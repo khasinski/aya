@@ -821,12 +821,14 @@ function ProjectsLeftLayoutImpl({
           </button>
           <button
             className="aya-context-menu-item"
+            disabled={!!terminals.find(t=>t.id===menu.id)?.recoveryBlocked}
+            title={terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? terminals.find(t=>t.id===menu.id)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
             onClick={() => {
               onRestartTerminal(menu.id);
               setMenu(null);
             }}
           >
-            Restart terminal
+            Restart terminal{terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? " - host recovering" : ""}
           </button>
           {/* Split actions are intentionally absent: this layout does not
               support split panes (see App's layoutMode gating). */}

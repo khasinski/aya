@@ -1,5 +1,6 @@
 // A pane opened for a team role is launched in a mode that reaches Aya, and the
-// host says how each live pane was launched. HOME, SHELL and PATH are fake.
+// host says how each live pane was launched. HOME, SHELL and PATH are fake, and
+// CODEX_HOME is unset.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -23,7 +24,10 @@ process.env.AYA_HOME = join(root, "aya-home");
 process.env.HOME = join(root, "home");
 process.env.PATH = "/usr/bin:/bin";
 process.env.SHELL = "/bin/sh";
+// A runner started from a Codex pane has one: Codex's config would be read there, not in this fake home.
+delete process.env.CODEX_HOME;
 mkdirSync(process.env.HOME);
+mkdirSync(process.env.AYA_HOME,{recursive:true});
 writeFileSync(join(process.env.HOME, ".profile"), `PATH='${bin}':$PATH\nexport PATH\n`);
 
 // Env first, then the app's modules: paths.ts reads AYA_HOME once, at load.
@@ -34,12 +38,14 @@ const { PTY_HOST_UNKNOWN_REQUEST, PTY_HOST_NOT_CONNECTED } = await import("../di
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
 const { HOST_EVENT_TIMEOUT_MS } = await import("./helpers/pty-host.mjs");
 
+let componentAuthority; // Shared only between clients in this one test principal.
 async function launched(t, ptyId, command, teamLaunch, dir = cwd) {
   const events = [];
-  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));
+  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));if(componentAuthority)client.hostAuthKey=Buffer.from(componentAuthority);
   client.attachWebContents({ isDestroyed: () => false, send: (channel, payload) => channel === "pty:event" && events.push(payload) });
   t.after(() => client.shutdown().catch(() => {}));
   await client.spawn({ ptyId, command, cwd: dir, cols: 80, rows: 24, ...(teamLaunch ? { teamLaunch: true } : {}) });
+  componentAuthority=Buffer.from(client.hostAuthKey);
   const output = () => events.filter((e) => e.type === "data").map((e) => e.chunk).join("");
   const deadline = Date.now() + HOST_EVENT_TIMEOUT_MS;
   while (!/CODEX-ARGS:[^\r\n]*[\r\n]/.test(output()) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
@@ -75,7 +81,7 @@ test("a role's pane in read-only is not escalated: it launches as its preset say
 });
 
 test("a pane in its spawn preflight is starting, not unrecorded; once recorded it has its record", async (t) => {
-  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));
+  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));if(componentAuthority)client.hostAuthKey=Buffer.from(componentAuthority);
   client.attachWebContents({ isDestroyed: () => false, send: () => {} });
   t.after(() => client.shutdown().catch(() => {}));
   const spawned = client.spawn({ ptyId: "lm-starting", command: "codex", cwd, cols: 80, rows: 24 });
@@ -129,7 +135,7 @@ test("a pane the host has no launch verdict for is reported as such, and never h
 });
 
 test("a host that cannot be reached is not 'no record'; an old host that lacks the request is", async () => {
-  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));
+  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));if(componentAuthority)client.hostAuthKey=Buffer.from(componentAuthority);
   client.request = async () => {
     throw new Error("PTY host disconnected");
   };
@@ -148,7 +154,7 @@ test("an old host's unknown-request error keeps the exact words shipped hosts se
 });
 
 test("a pane's record goes with the pane when its process exits on its own", async (t) => {
-  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));
+  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));if(componentAuthority)client.hostAuthKey=Buffer.from(componentAuthority);
   client.attachWebContents({ isDestroyed: () => false, send: () => {} });
   t.after(() => client.shutdown().catch(() => {}));
   await client.spawn({ ptyId: "lm-8", command: "brief", cwd, cols: 80, rows: 24 });
@@ -159,13 +165,13 @@ test("a pane's record goes with the pane when its process exits on its own", asy
   assert.match(await client.holdReason("lm-8"), /not running/);
 });
 
-test("an Aya restart attaching to a running pane finds the record the host made at spawn", async (t) => {
+test("an authorized component client attaching to a running pane finds the record the host made at spawn", async (t) => {
   setConfig('sandbox_mode = "danger-full-access"\n');
   const { launch: before, client: first } = await launched(t, "lm-9", "codex --no-daemon", true);
   assert.equal(before.mode.reach, "reaches");
   first.dispose();
   setConfig('sandbox_mode = "read-only"\n');
-  const second = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));
+  const second = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));second.hostAuthKey=Buffer.from(first.hostAuthKey);
   second.attachWebContents({ isDestroyed: () => false, send: () => {} });
   t.after(() => second.shutdown().catch(() => {}));
   await second.spawn({ ptyId: "lm-9", command: "codex --no-daemon", cwd, cols: 80, rows: 24, attachOnly: true });

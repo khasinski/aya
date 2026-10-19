@@ -22,5 +22,5 @@ test("the restart dialog shows its button and its list as text, with Cancel the 
   const options = restartDialog(`Restart ${RLO}tset`, `pane w\x1b[2J: a dev server\nother: a watcher`);
   assert.deepEqual(options.buttons, [`Restart ${U("202e")}tset`, "Cancel"]);
   assert.equal(options.detail, `pane w${U("001b")}[2J: a dev server\nother: a watcher`);
-  assert.deepEqual([options.defaultId, options.cancelId, options.message], [1, 1, "Background tasks will stop"]);
+  assert.deepEqual([options.defaultId, options.cancelId, options.message], [1, 1, "Work in progress will stop"]);
 });

@@ -408,12 +408,12 @@ test("listTeams reports the role-note report of each team, and none otherwise", 
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "assignments.json"), JSON.stringify({ a: "p1", b: "p9" }));
     const asked = [];
-    const report = { roleNotes: { a: "x" }, staleNotes: ["p2 still carries the role note of b"] };
+    const report = { roleNotes: { a: "x" }, restartable: ["a"], staleNotes: ["p2 still carries the role note of b"] };
     const [team] = await listTeams(t.teamHome, t.project, undefined, async (project, name, assignments) => (asked.push([name, assignments]), report));
-    assert.deepEqual([team.roleNotes, team.staleNotes], [report.roleNotes, report.staleNotes]);
+    assert.deepEqual([team.roleNotes, team.restartable, team.staleNotes], [report.roleNotes, report.restartable, report.staleNotes]);
     assert.deepEqual(asked, [["ux-review", { a: "p1", b: "p9" }]]);
     const [plain] = await listTeams(t.teamHome, t.project);
-    assert.deepEqual([plain.roleNotes, plain.staleNotes], [{}, []]);
+    assert.deepEqual([plain.roleNotes, plain.restartable, plain.staleNotes], [{}, [], []]);
   } finally {
     t.cleanup();
   }

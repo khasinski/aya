@@ -96,11 +96,23 @@ test.describe("role given or changed while panes run", () => {
     aya(["team", "open", "ux-review", "tester=pane:tab-right"]);
     const card = (await openTeams(window)).getByTestId("team-ux-review");
     await expect(card.getByLabel("tester role note")).toContainText("This agent started before it had this role");
-    await expect(card.getByLabel("tester role note")).toContainText("right-click the pane and choose Restart");
+    await expect(card.getByLabel("tester role note")).toContainText("click Restart");
     await expect(card.getByLabel("tester role note")).not.toContainText("aya team whoami");
 
     aya(["team", "open", "ux-review", "--replace", "tester=pane:tab-left"]);
     await expect(card.getByLabel("tester role note")).toContainText("This agent started before it had this role");
+  });
+
+  test("the Teams window's Restart gives a running pane its role note, and the warning goes", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    await expect.poll(() => dumpOf(seeded.projectDir, "tab-right") !== null, { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
+    expect(told(dumpOf(seeded.projectDir, "tab-right")!)).not.toMatch(NOTE);
+    cli(seeded.ayaHome)(["team", "open", "ux-review", "tester=pane:tab-right"]);
+    const card = (await openTeams(window)).getByTestId("team-ux-review");
+    await expect(card.getByLabel("tester role note")).toContainText("started before it had this role");
+    await card.getByRole("button", { name: "Restart tester's pane" }).click();
+    await expect.poll(() => told(dumpOf(seeded.projectDir, "tab-right") ?? { args: [], opencodeConfig: null, opencodeConfigContent: null }), { timeout: AGENT_START_TIMEOUT_MS }).toMatch(NOTE);
+    await expect(card.getByLabel("tester role note")).toHaveCount(0, { timeout: AGENT_START_TIMEOUT_MS });
   });
 });
 
@@ -115,6 +127,8 @@ for (const agent of AGENTS) {
       cli(seeded.ayaHome)(["team", "open", "ux-review", "tester=pane:tab-right"]);
       const card = (await openTeams(window)).getByTestId("team-ux-review");
       await expect(card.getByLabel("tester role note")).toContainText("Aya cannot tell whether this agent got its role when it started");
+      // A resumed Codex session keeps its first note: no Restart there, the text says to pick a new session.
+      await expect(card.getByRole("button", { name: "Restart tester's pane" })).toHaveCount(agent === "codex" ? 0 : 1);
     });
   });
 }

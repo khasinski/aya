@@ -1,12 +1,13 @@
+import {spawnAuthenticatedHost,authenticateFixtureSocket} from "./helpers/pty-host-launch.cjs";
 // A host that never gets a client (its app was killed while it booted) must exit on its own.
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cleanupNativeOwner } from "./helpers/pty-host.mjs";
 import { connectWhenListening } from "./helpers/unix-socket.mjs";
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
@@ -14,7 +15,7 @@ const IDLE_MS = 500;
 const EXIT_DEADLINE_MS = 6000;
 
 function startHost(ayaHome, idleMs) {
-  return spawn(process.execPath, [HOST_SCRIPT], {
+  return spawnAuthenticatedHost(process.execPath, [HOST_SCRIPT], {
     env: { ...process.env, AYA_HOME: ayaHome, AYA_PTY_HOST_IDLE_MS: String(idleMs) },
     stdio: "ignore",
   });
@@ -32,6 +33,17 @@ const exited = (child, ms) =>
 
 // Every case starts its own host under its own temporary AYA_HOME (and socket).
 describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
+  test("an unauthenticated silent connection cannot keep an empty host alive",async()=>{
+    const home=mkdtempSync(join(tmpdir(),"aya-idle-unproven-")),host=startHost(home,IDLE_MS*2);
+    let client;
+    try{
+      client=await connectWhenListening(join(home,"pty-host.sock"));client.on('error',()=>{});
+      assert.equal(await exited(host,EXIT_DEADLINE_MS),true);
+    }finally{
+      client?.destroy();host.kill('SIGKILL');await exited(host,EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);rmSync(home,{recursive:true,force:true});
+    }
+  });
   test("a host that never gets a client exits after its idle timeout", async () => {
     const home = mkdtempSync(join(tmpdir(), "aya-idle-start-"));
     const host = startHost(home, IDLE_MS);
@@ -39,38 +51,45 @@ describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
       assert.equal(await exited(host, EXIT_DEADLINE_MS), true, "the host is still running");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });
 
   test("the idle timeout is the default when the override is unset", async () => {
     const home = mkdtempSync(join(tmpdir(), "aya-idle-start-"));
-    const host = spawn(process.execPath, [HOST_SCRIPT], { env: { ...process.env, AYA_HOME: home, AYA_PTY_HOST_IDLE_MS: "" }, stdio: "ignore" });
+    const host = spawnAuthenticatedHost(process.execPath, [HOST_SCRIPT], { env: { ...process.env, AYA_HOME: home, AYA_PTY_HOST_IDLE_MS: "" }, stdio: "ignore" });
     try {
       assert.equal(await exited(host, EXIT_DEADLINE_MS), false, "the default idle wait is 30 s, not immediate");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });
 
-  test("a client that sits silent past the idle timeout, then leaves, still lets the host exit", async () => {
+  test("an authenticated client that sits silent past the idle timeout, then leaves, still lets the host exit", async () => {
     const home = mkdtempSync(join(tmpdir(), "aya-idle-start-"));
     const sock = join(home, "pty-host.sock");
     const host = startHost(home, IDLE_MS * 2);
     try {
       const client = await connectWhenListening(sock);
+      await authenticateFixtureSocket(client,home);client.resume();
       await new Promise((r) => setTimeout(r, IDLE_MS * 3));
       assert.equal(host.exitCode, null, "a host with a client must stay up");
       client.destroy();
       assert.equal(await exited(host, EXIT_DEADLINE_MS), true, "the host never exited after its last client left");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });
 
-  test("a client that connects and leaves without a request restarts the idle wait", async () => {
+  test("an authenticated client that connects and leaves without an RPC request restarts the idle wait", async () => {
     const idle = 1500;
     const home = mkdtempSync(join(tmpdir(), "aya-idle-start-"));
     const sock = join(home, "pty-host.sock");
@@ -81,12 +100,15 @@ describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
       await new Promise((r) => setTimeout(r, Math.max(0, idle * 0.6 - (Date.now() - startedAt))));
       // A host slower than the planned delay may have only just made the file.
       const client = await connectWhenListening(sock);
+      await authenticateFixtureSocket(client,home);client.resume();
       client.destroy();
       await new Promise((r) => setTimeout(r, idle * 0.6));
       assert.equal(host.exitCode, null, "the host exited on the timer armed before the client came");
       assert.equal(await exited(host, EXIT_DEADLINE_MS), true, "the host never exited after the client left");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });

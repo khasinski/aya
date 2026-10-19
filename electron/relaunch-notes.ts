@@ -1,5 +1,6 @@
 // Leaving a CLI stops the background tasks and monitors its session ran ("1 monitor couldn't be moved and was
 // stopped"): a restart Aya makes on purpose warns first, and tells a team agent resumed after it to start them again.
+// It also cuts off an agent's turn and a shell's running command (#217), which the warning names too.
 
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
@@ -52,10 +53,18 @@ const RESUMED: Partial<Record<AgentKind, RegExp>> = {
 export interface PaneWork {
   id: string;
   name: string;
+  /** What a restart stops there, as the warning names it: "mid-turn, 1 monitor", "running npm run dev". */
   work: string;
+  /** The agent is mid-turn. */
+  turn?: boolean;
+  /** A shell runs a command in the foreground. */
+  command?: boolean;
+  /** Background tasks the screen shows: a resumed team agent is told to start them again. */
+  background?: boolean;
 }
 
 export interface RelaunchDeps {
+  disconnected?: (id: string) => Promise<boolean>;
   /** Where the notes wait for the relaunch; it outlives Aya's own restart. */
   file: string;
   /** The panes a restart of `ids` (all when absent) stops, with their names. */
@@ -67,6 +76,10 @@ export interface RelaunchDeps {
   pid: (id: string) => Promise<number | null | undefined>;
   /** The command the pane runs now, null when not known. */
   command: (id: string) => Promise<string | null>;
+  /** Whether the pane's agent is mid-turn; false when the host cannot say. */
+  busy: (id: string) => Promise<boolean>;
+  /** The command a shell pane runs in the foreground, null at its prompt or when not known. */
+  foreground: (id: string) => Promise<string | null>;
   now?: () => number;
 }
 
@@ -74,6 +87,9 @@ interface Note {
   pid: number | null;
   work: string;
   at: number;
+  /** Only the user's yes to stopping a turn or a command, kept so the next restart of that process does not ask again;
+   *  there is nothing to tell the agent. */
+  quiet?: true;
 }
 
 async function readNotes(file: string): Promise<Record<string, Note>> {
@@ -96,18 +112,33 @@ function changeNotes(file: string, change: (notes: Record<string, Note>) => void
   });
 }
 
-/** The panes among `ids` (all when absent) whose screen shows background work now. */
-export async function backgroundWorkOf(deps: RelaunchDeps, ids?: readonly string[]): Promise<PaneWork[]> {
+/** What a restart of the running pane stops now: the agent's turn and its background tasks, or a shell's command. */
+async function paneWork(deps: RelaunchDeps, id: string, name: string, screen: string): Promise<PaneWork | null> {
+  const agent = await deps.agentOf(id);
+  const background = backgroundWorkShown(screen, agent);
+  // "custom" is a shell, a script or a CLI Aya has no rules for: only what it runs in the foreground can be read.
+  const known = agent !== undefined && agent !== "custom";
+  const turn = known && (await deps.busy(id).catch(() => false));
+  const command = known ? null : await deps.foreground(id).catch(() => null);
+  const work = [turn && "mid-turn", command !== null && `running ${command}`, background].filter((w): w is string => !!w);
+  if (!work.length) return null;
+  return { id, name, work: work.join(", "), turn, command: command !== null, background: background !== null };
+}
+
+/** The panes among `ids` (all when absent) whose restart would stop work now. */
+export async function restartWorkOf(deps: RelaunchDeps, ids?: readonly string[]): Promise<PaneWork[]> {
   const out: PaneWork[] = [];
   for (const { id, name } of await deps.panes(ids)) {
+    if (await deps.disconnected?.(id)) { out.push({ id, name, work: "disconnected, with a process that may still be running" }); continue; }
     const screen = await deps.screen(id).catch(() => null);
-    const work = screen === null ? null : backgroundWorkShown(screen, await deps.agentOf(id));
-    if (work) out.push({ id, name, work });
+    const work = screen === null ? null : await paneWork(deps, id, name, screen);
+    if (work) out.push(work);
   }
   return out;
 }
 
-/** As backgroundWorkOf for all panes, but null when a pane that runs (or may run) cannot be read: its work is unknown. */
+/** The panes whose screen shows background work now, which an ordinary quit's update waits for; null when a pane that
+ *  runs (or may run) cannot be read: its work is unknown. A turn or a command is asked about when the host restarts. */
 export async function backgroundWorkKnown(deps: RelaunchDeps): Promise<PaneWork[] | null> {
   const out: PaneWork[] = [];
   for (const { id, name } of await deps.panes()) {
@@ -117,7 +148,7 @@ export async function backgroundWorkKnown(deps: RelaunchDeps): Promise<PaneWork[
       continue;
     }
     const work = backgroundWorkShown(screen, await deps.agentOf(id));
-    if (work) out.push({ id, name, work });
+    if (work) out.push({ id, name, work, background: true });
   }
   return out;
 }
@@ -125,7 +156,13 @@ export async function backgroundWorkKnown(deps: RelaunchDeps): Promise<PaneWork[
 /** The warning before a restart that stops `work`; `action` names the restart. */
 export function restartWarning(action: string, work: readonly PaneWork[]): string {
   const shown = work.map((w) => `${w.name}: ${w.work}`).join("; ");
-  return `${action} stops what these panes run in the background (${shown}). The agent cannot carry them into the new process; Aya tells a team agent resumed afterwards to start again the ones it still needs.`;
+  return [
+    `${action} stops what these panes are doing (${shown}).`,
+    work.some((w) => w.turn) && "An agent mid-turn stops before its turn ends.",
+    work.some((w) => w.command) && "A command running in a shell stops.",
+    work.some((w) => w.background) &&
+      "An agent cannot carry its background tasks into the new process; Aya tells a team agent resumed afterwards to start again the ones it still needs.",
+  ].filter(Boolean).join(" ");
 }
 
 /** Remembers the panes in `work` for a note once each comes back as a new process. */
@@ -133,22 +170,71 @@ export async function noteRelaunch(deps: RelaunchDeps, work: readonly PaneWork[]
   if (!work.length) return;
   const at = (deps.now ?? Date.now)();
   const pids = await Promise.all(work.map(async (w) => (await deps.pid(w.id).catch(() => undefined)) ?? null));
-  await changeNotes(deps.file, (notes) => work.forEach((w, i) => (notes[w.id] = { pid: pids[i], work: w.work, at })));
+  // A command line can carry a password or a token: the note on disk does not repeat it.
+  const noted = (w: PaneWork) => (w.command ? "running a command" : w.work);
+  await changeNotes(deps.file, (notes) =>
+    work.forEach((w, i) => (notes[w.id] = w.background ? { pid: pids[i], work: noted(w), at } : { pid: pids[i], work: noted(w), at, quiet: true })),
+  );
 }
 
-/** Asks before a restart of `ids` (all when absent) only when one shows background work; a yes keeps the notes. */
+/** Asks before a restart of `ids` (all when absent) only when it would stop work in one; a yes keeps the notes. */
 export async function confirmRestart(deps: RelaunchDeps, action: string, ask: (text: string) => Promise<boolean>, ids?: readonly string[]): Promise<boolean> {
-  const work = await backgroundWorkOf(deps, ids);
+  const work = await restartWorkOf(deps, ids);
   if (!work.length) return true;
   if (!(await ask(restartWarning(action, work)))) return false;
   await noteRelaunch(deps, work);
   return true;
 }
 
+/** Planned migration must also ask about an idle process that cannot move.
+ * Existing detailed work text and quiet PID notes stay the #219 contract. */
+export async function confirmStoppingProcesses(deps:RelaunchDeps,action:string,ask:(text:string)=>Promise<boolean>,ids?:readonly string[]):Promise<boolean> {
+  const panes=await deps.panes(ids),known=await restartWorkOf(deps,ids).catch(()=>[]);
+  const work:PaneWork[]=[];
+  const selected=ids??panes.map(p=>p.id);
+  for(const id of selected){
+    if(await deps.pid(id).catch(()=>undefined)===null)continue;
+    work.push(known.find(p=>p.id===id)??{id,name:panes.find(p=>p.id===id)?.name??id,work:"a running process"});
+  }
+  if(!work.length)return true;
+  if(!await ask(restartWarning(action,work)))return false;
+  await noteRelaunch(deps,work);return true;
+}
+
+/** The question before restarting one pane, `name`. When what it runs cannot be checked, the user still decides: asked
+ *  plainly, with the reason, rather than restarted without a word or silently not restarted. */
+export async function confirmPaneRestart(
+  confirm: () => Promise<boolean>,
+  ask: (text: string) => Promise<boolean>,
+  name: string,
+): Promise<boolean> {
+  try {
+    return await confirm();
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return ask(`Aya could not check what ${name} is doing (${why}). Restarting it stops anything it runs: a turn, a command or background tasks.`);
+  }
+}
+
+/** Same-process consent survives Restart to update; forced legacy/native
+ * migration must not ask twice when every process was already acknowledged. */
+export async function currentProcessesConfirmed(deps: RelaunchDeps, count: number): Promise<boolean> {
+  if (count <= 0) return false;
+  const notes = await readNotes(deps.file);
+  let confirmed = 0;
+  for (const pane of await deps.panes()) {
+    const pid = await deps.pid(pane.id);
+    if (pid === null) continue;
+    if (pid === undefined || notes[pane.id]?.pid !== pid) return false;
+    confirmed++;
+  }
+  return confirmed >= count;
+}
+
 /** As confirmRestart, but a pane whose work the user already agreed to stop for its current process (a note left by
  *  Restart to update, its pane not relaunched yet) is not asked about again. */
 export async function confirmRestartOnce(deps: RelaunchDeps, action: string, ask: (text: string) => Promise<boolean>): Promise<boolean> {
-  const work = await backgroundWorkOf(deps);
+  const work = await restartWorkOf(deps);
   const notes = await readNotes(deps.file);
   const pids = await Promise.all(work.map(async (w) => (await deps.pid(w.id).catch(() => undefined)) ?? null));
   const unasked = work.filter((w, i) => notes[w.id]?.pid !== pids[i] || pids[i] === null);
@@ -183,6 +269,10 @@ export async function deliverRelaunchNotes(team: TeamControlDeps, deps: Relaunch
     const pid = await deps.pid(id).catch(() => undefined);
     // Not running yet, the host cannot say, or still the process the work ran in.
     if (pid === null || pid === undefined || pid === note.pid) continue;
+    if (note.quiet) {
+      done.push([id, note.at]);
+      continue;
+    }
     const agent = await deps.agentOf(id);
     const resumed = agent && RESUMED[agent];
     const command = await deps.command(id);

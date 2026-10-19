@@ -1,3 +1,5 @@
+import {findAuthTransferTicket} from "./pty-host-auth-ticket";
+import { builtinScreenRules } from "./screen-rule-provider";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
@@ -55,7 +57,8 @@ import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./ipc/team-ipc";
 import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
-import { confirmRestart, type RelaunchDeps } from "./relaunch-notes";
+import { confirmPaneRestart, confirmRestart, confirmStoppingProcesses, type RelaunchDeps } from "./relaunch-notes";
+import { foregroundCommand } from "./foreground-command";
 import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
@@ -83,7 +86,7 @@ import { openExternalUrl } from "./navigation";
 import { listPresets, type AgentKind } from "./presets";
 import { expandUserPath } from "./usage";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
-import { usageHookStatus } from "./usage-hook";
+import { refreshUsageHookScript, usageHookStatus } from "./usage-hook";
 import { refreshStatusHookScript, migrateStatusHookCommand } from "./status-hook";
 import { refreshStatusCodexHookScript } from "./status-hook-codex";
 import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
@@ -140,6 +143,9 @@ const MAX_KEYBOARD_PROJECTS = 9;
 const COLOR_DARK_BG = "#0d1117";
 const COLOR_LIGHT_TEXT = "#f0f6fc";
 
+import {PlannedUpdate} from "./pty-planned-update";
+import {HandoverDisplays} from "./pty-handover-display";
+
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
 const spawnGate = createSpawnGate();
@@ -190,8 +196,9 @@ async function paneAgent(terminalId: string): Promise<AgentKind | undefined> {
   const preset = tab && (await listPresets()).find((p) => p.id === tab.presetId);
   return preset ? presetAgent(preset) : undefined;
 }
-// Restarts that stop the panes' background tasks and monitors warn first, and the resumed team agents are told.
+// Restarts that stop a turn, a shell's command or background tasks warn first, and the resumed team agents are told.
 const relaunchDeps: RelaunchDeps = {
+  disconnected: id => ptyHost.paneDisconnected(id),
   file: path.join(AYA_HOME, "relaunch-notes.json"),
   panes: async (ids) => (await listProjects()).flatMap((p) => p.tabs).filter((t) => !ids || ids.includes(t.id)).map(({ id, name }) => ({ id, name })),
   agentOf: paneAgent,
@@ -201,8 +208,13 @@ const relaunchDeps: RelaunchDeps = {
     const launch = await ptyHost.launch(terminalId);
     return typeof launch === "object" && launch !== null ? launch.command : null;
   },
+  busy: (terminalId) => ptyHost.paneBusy(terminalId),
+  foreground: async (terminalId) => {
+    const pid = await ptyHost.getPid(terminalId);
+    return typeof pid === "number" ? foregroundCommand(pid) : null;
+  },
 };
-/** A native yes/no before a restart that stops background work; `yes` names the restart. */
+/** A native yes/no before a restart that stops work in panes; `yes` names the restart. */
 async function askRestart(yes: string, text: string): Promise<boolean> {
   const options = restartDialog(yes, text);
   const parent = focusedAyaWindow();
@@ -255,6 +267,23 @@ const windows = createAyaWindows({
 });
 const { ayaWindows, focusedAyaWindow, eachAyaWindow, createWindow, openNewWindow, createWindowOnce, windowForOpen, isAyaFullScreen, setAyaFullScreen, toggleAyaFullScreen } = windows;
 const { windowSlices, projectStateForWindow } = windowProjects;
+const handoverDisplays=new HandoverDisplays(async id=>{
+  const project=(await listProjects()).find(p=>p.tabs.some(tab=>tab.id===id));
+  const windowId=project?windowSlices.windowOf(project.slug):null;
+  return windowId===null?null:BrowserWindow.fromId(windowId)?.webContents??null;
+},(event,fields)=>diagnosticsLog.append(event,fields),(id,generation,token)=>ptyHost.acknowledgeHandoverDisplay(id,generation,token));
+ptyHost.enableCrashRecovery({
+  restored:panes=>handoverDisplays.installRecovery(panes),
+  log:(event,fields)=>diagnosticsLog.append(event,fields),
+});
+const plannedUpdate=new PlannedUpdate({
+  host:ptyHost,displays:handoverDisplays,
+  livePaneIds:async()=>{const panes=await relaunchDeps.panes();const live=await Promise.all(panes.map(async p=>await relaunchDeps.pid(p.id).catch(()=>undefined)!==null?p.id:null));return live.filter((id):id is string=>id!==null);},
+  expected:()=>ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
+  confirmStop:(ids,action)=>confirmStoppingProcesses(relaunchDeps,action,text=>askRestart("Restart terminals",text),ids),
+  log:(event,fields)=>diagnosticsLog.append(event,fields),
+});
+
 
 const { cliStatus, installCli, healDeadCliShims } = createCliSetup({
   app,
@@ -276,7 +305,7 @@ const { paneBriefDeps, expectRoles: expectPaneRoles } = createPaneBriefDeps({
 });
 
 const { EXPECTED_HOST_VERSION, handleStaleHost, hostHealth, restartHostFromWindow, stopOtherHostsFromWindow,
-  staleHostDetected } = createPtyHostHealth({
+  staleHostDetected, keepStaleHost } = createPtyHostHealth({
   app,
   mainDirname: __dirname,
   ptyHost,
@@ -398,6 +427,8 @@ let appQuitting = false;
 const TEAM_QUIT_SETTLE_MS = 2_000;
 let teamsAtQuit: TeamRunner | null = null;
 let teamsStopped = false;
+let ordinaryQuitAnnounced = false;
+let ordinaryQuitAnnouncementPending = false;
 
 const ayaWeb = createAyaWeb({
   app,
@@ -411,6 +442,7 @@ const ayaWeb = createAyaWeb({
 });
 
 const applicationMenuDeps = {
+  restartTerminals:restartHostFromWindow,
   app,
   Menu,
   nativeImage,
@@ -444,9 +476,12 @@ const updates = createUpdates({
   },
   relaunchDeps,
   askRestart,
+  preparePlannedUpdate:()=>plannedUpdate.prepare(),
+  abortPlannedUpdate:()=>plannedUpdate.abort(),
 });
 
 function registerIpc(): TeamRunner {
+  handoverDisplays.register(ipcMain);
   // Aya Web reuses these handlers over WebSocket - record every registration
   // (must run before the first ipcMain.handle below).
   captureIpcHandlers(ipcMain);
@@ -515,16 +550,19 @@ function registerIpc(): TeamRunner {
     prepareSpawn,
     sendSpawn,
     forgetBrief: (ptyId) => removePaneBrief(AYA_HOME, ptyId),
+    forgetDisplay: (ptyId) => handoverDisplays.forget(ptyId),
+    hasDisplay: (ptyId) => handoverDisplays.has(ptyId),
     noteTyping: async (ptyId, text) => {
       // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
       const answered = await noteUserAnswer(ptyId, text, () => ptyHost.holdReason(ptyId));
       if (answered) broadcastStatus(answered);
     },
     confirmRestartPane: async (ptyId) => {
-      const name = (await relaunchDeps.panes([ptyId]))[0]?.name ?? "this pane";
-      return confirmLosingWork(`Restarting ${name}`, "Restart", [ptyId]);
+      const name = (await relaunchDeps.panes([ptyId]).catch(() => []))[0]?.name ?? "this pane";
+      return confirmPaneRestart(() => confirmLosingWork(`Restarting ${name}`, "Restart", [ptyId]), (text) => askRestart("Restart", text), name);
     },
     restartHost: restartHostFromWindow,
+    retryRecovery:()=>ptyHost.retryCrashRecovery(),
     stopOtherHosts: stopOtherHostsFromWindow,
     waiting: outstandingWaiting,
   });
@@ -689,6 +727,9 @@ app.whenReady().then(async () => {
   void refreshStatusHookScript().catch(() => {});
   void migrateStatusHookCommand().catch(() => {});
   void refreshStatusCodexHookScript().catch(() => {});
+  // An installed usage hook from an older build copies the shared account file, which a parallel hook can replace
+  // mid-copy; refresh it in place too (never install).
+  void refreshUsageHookScript().catch(() => {});
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
@@ -704,7 +745,7 @@ app.whenReady().then(async () => {
 
   // Reap stale detached PTY hosts (and their whole process groups) that THIS
   // registry recorded - i.e. hosts from this build onward left behind by future
-  // updates. A same-build host is kept (survive-restart, #28); a version-
+  // updates. A matching PTY-content host is kept (survive-restart, #28); a
   // mismatched one is force-killed by pid (fail-closed, verified via its
   // recorded start time). Pre-registry hosts have no record and are NOT covered
   // here (Phase-2 sweep); the one currently holding the socket is handled by
@@ -712,8 +753,14 @@ app.whenReady().then(async () => {
   // createWindow so a recorded stale host is dead before anything can connect
   // to it; the common-path cost is one `ps -p` fork for the kept host (the
   // system-wide snapshot only runs when a kill actually happens).
+  let announcedTicket:Awaited<ReturnType<typeof findAuthTransferTicket>>=null;
+  try{
+    announcedTicket=await findAuthTransferTicket(AYA_HOME);
+    if(announcedTicket)await ptyHost.redeemAnnouncedCapability(announcedTicket);
+  }catch{diagnosticsLog.append("host-transfer-unavailable",{purpose:"startup"});}
+  const keepPlannedHost=await plannedUpdate.resume(announcedTicket?.purpose==="planned-update"&&announcedTicket.deadline!==null?{...announcedTicket,deadline:announcedTicket.deadline}:undefined) === "kept";
   let keptCompatibleHosts: number[] = [];
-  try {
+  if(!keepPlannedHost)try {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
     const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
     const summary = reapStaleHostRecords(
@@ -747,7 +794,7 @@ app.whenReady().then(async () => {
   // start. The red fallback icon is applied after installApplicationMenu.
   // Unconditionally now: with no socket file, hostHealth() starts no host, and a host still running without its
   // socket (2026-10-13) is exactly the one this must catch before the first pane starts another.
-  await handleStaleHost();
+  if(keepPlannedHost)keepStaleHost();else await handleStaleHost();
 
   const savedState = await loadWindowState();
   windows.mainWindow = createWindow(savedState);
@@ -788,6 +835,7 @@ app.whenReady().then(async () => {
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     paneHold: (terminalId) => ptyHost.holdReason(terminalId),
+    paneState: (terminalId) => ptyHost.paneState(terminalId),
     team: teamDeps,
     teamRunner,
     teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),
@@ -909,6 +957,16 @@ app.on("before-quit", (event) => {
   }
   if (updates.beforeQuit(event)) return;
   appQuitting = true;
+  if(!IS_E2E_PTY_SHUTDOWN&&!plannedUpdate.hasPreparedHandover&&!ordinaryQuitAnnounced){
+    event.preventDefault();
+    if(!ordinaryQuitAnnouncementPending){
+      ordinaryQuitAnnouncementPending=true;
+      void ptyHost.announceOrdinaryQuit().catch(()=>false).finally(()=>{
+        ordinaryQuitAnnounced=true;ordinaryQuitAnnouncementPending=false;app.quit();
+      });
+    }
+    return;
+  }
   try {
     cliAdoption.flush();
   } catch {
@@ -930,6 +988,8 @@ app.on("before-quit", (event) => {
 });
 
 const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
+builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
+builtinScreenRules.get();
 const gpuDeathHandler = createGpuDeathHandler({
   diagnosticsLog,
   appQuitting: () => appQuitting,

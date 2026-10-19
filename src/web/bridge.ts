@@ -59,6 +59,9 @@ export function createWebAya(transport: WebTransport): AyaApi {
   const noopSubscription = () => () => {};
 
   const api: AyaApi = {
+    onHandoverCapture:()=>()=>{},
+    handoverDisplay:async()=>null,
+    acknowledgeHandoverDisplay:async()=>{},
     isDev: transport.hello.isDev,
     platform: transport.hello.platform as NodeJS.Platform,
 
@@ -71,6 +74,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     ptySearch: inv("pty:search"),
     harnessSearch: inv("harness:search"),
     restartPtyHost: inv("pty-host:restart"),
+    retryPtyHostRecovery: inv("pty-host:retry-recovery"),
     stopOtherPtyHosts: inv("pty-host:stop-others"),
     confirmPaneRestart: inv("pty:confirm-restart"),
     onPtyEvent: on<PtyEvent>("pty:event"),

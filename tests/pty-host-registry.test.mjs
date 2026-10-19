@@ -1,3 +1,4 @@
+import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 // The reaper SIGKILLs process trees, so isReapableHost is the safety gate: it
 // must be fail-closed - true ONLY when we are certain a live pid is the exact
 // host a record describes. These tests pin every rejection path (a regression
@@ -5,7 +6,6 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -250,9 +250,9 @@ test("reap: empty registry is a no-op", () => {
 
 // --- the "unknown" identity sentinel must never decide a kill or a keep ---
 
-test("classifyIdentity: version mismatch is stale regardless of hashes", () => {
+test("classifyIdentity: version mismatch keeps matching core content", () => {
   assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "unknown" }), "stale");
-  assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "new" }), "stale");
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "new" }), "compatible");
 });
 
 test("classifyIdentity: same version needs BOTH hashes known to decide", () => {
@@ -260,7 +260,7 @@ test("classifyIdentity: same version needs BOTH hashes known to decide", () => {
   assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "other" }), "stale");
   // 'unknown' on either side -> indeterminate: 'unknown'==='unknown' must not
   // trust a foreign build, and real-vs-'unknown' must not SIGKILL a healthy one.
-  assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "unknown" }), "indeterminate");
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "unknown" }), "stale");
   assert.equal(
     classifyIdentity({ version: "0.8.0", scriptHash: "unknown" }, { version: "0.8.0", scriptHash: "real" }),
     "indeterminate",
@@ -376,13 +376,13 @@ test("readHostRecords self-heals: unparseable and wrong-shape .json files are re
 
 // --- real host process: record lifecycle + graceful SIGTERM (integration) ---
 
-test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (record removed)", async () => {
+test("a real spawned host retains its record through SIGTERM exit until verified-death GC", async () => {
   const home = mkdtempSync(join(tmpdir(), "aya-host-it-"));
   // detached:true mirrors the real client spawn (pty-host-client.ts startHost) -
   // and is REQUIRED for the record: a non-leader host refuses to publish (its
   // ownPgid() !== pid verification; confirmed by this very test failing without
   // detached).
-  const host = spawn(process.execPath, ["dist-electron/pty-host.js"], {
+  const host = spawnAuthenticatedHost(process.execPath, ["dist-electron/pty-host.js"], {
     env: { ...process.env, AYA_HOME: home },
     stdio: "ignore",
     detached: true,
@@ -401,6 +401,7 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     });
     assert.equal(recs.length, 1, "host published its registry record");
     assert.equal(recs[0].pid, host.pid);
+    assert.equal(recs[0].authProtocol,1,"new hosts must never qualify for pre-auth migration status");
     assert.equal(recs[0].pgid, recs[0].pid, "host verified it leads its own group");
     assert.ok(recs[0].startTime.length > 0, "record carries a verifiable start time");
     assert.match(recs[0].nonce, /^[0-9a-f]{16}$/, "an 8-byte hex nonce");
@@ -412,13 +413,17 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     assert.equal(start?.scriptHash, recs[0].scriptHash.slice(0, 8), "the log keeps an 8-char hash prefix");
 
     // SIGTERM must now do a REAL graceful shutdown (not leave a socketless
-    // zombie): host exits and removes its record (children confirmed dead -
-    // there are none here).
+    // zombie). The host retains its record through actual exit so a concurrent
+    // main cannot mistake the final process.exit boundary for absence.
     host.kill("SIGTERM");
     await waitFor(() => exited);
     assert.equal(exited, true, "SIGTERM terminates the host (no suppressed-default zombie)");
-    await waitFor(() => readHostRecords(regDir).length === 0);
-    assert.deepEqual(readHostRecords(regDir), [], "clean shutdown removed the record");
+    assert.equal(readHostRecords(regDir).length,1,"only an external observer may certify death");
+    const kill=process.kill;let signals=0,summary;
+    try{process.kill=(pid,signal)=>{if(signal===0){assert.equal(pid,host.pid);return kill(pid,0);}signals++;throw Error('verified-dead GC must not signal');};summary=reapStaleHostRecords({version:recs[0].version,scriptHash:recs[0].scriptHash},join(process.cwd(),'dist-electron/pty-host.js'),regDir);}
+    finally{process.kill=kill;}
+    assert.equal(signals,0);assert.deepEqual(summary.gc,[host.pid]);assert.deepEqual(summary.reaped,[]);
+    assert.deepEqual(readHostRecords(regDir), [], "verified-dead GC removes the retained record without signalling");
   } finally {
     try {
       host.kill("SIGKILL");

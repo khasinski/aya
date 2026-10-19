@@ -17,6 +17,7 @@ writeFileSync(slowShell, "#!/bin/sh\nsleep 4\nexit 1\n");
 chmodSync(slowShell, 0o755);
 process.env.SHELL = slowShell;
 mkdirSync(process.env.HOME);
+mkdirSync(process.env.AYA_HOME,{recursive:true});
 const cwd = join(root, "project");
 mkdirSync(cwd);
 
@@ -40,8 +41,9 @@ test("host lost while a spawn waits on its CLI check: the spawn fails, the tab a
   await new Promise((r) => setTimeout(r, 500));
   process.kill(-pid, "SIGKILL");
   assert.equal(await inFlight, "refused: PTY host disconnected");
-  await waitFor(() => typeOf(events, "a").includes("no-session"));
-  assert.deepEqual([typeOf(events, "x"), typeOf(events, "a")], [["no-session"], ["no-session"]]);
+  await waitFor(() => typeOf(events, "a").includes("disconnected"));
+  assert.deepEqual([typeOf(events, "x"), typeOf(events, "a")], [["disconnected"], ["disconnected"]]);
+  assert.equal(await client.restart(),true,"only the explicit confirmed restart may replace this disconnected host");
   await client.spawn({ ptyId: "x", command: "/bin/sleep 120", cwd, cols: 80, rows: 24 });
   const { pid: newPid } = await client.hostStatus();
   assert.notEqual(newPid, pid);

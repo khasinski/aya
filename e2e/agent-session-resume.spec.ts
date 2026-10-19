@@ -12,6 +12,7 @@ import { SLOW_EXPECT_TIMEOUT_MS } from "./timeouts";
 import { launchApp } from "./helpers/relaunch";
 import { IMPLEMENTER_FIRST_TEAM, teamSeed } from "./helpers/team";
 import { agentBin } from "./helpers/agent-bin";
+import { loginPathFront } from "./helpers/seed";
 
 const FAKE_CODEX = agentBin("codex", join(__dirname, "helpers", "fake-codex.cjs"));
 const FAKE_GROK = agentBin("grok", join(__dirname, "helpers", "fake-grok.cjs"));
@@ -607,6 +608,8 @@ const ocLaunches = (dir: string, tab: string): string[] => {
 
 const OPENCODE_SEED = {
   launchEnv: { PATH: `${join(openBin, "b")}:${process.env.PATH}`, XDG_DATA_HOME: join(openBin, "xdg") },
+  // The pane and the session lookup run through a login shell, which would find a Homebrew opencode first.
+  homeFiles: loginPathFront(join(openBin, "b")),
   presetList: [{ id: "shell", name: "OpenCode", icon: "o", color: "", agent: "opencode", command: "opencode" }],
 };
 

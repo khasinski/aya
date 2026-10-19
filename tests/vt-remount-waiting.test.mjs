@@ -48,7 +48,7 @@ test("a window attaching to a pane: the dot says what the screen shows", async (
   const said = (wc, id) => ptyEventsFor(wc, id).filter((e) => e.type === "vt-status").map((e) => [e.waiting, e.dialog]);
   assert.deepEqual(said(first, "offer"), [[true, HOLD_ACCOUNT_SETTING]], "the live edge names the offer");
 
-  const later = new PtyHostClient(HOST_SCRIPT);
+  const later = new PtyHostClient(HOST_SCRIPT);later.hostAuthKey=Buffer.from(owner.hostAuthKey); // Same-principal view observer.
   const second = fakeWebContents();
   later.attachWebContents(second);
   for (const [id, command, agent] of panes) await later.spawn(spawnReq(id, command, agent));
@@ -58,4 +58,23 @@ test("a window attaching to a pane: the dot says what the screen shows", async (
     assert.deepEqual(said(second, id), says, id);
   }
   for (const [id] of panes) await later.kill(id);
+});
+
+test("the same main client restores current dialog state to a reloaded renderer", async (t) => {
+  const owner = new PtyHostClient(HOST_SCRIPT), first = fakeWebContents();
+  owner.attachWebContents(first);
+  t.after(() => owner.shutdown().catch(() => {}));
+  const requests = [spawnReq("reload-dialog", DIALOG), spawnReq("reload-offer", OFFER, "claude")];
+  for (const req of requests) await owner.spawn(req);
+  for (const req of requests)
+    await waitFor(() => ptyEventsFor(first, req.ptyId).some((e) => e.type === "vt-status" && e.waiting));
+  owner.detachWebContents(first);
+  const reloaded = fakeWebContents();
+  owner.attachWebContents(reloaded);
+  for (const req of requests) await owner.spawn({ ...req, attachOnly: true });
+  for (const [i, req] of requests.entries()) {
+    await waitFor(() => ptyEventsFor(reloaded, req.ptyId).some((e) => e.type === "data" && e.replay));
+    assert.deepEqual(ptyEventsFor(reloaded, req.ptyId).filter((e) => e.type === "vt-status").map((e) => [e.waiting, e.dialog]),
+      [[true, i === 1 ? HOLD_ACCOUNT_SETTING : undefined]]);
+  }
 });

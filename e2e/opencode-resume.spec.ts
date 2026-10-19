@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import { SLOW_EXPECT_TIMEOUT_MS } from "./timeouts";
 import { ARGV_DUMP_COMMAND } from "./helpers/agent-bin";
+import { loginPathFront } from "./helpers/seed";
 
 const scratch = mkdtempSync(join(tmpdir(), "aya-e2e-opencode-"));
 const bin = join(scratch, "bin");
@@ -38,6 +39,8 @@ const seedOptions = {
     PATH: `${bin}:${process.env.PATH}`,
     XDG_DATA_HOME: join(scratch, "xdg-data"),
   },
+  // Aya looks the session up through a login shell, which would find a Homebrew opencode first.
+  homeFiles: loginPathFront(bin),
   presetList: [
     { id: "shell", name: "OpenCode", icon: "$", color: "", agent: "opencode", command: "opencode" },
   ],

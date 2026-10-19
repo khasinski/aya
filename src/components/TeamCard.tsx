@@ -34,6 +34,7 @@ export function TeamCard({
   waiting,
   onEdit,
   onChanged,
+  onRestartPane,
 }: {
   team: TeamSummary;
   project: ProjectConfig;
@@ -46,6 +47,9 @@ export function TeamCard({
   waiting: WaitingPanes;
   onEdit: (definition: TeamDefinition) => void;
   onChanged: () => Promise<void>;
+  /** Restarts a pane of this window as its tab menu's Restart terminal does: it asks first when that stops work, and
+   *  the pane resumes with the role note. */
+  onRestartPane?: (paneId: string) => Promise<void>;
 }) {
   const { run, busy, error } = useAsyncAction();
   // Why a role's pane was not reached by the last Start or assignment, per role.
@@ -235,6 +239,20 @@ export function TeamCard({
                   {team.roleNotes[role.id] && (
                     <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} role note`}>
                       ⚠ {team.roleNotes[role.id]}
+                      {onRestartPane && team.restartable.includes(role.id) && project.tabs.some((t) => t.id === team.assignments[role.id]) && (
+                        <>
+                          {" "}
+                          <button
+                            className="aya-modal-btn"
+                            type="button"
+                            disabled={busy}
+                            aria-label={`Restart ${role.id}'s pane`}
+                            onClick={() => void act(() => onRestartPane(team.assignments[role.id]))}
+                          >
+                            Restart
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                   {team.olderRoles?.[role.id] && (

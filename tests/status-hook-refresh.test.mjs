@@ -1,4 +1,4 @@
-// The startup refresh rewrites only an installed, outdated hook script. AYA_HOME is
+// The startup refresh rewrites only an installed, outdated hook script (status hooks and the usage hook). AYA_HOME is
 // set BEFORE importing: the script paths are resolved at module load.
 
 import { test } from "node:test";
@@ -14,6 +14,7 @@ mkdirSync(process.env.AYA_HOME, { recursive: true });
 
 const claude = await import("../dist-electron/status-hook.js");
 const codex = await import("../dist-electron/status-hook-codex.js");
+const usage = await import("../dist-electron/usage-hook.js");
 const { EXECUTABLE_FILE_MODE } = await import("../dist-electron/paths.js");
 const { HOOK_VIA } = await import("../dist-electron/constants.js");
 
@@ -35,12 +36,14 @@ test("the generated status-hook scripts are unchanged", () => {
   );
 });
 
+// [name, script file, refresh, a line only the current script has]
 const cases = [
-  ["claude", claude.STATUS_HOOK_SCRIPT_FILE, claude.refreshStatusHookScript],
-  ["codex", codex.STATUS_HOOK_CODEX_SCRIPT_FILE, codex.refreshStatusCodexHookScript],
+  ["claude", claude.STATUS_HOOK_SCRIPT_FILE, claude.refreshStatusHookScript, /AYA_VIA=hook "\$AYA" status/],
+  ["codex", codex.STATUS_HOOK_CODEX_SCRIPT_FILE, codex.refreshStatusCodexHookScript, /AYA_VIA=hook "\$AYA" status/],
+  ["usage", usage.HOOK_SCRIPT_FILE, usage.refreshUsageHookScript, /^ {2}cp "\$TMP" "\$TMP_OUT"$/m],
 ];
 
-for (const [name, file, refresh] of cases) {
+for (const [name, file, refresh, current] of cases) {
   test(`${name}: refresh never installs a missing script`, async () => {
     assert.equal(existsSync(file), false);
     await refresh();
@@ -53,7 +56,7 @@ for (const [name, file, refresh] of cases) {
     await refresh();
     const fresh = readFileSync(file, "utf8");
     assert.notEqual(fresh, "#!/bin/sh\n# old\n");
-    assert.match(fresh, /AYA_VIA=hook "\$AYA" status/);
+    assert.match(fresh, current);
     assert.equal(statSync(file).mode & 0o777, 0o755);
     chmodSync(file, 0o700);
     await refresh();

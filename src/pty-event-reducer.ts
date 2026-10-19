@@ -61,9 +61,10 @@ export function isTerminalDone(
  *  handler so clearing the agent overlay falls back to this same truth (#34). */
 export function deriveLifecycleStatus(t: {
   spawnFailure?: TerminalState["spawnFailure"];
+  disconnected?: boolean;
   exitCode: number | null;
 }): TerminalStatus {
-  if (t.spawnFailure) return "error";
+  if (t.spawnFailure || t.disconnected) return "error";
   return t.exitCode === null || t.exitCode === 0 ? "idle" : "error";
 }
 
@@ -87,6 +88,7 @@ export function applyReportedStatus(
   terminal: TerminalState,
   { level, text, updatedAt, restart, on }: NonNullable<TerminalState["externalStatus"]>,
 ): TerminalState {
+  if (terminal.disconnected) return terminal;
   const dialog = terminal.status === "waiting" && terminal.externalStatus?.level !== "waiting" && level !== "waiting";
   return {
     ...terminal,
@@ -114,10 +116,39 @@ export function applyPtyEvent(
     };
   }
 
+  if(event.type === "host-connection"){
+    const t=prev[event.ptyId];if(!t)return prev;
+    if(event.connected){
+      if(t.disconnectedReason!==event.reason)return prev;
+      return {...prev,[event.ptyId]:{...t,disconnected:undefined,disconnectedReason:undefined,status:"running",stopped:false}};
+    }
+    return {...prev,[event.ptyId]:{...t,disconnected:true,disconnectedReason:event.reason,status:"error",stopped:false,bell:false}};
+  }
+  if (event.type === "disconnected") {
+    const t = prev[event.ptyId];
+    if (!t || (t.disconnected && t.disconnectedReason === event.reason && t.recoveryRetryable === event.retryable && t.recoveryBlocked === event.recoveryBlocked)) return prev;
+    return { ...prev, [event.ptyId]: { ...t, disconnected: true, disconnectedReason:event.reason,recoveryBlocked:event.recoveryBlocked,recoveryRetryable:event.retryable, stopped: false, bell: false, status: "error", externalStatus: undefined, screenDialog: undefined } };
+  }
+  if(event.type === "recovered") {
+    const t=prev[event.ptyId];if(!t)return prev;
+    return {...prev,[event.ptyId]:{...t,disconnected:undefined,disconnectedReason:undefined,stopped:false,exitCode:null,spawnFailure:undefined,bell:false,status:"running",externalStatus:undefined,screenDialog:undefined,recoveryGeneration:event.generation,recoveryNotice:event.notice,recoveryScreenUnknown:false,recoveryBlocked:undefined,recoveryRetryable:undefined}};
+  }
+  if(event.type === "recovery-unavailable") {
+    const t=prev[event.ptyId];if(!t||t.disconnected)return prev;
+    return {...prev,[event.ptyId]:{...t,recoveryNotice:event.reason}};
+  }
+  if(event.type === "recovery-state") {
+    const t=prev[event.ptyId];if(!t||t.disconnected||(t.recoveryGeneration&&t.recoveryGeneration!==event.generation))return prev;
+    return {...prev,[event.ptyId]:{...t,recoveryGeneration:event.generation,recoveryNotice:event.notice,recoveryScreenUnknown:event.screenUnknown}};
+  }
+  if(event.type === "recovery-screen") {
+    const t=prev[event.ptyId];if(!t||t.disconnected||t.exitCode!==null||t.recoveryGeneration!==event.generation)return prev;
+    return {...prev,[event.ptyId]:{...t,recoveryScreenUnknown:!event.known}};
+  }
   if (event.type === "exit") {
     const t = prev[event.ptyId];
     if (!t) return prev;
-    const next = { ...t, bell: false, exitCode: event.exitCode };
+    const next = { ...t, bell: false, disconnected: undefined, disconnectedReason:undefined, recoveryScreenUnknown:false, exitCode: event.exitCode };
     return {
       ...prev,
       [event.ptyId]: { ...next, status: deriveLifecycleStatus(next) },
@@ -139,7 +170,7 @@ export function applyPtyEvent(
 
   if (event.type === "vt-status") {
     const t = prev[event.ptyId];
-    if (!t || t.exitCode !== null) return prev;
+    if (!t || t.exitCode !== null || t.disconnected) return prev;
     // The screen is the one source of a CLI dialog: it raises the bell over any reported status, and ends
     // the dialog's waiting, back to what was reported. Only the agent's own question outlives the screen.
     const screenDialog = event.waiting ? event.dialog : undefined;
@@ -169,7 +200,7 @@ export function applyPtyEvent(
 
   if (event.type === "osc-status") {
     const t = prev[event.ptyId];
-    if (!t) return prev;
+    if (!t || t.disconnected) return prev;
     const text = event.text.trim();
     if (!text) return prev;
     return { ...prev, [event.ptyId]: applyReportedStatus(t, { level: event.level, text, updatedAt: event.updatedAt }) };
@@ -180,7 +211,7 @@ export function applyPtyEvent(
   if (!t) return prev;
   // Exited terminals should not flicker back to "running" from late chunks
   // (e.g. final newline after exit).
-  if (t.exitCode !== null) return prev;
+  if (t.exitCode !== null || t.disconnected) return prev;
 
   // Output says the terminal runs; it never says what the agent reported or what the screen shows (vt-status).
   if (t.externalStatus || t.status === "waiting" || t.status === "running") return prev;

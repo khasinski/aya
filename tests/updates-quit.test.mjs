@@ -1,5 +1,6 @@
 // A downloaded update replaces the PTY host, and the next launch restarts it, stopping what panes run in the background
-// (finding 16). An ordinary quit must not install it past the background work; the launch asks before the restart.
+// (finding 16), an agent's turn and a shell's command (#217). An ordinary quit must not install it past the background
+// work; Restart to update and the launch ask before the restart, and the launch does not ask again what was confirmed.
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -48,9 +49,13 @@ function relaunch(screens, extra = {}) {
     screen: async (id) => screens[id] ?? null,
     pid: async (id) => ({ "pane-t": 100, "pane-x": 300 })[id],
     command: async () => null,
+    busy: async () => false,
+    foreground: async () => null,
     ...extra,
   };
 }
+
+const busyIn = (...ids) => ({ busy: async (id) => ids.includes(id) });
 
 describe("a quit with a downloaded update", () => {
   for (const [downloaded, work, installs] of QUITS) {
@@ -110,6 +115,13 @@ const LAUNCHES = [
   ["a note from an earlier process does not confirm this one", { "pane-t": MONITOR }, { "pane-t": { pid: 99, work: "1 monitor", at: Date.now() } }, false, true, false],
 ];
 
+// [case, extra deps, notes left by a confirmed restart, the question (null: none), restarted?]
+const LAUNCH_WORK = [
+  ["an agent mid-turn: asked, the user keeps the old host", busyIn("pane-t"), null, "Restarting the terminals for Aya's updated terminal host stops what these panes are doing (tester: mid-turn). An agent mid-turn stops before its turn ends.", false],
+  ["a turn the user already confirmed for this process (Restart to update): no second question", busyIn("pane-t"), { "pane-t": { pid: 100, work: "mid-turn", at: Date.now(), quiet: true } }, null, true],
+  ["a confirmed turn, and another pane now mid-turn: asked about that one only", busyIn("pane-t", "pane-x"), { "pane-t": { pid: 100, work: "mid-turn", at: Date.now(), quiet: true } }, "Restarting the terminals for Aya's updated terminal host stops what these panes are doing (loose: mid-turn). An agent mid-turn stops before its turn ends.", false],
+];
+
 describe("the next launch finds the old host", () => {
   for (const [name, screens, noted, answer, asked, restarted] of LAUNCHES) {
     test(name, async () => {
@@ -122,7 +134,22 @@ describe("the next launch finds the old host", () => {
         assert.equal(questions.length > 0, asked);
         assert.equal(did, restarted);
         assert.equal(restarts, restarted ? 1 : 0);
-        if (asked) assert.match(questions[0], /^Restarting the terminals for the new Aya version stops what these panes run in the background \(tester: 1 monitor\)/);
+        if (asked) assert.match(questions[0], /^Restarting the terminals for Aya's updated terminal host stops what these panes are doing \(tester: 1 monitor\)/);
+      } finally {
+        rmSync(deps.root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const [name, extra, noted, question, restarted] of LAUNCH_WORK) {
+    test(name, async () => {
+      const deps = relaunch({ "pane-t": IDLE, "pane-x": IDLE }, extra);
+      if (noted) writeFileSync(deps.file, JSON.stringify(noted));
+      try {
+        const questions = [];
+        const did = await restartStaleHost(deps, async (q) => (questions.push(q), false), async () => {});
+        assert.deepEqual(questions, question ? [question] : []);
+        assert.equal(did, restarted);
       } finally {
         rmSync(deps.root, { recursive: true, force: true });
       }
@@ -131,8 +158,8 @@ describe("the next launch finds the old host", () => {
 });
 
 /** The installer as main.ts wires it, with the updater, the dialog and app.quit recorded. */
-function installer({ phase = "downloaded", screens = { "pane-t": IDLE, "pane-x": IDLE }, answer = true, installing = false, handoff = null } = {}) {
-  const deps = relaunch(screens);
+function installer({ phase = "downloaded", screens = { "pane-t": IDLE, "pane-x": IDLE }, answer = true, installing = false, handoff = null, extra = {} } = {}) {
+  const deps = relaunch(screens, extra);
   const seen = { asked: [], installs: [], marks: [], cleared: 0, quits: 0, failed: [] };
   const updater = {
     autoRunAppAfterInstall: true,
@@ -166,7 +193,19 @@ const INSTALLS = [
   ["a monitor, the user restarts: asked, installs", { screens: { "pane-t": MONITOR, "pane-x": IDLE } }, false, true, true],
   ["a monitor, the user cancels: asked, no install", { screens: { "pane-t": MONITOR, "pane-x": IDLE }, answer: false }, false, true, false],
   ["an install already handed off: no second one, no question", { installing: true, screens: { "pane-t": MONITOR, "pane-x": IDLE } }, false, false, false],
+  ["an agent mid-turn, the user restarts: asked, installs", { extra: busyIn("pane-t") }, false, true, true],
+  ["an agent mid-turn, the user cancels: asked, no install", { extra: busyIn("pane-t"), answer: false }, false, true, false],
+  ["a shell running a command, the user restarts: asked, installs", { extra: { agentOf: async (id) => (id === "pane-x" ? "custom" : "claude"), foreground: async (id) => (id === "pane-x" ? "npm run dev" : null) } }, false, true, true],
 ];
+
+// What Restart to update asks, by its case above.
+const INSTALL_QUESTIONS = {
+  "a monitor, the user restarts: asked, installs": /^Restarting to update stops what these panes are doing \(tester: 1 monitor\)/,
+  "a monitor, the user cancels: asked, no install": /^Restarting to update stops what these panes are doing \(tester: 1 monitor\)/,
+  "an agent mid-turn, the user restarts: asked, installs": /^Restarting to update stops what these panes are doing \(tester: mid-turn\)\. An agent mid-turn stops before its turn ends\.$/,
+  "an agent mid-turn, the user cancels: asked, no install": /^Restarting to update stops what these panes are doing \(tester: mid-turn\)/,
+  "a shell running a command, the user restarts: asked, installs": /^Restarting to update stops what these panes are doing \(loose: running npm run dev\)\. A command running in a shell stops\.$/,
+};
 
 describe("Restart to update", () => {
   for (const [name, setup, throws, asked, installed] of INSTALLS) {
@@ -176,7 +215,7 @@ describe("Restart to update", () => {
         if (throws) await assert.rejects(it.install(), /No downloaded update/);
         else await it.install();
         assert.equal(seen.asked.length > 0, asked);
-        if (asked) assert.match(seen.asked[0], /^Restarting to update stops what these panes run in the background \(tester: 1 monitor\)/);
+        if (asked) assert.match(seen.asked[0], INSTALL_QUESTIONS[name]);
         assert.deepEqual(seen.installs, installed ? [[false, true, true]] : []);
         assert.deepEqual(seen.marks, installed ? ["0.9.0"] : []);
         if (installed) assert.equal(latch.installing, true, "a second click finds the latch");
@@ -185,6 +224,21 @@ describe("Restart to update", () => {
       }
     });
   }
+
+  test("a turn confirmed by Restart to update is not asked about again when the next launch restarts the old host", async () => {
+    const { it, seen, deps } = installer({ extra: busyIn("pane-t") });
+    try {
+      await it.install();
+      assert.equal(seen.asked.length, 1);
+      assert.equal(JSON.parse(readFileSync(deps.file, "utf8"))["pane-t"].quiet, true);
+      // The relaunched app finds the old host; the agent is still mid-turn in the same process.
+      let restarts = 0;
+      assert.equal(await restartStaleHost(deps, async () => assert.fail("asked twice"), async () => void restarts++), true);
+      assert.equal(restarts, 1);
+    } finally {
+      rmSync(deps.root, { recursive: true, force: true });
+    }
+  });
 
   test("a handoff that throws releases the latch, clears the marker and says why", async () => {
     const { it, seen, latch, deps } = installer({ handoff: "ShipIt missing" });
@@ -206,6 +260,8 @@ const BEFORE_QUITS = [
   ["downloaded, no background work: held, installs without relaunch", {}, true, true, 0],
   ["downloaded, a monitor: held, quits without installing", { screens: { "pane-t": MONITOR, "pane-x": IDLE } }, true, false, 1],
   ["downloaded, a running pane unreadable: held, quits without installing", { screens: { "pane-t": IDLE } }, true, false, 1],
+  // As before #217: the next launch asks before the restart stops the turn.
+  ["downloaded, an agent mid-turn: held, installs without relaunch", { extra: busyIn("pane-t") }, true, true, 0],
   ["an install already handed off: the quit goes on", { installing: true }, false, false, 0],
 ];
 

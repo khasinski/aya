@@ -94,7 +94,7 @@ dimension has been run end to end against every real CLI.
 | Pane lifecycle | no pane, not opened, spawning, running, exited, killed mid-spawn, respawned | Start sends into a pane that is not running (22) | Covered |
 | Env inheritance / identity | launcher env, daemon env, AYA_* per pane, HOME in tests | panes inherit CLAUDE_CODE_*, so --continue finds nothing (7) | Session markers of all four CLIs are stripped. Limit: Grok and OpenCode values are measured by the author only; a build launched from a pane adopts the outer Aya's home |
 | App readiness / instance | socket up before the renderer, no window, Dev vs prod, shared instance | open acked and dropped before the page loaded (12) | Covered for `aya open` and `aya team` (it waits out the boot gap). Limit: a cwd-only `aya team start` from a plain shell during boot is not retried |
-| Pty host generation | compatible, stale, booting, orphaned | a rebuild reaps the host and kills every agent (9) | Covered for reap, hash and attach. Limit: a spawn still in preflight when the host idles out is invisible to it |
+| Pty host generation | compatible, stale, booting, orphaned | changed PTY core/runtime needs a restart; main/renderer/rule/version-only changes keep every pane | Covered for reap, content hash, version-only survival and attach. Main prepares spawns and evaluates applied VT snapshots; see [PTY host core](pty-host-core.md) |
 | Team state across restart | round counter, inbox from Aya vs a peer, paused/running | round restarts at 1 after a restart (6) | Covered, incl. an e2e relaunch. Limit: cadence across a relaunch with a real CLI is unverified |
 | Session on resume | own session, sibling worktree's, latest in dir, none | OpenCode resumes a sibling worktree's session (10) | Claude, Codex, OpenCode. Limit: Grok resume never run for real; a sibling closed before either ran keeps `--continue` |
 | Project topology | worktree, nested, symlink, cwd outside project | Codex pane "belongs to no open project" (20) | Covered for worktree, nested, symlink. Limit: a symlink retargeted while running keeps its old key |
@@ -576,18 +576,22 @@ messages about one commit over 12 minutes read as "progressing".)
   dialog on its screen), as does the agent's next status; its next message lifts the hold on rounds. A team with no lead gets no round, only the status. The limits
   (30 / 10 / 60 min) live in `electron/team-times.ts`; `AYA_E2E_TEAM_MINUTE_MS`
   scales them.
-- **A restart stops background work**: leaving a CLI stops the background tasks and monitors its
-  session ran (Claude Code: "1 monitor couldn't be moved and was stopped"). A restart Aya makes on
-  purpose (Restart terminal, Restart the PTY host, Restart to update, Restart Aya with a stale host)
-  asks first when a pane's screen shows such work: Claude Code's footer pill ("1 shell", "2 shells,
-  1 monitor", "3 background tasks", read from the 2.1.289 bundle) or Codex's "/ps to view" line.
-  A yes keeps a note in `relaunch-notes.json` under the Aya home (an update the next launch finds,
-  with the old PTY host still running, is noted without a question); once that pane runs a new process
-  resumed into its conversation and plays a role, Aya types it one message, held like its other
-  messages: "Aya restarted this pane; background tasks and monitors you had are gone; start again the
-  ones you still need." A pane that comes back in a new conversation, or plays no role, drops the
-  note; a note never typed is dropped after a day. A crash or `/exit` is not a restart Aya makes, and
-  gets no note.
+- **A restart stops work in panes**: leaving a CLI stops the background tasks and monitors its
+  session ran (Claude Code: "1 monitor couldn't be moved and was stopped"), and a new process cuts
+  off an agent's turn and a command a shell runs (#217). A restart Aya makes on purpose (Restart
+  terminal, Restart the PTY host, Restart to update, Restart Aya with a stale host) asks first when a
+  pane shows such work: an agent mid-turn (the busy rule a round waits on), a shell whose
+  terminal a command holds (its foreground process group, `ps -o tpgid=`; a job sent to the
+  background with `&` is not seen), Claude Code's footer pill ("1 shell", "2 shells, 1 monitor",
+  "3 background tasks", read from the 2.1.289 bundle) or Codex's "/ps to view" line. A yes keeps a
+  note in `relaunch-notes.json` under the Aya home, so the same process is not asked about twice
+  (Restart to update, then the launch that finds the old PTY host still running). Once a pane whose
+  background tasks stopped runs a new process resumed into its conversation and plays a role, Aya
+  types it one message, held like its other messages: "Aya restarted this pane; background tasks and
+  monitors you had are gone; start again the ones you still need." A stopped turn or command gets no
+  message. A pane that comes back in a new conversation, or plays no role, drops the note; a note
+  never typed is dropped after a day. A crash or `/exit` is not a restart Aya makes, and gets no
+  note.
 - **A send claimed, nothing arrived**: agents on small models wrote `aya team send lead "..."` as
   text instead of running it, then said "I sent the findings earlier". At each look of the clock Aya
   reads, once per turn, the reply of a role whose pane is free and idle: the rows under the message

@@ -45,6 +45,7 @@ test("registers exactly the terminal and host channels", () => {
     "agent:waiting",
     "harness:search",
     "pty-host:restart",
+    "pty-host:retry-recovery",
     "pty-host:stop-others",
     "pty:buffer",
     "pty:confirm-restart",
@@ -88,7 +89,41 @@ test("closing a running pane forgets its brief and kills it", async () => {
   const { call, log } = setup();
   await call("pty:spawn", spawnReq("c"));
   await call("pty:kill", "c");
-  assert.deepEqual(log.slice(-2), [["forget", "c"], ["kill", "c"]]);
+  assert.deepEqual(log.slice(-2), [["kill", "c"], ["forget", "c"]]);
+});
+test("a refused kill keeps its live pane and brief record", async () => {
+  const { call, log, host, panes } = setup();
+  await call("pty:spawn", spawnReq("kept"));
+  host.kill = async () => { throw new Error("owner identity could not be confirmed"); };
+  await assert.rejects(call("pty:kill", "kept"), /identity could not be confirmed/);
+  assert.equal(panes.has("kept"), true);
+  assert.equal(log.some(([op]) => op === "forget"), false);
+});
+
+test("successful kill and explicit fresh spawn invalidate only their pane's display",async()=>{
+  const forgotten=[];
+  const {call,host}=setup({forgetDisplay:id=>forgotten.push(id)});
+  await call('pty:spawn',spawnReq('p'));
+  assert.deepEqual(forgotten,['p']);forgotten.length=0;
+  await call('pty:spawn',{...spawnReq('p'),attachOnly:true});
+  await call('pty:spawn',{...spawnReq('p'),attachIfReused:true});
+  await call('pty:spawn',{...spawnReq('p'),replayAfter:{generation:'g',offset:0,token:'t'}});
+  assert.deepEqual(forgotten,[],'reattach preserves unapplied display');
+  await call('pty:kill','p');assert.deepEqual(forgotten,['p']);forgotten.length=0;
+  host.kill=async()=>{throw Error('refused');};
+  await assert.rejects(call('pty:kill','kept'),/refused/);
+  assert.deepEqual(forgotten,[],'refused stop retains its display');
+});
+for(const attachOnly of [true,false])test(`closing an ended restored pane during ${attachOnly?'attach':'fresh'} main preparation still releases its host record`,async()=>{
+ let release;
+ const displays=new Set(['ended']);
+ const {call,log}=setup({hasDisplay:id=>displays.has(id),forgetDisplay:id=>displays.delete(id),prepareSpawn:req=>new Promise(resolve=>{release=()=>resolve(req);})});
+ const spawn=call('pty:spawn',{...spawnReq('ended'),attachOnly});
+ assert.equal(displays.has('ended'),true,'preparation retains cleanup authority');
+ await call('pty:kill','ended');release();await spawn;
+ assert.ok(log.some(([operation,id])=>operation==='kill'&&id==='ended'));
+ assert.equal(log.some(([operation])=>operation==='send'),false);
+ assert.equal(displays.has('ended'),false);
 });
 
 test("buffer, cwd, search and resize go to the host; an unreachable host's buffer reads as empty", async () => {
@@ -144,3 +179,9 @@ test("writes to one pane keep their order behind a slow check; another pane does
     "the keys typed after the Enter did not overtake it",
   );
 });
+
+ test('manual crash retry reaches the main-owned supervisor and defaults to refusal when unavailable',async()=>{
+  let attempts=0;const fixture=setup({retryRecovery:async()=>{attempts++;return true;}});
+  assert.equal(await fixture.call('pty-host:retry-recovery'),true);assert.equal(attempts,1);
+  assert.equal(await setup().call('pty-host:retry-recovery'),false);
+ });

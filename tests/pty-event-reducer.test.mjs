@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPtyEvent,
+  applyReportedStatus,
   clearedTerminalStatus,
   controlLevelToTerminalStatus,
   controlStatusEventTitle,
@@ -670,4 +671,43 @@ test("an agent-reported status is preserved even while the bell is raised", () =
     text: "Running tests",
     updatedAt: 1,
   });
+});
+
+test("an unavailable owner-backed pane stays visibly disconnected and never becomes stopped or ready from stale VT", () => {
+  const previous = { t1: termState("t1", { bell: true, externalStatus: { level: "done", updatedAt: 1 } }) };
+  const next = applyPtyEvent(previous, { type: "disconnected", ptyId: "t1" });
+  assert.equal(next.t1.disconnected, true); assert.equal(next.t1.stopped, false); assert.equal(next.t1.exitCode, null);
+  assert.equal(next.t1.status, "error"); assert.equal(next.t1.bell, false);
+  assert.equal(applyPtyEvent(next, { type: "vt-status", ptyId: "t1", waiting: false }), next);
+  assert.equal(applyPtyEvent(next, { type: "data", ptyId: "t1", data: "late output" }), next);
+  assert.equal(applyPtyEvent(next, { type: "osc-status", ptyId: "t1", level: "active", text: "late hook", updatedAt: 2 }), next);
+  assert.equal(applyReportedStatus(next.t1, { level: "waiting", text: "late control report", updatedAt: 2 }), next.t1);
+  assert.equal(clearedTerminalStatus(next.t1).status, "error");
+  assert.equal(applyPtyEvent(next, { type: "exit", ptyId: "t1", exitCode: 23 }).t1.disconnected, undefined);
+});
+
+test('recovery clears stale lifecycle overlays and screen trust is generation scoped',()=>{
+ let state={p:termState('p',{disconnected:true,disconnectedReason:'old',status:'error',bell:true,exitCode:23,screenDialog:'account',externalStatus:{level:'waiting'}})};
+ state=applyPtyEvent(state,{type:'recovered',ptyId:'p',generation:'new',replayToken:'t',notice:'consumed history lost'});
+ assert.equal(state.p.disconnected,undefined);assert.equal(state.p.exitCode,null);assert.equal(state.p.status,'running');assert.equal(state.p.bell,false);assert.equal(state.p.screenDialog,undefined);assert.equal(state.p.externalStatus,undefined);
+ assert.equal(applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'old',known:false}),state);
+ state=applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'new',known:false});assert.equal(state.p.recoveryScreenUnknown,true);
+ state=applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'new',known:true});assert.equal(state.p.recoveryScreenUnknown,false);
+ state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'budget exhausted'});
+ state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'owner key unknown'});assert.equal(state.p.disconnectedReason,'owner key unknown');
+ assert.equal(applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'new',known:true}),state);
+});
+
+test('new renderer hydrates current recovery metadata and refuses stale generation hydration',()=>{
+ let state={p:termState('p')};
+ state=applyPtyEvent(state,{type:'recovery-state',ptyId:'p',generation:'current',notice:'history lost',screenUnknown:true});assert.equal(state.p.recoveryScreenUnknown,true);assert.equal(state.p.recoveryGeneration,'current');
+ assert.equal(applyPtyEvent(state,{type:'recovery-state',ptyId:'p',generation:'old',notice:'stale',screenUnknown:false}),state);
+ state=applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'current',known:true});assert.equal(state.p.recoveryScreenUnknown,false);
+ state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'budget',recoveryBlocked:true,retryable:true});assert.equal(state.p.recoveryRetryable,true);assert.equal(state.p.recoveryBlocked,true);
+});
+
+test('unavailable recovery metadata shows a warning without stopping serving input or clearing hold state',()=>{
+ const before={pane:termState('pane',{recoveryNotice:undefined,disconnected:undefined,status:'waiting',screenDialog:true})};
+ const after=applyPtyEvent(before,{type:'recovery-unavailable',ptyId:'pane',reason:'Automatic terminal host recovery is off'});
+ assert.equal(after.pane.recoveryNotice,'Automatic terminal host recovery is off');assert.equal(after.pane.disconnected,undefined);assert.equal(after.pane.status,'waiting');assert.equal(after.pane.screenDialog,true);
 });

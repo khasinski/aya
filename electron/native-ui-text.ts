@@ -8,14 +8,14 @@ export function waitingNotification(body: string): { title: string; body: string
   return { title: "Aya - waiting for input", body: printable(body), silent: false };
 }
 
-/** The yes/no before a restart that stops background work; `yes` names the restart, `text` lists what stops. */
+/** The yes/no before a restart that stops work in panes; `yes` names the restart, `text` lists what stops. */
 export function restartDialog(yes: string, text: string) {
   return {
     type: "warning" as const,
     buttons: [printable(yes), "Cancel"],
     defaultId: 1,
     cancelId: 1,
-    message: "Background tasks will stop",
+    message: "Work in progress will stop",
     detail: printable(text),
   };
 }

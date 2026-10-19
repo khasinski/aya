@@ -21,7 +21,7 @@ import { pathExists } from "./path-exists";
 import { AYA_HOME, EXECUTABLE_FILE_MODE } from "./paths";
 import { bundledAyaCliPath } from "./cli-path";
 import { HOOK_VIA } from "./constants";
-import { refreshInstalledScript } from "./status-hook";
+import { refreshInstalledScript } from "./usage-hook";
 import { CODEX_CONFIG_FILENAME, DEFAULT_CODEX_HOME } from "./usage-codex";
 
 /** The generated notify program, in Aya's own dir (always exists). */

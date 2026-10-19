@@ -75,9 +75,11 @@ interface Props {
   intelligence: AyaIntelligenceConfig;
   waiting: WaitingPanes;
   onClose: () => void;
+  /** Restart terminal for a pane of this window: offered where a restart gives a role its note. */
+  onRestartPane?: (paneId: string) => Promise<void>;
 }
 
-export function TeamsModal({ project, intelligence, waiting, onClose }: Props) {
+export function TeamsModal({ project, intelligence, waiting, onClose, onRestartPane }: Props) {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [editing, setEditing] = useState<{ team: TeamDefinition; isNew: boolean } | null>(null);
   const [presets, setPresets] = useState<PresetChoice[]>([]);
@@ -152,6 +154,7 @@ export function TeamsModal({ project, intelligence, waiting, onClose }: Props) {
                 waiting={waiting}
                 onEdit={(definition) => setEditing({ team: definition, isNew: false })}
                 onChanged={reload}
+                onRestartPane={onRestartPane}
               />
             ))}
             </div>

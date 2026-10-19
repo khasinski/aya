@@ -929,6 +929,7 @@ export function App() {
     !!teamToPrompt ||
     !!pendingRepoImport;
   const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
+  const closeTabQueue = useRef(Promise.resolve());
   useEffect(() => {
     if (closeFocusHold && closeFocusHold.slug !== activeProjectId) setCloseFocusHold(null);
   }, [closeFocusHold, activeProjectId]);
@@ -945,9 +946,11 @@ export function App() {
     closeCurrentTab: () => {
       // Through the refs, not render state: a burst of closes must each act on
       // the tab that is active by then, not on a snapshot from the last render.
-      const slug = activeProjectIdRef.current;
-      const id = slug ? activeTabByProjectRef.current[slug] : null;
-      if (id) closeTerminal(id);
+      closeTabQueue.current = closeTabQueue.current.then(async () => {
+        const slug = activeProjectIdRef.current;
+        const id = slug ? activeTabByProjectRef.current[slug] : null;
+        if (id) await closeTerminal(id);
+      }).catch(error => console.warn("close terminal failed", error));
     },
     search: () => {
       if (!chromeBlocked) setShowSearch(true);
@@ -1275,6 +1278,7 @@ export function App() {
           project={activeProject}
           waiting={waitingPanes}
           intelligence={ayaIntelligence}
+          onRestartPane={forceRestartTerminal}
           onClose={() => {
             setShowTeams(false);
             onTeamsWindowClosed(activeProject.slug);

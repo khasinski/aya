@@ -1,10 +1,11 @@
+import {spawnAuthenticatedHost,authenticateFixtureSocket} from "./helpers/pty-host-launch.cjs";
 // The pty host holds every terminal of every Aya window: whatever one client or one bug does, the host must not
 // die with them. On 2026-10-13 the production host died after 26 hours with no shutdown line, no crash report and
 // no trace (its stderr went to /dev/null), and every pane in every window went with it.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -26,7 +27,7 @@ const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-host-survives-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
 const { PtyHostClient, openHostStderr } = await import("../dist-electron/pty-host-client.js");
-const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
+const { waitFor, fakeWebContents, ptyEventsFor, cleanupNativeOwner } = await import("./helpers/pty-host.mjs");
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 const SOCKET = join(TMP_AYA_HOME, "pty-host.sock");
@@ -50,20 +51,24 @@ function stderrTarget(pid) {
 }
 
 /** A second client asks to attach to `req`'s pane and drops its socket as soon as the replay starts arriving. */
-function attachAndDrop(req) {
-  return new Promise((resolve) => {
-    const socket = net.createConnection(SOCKET, () => {
-      socket.write(`${JSON.stringify({ id: 1, type: "spawn", req: { ...req, attachOnly: true } })}\n`);
+async function attachAndDrop(req,key) {
+  const socket=net.createConnection(SOCKET);
+  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+  const authenticated=await authenticateFixtureSocket(socket,TMP_AYA_HOME,key);
+  await new Promise((resolve,reject)=>{
+    let buffer=authenticated.buffered;
+    const timer=setTimeout(()=>{socket.destroy();reject(Error('no authenticated replay before drop'));},5000);
+    socket.on('error',error=>{clearTimeout(timer);reject(error);});
+    socket.setEncoding('utf8');
+    socket.on('data',chunk=>{
+      buffer+=chunk;let end;
+      while((end=buffer.indexOf('\n'))>=0){
+        const event=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);
+        if(event.type==='event'&&event.event?.type==='data'&&event.event.chunk){clearTimeout(timer);socket.destroy();resolve();return;}
+        if(event.type==='events'&&event.events?.some(e=>e.type==='data'&&e.chunk)){clearTimeout(timer);socket.destroy();resolve();return;}
+      }
     });
-    socket.on("error", () => resolve());
-    socket.once("data", () => {
-      socket.destroy();
-      resolve();
-    });
-    setTimeout(() => {
-      socket.destroy();
-      resolve();
-    }, 1_000);
+    socket.write(`${JSON.stringify({id:1,type:'spawn',req:{...req,attachOnly:true}})}\n`);socket.resume();
   });
 }
 
@@ -72,7 +77,7 @@ test("a client that drops its socket during a replay leaves the host and every t
   const client = new PtyHostClient(HOST_SCRIPT);
   client.attachWebContents(wc);
   let hostPid;
-  t.after(() => {
+  t.after(async () => {
     if (hostPid && isAlive(hostPid)) {
       try {
         process.kill(-hostPid, "SIGKILL");
@@ -80,6 +85,7 @@ test("a client that drops its socket during a replay leaves the host and every t
         // already gone
       }
     }
+    await cleanupNativeOwner(TMP_AYA_HOME);
     rmSync(TMP_AYA_HOME, { recursive: true, force: true });
   });
 
@@ -102,7 +108,7 @@ test("a client that drops its socket during a replay leaves the host and every t
   assert.ok(hostPid, "the host reports its pid");
 
   for (let i = 0; i < 10 && isAlive(hostPid); i++) {
-    await attachAndDrop(req);
+    await attachAndDrop(req,client.hostAuthKey);
     await delay(100);
   }
   await delay(500);
@@ -214,17 +220,18 @@ test("the real host installs the guard: an error thrown inside it is logged and 
     `setTimeout(() => { throw new Error("injected throw"); }, 300);
      setTimeout(() => { Promise.reject(new Error("injected rejection")); }, 400);`,
   );
-  const host = spawn(process.execPath, ["--require", injector, HOST_SCRIPT], {
+  const host = spawnAuthenticatedHost(process.execPath, ["--require", injector, HOST_SCRIPT], {
     detached: true,
     stdio: "ignore",
     env: { ...process.env, AYA_HOME: home },
   });
-  t.after(() => {
+  t.after(async () => {
     try {
       process.kill(-host.pid, "SIGKILL");
     } catch {
       // already gone
     }
+    await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   });
   const logFile = join(home, "pty-events.log");
@@ -239,12 +246,12 @@ test("the real host installs the guard: an error thrown inside it is logged and 
   assert.match(uncaught[0].error, /injected throw/);
   assert.match(uncaught[1].error, /injected rejection/);
   // And it still answers on its socket.
+  const socket=net.createConnection(join(home,'pty-host.sock'));
+  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+  const authenticated=await authenticateFixtureSocket(socket,home);
   const answer = await new Promise((resolve, reject) => {
-    const socket = net.createConnection(join(home, "pty-host.sock"), () => {
-      socket.write(`${JSON.stringify({ id: 7, type: "version" })}\n`);
-    });
     socket.setEncoding("utf8");
-    let buffer = "";
+    let buffer = authenticated.buffered;
     socket.on("data", (chunk) => {
       buffer += chunk;
       if (buffer.includes("\n")) {
@@ -253,6 +260,7 @@ test("the real host installs the guard: an error thrown inside it is logged and 
       }
     });
     socket.on("error", reject);
+    socket.write(`${JSON.stringify({ id: 7, type: "version" })}\n`);socket.resume();
   });
   assert.equal(answer.id, 7);
   assert.equal(answer.ok, true);

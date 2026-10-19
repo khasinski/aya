@@ -29,6 +29,7 @@ import { HOOK_VIA } from "./constants";
 import {
   claudeConfigDirs,
   readSettingsFile,
+  refreshInstalledScript,
   serially,
   settingsFileForConfigDir,
 } from "./usage-hook";
@@ -289,19 +290,6 @@ async function uninstall(): Promise<StatusHookStatus> {
 /** Rewrites an ALREADY-installed, out-of-date script; never installs one. */
 export function refreshStatusHookScript(): Promise<void> {
   return refreshInstalledScript(STATUS_HOOK_SCRIPT_FILE, statusHookScriptSource(bundledAyaCliPath(__dirname)));
-}
-
-/** Rewrites `file` with `source` (executable) only when it exists and differs. */
-export async function refreshInstalledScript(file: string, source: string): Promise<void> {
-  let current: string;
-  try {
-    current = await fs.readFile(file, "utf8");
-  } catch {
-    return;
-  }
-  if (current === source) return;
-  await writeFileAtomic(file, source);
-  await fs.chmod(file, EXECUTABLE_FILE_MODE);
 }
 
 async function migrate(): Promise<void> {

@@ -10,6 +10,13 @@ import * as net from "node:net";
 import { join } from "node:path";
 import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
+export const {spawnAuthenticatedHost,authenticateFixtureSocket,redeemFixtureQuit,forgetFixtureAuthority}=require("../tests/helpers/pty-host-launch.cjs") as {
+  spawnAuthenticatedHost:typeof spawn;
+  authenticateFixtureSocket:(socket:net.Socket,home:string)=>Promise<unknown>;
+  redeemFixtureQuit:(home:string)=>Promise<void>;
+  forgetFixtureAuthority:(home:string)=>void;
+};
+
 const APP_ROOT = join(__dirname, "..");
 export const PTY_HOST_SCRIPT = join(APP_ROOT, "dist-electron", "pty-host.js");
 const REMOVE_RETRY_COUNT = 5;
@@ -99,7 +106,7 @@ export async function cleanUpSeeded(s: SeededEnv): Promise<void> {
  *  leaked host keeps its children and loads every later test. */
 export async function reapPtyHosts(ayaHome: string): Promise<void> {
   const pids = hostPidsForHome(ayaHome);
-  if (pids.length === 0) return;
+  if (pids.length === 0) { await reapNativeOwner(ayaHome); return; }
   await shutdownPtyHost(ayaHome, pids);
   // A SIGKILLed process lingers in the table until the kernel reaps it.
   const deadline = Date.now() + PTY_HOST_REAP_TIMEOUT_MS;
@@ -111,17 +118,35 @@ export async function reapPtyHosts(ayaHome: string): Promise<void> {
   if (leaked.length > 0) {
     throw new Error(`pty host(s) ${leaked.join(", ")} of ${ayaHome} outlived the test`);
   }
+  await reapNativeOwner(ayaHome);
+}
+
+/** A crashed JS host leaves its native inventory deliberately alive. Fixture
+ * cleanup is authorized to stop only that disposable home's verified owner. */
+async function reapNativeOwner(ayaHome: string): Promise<void> {
+  const file = join(ayaHome, "pty-owner/record.json");
+  if (!existsSync(file)) return;
+  const record = JSON.parse(readFileSync(file, "utf8"));
+  if (record.executable !== join(APP_ROOT, "dist-electron/aya-pty-owner")) throw new Error("Unexpected fixture owner executable");
+  const { ownerRecordIsLive } = require("../dist-electron/pty-owner-registry.js") as { ownerRecordIsLive(r: unknown): boolean };
+  if (!ownerRecordIsLive(record)) return;
+  process.kill(record.pid, "SIGTERM");
+  const deadline = Date.now() + 5000;
+  while (ownerRecordIsLive(record) && Date.now() < deadline) await delay(25);
+  if (ownerRecordIsLive(record)) throw new Error(`Native owner ${record.pid} outlived its test`);
 }
 
 /** Asks the host to shut down; `pids` are then waited for and SIGKILLed if still alive. */
 export async function shutdownPtyHost(ayaHome: string, pids: number[] = []): Promise<void> {
+  await redeemFixtureQuit(ayaHome).catch(()=>{});
   const socketPath = join(ayaHome, "pty-host.sock");
   await Promise.race([
     new Promise<void>((resolve) => {
       const socket = net.createConnection(socketPath);
-      socket.once("connect", () => {
+      socket.once("connect", () => {void (async()=>{
+        await authenticateFixtureSocket(socket,ayaHome);socket.resume();
         socket.end(`${JSON.stringify({ id: 1, type: "shutdown" })}\n`);
-      });
+      })().catch(()=>socket.destroy());});
       socket.once("close", resolve);
       socket.once("error", resolve);
     }),
@@ -218,21 +243,19 @@ export const test = base.extend<{
       }
     }
     // Here, not in `app`: this teardown also runs when launching the app failed.
-    await cleanUpSeeded(s);
+    try{await cleanUpSeeded(s);}finally{forgetFixtureAuthority(s.ayaHome);}
   },
 
   app: async ({ seeded, seedOptions }, use) => {
     // A host started FIRST makes the app treat it as REUSED, so boot-restored
     // tabs must attach-only instead of respawning.
     if (seedOptions.preStartPtyHost) {
-      spawn(
-        process.execPath,
-        [PTY_HOST_SCRIPT],
-        {
-          env: appEnv(seeded, process.env, false),
-          stdio: "ignore",
-        },
-      );
+      // Match main's startHost: the Node/Electron runtime is part of the host content identity.
+      const issuer=spawn(require("electron") as string,[join(APP_ROOT,'tests/helpers/pty-prestart-announced.cjs')],{
+        env:{...appEnv(seeded,process.env,false),ELECTRON_RUN_AS_NODE:'1',AYA_TEST_HOST_SCRIPT:PTY_HOST_SCRIPT},stdio:['ignore','ignore','pipe'],
+      });
+      let issuerError='';issuer.stderr?.on('data',chunk=>{issuerError+=String(chunk);});
+      await new Promise<void>((resolve,reject)=>{issuer.once('error',reject);issuer.once('exit',code=>code===0?resolve():reject(Error('Announced prestart issuer failed: '+issuerError)));});
       const socketPath = join(seeded.ayaHome, "pty-host.sock");
       const deadline = Date.now() + PTY_HOST_SHUTDOWN_TIMEOUT_MS * 5;
       while (!existsSync(socketPath)) {

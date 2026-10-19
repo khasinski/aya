@@ -82,6 +82,12 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: "pane state",
+    usage: "aya pane state target [--explain] [--project slug]",
+    summary: "Show fresh pane state; --explain names matching rules, source, version, region and a short safe excerpt.",
+    notes: ["Read-only: never starts a host or owner. A missing host reports unknown: terminal host not running. State answers, including unknown, exit 0; invalid targets/options exit nonzero."],
+  },
+  {
     command: "pane read",
     usage: "aya pane read target [--project slug]",
     summary: "Print another pane's recent output as plain text, as its screen shows it, newest last; a control character in it shows as its \\uXXXX escape.",

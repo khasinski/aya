@@ -1,10 +1,11 @@
+import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 // A host replaced by a restart must not take its successor's socket with it. On 2026-10-13 a stale host shut down
 // by Aya kept running its exit handler after the new host had bound pty-host.sock, removed that path, and left
 // the new host serving its panes with no socket: the next Aya start found none, started a third host and resumed
 // every agent a second time while the unreachable host kept the first copies running.
 
 import { test } from "node:test";
-import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-handoff-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
-const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
+const { waitFor, fakeWebContents, ptyEventsFor, cleanupNativeOwner } = await import("./helpers/pty-host.mjs");
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 const SOCKET = join(TMP_AYA_HOME, "pty-host.sock");
@@ -30,7 +31,7 @@ const isAlive = (pid) => {
 
 test("after a restart, the old host's exit leaves the new host's socket in place", async (t) => {
   const pids = new Set();
-  t.after(() => {
+  t.after(async () => {
     for (const pid of pids) {
       try {
         process.kill(-pid, "SIGKILL");
@@ -38,6 +39,7 @@ test("after a restart, the old host's exit leaves the new host's socket in place
         // already gone
       }
     }
+    await cleanupNativeOwner(TMP_AYA_HOME);
     rmSync(TMP_AYA_HOME, { recursive: true, force: true });
   });
 
@@ -68,8 +70,9 @@ test("after a restart, the old host's exit leaves the new host's socket in place
   await waitFor(() => !isAlive(oldPid), 10_000);
 
   assert.equal(existsSync(SOCKET), true, "the new host's socket is still there after the old host exited");
-  // The next Aya start connects to the running host instead of starting another one.
-  const nextStart = new PtyHostClient(HOST_SCRIPT);
+  // Another explicitly authorized client reaches the same surviving host.
+  // Actual new-main continuity is tested through announced relaunch elsewhere.
+  const nextStart = new PtyHostClient(HOST_SCRIPT);nextStart.hostAuthKey=Buffer.from(app.hostAuthKey);
   const reached = (await nextStart.hostStatus()).pid;
   pids.add(reached);
   assert.equal(reached, newPid, "a later client reaches the same host");
@@ -81,7 +84,7 @@ test("a host whose socket another host replaced leaves that socket alone when it
   const socket = join(home, "pty-host.sock");
   const hosts = [];
   const startHost = () => {
-    const child = spawn(process.execPath, [HOST_SCRIPT], {
+    const child = spawnAuthenticatedHost(process.execPath, [HOST_SCRIPT], {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, AYA_HOME: home },
@@ -89,7 +92,7 @@ test("a host whose socket another host replaced leaves that socket alone when it
     hosts.push(child.pid);
     return child.pid;
   };
-  t.after(() => {
+  t.after(async () => {
     for (const pid of hosts) {
       try {
         process.kill(-pid, "SIGKILL");
@@ -97,6 +100,7 @@ test("a host whose socket another host replaced leaves that socket alone when it
         // already gone
       }
     }
+    await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -105,13 +109,18 @@ test("a host whose socket another host replaced leaves that socket alone when it
   const firstInode = statSync(socket).ino;
   // A second host takes the path over without the first one closing (what a client does when it cannot reach the
   // host on the socket): it removes the file and binds its own.
-  const second = startHost();
+  // A stand-in listener exercises inode ownership without starting a second
+  // JS host or native owner for the same panes.
+  rmSync(socket);
+  const replacement = createServer();
+  await new Promise(resolve => replacement.listen(socket, resolve));
+  t.after(() => new Promise(resolve => replacement.close(resolve)));
   await waitFor(() => existsSync(socket) && statSync(socket).ino !== firstInode);
   const secondInode = statSync(socket).ino;
 
   process.kill(first, "SIGTERM");
   await waitFor(() => !isAlive(first), 10_000);
-  assert.equal(isAlive(second), true);
+  assert.equal(replacement.listening, true);
   assert.equal(existsSync(socket), true, "the second host's socket survives the first host's exit");
   assert.equal(statSync(socket).ino, secondInode);
 });
@@ -130,7 +139,7 @@ test("a displaced host that exits on its own, not through shutdown, leaves the s
   );
   const hosts = [];
   const startHost = (args) => {
-    const child = spawn(process.execPath, [...args, HOST_SCRIPT], {
+    const child = spawnAuthenticatedHost(process.execPath, [...args, HOST_SCRIPT], {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, AYA_HOME: home },
@@ -138,7 +147,7 @@ test("a displaced host that exits on its own, not through shutdown, leaves the s
     hosts.push(child.pid);
     return child.pid;
   };
-  t.after(() => {
+  t.after(async () => {
     for (const pid of hosts) {
       try {
         process.kill(-pid, "SIGKILL");
@@ -146,19 +155,23 @@ test("a displaced host that exits on its own, not through shutdown, leaves the s
         // already gone
       }
     }
+    await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   });
 
   const first = startHost(["--require", preload]);
   await waitFor(() => existsSync(socket));
   const firstInode = statSync(socket).ino;
-  const second = startHost([]);
+  rmSync(socket);
+  const replacement = createServer();
+  await new Promise(resolve => replacement.listen(socket, resolve));
+  t.after(() => new Promise(resolve => replacement.close(resolve)));
   await waitFor(() => existsSync(socket) && statSync(socket).ino !== firstInode);
   const secondInode = statSync(socket).ino;
 
   writeFileSync(flag, "");
   await waitFor(() => !isAlive(first), 10_000);
-  assert.equal(isAlive(second), true);
+  assert.equal(replacement.listening, true);
   assert.equal(existsSync(socket), true, "the successor's socket survives the displaced host's exit");
   assert.equal(statSync(socket).ino, secondInode);
 });

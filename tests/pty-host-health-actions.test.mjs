@@ -29,20 +29,22 @@ function setup(t, over = {}) {
   const log = [];
   const item = { icon: "initial" };
   const state = {
-    identity: EXPECTED, connected: true, socketExists: true, socketPid: 100,
+    expected: EXPECTED, identity: EXPECTED, connected: true, socketExists: true, socketPid: 100,
     records: [record(100)], parent: null, response: 0, restartAnswer: true,
-    confirmAnswer: true, askAnswer: true, menuInstalled: true,
+    confirmAnswer: true, askAnswer: true, menuInstalled: true, keepRecoveryInventory: false,
+    owner: { pid: 99, incompatible: false, disconnected: [] },
   };
   const d = {
     app: { getVersion: () => (log.push(["app-version"]), "electron-version") },
     mainDirname,
     ptyHost: {
-      expectedHostIdentity: (version) => (log.push(["expected", version]), { ...EXPECTED, version }),
+      expectedHostIdentity: (version) => (log.push(["expected", version]), { ...state.expected, version }),
       isConnected: () => state.connected,
-      hostStatus: async () => (log.push(["status"]), { identity: state.identity, ptyCount: 3, pid: 100 }),
+      hostStatus: async () => (log.push(["status"]), { identity: state.identity, ptyCount: 3, pid: 100, ...(state.owner ? { owner: state.owner } : {}) }),
       restart: async () => {
         log.push(["restart"]);
         state.identity = EXPECTED;
+        if (!state.keepRecoveryInventory && state.owner) state.owner = { ...state.owner, incompatible: false, disconnected: [] };
         return state.restartAnswer;
       },
     },
@@ -53,6 +55,8 @@ function setup(t, over = {}) {
       screen: async () => `${"\u2500".repeat(8)}\n1 monitor`,
       pid: async () => 123,
       command: async () => "claude --resume",
+      busy: async () => false,
+      foreground: async () => null,
     },
     askRestart: async (yes, text) => (log.push(["ask-restart", yes, text]), state.askAnswer),
     confirmLosingWork: async (action, yes) => (log.push(["confirm", action, yes]), state.confirmAnswer),
@@ -74,6 +78,27 @@ function setup(t, over = {}) {
 }
 
 const operations = (log) => log.filter(([op]) => ["dialog", "kill", "wait", "restart", "ask-restart", "confirm"].includes(op));
+
+test("explicit Restart on an idle legacy host asks about migration and Cancel preserves its processes", async (t) => {
+  const { state, log, actions } = setup(t);
+  state.owner = undefined; state.askAnswer = false; state.confirmAnswer = true;
+  await assert.rejects(actions.restartHostFromWindow(), /restart cancelled/);
+  assert.equal(log.filter(([op]) => op === "restart").length, 0);
+  assert.equal(log.filter(([op]) => op === "ask-restart").length, 1);
+  assert.match(log.find(([op]) => op === "ask-restart")[2], /cannot be moved from the older host/);
+  state.askAnswer = true;
+  await actions.restartHostFromWindow();
+  assert.equal(log.filter(([op]) => op === "restart").length, 1);
+});
+
+test("explicit recovery lists retained PIDs and reports inventory that could not be stopped", async (t) => {
+  const { state, log, actions } = setup(t);
+  state.keepRecoveryInventory = true;
+  state.owner = { pid: 99, incompatible: true, disconnected: ["orphan"], inventory: [{ id: "orphan", pid: 789 }] };
+  await assert.rejects(actions.restartHostFromWindow(), /inventory was kept: orphan \(PID 789\)/);
+  assert.match(log.find(([op]) => op === "ask-restart")[2], /orphan \(PID 789\)/);
+  assert.equal(state.owner.inventory[0].pid, 789);
+});
 
 test("expected version is read once from the host's package, with Electron's version only as a fallback", (t) => {
   const { d, dir, log, actions } = setup(t);
@@ -141,7 +166,7 @@ test("launch asks before stopping background work and a refusal keeps the host a
   assert.equal(ops.length, 1);
   assert.equal(ops[0][0], "ask-restart");
   assert.equal(ops[0][1], "Restart terminals");
-  assert.equal(ops[0][2], "Restarting the terminals for the new Aya version stops what these panes run in the background (Agent: 1 monitor). The agent cannot carry them into the new process; Aya tells a team agent resumed afterwards to start again the ones it still needs.");
+  assert.equal(ops[0][2], "Restarting the terminals for Aya's updated terminal host stops what these panes are doing (Agent: 1 monitor). An agent cannot carry its background tasks into the new process; Aya tells a team agent resumed afterwards to start again the ones it still needs.");
   assert.equal(actions.staleHostDetected(), true);
 });
 
@@ -202,11 +227,12 @@ test("Settings restart cancellation leaves the host alone; acceptance restarts b
   const { actions, state, log } = setup(t);
   state.confirmAnswer = false;
   await assert.rejects(actions.restartHostFromWindow(), { message: "restart cancelled" });
-  assert.deepEqual(log, [["confirm", "Restarting the PTY host", "Restart"]]);
+  assert.deepEqual(operations(log), [["confirm", "Restarting the PTY host", "Restart"]]);
   log.length = 0;
   state.confirmAnswer = true;
   await actions.restartHostFromWindow();
-  assert.deepEqual(log.slice(0, 3), [["confirm", "Restarting the PTY host", "Restart"], ["restart"], ["expected", EXPECTED.version]]);
+  assert.deepEqual(operations(log), [["confirm", "Restarting the PTY host", "Restart"], ["restart"]]);
+  assert.ok(log.slice(log.findIndex(([op]) => op === "restart") + 1).some(([op]) => op === "status"));
   assert.equal(actions.staleHostDetected(), false);
 });
 
@@ -268,4 +294,99 @@ test("Settings re-verifies hosts after asking, skips failed signals, and waits f
   releases.get(303)(true);
   assert.deepEqual(await stopping, [302, 303], "the existing result lists signals sent, even if an exit wait times out");
   assert.equal(wired.staleHostDetected(), false);
+});
+
+test("an unreadable expected hash keeps the red dot and never asks, restarts or kills on launch", async (t) => {
+  const { actions, state, log, item } = setup(t);
+  state.expected = { ...EXPECTED, scriptHash: "unknown" };
+  state.identity = OLD;
+  state.records.push(record(200));
+  await actions.handleStaleHost();
+  assert.equal(actions.staleHostDetected(), true);
+  assert.equal(item.icon, "stale");
+  assert.deepEqual(operations(log), []);
+});
+
+for (const migration of ["legacy", "incompatible owner"]) for (const accepted of [false, true]) {
+  test(`${migration} asks before stopping processes even without a readable busy screen: ${accepted ? "confirm" : "Cancel"}`, async (t) => {
+    const { actions, state, log } = setup(t);
+    state.identity = migration === "legacy" ? OLD : EXPECTED;
+    state.owner = migration === "legacy" ? undefined : { pid: 99, incompatible: true, disconnected: ["pane"] };
+    state.askAnswer = accepted;
+    await actions.handleStaleHost();
+    const asks = operations(log).filter(([op]) => op === "ask-restart");
+    assert.equal(asks.length, 1);
+    assert.match(asks[0][2], migration === "legacy" ? /cannot be moved from the older host/ : /stops every terminal it owns/);
+    assert.equal(operations(log).filter(([op]) => op === "restart").length, accepted ? 1 : 0);
+    if (!accepted) assert.equal(actions.staleHostDetected(), true);
+  });
+}
+
+test("Settings disconnected-owner recovery asks once and Cancel never sends shutdown", async (t) => {
+  const { actions, state, log } = setup(t);
+  state.owner = { pid: 99, incompatible: false, disconnected: ["pane"] }; state.askAnswer = false;
+  await assert.rejects(actions.restartHostFromWindow(), /restart cancelled/);
+  assert.equal(operations(log).filter(([op]) => op === "ask-restart").length, 1);
+  assert.equal(operations(log).filter(([op]) => ["confirm", "restart", "kill"].includes(op)).length, 0);
+});
+
+test('status A then socket B asks again with fresh inventory and Cancel sends no shutdown',async(t)=>{
+ const {createRequire}=await import('node:module'),require=createRequire(import.meta.url),{PtyHostClient}=require('../dist-electron/pty-host-client.js'),native=require('../dist-electron/pty-owner-client.js');
+ const questions=[],{d,state,actions}=setup(t,{askRestart:async(_yes,text)=>{questions.push(text);return questions.length===1;}}),client=new PtyHostClient('unused'),requests=[],probe=native.ownerProcessStartIdentity;
+ state.owner={pid:800,startTime:'owner-A',instanceId:'a'.repeat(32),hash:'c'.repeat(64),incompatible:true,disconnected:['A'],inventory:[{id:'A',pid:900}]};
+ const b={pid:2147483001,ptyCount:1,owner:{pid:801,startTime:'owner-B',instanceId:'b'.repeat(32),hash:'c'.repeat(64),incompatible:false,disconnected:['B'],inventory:[{id:'B',pid:901}]}};
+ client.socket={destroyed:false,once(){return this;}};client.request=async r=>{requests.push(r.type);return b;};client.sendRequest=async(_s,r)=>{requests.push(r.type);};native.ownerProcessStartIdentity=()=> 'B-start';
+ d.ptyHost.restart=consent=>client.restart(consent);
+ try{await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);assert.equal(questions.length,2);assert.match(questions[0],/A \(PID 900\)/);assert.match(questions[1],/host changed/);assert.match(questions[1],/B \(PID 901\)/);assert.deepEqual(requests,['version']);}
+ finally{native.ownerProcessStartIdentity=probe;client.dispose();}
+});
+
+test('auth refusal always asks with retained PIDs or unknown inventory before explicit and launch restart',async t=>{
+ for(const inventoryKnown of [true,false]){
+  const {d,state,log}=setup(t);state.askAnswer=false;
+  d.relaunchDeps.panes=async()=>[{id:'retained',name:'Agent work'}];
+  d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:inventoryKnown?1:0,authentication:{required:true,targetVerified:true,inventoryKnown,reason:'auth refused'},...(inventoryKnown?{owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}}:{})});
+  const actions=createPtyHostHealth(d);
+  await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);await actions.handleStaleHost();
+  const questions=log.filter(([op])=>op==='ask-restart');assert.equal(questions.length,2);
+  for(const [, ,text] of questions){assert.match(text,/could not authenticate/);assert.match(text,inventoryKnown?/Agent work \(PID 789\)/:/process inventory is unknown/);}
+  assert.equal(log.filter(([op])=>op==='restart'||op==='confirm'||op==='kill').length,0);
+ }
+});
+
+test('an unverified auth target gets one OK information dialog, never a Restart offer or a signal',async t=>{
+ for(const entry of ['launch','explicit'])for(const missing of ['pid','start','proof']){
+  const {d,state,log}=setup(t);state.owner=undefined;
+  d.ptyHost.hostStatus=async()=>({identity:null,ptyCount:0,pid:missing==='pid'?undefined:100,startTime:missing==='start'?null:'1:2',authentication:{required:true,targetVerified:missing!=='proof',inventoryKnown:false,reason:'identity unavailable'}});
+  const actions=createPtyHostHealth(d);if(entry==='launch')await actions.handleStaleHost();else await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+  const dialogs=log.filter(([op])=>op==='dialog');assert.equal(dialogs.length,1,`${entry}/${missing}`);
+  const options=dialogs[0].at(-1);assert.deepEqual(options.buttons,['OK']);assert.match(options.detail,/identity could not be verified/);
+  assert.equal(log.filter(([op])=>['ask-restart','restart','kill','wait'].includes(op)).length,0);
+  assert.equal(actions.staleHostDetected(),true);
+ }
+});
+
+test('principal busy opens no stop or restart question, including unrelated host inventory',async t=>{
+ const {d,state,log}=setup(t);state.records.push(record(200));
+ d.ptyHost.hostStatus=async()=>({identity:null,ptyCount:0,pid:100,principalBusy:true,recoveryReason:'The previous Aya process is still closing.'});
+ const actions=createPtyHostHealth(d);await actions.handleStaleHost();
+ await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+ assert.equal(log.filter(([op])=>['dialog','ask-restart','confirm','restart','kill','wait'].includes(op)).length,0);
+});
+
+for(const owner of [undefined,{pid:99,incompatible:true,disconnected:[]}])test('authenticated unavailable continuity opens without any startup stop question, including incompatible owner',async t=>{
+ const f=setup(t);f.d.ptyHost.hostStatus=async()=>({identity:EXPECTED,ptyCount:3,pid:100,owner,continuityUnavailable:true,recoveryReason:'Automatic terminal host recovery is off'});
+ // Even an additional recorded host cannot cause a stop question in this path.
+ f.state.records=[record(100),record(101)];await f.actions.handleStaleHost();
+ assert.equal(f.log.some(item=>['restart','ask-restart','dialog','kill','confirm'].includes(item[0])),false);
+});
+
+for(const targetVerified of [true,false])test(`unannounced loss opens without a startup modal; explicit review retains consent, verified=${targetVerified}`,async t=>{
+ const f=setup(t);f.state.records.push(record(200));
+ f.d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:1,authentication:{required:true,unannounced:true,targetVerified,inventoryKnown:true,reason:'These terminals cannot be reattached by this Aya'},owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}});
+ const actions=createPtyHostHealth(f.d);await actions.handleStaleHost();
+ assert.deepEqual(operations(f.log),[]);assert.equal(actions.staleHostDetected(),true);
+ f.state.askAnswer=false;await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+ assert.equal(f.log.filter(([op])=>op=== (targetVerified?'ask-restart':'dialog')).length,1);
+ assert.equal(f.log.filter(([op])=>['restart','kill','wait'].includes(op)).length,0);
 });

@@ -27,6 +27,9 @@ const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-h
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 
+let componentAuthority;
+function componentClient(){const client=new PtyHostClient(HOST_SCRIPT);if(componentAuthority)client.hostAuthKey=Buffer.from(componentAuthority);return client;}
+
 const spawnReq = (over) => ({
   ptyId: "id",
   command: "echo hi",
@@ -53,7 +56,7 @@ test("resolveSpawnAttach: attach only for an explicit attach or intent+reused", 
 
 test("a client that SPAWNED the host plain-spawns despite attachIfReused (cold boot)", async () => {
   const wc = fakeWebContents();
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = componentClient();
   client.attachWebContents(wc);
 
   // No socket exists yet -> this connect takes the startHost path (fresh).
@@ -61,6 +64,7 @@ test("a client that SPAWNED the host plain-spawns despite attachIfReused (cold b
     spawnReq({ ptyId: "fresh-1", command: "echo fresh-marker", attachIfReused: true }),
   );
 
+  componentAuthority=Buffer.from(client.hostAuthKey); // Explicit same-principal component authority, not main relaunch.
   await waitFor(() => ptyEventsFor(wc, "fresh-1").some((e) => e.type === "exit"));
   const events = ptyEventsFor(wc, "fresh-1");
   assert.match(
@@ -77,7 +81,7 @@ test("a client that SPAWNED the host plain-spawns despite attachIfReused (cold b
 
 test("a client that FOUND the host running gets no-session for a dead id (no silent respawn)", async () => {
   const wc = fakeWebContents();
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = componentClient();
   client.attachWebContents(wc);
 
   // The previous test's host is still up -> this connect REUSES it.
@@ -95,7 +99,7 @@ test("a client that FOUND the host running gets no-session for a dead id (no sil
 
 test("attachIfReused still attaches to a LIVE session on a reused host", async (t) => {
   const wcA = fakeWebContents();
-  const owner = new PtyHostClient(HOST_SCRIPT);
+  const owner = componentClient();
   owner.attachWebContents(wcA);
   t.after(async () => {
     try {
@@ -109,7 +113,7 @@ test("attachIfReused still attaches to a LIVE session on a reused host", async (
   await owner.spawn(spawnReq({ ptyId: "live-1", command: "cat" }));
 
   const wcB = fakeWebContents();
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = componentClient();
   client.attachWebContents(wcB);
   await client.spawn(spawnReq({ ptyId: "live-1", command: "cat", attachIfReused: true }));
 

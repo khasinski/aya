@@ -44,6 +44,8 @@ export interface UpdatesDeps {
   };
   relaunchDeps: RelaunchDeps;
   askRestart: (yes: string, text: string) => Promise<boolean>;
+  preparePlannedUpdate?:()=>Promise<boolean>;
+  abortPlannedUpdate?:()=>Promise<void>;
 }
 
 export function createUpdates(deps: UpdatesDeps) {
@@ -236,6 +238,7 @@ export function createUpdates(deps: UpdatesDeps) {
       // marker is deliberately kept: `error` also fires for unrelated checks, and
       // deleting it there would cost the whole #78 detector.
       updateLatch.installing = false;
+      void deps.abortPlannedUpdate?.().catch(()=>{});
       setUpdateStatus({
         phase: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -265,11 +268,13 @@ export function createUpdates(deps: UpdatesDeps) {
     return updateCheckInFlight;
   }
 
-  /** Restart to update (asks before stopping background work) and an ordinary quit's update (installs only past no
+  /** Restart to update (asks before stopping work in panes) and an ordinary quit's update (installs only past no
    *  background work, else leaves it for Restart to update). Markers are written for diagnoseRelaunch (#78). */
   const updates = updateInstaller({
     status: getUpdateStatus,
     relaunch: relaunchDeps,
+    preparePlannedUpdate:deps.preparePlannedUpdate,
+    abortPlannedUpdate:deps.abortPlannedUpdate,
     ask: (text) => askRestart("Restart to update", text),
     latch: updateLatch,
     mark: markPendingUpdate,
@@ -307,9 +312,11 @@ export async function ordinaryQuitInstalls(deps: RelaunchDeps, downloaded: boole
 }
 
 export interface UpdateInstallDeps {
+  preparePlannedUpdate?:()=>Promise<boolean>;
+  abortPlannedUpdate?:()=>Promise<void>;
   status: () => { phase: string; downloadedVersion?: string | null };
   relaunch: RelaunchDeps;
-  /** The native question before Restart to update stops background work. */
+  /** The native question before Restart to update stops work in panes. */
   ask: (text: string) => Promise<boolean>;
   /** Set from the handoff until the quit (#78); the updater's error event releases it. */
   latch: { installing: boolean };
@@ -332,7 +339,8 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     if (status.phase !== "downloaded") throw new Error("No downloaded update is ready to install.");
     // One ShipIt at a time (#78): overlapping installs are a suspected cause of the silent rollback.
     if (deps.latch.installing) return;
-    if (!(await confirmRestart(deps.relaunch, "Restarting to update", deps.ask))) return;
+    if (!(await (deps.preparePlannedUpdate?deps.preparePlannedUpdate():confirmRestart(deps.relaunch, "Restarting to update", deps.ask)))) return;
+    if(deps.status().phase!=="downloaded"){await deps.abortPlannedUpdate?.();return;}
     if (deps.latch.installing) return;
     deps.latch.installing = true;
     try {
@@ -342,6 +350,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     } catch (err) {
       // A synchronous handoff failure is observable; the async ShipIt one is caught on the next launch.
       deps.latch.installing = false;
+      await deps.abortPlannedUpdate?.().catch(()=>{});
       await deps.clearMark();
       deps.failed(`Couldn't start the update: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -375,10 +384,10 @@ export function updateInstaller(deps: UpdateInstallDeps) {
   return { install, beforeQuit };
 }
 
-/** On launch with a stale host: restarts it unless a pane shows background work the user did not agree to stop and
+/** On launch with a stale host: restarts it unless that stops work in a pane the user did not agree to stop and
  *  keeps now; true when restarted. An old host whose panes cannot be read is restarted, as before the question. */
 export async function restartStaleHost(deps: RelaunchDeps, ask: (text: string) => Promise<boolean>, restart: () => Promise<unknown>): Promise<boolean> {
-  if (!(await confirmRestartOnce(deps, "Restarting the terminals for the new Aya version", ask).catch(() => true))) return false;
+  if (!(await confirmRestartOnce(deps, "Restarting the terminals for Aya's updated terminal host", ask).catch(() => true))) return false;
   await restart();
   return true;
 }

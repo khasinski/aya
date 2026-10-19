@@ -78,7 +78,7 @@ test("running hosts nobody uses are listed and warned about, with the button to 
 test("a stale host is warned about with its version, and drives the red dot", async () => {
   const health = await gatherHostHealth(deps({ status: async () => ({ identity: OLD, ptyCount: 1, pid: 100 }) }).d);
   assert.equal(health.stale, true);
-  assert.match(health.warnings[0], /older Aya build \(0\.12\.0\)/);
+  assert.match(health.warnings[0], /different PTY code or runtime \(0\.12\.0\)/);
 });
 
 test("no connection and no socket: the host is not asked, so none is started, and nothing is stale", async () => {
@@ -104,33 +104,21 @@ test("hostWarnings lists every problem at once", () => {
   assert.match(warnings[2], /^1 other terminal host still runs /);
 });
 
-test("probeSocketPid: the pid of the host answering, null when nothing does, and it never starts a host", async (t) => {
+test("probeSocketPid reads only kernel peer identity, never unprotected version/status", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aya-probe-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   assert.equal(await probeSocketPid(join(dir, "missing.sock")), null);
-
-  const answering = join(dir, "a.sock");
-  const server = net.createServer((socket) => {
-    socket.once("data", () => socket.write(`${JSON.stringify({ id: 1, ok: true, result: { pid: 4242 } })}\n`));
-    socket.resume();
-  });
-  await new Promise((resolve) => server.listen(answering, resolve));
-  assert.equal(await probeSocketPid(answering), 4242);
-
-  const silent = join(dir, "s.sock");
-  // Reads and never answers; reading lets its side see the probe hang up, so the server can close.
-  const mute = net.createServer((socket) => socket.resume());
-  await new Promise((resolve) => mute.listen(silent, resolve));
-  assert.equal(await probeSocketPid(silent, 200), null, "a host that does not answer in time");
-
-  const garbled = join(dir, "g.sock");
-  const bad = net.createServer((socket) => {
-    socket.once("data", () => socket.write("not json\n"));
-    socket.resume();
-  });
-  await new Promise((resolve) => bad.listen(garbled, resolve));
-  assert.equal(await probeSocketPid(garbled), null);
-  await Promise.all([server, mute, bad].map((s) => new Promise((resolve) => s.close(resolve))));
+  for(const sendsGarbage of [false,true]){
+    const endpoint=join(dir,sendsGarbage?"garbage.sock":"silent.sock");let received="";
+    const server=net.createServer(socket=>{
+      socket.on("data",chunk=>received+=chunk);socket.on("error",()=>{});socket.resume();
+      if(sendsGarbage)socket.write("not a trusted version reply\n");
+    });
+    await new Promise(resolve=>server.listen(endpoint,resolve));
+    assert.equal(await probeSocketPid(endpoint),process.pid);
+    await new Promise(resolve=>server.close(resolve));
+    assert.equal(received,"","discovery sends no RPC, proof or secret");
+  }
 });
 
 test("liveHostRecords keeps only records whose pid is that host now", (t) => {
@@ -152,4 +140,29 @@ test("liveHostRecords keeps only records whose pid is that host now", (t) => {
     liveHostRecords("/app/dist-electron/pty-host.js", registry, probe).map((r) => r.pid),
     [500],
   );
+});
+
+test("an unreadable expected hash keeps the host with an indeterminate warning", async () => {
+  const health = await gatherHostHealth(deps({ expected: { ...EXPECTED, scriptHash: "unknown" } }).d);
+  assert.equal(health.stale, false);
+  assert.equal(health.indeterminate, true);
+  assert.match(health.warnings[0], /could not read.*running terminals were kept/);
+});
+test("a version-only change is compatible when the PTY content matches", async () => {
+  const health = await gatherHostHealth(deps({ status: async () =>
+    ({ identity: { ...EXPECTED, version: "0.1.0" }, ptyCount: 3, pid: 100 }) }).d);
+  assert.equal(health.stale, false);
+  assert.deepEqual(health.warnings, []);
+});
+
+test('disconnected recovery refusal is preserved in Diagnostics without inventing an active host',async()=>{
+ const reason='Aya restarted since this terminal host started, so it cannot restart the host for these panes. Processes may still be running.';
+ const health=await gatherHostHealth(deps({connected:()=>false,socketExists:async()=>false,ownerExists:()=>true,status:async()=>({identity:null,ptyCount:0,recoveryReason:reason}),probeSocket:async()=>{throw Error('no socket probe');},liveRecords:()=>[]}).d);
+ assert.equal(health.pid,null);assert.equal(health.recoveryReason,reason);assert.ok(health.warnings.includes(reason));
+});
+
+test("an authentication refusal remains stale with a truthful unknown-inventory warning",async()=>{
+ const authentication={required:true,inventoryKnown:false,targetVerified:true,reason:"Aya could not authenticate to the terminal host. Its processes were kept."};
+ const health=await gatherHostHealth({expected:EXPECTED,connected:()=>false,status:async()=>({identity:null,pid:1234,ptyCount:0,authentication}),socketExists:async()=>true,probeSocket:async()=>1234,liveRecords:()=>[]});
+ assert.equal(health.stale,true);assert.deepEqual(health.authentication,authentication);assert.ok(health.warnings.includes(authentication.reason));assert.ok(health.warnings.some(w=>w.includes("processes are unknown")));assert.ok(!health.warnings.some(w=>w.includes("runs different PTY code")));
 });

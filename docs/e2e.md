@@ -17,6 +17,11 @@ npx playwright show-report              # open the HTML report
 `npm run test:e2e` runs `npm run build` first, so the specs always test the
 current renderer + main.
 
+Once per Playwright version, `npx playwright install chromium`: every spec but
+`e2e/web-mode.spec.ts` drives Electron's own Chromium, and that one drives a
+real browser against Aya Web. Without it, it fails with "Executable doesn't
+exist at .../ms-playwright/chromium_headless_shell-<revision>".
+
 ## How isolation works
 
 Each test launches a fresh app instance via `e2e/fixtures.ts` against a

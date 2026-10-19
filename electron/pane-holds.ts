@@ -24,3 +24,5 @@ const DIALOG_HOLDS: ReadonlySet<string> = new Set([HOLD_APPROVAL, HOLD_CHOICE, H
 export const isDialogHold = (hold: string | null | undefined): hold is string => !!hold && DIALOG_HOLDS.has(hold);
 /** A dialog no agent may answer for the user, not even with `aya pane send`. */
 export const isUserOnlyHold = (hold: string | null | undefined): boolean => hold === HOLD_ACCOUNT_SETTING;
+
+export const HOLD_RECOVERY_UNKNOWN = "screen unknown after the terminal host restarted";

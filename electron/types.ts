@@ -128,6 +128,8 @@ export interface SpawnRequest {
   // NOT spawn a fresh process; emit a `no-session` event instead. Set by the
   // renderer when re-mounting a tab that already ran this session.
   attachOnly?: boolean;
+  /** Restore a captured display, then replay only output after this boundary. */
+  replayAfter?: { generation: string; offset: number; token?: string };
   // Attach-only IF the connected PTY host predates this app session (it was
   // found running, not spawned by us). Set by the renderer for the first mount
   // of a boot-restored tab; PtyHostClient.spawn resolves it into `attachOnly`
@@ -281,11 +283,12 @@ export type SpawnFailureReason =
   | "preset-empty-command"
   | "agent-config-dir-create-failed"
   | "command-not-found"
-  | "node-pty-spawn-error";
+  | "node-pty-spawn-error"
+  | "spawn-prepare-failed";
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean }
-  | { type: "exit"; ptyId: string; exitCode: number }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string }
+  | { type: "exit"; ptyId: string; exitCode: number; ownerExit?: {generation:number;event:number} }
   | {
       type: "spawn-failed";
       ptyId: string;
@@ -295,6 +298,12 @@ export type PtyEvent =
   // Host had no live session for an attach-only spawn (process died while the
   // host stayed up). The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
+  | { type: "host-connection"; ptyId:string;connected:boolean;reason:string }
+  | { type: "disconnected"; ptyId: string; reason?:string;recoveryBlocked?:boolean;retryable?:boolean }
+  | {type:"recovery-unavailable";ptyId:string;reason:string}
+  | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
+  | {type:"recovery-screen";ptyId:string;generation:string;known:boolean}
+  | {type:"recovery-state";ptyId:string;generation:string;notice:string;screenUnknown:boolean}
   // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
   // a wrapper script) emitted inline in its own output — see integrations.md.
   // Carries the same vocabulary as ControlStatusUpdate's "status" request,
@@ -561,6 +570,9 @@ export interface WebConfigureRequest {
 }
 
 // What the preload exposes to window.aya:
+export interface HandoverCaptureRequest {requestId:string;ptyId:string;maxBytes:number}
+export interface HandoverDisplay {json:string|null;generation:string;offset:number;notice:string|null}
+
 export interface AyaApi {
   /** True when running under `npm run dev` (AYA_DEV=1). False in the packaged
    *  Aya.app. Use to show a "dev" indicator and keep the user's dogfooded
@@ -570,7 +582,10 @@ export interface AyaApi {
 
   // PTY lifecycle
   ptySpawn(req: SpawnRequest): Promise<void>;
-  ptyWrite(ptyId: string, data: string): Promise<void>;
+  onHandoverCapture(handler:(request:HandoverCaptureRequest)=>Promise<string|null>):()=>void;
+  handoverDisplay(ptyId:string):Promise<HandoverDisplay|null>;
+  acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<void>;
+  ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
   ptyBuffer(ptyId: string): Promise<string>;
@@ -586,6 +601,7 @@ export interface AyaApi {
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
+  retryPtyHostRecovery():Promise<boolean>;
   /** Stop running hosts this Aya does not use; returns the pids signalled. */
   stopOtherPtyHosts(): Promise<number[]>;
   /** Asks first when the pane shows background tasks or monitors a restart stops; false: the user kept it. */
@@ -1000,6 +1016,8 @@ export interface TeamSummary {
   paneHolds: Record<string, string | null>;
   /** Per role with a pane: why its CLI holds no note for this role, null when it does. */
   roleNotes: Record<string, string | null>;
+  /** Roles whose note a restart of their pane (it resumes) gives; not a CLI that cannot take one, nor Codex. */
+  restartable: string[];
   /** Panes that started with a role note of this team that they no longer play. */
   staleNotes: string[];
   /** Per role with a pane: when a Save changed what its aya team whoami prints, while it has not run whoami since. */

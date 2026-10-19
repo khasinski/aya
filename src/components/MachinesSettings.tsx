@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiCandidate, KnownHost, MachineSetup } from "../types";
 import { addAnswerText, MACHINES_CHANGED_EVENT, reachText } from "../machines-view";
 
+// The fields are off while a save runs, as the backend select is: the save reloads the machines, and an editor whose
+// URL or token state changed comes back new (its key), dropping what was typed meanwhile.
 function BackendEditor({ machine, busy, save }: { machine: MachineSetup; busy: boolean; save: (argv: string[], token?: string) => Promise<void> }) {
   const [backend, setBackend] = useState(machine.api ? "openai-compatible" : "ollama");
   const [url, setUrl] = useState(machine.api?.baseUrl ?? "");
@@ -57,8 +59,8 @@ function BackendEditor({ machine, busy, save }: { machine: MachineSetup; busy: b
     <label>Backend <select className="aya-modal-input" aria-label={`Backend for ${machine.id}`} value={backend} disabled={busy} onChange={(e) => { invalidateDiscovery(); credentialsEdited.current = false; setBackend(e.target.value); setToken(""); setClear(false); }}>
       <option value="ollama">Ollama</option><option value="openai-compatible">OpenAI-compatible API</option>
     </select></label>
-    {backend === "ollama" ? <label>Ollama port <input className="aya-modal-input" type="number" min={1} max={65535} value={port} onChange={(e) => setPort(e.target.value)} /></label> : <>
-      <label>API URL <input className="aya-modal-input" type="url" required aria-label={`API URL for ${machine.id}`} placeholder="http://host:8080/v1" value={url} onChange={(e) => editUrl(e.target.value)} /></label>
+    {backend === "ollama" ? <label>Ollama port <input className="aya-modal-input" type="number" min={1} max={65535} value={port} disabled={busy} onChange={(e) => setPort(e.target.value)} /></label> : <>
+      <label>API URL <input className="aya-modal-input" type="url" required aria-label={`API URL for ${machine.id}`} placeholder="http://host:8080/v1" value={url} disabled={busy} onChange={(e) => editUrl(e.target.value)} /></label>
       <div className="aya-machines-discovery" aria-label={`Endpoint discovery for ${machine.id}`}>
         <button className="aya-modal-btn" type="button" disabled={busy || discovering} onClick={() => void discover()}>{discovering ? "Searching this host…" : "Search again"}</button>
         <div className="aya-modal-hint">Checks four common ports on this machine, without a token. You can also enter the URL manually.</div>
@@ -68,11 +70,11 @@ function BackendEditor({ machine, busy, save }: { machine: MachineSetup; busy: b
           <button className="aya-modal-btn" type="button" disabled={busy} onClick={() => editUrl(c.baseUrl)} aria-label={`Use ${c.baseUrl}`}>Use endpoint</button>
         </div>)}
       </div>
-      <label>Bearer token <input className="aya-modal-input" type="password" autoComplete="new-password" aria-label={`Bearer token for ${machine.id}`} value={token} onChange={(e) => { credentialsEdited.current = true; setToken(e.target.value); setClear(false); }} /></label>
+      <label>Bearer token <input className="aya-modal-input" type="password" autoComplete="new-password" aria-label={`Bearer token for ${machine.id}`} value={token} disabled={busy} onChange={(e) => { credentialsEdited.current = true; setToken(e.target.value); setClear(false); }} /></label>
       <div className="aya-modal-hint">{machine.api?.tokenConfigured && url === machine.api.baseUrl ? clear ? "Saved token will be cleared on Save backend." : <>
         Token saved. {machine.api.savedTokenPreview && <>Saved token: <code>{machine.api.savedTokenPreview}</code>. </>}Leave blank to keep it for this URL.
       </> : "No token saved for this URL. Leave blank for an API without authentication."}</div>
-      <label><input type="checkbox" checked={clear} onChange={(e) => { credentialsEdited.current = true; setClear(e.target.checked); if (e.target.checked) setToken(""); }} /> Clear saved token</label>
+      <label><input type="checkbox" checked={clear} disabled={busy} onChange={(e) => { credentialsEdited.current = true; setClear(e.target.checked); if (e.target.checked) setToken(""); }} /> Clear saved token</label>
     </>}
     <button className="aya-modal-btn" type="submit" disabled={busy}>Save backend</button>
   </form>;

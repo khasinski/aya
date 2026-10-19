@@ -133,6 +133,14 @@ function shellQuote(value: string): string {
  *  a project with two shell terminals (in a 1x2 split by default), a single
  *  shell preset (so no PATH harness scan pulls in claude/codex), and an empty
  *  snippet store that the app seeds with its defaults on boot. */
+/** homeFiles that put `bin` in front of PATH again in a login shell: on macOS /etc/zprofile and /etc/profile run
+ *  path_helper, which puts /etc/paths and /etc/paths.d (/opt/homebrew/bin among them) back in front of it, so a real
+ *  CLI installed there would win over the stand-in. */
+export function loginPathFront(bin: string): Record<string, string> {
+  const front = `export PATH=${shellQuote(bin)}:"$PATH"\n`;
+  return { ".zprofile": front, ".bash_profile": front };
+}
+
 export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   const split = opts.split !== false && !opts.singleTab;
   // Keep sockets short and use the shell's canonical cwd spelling from boot.
@@ -405,7 +413,7 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     }
     prependPath(bin);
     // A login shell puts /usr/bin (the real ssh) back in front of PATH.
-    homeFiles[".zprofile"] = homeFiles[".bash_profile"] = `export PATH=${shellQuote(bin)}:"$PATH"\n`;
+    Object.assign(homeFiles, loginPathFront(bin));
   }
 
   if (opts.fakeSshMachines) {

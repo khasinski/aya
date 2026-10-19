@@ -46,16 +46,18 @@ test("Restart terminal asks when the pane shows background work, and the resumed
   const before = read("tab-right");
   await restart(window, "shell 2");
   await expect.poll(() => asked(app)).toHaveLength(1);
-  expect((await asked(app))[0]).toMatch(/^Restarting shell 2 stops what these panes run in the background \(shell 2: 2 shells, 1 monitor\)/);
+  expect((await asked(app))[0]).toMatch(/^Restarting shell 2 stops what these panes are doing \(shell 2: 2 shells, 1 monitor\)\. An agent cannot carry its background tasks/);
   await window.waitForTimeout(1_500);
   expect(read("tab-right")).toBe(before);
 
   // Restart: asked again, the pane restarts resumed, and its new process gets the note once, from Aya.
   await answerDialogs(app, 0);
   await restart(window, "shell 2");
-  await expect.poll(() => read("tab-right"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/^LAUNCH resumed$/m);
-  expect(await asked(app)).toHaveLength(2);
-  await expect.poll(() => read("tab-right"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toContain(NOTE);
+  await expect.poll(() => asked(app)).toHaveLength(2);
+  // shell 2 starts with --continue, so its first log already says resumed. Only the new process gets the note,
+  // and each launch starts its log over: once the note is there, the log is the new process's.
+  await expect.poll(() => read("tab-right"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS + TEAM_DELIVERY_TIMEOUT_MS }).toContain(NOTE);
+  expect(read("tab-right")).toMatch(/^LAUNCH resumed$/m);
   expect(read("tab-right")).toMatch(new RegExp(`\\[team ux-review \\| from aya \\| [^\\]]+\\] ${literal(NOTE)}`));
 
   // No pill: restarts without asking, and its resumed process gets no note, however many passes run.

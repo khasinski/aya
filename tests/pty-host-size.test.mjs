@@ -1,3 +1,4 @@
+import {authenticatedFixtureServer,authorizeFixtureClient} from "./helpers/pty-host-launch.cjs";
 // `aya pane read` renders a pane at the size it actually has, which only the
 // pty host knows. A host from an older build cannot answer; the client must
 // then say "unknown" so the read falls back to the raw buffer.
@@ -7,13 +8,17 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { isolateHome } from "./helpers/isolate-home.mjs";
 
-const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-size-"));
-process.env.AYA_HOME = TMP_AYA_HOME;
+const ROOT = mkdtempSync(join(tmpdir(), "aya-size-"));
+isolateHome(ROOT);
+const TMP_AYA_HOME = process.env.AYA_HOME;
+mkdirSync(process.env.HOME, { recursive: true }); mkdirSync(TMP_AYA_HOME, { recursive: true });
+test.after(() => rmSync(ROOT, { recursive: true, force: true }));
 
 const { PTY_HOST_UNKNOWN_REQUEST } = await import("../dist-electron/constants.js");
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
@@ -35,7 +40,7 @@ async function waitFor(predicate, ms = 4000, step = 25) {
 /** Ask getSize of a fake host that answers every request with `answer`. */
 async function sizeFromFakeHost(answer) {
   const requests = [];
-  const server = net.createServer((socket) => {
+  const server = authenticatedFixtureServer((socket) => {
     let buf = "";
     socket.on("data", (d) => {
       buf += d;
@@ -49,12 +54,12 @@ async function sizeFromFakeHost(answer) {
     });
   });
   await new Promise((r) => server.listen(PTY_HOST_SOCKET_PATH, r));
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = authorizeFixtureClient(new PtyHostClient(HOST_SCRIPT));
   try {
     const size = await client.getSize("any");
     return { size, requests: [...requests] };
   } finally {
-    client.restart().catch(() => {});
+    client.dispose();client.hostAsked=true;client.dropSocket();
     await new Promise((r) => server.close(r));
   }
 }
@@ -62,7 +67,7 @@ async function sizeFromFakeHost(answer) {
 test("a host that predates the size request reads as an unknown size", async () => {
   const { size, requests } = await sizeFromFakeHost({ ok: false, error: PTY_HOST_UNKNOWN_REQUEST });
   assert.equal(size, null);
-  assert.deepEqual(requests, ["size"]);
+  assert.deepEqual(requests, ["version","size"]);
 });
 
 test("a size answer without numeric cols and rows reads as unknown", async () => {

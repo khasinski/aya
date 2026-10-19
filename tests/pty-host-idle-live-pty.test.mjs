@@ -1,9 +1,11 @@
+import {spawnAuthenticatedHost,authenticateFixtureSocket} from "./helpers/pty-host-launch.cjs";
 // The idle shutdown must never take a host that still holds a pty or a client
 // (its children die with it). Real host, real socket, a real `sleep` pty.
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { cleanupNativeOwner } from "./helpers/pty-host.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +22,7 @@ let sleepSeed = 71000 + (process.pid % 1000) * 10;
 async function withHost(body) {
   const home = mkdtempSync(join(tmpdir(), "aya-idle-live-"));
   const sock = join(home, "pty-host.sock");
-  const host = spawn(process.execPath, [HOST_SCRIPT], {
+  const host = spawnAuthenticatedHost(process.execPath, [HOST_SCRIPT], {
     env: { ...process.env, AYA_HOME: home, AYA_PTY_HOST_IDLE_MS: String(IDLE_MS) },
     stdio: "ignore",
   });
@@ -29,8 +31,9 @@ async function withHost(body) {
   const connect = async () => {
     const socket = await connectWhenListening(sock);
     socket.on("error", () => {});
+    const authenticated=await authenticateFixtureSocket(socket,home);
     const pending = new Map();
-    let buf = "";
+    let buf = authenticated.buffered;
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
       buf += chunk;
@@ -38,9 +41,14 @@ async function withHost(body) {
       while ((i = buf.indexOf("\n")) >= 0) {
         const msg = JSON.parse(buf.slice(0, i));
         buf = buf.slice(i + 1);
-        pending.get(msg.id)?.(msg);
+        if (msg.type === "prepare") {
+          const data = { argv: ["/bin/sh", "-c", msg.req.command], env: { PATH: "/usr/bin:/bin", TERM: "xterm-256color", AYA_HOME: home },
+            command: msg.req.command, launch: { command: msg.req.command, cwd: msg.cwd }, ownSessionId: null, spawnedAt: Date.now() };
+          socket.write(JSON.stringify({ id: nextId++, type: "prepared", prepareId: msg.prepareId, data }) + "\n");
+        } else pending.get(msg.id)?.(msg);
       }
     });
+    socket.resume();
     const client = {
       send: (req) =>
         new Promise((resolve, reject) => {
@@ -98,6 +106,7 @@ async function withHost(body) {
     for (const pid of [...owned].reverse()) {
       try { process.kill(pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
     }
+    await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   }
 }

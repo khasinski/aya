@@ -185,18 +185,28 @@ fi
 TOKEN=$(printf '%s' "$RAW" | jq -r '.claudeAiOauth.accessToken // empty')
 [ -n "$TOKEN" ] || exit 0
 # One scratch file per process: two panes ending a turn together both pass the
-# throttle, and a shared name made the second mv fail with ENOENT.
+# throttle, and a shared name made the second mv fail with ENOENT. The default
+# account's copy comes from this process's own file too: copied from the shared
+# one, another hook's mv could replace it mid-copy, and GNU cp then fails
+# ("replaced while being copied").
 TMP="$ACCOUNT_OUT.$$.tmp"
-trap 'rm -f "$TMP"' EXIT
+TMP_OUT="$OUT.$$.tmp"
+trap 'rm -f "$TMP" "$TMP_OUT"' EXIT
 RESP=$(curl -sS -m ${HOOK_FETCH_TIMEOUT_SECONDS} -H "Authorization: Bearer $TOKEN" \\
   https://api.anthropic.com/api/oauth/usage) || exit 0
 printf '%s' "$RESP" | jq \\
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
   '{fiveHour:{pct:.five_hour.utilization, resetsAt:.five_hour.resets_at},
     sevenDay:{pct:.seven_day.utilization, resetsAt:.seven_day.resets_at},
-    updatedAt:$ts}' > "$TMP" && mv "$TMP" "$ACCOUNT_OUT"
+    updatedAt:$ts}' > "$TMP" || exit 0
+DEFAULT_ACCOUNT=0
 if [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ]; then
-  cp "$ACCOUNT_OUT" "$TMP" && mv "$TMP" "$OUT"
+  DEFAULT_ACCOUNT=1
+  cp "$TMP" "$TMP_OUT"
+fi
+mv "$TMP" "$ACCOUNT_OUT"
+if [ "$DEFAULT_ACCOUNT" = 1 ]; then
+  mv "$TMP_OUT" "$OUT"
 fi
 `;
 }
@@ -274,6 +284,24 @@ async function uninstall(): Promise<UsageHookStatus> {
   }
   await fs.rm(HOOK_SCRIPT_FILE, { force: true });
   return usageHookStatus();
+}
+
+/** Rewrites `file` with `source` (executable) only when it exists and differs. */
+export async function refreshInstalledScript(file: string, source: string): Promise<void> {
+  let current: string;
+  try {
+    current = await fs.readFile(file, "utf8");
+  } catch {
+    return;
+  }
+  if (current === source) return;
+  await writeFileAtomic(file, source);
+  await fs.chmod(file, EXECUTABLE_FILE_MODE);
+}
+
+/** Rewrites an ALREADY-installed, out-of-date script; never installs one. */
+export function refreshUsageHookScript(): Promise<void> {
+  return refreshInstalledScript(HOOK_SCRIPT_FILE, hookScriptSource(USAGE_FILE));
 }
 
 export const installUsageHook = (): Promise<UsageHookStatus> => serially(install);

@@ -6,6 +6,7 @@ import type { IpcMain } from "electron";
 import { listProjects } from "../config";
 import { handleMachinesRequest, machinesDiscover, machinesSetup, machinesStatus, machinesUiSetup } from "../machines";
 import { ayaMachinesDeps } from "../machines-dialog";
+import { MACHINES_CONFIGURE_DELAY_MS } from "../paths";
 import {
   checkRemoteHealth,
   createRemoteDirectory,
@@ -69,6 +70,7 @@ export function registerRemoteIpc(deps: RemoteIpcDeps): void {
     if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || argv[0] !== "configure" || (token !== undefined && typeof token !== "string")) {
       throw new Error("machines:configure needs configuration arguments and optional token input");
     }
+    if (MACHINES_CONFIGURE_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, MACHINES_CONFIGURE_DELAY_MS));
     return (await handleMachinesRequest({ argv, ...(typeof token === "string" ? { token } : {}) }, machinesDeps)).output;
   });
   ipcMain.handle("machines:command", async (_e, argv: unknown) => {

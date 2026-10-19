@@ -60,6 +60,8 @@ function setup(over = {}) {
       screen: async () => "1 background terminal running /ps to view",
       pid: async () => 100,
       command: async () => "codex resume",
+      busy: async () => false,
+      foreground: async () => null,
     },
     askRestart: async (yes, text) => { log.push(["ask", yes, text]); return true; },
     ...over,
@@ -243,7 +245,7 @@ test("background work uses the same Restart to update prompt and honors cancella
   downloaded(s);
   await s.updates.install();
   assert.equal(s.log.at(-1)[1], "Restart to update");
-  assert.match(s.log.at(-1)[2], /^Restarting to update stops what these panes run in the background \(agent: 1 background terminal\)/);
+  assert.match(s.log.at(-1)[2], /^Restarting to update stops what these panes are doing \(agent: 1 background terminal\)/);
   assert.equal(await readPendingUpdate(), null);
   assert.equal(s.log.some(([what]) => what === "install"), false);
 });

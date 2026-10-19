@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { terminalKillRefusal } from "../terminal-kill-refusal";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { clearedTerminalStatus } from "../pty-event-reducer";
 import { forgetSpawn, wasSpawned } from "../spawnSession";
+import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
 import { defaultTabName, findProject, remoteTerminalCommand } from "../project-helpers";
 import { projectBaseCwd, tabFromTerminal } from "../worktree";
 import {
@@ -210,10 +212,16 @@ export function useTerminalActions({
     [appendProjectEvent, effectiveCwd, projectsRef, presetsRef, terminalsRef, setTerminals, setAllProjects, setProjects],
   );
 
+  const closingTerminals = useRef(new Set<string>());
   const closeTerminal = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const t = terminalsRef.current[id];
-      if (!t) return;
+      if (!t || closingTerminals.current.has(id)) return;
+      closingTerminals.current.add(id);
+      const releaseAttachClose = cancelPendingTerminalAttach(id);
+      try { await window.aya.ptyKill(id); }
+      catch (error) { window.alert(terminalKillRefusal("close", t.name, error)); return; }
+      finally { closingTerminals.current.delete(id); releaseAttachClose(); }
     // A closed tab plays no team role; a restart keeps it (same tab).
     void window.aya.teamReleasePane(t.projectSlug, id).catch(() => {});
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
@@ -228,7 +236,6 @@ export function useTerminalActions({
       delete next[id];
       return next;
     });
-    void window.aya.ptyKill(id);
     appendProjectEvent({
       projectSlug: t.projectSlug,
       terminalId: t.id,
@@ -313,7 +320,7 @@ export function useTerminalActions({
         // `stopped` (not a fake exitCode 0) marks the PTY as killed-by-restart:
         // shows idle + restartable via Shift+Enter, without masquerading as a
         // clean "done" finish in the project badges or event log.
-        next[id] = { ...t, status: "idle", stopped: true, bell: false };
+        next[id] = { ...t, status: "idle", stopped: true, disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined, bell: false };
       }
       return next;
     });
@@ -377,6 +384,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
           restored: t.restored || hadSession,
         },
       };
@@ -411,7 +419,7 @@ export function useTerminalActions({
    *  fresh one. */
   const forceRestartTerminal = useCallback(async (id: string) => {
     const t = terminalsRef.current[id];
-    if (!t) return;
+    if (!t || t.recoveryBlocked) return;
     // Read the had-a-session marker BEFORE the kill and forgetSpawn below wipe
     // it - the respawned agent tab must resume its conversation (see
     // restartTerminal for the rationale, including the spawnFailure veto).
@@ -425,17 +433,28 @@ export function useTerminalActions({
     // yet (exit event still in flight) can still hit that window; the gate
     // covers every state the user can actually observe when clicking.
     const maybeAlive = t.exitCode === null && !t.stopped;
-    // A live pane's background tasks and monitors stop with it: asked first when its screen shows some.
-    if (maybeAlive && !(await window.aya.confirmPaneRestart(id).catch(() => true))) return;
+    // Asked first when the restart would stop work in the pane: a turn, a command, background tasks (#219). Main asks
+    // plainly when it cannot check; a question that cannot reach main at all stops the restart, since going ahead
+    // could end work nobody agreed to stop.
+    if (maybeAlive) {
+      const agreed = await window.aya.confirmPaneRestart(id).catch((err: unknown) => {
+        const why = err instanceof Error ? err.message : String(err);
+        window.alert(`Aya did not restart ${t.name}: it could not ask first whether that would stop work there, so the pane keeps running.\n\n${why}`);
+        return false;
+      });
+      if (!agreed) return;
+    }
     if (maybeAlive) {
       // Await the kill so the main-side ptys map is empty by the time the
       // new spawn IPC arrives - otherwise spawnPty treats it as a re-mount
       // and replays the old buffer instead of starting fresh.
+      const releaseAttachClose = cancelPendingTerminalAttach(id);
       try {
         await window.aya.ptyKill(id);
-      } catch {
-        /* ignore - best effort */
-      }
+      } catch (err: unknown) {
+        window.alert(terminalKillRefusal("restart", t.name, err));
+        return;
+      } finally { releaseAttachClose(); }
     }
     // Forget the confirmed-session marker AFTER the kill: a still-alive process
     // can emit output between the request and the kill landing, which would
@@ -455,6 +474,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
           restored: cur.restored || hadSession,
         },
       };
