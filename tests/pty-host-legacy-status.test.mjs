@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import {once} from 'node:events';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 fs.mkdirSync('test-results',{recursive:true});const home=fs.mkdtempSync(path.resolve('test-results/legacy-status-'));
@@ -11,13 +10,28 @@ process.env.AYA_HOME=home;
 const {probeLegacyInventory}=require('../dist-electron/pty-host-legacy-status.js');
 const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
 const file=path.join(home,'pty-hosts'),requests=path.join(home,'requests.jsonl');
-const source=`const fs=require('fs'),net=require('net'),path=require('path');const registry=require(path.join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host-registry.js'));const info=registry.readProcInfo(process.pid);registry.writeHostRecord({pid:process.pid,pgid:process.pid,startTime:info.startTime,version:'0.12.0',scriptHash:'a'.repeat(64),nonce:'legacy'});net.createServer(socket=>{let buf='';socket.on('error',()=>{});socket.on('data',data=>{buf+=data;let end;while((end=buf.indexOf('\\n'))>=0){const req=JSON.parse(buf.slice(0,end));buf=buf.slice(end+1);fs.appendFileSync(process.env.AYA_TEST_REQUEST_LOG,JSON.stringify(req)+'\\n');if(process.env.LEGACY_MODE==='silent')continue;let result=req.type==='version'?{version:'0.12.0',scriptHash:'a'.repeat(64),pid:process.pid,ptyCount:2}:req.ptyId==='saved'?{cols:80,rows:24}:null;if(process.env.LEGACY_MODE==='wrong-pid'&&req.type==='version')result.pid++;if(process.env.LEGACY_MODE==='too-many'&&req.type==='version')result.ptyCount=26;if(process.env.LEGACY_MODE==='flood'){socket.write('x'.repeat(70000));continue;}socket.write(JSON.stringify({id:req.id,ok:true,result})+'\\n');}});}).listen(path.join(process.env.AYA_HOME,'pty-host.sock'),()=>console.log('READY'));`;
+const source=`const fs=require('fs'),net=require('net'),path=require('path');if(process.env.LEGACY_MODE==='no-ready')process.exit(2);const registry=require(path.join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host-registry.js'));const info=registry.readProcInfo(process.pid);registry.writeHostRecord({pid:process.pid,pgid:process.pid,startTime:info.startTime,version:'0.12.0',scriptHash:'a'.repeat(64),nonce:'legacy'});net.createServer(socket=>{let buf='';socket.on('error',()=>{});socket.on('data',data=>{buf+=data;let end;while((end=buf.indexOf('\\n'))>=0){const req=JSON.parse(buf.slice(0,end));buf=buf.slice(end+1);fs.appendFileSync(process.env.AYA_TEST_REQUEST_LOG,JSON.stringify(req)+'\\n');if(process.env.LEGACY_MODE==='silent')continue;let result=req.type==='version'?{version:'0.12.0',scriptHash:'a'.repeat(64),pid:process.pid,ptyCount:2}:req.ptyId==='saved'?{cols:80,rows:24}:null;if(process.env.LEGACY_MODE==='wrong-pid'&&req.type==='version')result.pid++;if(process.env.LEGACY_MODE==='too-many'&&req.type==='version')result.ptyCount=26;if(process.env.LEGACY_MODE==='flood'){socket.write('x'.repeat(70000));continue;}socket.write(JSON.stringify({id:req.id,ok:true,result})+'\\n');}});}).listen(path.join(process.env.AYA_HOME,'pty-host.sock'),()=>console.log('READY'));`;
+function waitForReady(child, timeoutMs=5000){
+ return new Promise((resolve,reject)=>{
+  let output='',errors='';
+  const finish=error=>{clearTimeout(timer);child.stdout.off('data',onData);child.stderr.off('data',onErrorText);child.off('error',onError);child.off('exit',onExit);error?reject(error):resolve();};
+  const onData=data=>{output=(output+data.toString()).slice(-4096);if(output.includes('READY\n'))finish();};
+  const onErrorText=data=>{errors=(errors+data.toString()).slice(-4096);};
+  const onError=error=>finish(new Error(`legacy fixture failed to spawn: ${error.message}`));
+  const onExit=(code,signal)=>finish(new Error(`legacy fixture exited before READY (code ${code}, signal ${signal}); stderr: ${errors.trim()||'(empty)'}`));
+  const timer=setTimeout(()=>finish(new Error(`legacy fixture did not become READY in ${timeoutMs} ms; stdout: ${output.trim()||'(empty)'}; stderr: ${errors.trim()||'(empty)'}`)),timeoutMs);
+  child.stdout.on('data',onData);child.stderr.on('data',onErrorText);child.once('error',onError);child.once('exit',onExit);
+ });
+}
 async function fixture(mode,body){
  fs.rmSync(home,{recursive:true,force:true});fs.mkdirSync(home,{recursive:true});
- const child=spawn(process.execPath,['-e',source],{detached:true,stdio:['ignore','pipe','pipe'],env:{...process.env,ELECTRON_RUN_AS_NODE:'1',LEGACY_MODE:mode,AYA_TEST_APP_ROOT:path.resolve('.'),AYA_TEST_REQUEST_LOG:requests}}),exit=once(child,'exit');
- try{await once(child.stdout,'data');await body({pid:child.pid,startIdentity:ownerProcessStartIdentity(child.pid)});}
- finally{child.kill('SIGKILL');await exit;fs.rmSync(home,{recursive:true,force:true});}
+ const child=spawn(process.execPath,['-e',source],{detached:true,stdio:['ignore','pipe','pipe'],env:{...process.env,ELECTRON_RUN_AS_NODE:'1',LEGACY_MODE:mode,AYA_TEST_APP_ROOT:path.resolve('.'),AYA_TEST_REQUEST_LOG:requests}}),exit=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve([code,signal]));child.once('error',error=>resolve([null,error]));});
+ try{await waitForReady(child);await body({pid:child.pid,startIdentity:ownerProcessStartIdentity(child.pid)});}
+ finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await exit;fs.rmSync(home,{recursive:true,force:true});}
 }
+test('legacy fixture reports a child that exits before READY instead of leaving startup pending', {timeout:3000}, async()=>{
+ await assert.rejects(fixture('no-ready',async()=>{}),/legacy fixture exited before READY \(code 2, signal null\)/);
+});
 const readRequests=()=>fs.existsSync(requests)?fs.readFileSync(requests,'utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s)):[];
 test('v0.12.0 read-only migration reports one saved pane plus one unknown, without requesting a credential or trusting reply PID',()=>fixture('',async peer=>{
  assert.deepEqual(await probeLegacyInventory(peer,['saved','gone']),{reportedIds:['saved'],unknownCount:1,total:2});
