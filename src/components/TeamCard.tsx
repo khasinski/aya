@@ -238,7 +238,7 @@ export function TeamCard({
                   </div>
                   {team.roleNotes[role.id] && (
                     <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} role note`}>
-                      ⚠ {team.roleNotes[role.id]}; its first message tells it to run aya team whoami
+                      ⚠ {team.roleNotes[role.id]}
                       {onRestartPane && team.restartable.includes(role.id) && project.tabs.some((t) => t.id === team.assignments[role.id]) && (
                         <>
                           {" "}
@@ -246,7 +246,7 @@ export function TeamCard({
                             className="aya-modal-btn"
                             type="button"
                             disabled={busy}
-                            aria-label={`Restart ${role.id}'s pane with its role note`}
+                            aria-label={`Restart ${role.id}'s pane`}
                             onClick={() => void act(() => onRestartPane(team.assignments[role.id]))}
                           >
                             Restart

@@ -59,6 +59,7 @@ export async function listTeams(
       }
       const roleIds = definition && new Set(definition.roles.map((r) => r.id));
       const fullLog = await store.annotatedLog();
+      const state = await store.state();
       const log = fullLog.slice(-LOG_TAIL).map((m): TeamMessage => {
         // A role renamed or removed by a Save takes its inbox with it: say so instead of waiting for ever.
         const gone = !m.delivered && roleIds && !roleIds.has(m.to);
@@ -72,12 +73,12 @@ export async function listTeams(
         repoGone: saved !== null && repo === null,
         unsaved: saved === null && repo !== null,
         repoDefinition: repoParsed(name, repo),
-        ...(await store.state()),
+        ...state,
         agentAuthored: await store.agentAuthored(),
         assignments,
         paneHolds: await perLivePane(assignments, project, holdReason),
         paneNotes: await perLivePane(assignments, project, launchNote),
-        ...(roleNoteReport ? await roleNoteReport(project, name, assignments) : { roleNotes: {}, restartable: [], staleNotes: [] }),
+        ...(roleNoteReport ? await roleNoteReport(project, name, assignments, { running: state.running, read: await store.rolesRead() }) : { roleNotes: {}, restartable: [], staleNotes: [] }),
         olderRoles: Object.fromEntries(Object.entries(await store.olderRoles()).filter(([role]) => role in assignments)),
         unread: Object.fromEntries(await Promise.all((definition?.roles ?? []).map(async (r) => [r.id, (await store.owed(r.id)).length] as const))),
         unsent: unsentClaims(await readClaims(store), fullLog, await store.refusals(), [...(roleIds ?? [])]),

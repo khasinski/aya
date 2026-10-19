@@ -71,8 +71,8 @@ for (const [agent, optedIn, shape] of CELLS) {
         await expect(status).toHaveCount(0);
       } else {
         expect(carried).toBe(false);
-        await expect(status).toContainText("cannot tell this CLI its role: its command is not a single simple command");
-        await expect(status).toContainText("aya team whoami");
+        await expect(status).toContainText("Aya cannot give this agent its role when it starts: its command is not a single simple command");
+        await expect(status).toContainText("Aya tells it the role at Start instead.");
       }
     });
   });
@@ -83,7 +83,7 @@ test.describe("a CLI with no channel for a role note", () => {
 
   test("the Teams window says so", async ({ window }) => {
     const card = (await openTeams(window)).getByTestId("team-ux-review");
-    await expect(card.getByLabel("tester role note")).toContainText("cannot tell this CLI its role: cursor takes no per-session instruction");
+    await expect(card.getByLabel("tester role note")).toContainText("Aya cannot give this agent its role when it starts: cursor takes no per-session instruction");
     await expect(card.getByLabel("implementer role note")).toHaveCount(0);
   });
 });

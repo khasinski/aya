@@ -1,5 +1,5 @@
 // A Save that changes what `aya team whoami` prints for a role tells that role's running pane to read it again,
-// and the Teams window marks the role "started with an older role" until its next whoami (N3.3, finding 9).
+// and the Teams window notes that the role changed until the agent's next whoami (N3.3, finding 9).
 // Table: what the save changes x the panes' state x what happens (typed, row note, cleared on whoami).
 
 import { test } from "node:test";
@@ -86,7 +86,7 @@ for (const [saveLabel, change, changed] of SAVES) {
         const noted = paneState === "missing" ? [] : changed;
         const older = await t.older();
         assert.deepEqual(Object.keys(older).sort(), [...noted].sort(), "the row note: changed roles that have a pane");
-        for (const role of noted) assert.match(olderRoleNote(older[role]), /^started with an older role: it changed at \d\d:\d\d/);
+        for (const role of noted) assert.match(olderRoleNote(older[role]), /^Its role changed at \d\d:\d\d\. This note goes once the agent reads the new role\.$/);
 
         const log = await t.store.log();
         const tells = log.filter((m) => m.from === "aya" && /run aya team whoami again/.test(m.text));

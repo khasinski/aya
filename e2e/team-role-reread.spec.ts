@@ -24,7 +24,7 @@ test("a Save that changes the tester's role tells its pane, marks its row, and i
   expect(read("tab-right")).not.toMatch(/run aya team whoami again/);
 
   const dialog = await openTeams(window);
-  await expect(dialog.getByLabel("tester older role")).toContainText(/started with an older role: it changed at \d\d:\d\d/);
+  await expect(dialog.getByLabel("tester older role")).toContainText(/Its role changed at \d\d:\d\d\. This note goes once the agent reads the new role\./);
   await expect(dialog.getByLabel("implementer older role")).toHaveCount(0);
 
   // The tester's pane runs aya team whoami itself (the agent's request file), and reads the new text.

@@ -177,7 +177,7 @@ const teamDeps: TeamControlDeps = {
     deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, teamHold, cancelled, turnProbe, entered, pasting),
   holdReason: withLaunchHolds(startingHold, async (terminalId) => launchHoldOf(await ptyHost.launch(terminalId))),
   busy: (terminalId) => ptyHost.paneBusy(terminalId),
-  roleNoteReport: (project, team, assignments) => roleNoteReport(project, team, assignments, paneBriefDeps),
+  roleNoteReport: (project, team, assignments, state) => roleNoteReport(project, team, assignments, paneBriefDeps, state),
   launchNote,
   screen: paneScreen,
   agentOf: paneAgent,

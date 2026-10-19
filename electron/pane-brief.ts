@@ -248,46 +248,59 @@ async function capabilityGap(tab: WorkingTab, preset: Preset, deps: PaneBriefDep
   return "problem" in plan ? roleNoteStatus(plan.problem) : null;
 }
 
-/** What the window says about a role's pane, and whether restarting the pane (it resumes) gives it the note. */
+/** What the window says about a role's pane, and whether restarting the pane (it resumes) gives it the role. */
 interface RoleNoteGap {
   text: string;
   /** False for a CLI that cannot be told the role, and for Codex, whose resumed session keeps its first note. */
   restartFixes: boolean;
 }
 
-async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps): Promise<RoleNoteGap | null> {
+/** What the team knows of a pane: whether the team runs, and the role of the team the pane last read with whoami. */
+export interface RoleNoteContext {
+  running: boolean;
+  read: string | null;
+}
+
+/** What the window says about a role's pane, as the one thing the user can do about it, else null. A pane that
+ *  started with another role needs nothing once it has read this role with whoami (Aya's delivery test asks it to,
+ *  at Start or when it is given the role in a running team); until then the window says so. Without a context the
+ *  pane counts as having read it. */
+async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps, context?: RoleNoteContext): Promise<RoleNoteGap | null> {
   const preset = (await deps.listPresets()).find((p) => p.id === tab.presetId);
   // A shell pane already shows "runs a shell" as its hold.
   if (!preset || isShellCommand(preset.command)) return null;
   const launch = await deps.records.get(tab.id);
   const codex = presetAgent(preset) === "codex";
-  const restart = codex ? "start a new session" : "restart it";
-  // A restart respawns with the preset as it is now: where that preset cannot carry the note (edited since), the window
+  // The window offers Restart where a restart gives the role (the pane resumes with it). A Codex restart resumes the
+  // session with what it was told first, so there only a new session starts afresh.
+  const how = codex ? "pick a new session for this role in its pane list" : "click Restart";
+  // A restart respawns with the preset as it is now: where that preset cannot carry the role (edited since), the window
   // says why instead of promising what a restart would not give.
   const fix = async (text: string) => {
     const gap = await capabilityGap(tab, preset, deps);
     return gap === null ? { text, restartFixes: !codex } : { text: gap, restartFixes: false };
   };
   const cannot = (text: string | null) => (text === null ? null : { text, restartFixes: false });
-  const unknown = `started before Aya recorded what it was told: ${restart} to give it the role note`;
+  const unknown = `Aya cannot tell whether this agent got its role when it started. To be sure, ${how}.`;
   if (!launch) return cannot(await capabilityGap(tab, preset, deps)) ?? ((await deps.running(tab.id)) ? fix(unknown) : null);
   if (launch.unknown) return cannot(await capabilityGap(tab, preset, deps)) ?? fix(unknown);
   if (launch.carried && sameRole(launch.role, current)) {
     const now = digest(carriedText(briefOn(preset, presetAgent(preset), current), current));
-    return launch.told && launch.told !== now ? fix(`started with an older brief: ${restart} to give it the current one`) : null;
+    return launch.told && launch.told !== now ? fix(`This agent started with older instructions from Aya. To give it the current ones, ${how}.`) : null;
   }
   if (launch.carried && launch.role) {
-    const why = codex ? " (a resumed Codex session keeps its first note)" : "";
-    return fix(`started with the role note of ${launch.role.role}: ${restart} to give it this one${why}`);
+    if (!context || context.read === current.role) return null;
+    // Stopped or paused: the next Start tells it. Running: a held delivery test is not typed again, so the window
+    // says what to do if the pane never reads the role.
+    if (!context.running) return { text: `This agent started as ${launch.role.role}. Aya tells it this role at the next Start.`, restartFixes: false };
+    return fix(`This agent started as ${launch.role.role} and has not read this role yet. If that stays, ${how}.`);
   }
-  const began = launch.role ? "started without its role note" : "started before it had this role";
-  return cannot(await capabilityGap(tab, preset, deps)) ?? fix(`${began}: ${restart} to give it the role note`);
+  return cannot(await capabilityGap(tab, preset, deps)) ?? fix(`This agent started before it had this role and can lose it in a long session. To keep it, ${how}.`);
 }
 
-/** What the window says about a role's pane: why its CLI cannot be told the
- *  role, or that it started with another role (or none), else null. */
-export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps): Promise<string | null> {
-  return (await roleNoteState(tab, current, deps))?.text ?? null;
+/** What the window says about a role's pane, else null. */
+export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps, context?: RoleNoteContext): Promise<string | null> {
+  return (await roleNoteState(tab, current, deps, context))?.text ?? null;
 }
 
 interface RoleNoteReport {
@@ -303,6 +316,7 @@ export async function roleNoteReport(
   team: string,
   assignments: Record<string, string>,
   deps: PaneBriefDeps,
+  teamState?: { running: boolean; read: Record<string, string> },
 ): Promise<RoleNoteReport> {
   const assigned = new Set(Object.values(assignments));
   const roleNotes: Record<string, string | null> = {};
@@ -310,15 +324,18 @@ export async function roleNoteReport(
   for (const [role, pane] of Object.entries(assignments)) {
     const tab = project.tabs.find((t) => t.id === pane);
     if (!tab) continue;
-    const gap = await roleNoteState(tab, { team, role }, deps);
+    const gap = await roleNoteState(tab, { team, role }, deps, teamState && { running: teamState.running, read: teamState.read[pane] ?? null });
     roleNotes[role] = gap?.text ?? null;
     if (gap?.restartFixes) restartable.push(role);
   }
   const staleNotes: string[] = [];
+  const presets = await deps.listPresets();
   for (const tab of project.tabs) {
     const launch = assigned.has(tab.id) ? undefined : await deps.records.get(tab.id);
     if (launch?.carried && launch.role?.team === team) {
-      staleNotes.push(`${tab.name} still carries the role note of ${launch.role.role}: restart it to drop it`);
+      const preset = presets.find((p) => p.id === tab.presetId);
+      const how = preset && presetAgent(preset) === "codex" ? "close it and open a new session" : "right-click it and choose Restart";
+      staleNotes.push(`${tab.name} still works as ${launch.role.role} from when it started. To clear that, ${how}.`);
     }
   }
   return { roleNotes, restartable, staleNotes };

@@ -64,7 +64,7 @@ function keptByTrim(log: TeamMessage[], owed: (m: TeamMessage) => boolean): Team
   return log.filter((m) => kept.has(m));
 }
 
-type StateFile = { paused?: boolean; pausedBy?: unknown; started?: boolean; lastRound?: unknown; roundClockAt?: unknown; silenceRoundAt?: unknown; agentAuthored?: boolean; pendingTask?: unknown; whoamiAt?: unknown; roleChangedAt?: unknown };
+type StateFile = { paused?: boolean; pausedBy?: unknown; started?: boolean; lastRound?: unknown; roundClockAt?: unknown; silenceRoundAt?: unknown; agentAuthored?: boolean; pendingTask?: unknown; whoamiAt?: unknown; roleChangedAt?: unknown; whoamiRole?: unknown };
 
 export interface PendingTask {
   to: string;
@@ -98,6 +98,11 @@ const typingNow = new Set<string>();
 function isoRecord(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value).filter(([, at]) => typeof at === "string" && !Number.isNaN(Date.parse(at)))) as Record<string, string>;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => typeof v === "string")) as Record<string, string>;
 }
 
 function withoutKey(value: unknown, key: string): Record<string, string> {
@@ -158,8 +163,18 @@ export class TeamStore {
 
   private reassign(paneId: string, role?: string): Promise<void> {
     return this.serial(async () => {
-      const next = Object.fromEntries(Object.entries(await this.assignments()).filter(([, p]) => p !== paneId));
+      const before = await this.assignments();
+      const next = Object.fromEntries(Object.entries(before).filter(([, p]) => p !== paneId));
       if (role) next[role] = paneId;
+      // A pane that leaves or changes its role has not read its next one yet: what it read before does not count.
+      // Dropped before the assignment is written, so a write that fails or a quit in between leaves the pane
+      // counted as not having read its role (the window warns), never a new role counted as read.
+      const was = Object.entries(before).find(([, p]) => p === paneId)?.[0];
+      const state = await this.readState();
+      if (was !== role && paneId in stringRecord(state.whoamiRole)) {
+        const { [paneId]: _, ...read } = stringRecord(state.whoamiRole);
+        await writeFileAtomic(this.file(TEAM_FILES.state), JSON.stringify({ ...state, whoamiRole: read }));
+      }
       await writeFileAtomic(this.file(TEAM_FILES.assignments), JSON.stringify(next, null, 2));
     });
   }
@@ -217,9 +232,18 @@ export class TeamStore {
     return { paused: state.paused === true, running: state.started === true && state.paused !== true };
   }
 
-  /** When the role's pane last ran aya team whoami (asked before it read the definition). */
-  noteWhoami(role: string, at: string): Promise<void> {
-    return this.updateState((state) => ({ ...state, whoamiAt: { ...isoRecord(state.whoamiAt), [role]: at } }));
+  /** When the role's pane last ran aya team whoami (asked before it read the definition), and the role that pane read. */
+  noteWhoami(role: string, at: string, pane?: string): Promise<void> {
+    return this.updateState((state) => ({
+      ...state,
+      whoamiAt: { ...isoRecord(state.whoamiAt), [role]: at },
+      ...(pane ? { whoamiRole: { ...stringRecord(state.whoamiRole), [pane]: role } } : {}),
+    }));
+  }
+
+  /** Per pane, the role of this team its agent last read with aya team whoami. */
+  async rolesRead(): Promise<Record<string, string>> {
+    return stringRecord((await this.readState()).whoamiRole);
   }
 
   /** A Save changed what whoami prints for these roles. */
