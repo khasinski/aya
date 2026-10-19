@@ -80,6 +80,7 @@ async function world(pausedBy) {
     roleLaunch: async () => ({ reach: "reaches", refused: null }),
     launchBlock: async () => null,
     launchNote: async () => null,
+    launchUncertain: async () => false,
     paneAlive: async () => true,
     openPanes: async () => {},
     newPaneId: () => "new-1",
