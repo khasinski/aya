@@ -155,6 +155,26 @@ adminTest("assignments, pause state and the recent log come back with the team",
   assert.deepEqual(team.log.map((m) => m.text), ["hi"]);
 });
 
+// The role a pane read with whoami counts only while it keeps that role: one that left, even for another team, and
+// came back has not read it since (pane-brief.ts hides the other-role note on that read).
+adminTest("a pane that leaves its role, for another role or team, drops the role it read", async (t) => {
+  await saveTeam(t.teamHome, t.project, TEAM);
+  await saveTeam(t.teamHome, t.project, { ...TEAM, name: "other" });
+  const a = new TeamStore(teamDir(t.teamHome, "game", "ux-review"));
+  await assignRole(t.teamHome, t.project, "ux-review", "implementer", "pane-t");
+  await a.noteWhoami("implementer", new Date().toISOString(), "pane-t");
+  assert.deepEqual(await a.rolesRead(), { "pane-t": "implementer" });
+  await assignRole(t.teamHome, t.project, "other", "tester", "pane-t");
+  await assignRole(t.teamHome, t.project, "ux-review", "implementer", "pane-t");
+  assert.deepEqual(await a.rolesRead(), {}, "back from another team: not read since");
+  await a.noteWhoami("implementer", new Date().toISOString(), "pane-t");
+  await assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-t");
+  assert.deepEqual(await a.rolesRead(), {}, "another role in the same team: not read yet");
+  await a.noteWhoami("tester", new Date().toISOString(), "pane-i");
+  await assignRole(t.teamHome, t.project, "ux-review", "implementer", null);
+  assert.deepEqual(await a.rolesRead(), { "pane-i": "tester" }, "another pane's read stays");
+});
+
 adminTest("a pane from another project cannot take a role", async (t) => {
   await saveTeam(t.teamHome, t.project, TEAM);
   await assert.rejects(assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-elsewhere"), /not in this project/);

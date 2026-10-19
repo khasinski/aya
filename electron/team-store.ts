@@ -163,9 +163,17 @@ export class TeamStore {
 
   private reassign(paneId: string, role?: string): Promise<void> {
     return this.serial(async () => {
-      const next = Object.fromEntries(Object.entries(await this.assignments()).filter(([, p]) => p !== paneId));
+      const before = await this.assignments();
+      const next = Object.fromEntries(Object.entries(before).filter(([, p]) => p !== paneId));
       if (role) next[role] = paneId;
       await writeFileAtomic(this.file(TEAM_FILES.assignments), JSON.stringify(next, null, 2));
+      // A pane that leaves or changes its role has not read its next one yet: what it read before does not count.
+      const was = Object.entries(before).find(([, p]) => p === paneId)?.[0];
+      const state = await this.readState();
+      if (was !== role && paneId in stringRecord(state.whoamiRole)) {
+        const { [paneId]: _, ...read } = stringRecord(state.whoamiRole);
+        await writeFileAtomic(this.file(TEAM_FILES.state), JSON.stringify({ ...state, whoamiRole: read }));
+      }
     });
   }
 
