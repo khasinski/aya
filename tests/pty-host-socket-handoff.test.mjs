@@ -31,8 +31,10 @@ const isAlive = (pid) => {
 
 test("after a restart, the old host's exit leaves the new host's socket in place", async (t) => {
   const pids = new Set();
+  let app;
   t.after(async () => {
-    for (const pid of pids) {
+    app?.dispose();app?.dropSocket();
+    for (const pid of new Set([...pids, app?.lastHostPid, app?.pendingPlannedHost?.pid].filter(Number.isInteger))) {
       try {
         process.kill(-pid, "SIGKILL");
       } catch {
@@ -44,7 +46,7 @@ test("after a restart, the old host's exit leaves the new host's socket in place
   });
 
   const wc = fakeWebContents();
-  const app = new PtyHostClient(HOST_SCRIPT);
+  app = new PtyHostClient(HOST_SCRIPT);
   app.attachWebContents(wc);
   // A pane that ignores the hang-up, so the old host is still shutting down (until its SIGKILL step) when the new
   // one binds the socket: the order in which the race happened.
