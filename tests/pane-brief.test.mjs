@@ -105,7 +105,7 @@ for (const agent of AGENTS) {
               assert.equal(gap, null);
             } else {
               assert.doesNotMatch(told(out, deps), NOTE);
-              assert.match(gap ?? "", /^cannot tell this CLI its role: \S/, "a role that cannot be told must be reported");
+              assert.match(gap ?? "", /^Aya cannot give this agent its role when it starts: \S/, "a role that cannot be told must be reported");
             }
           }));
       }
@@ -208,34 +208,36 @@ for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
         withRig(presetOf(agent), startedAs && { team: "ux-review", role: startedAs }, async ({ start, gap: gapOf }) => {
           await start();
           const gap = await gapOf({ team: "ux-review", role: now });
-          if (!takesNote) assert.match(gap, /^cannot tell this CLI its role: /);
+          if (!takesNote) assert.match(gap, /^Aya cannot give this agent its role when it starts: /);
           else if (startedAs === now) assert.equal(gap, null);
-          else if (startedAs === null) assert.match(gap, /^started before it had this role: (restart it|start a new session) to give it the role note/);
-          else assert.match(gap, new RegExp(`^started with the role note of ${startedAs}: `));
+          else if (startedAs === null) assert.match(gap, /^This agent started before it had this role and can lose it in a long session\. To keep it, (right-click the pane and choose Restart|pick a new session for this role in its pane list)\.$/);
+          // Aya tells a pane its role at Start and when it is given one; the agent reads it with whoami.
+          else assert.equal(gap, null, `a pane that started as ${startedAs} needs nothing to play ${now}`);
         }));
     }
   }
 }
 
-test("ordering: a role taken away leaves the pane listed as still carrying its note", () =>
+test("ordering: a role taken away leaves the pane listed as still working as that role", () =>
   withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
     deps.paneRole = async (spawn) => (spawn.ptyId === "p1" ? ROLE : null);
     for (const ptyId of ["p1", "p2"]) await start(ptyId);
     const project = { slug: "g", tabs: [{ id: "p1", presetId: "p", name: "shell 1" }, { id: "p2", presetId: "p", name: "shell 2" }] };
     assert.deepEqual((await roleNoteReport(project, "ux-review", { tester: "p1" }, deps)).staleNotes, []);
     const moved = await roleNoteReport(project, "ux-review", { tester: "p2" }, deps);
-    assert.deepEqual(moved.staleNotes, ["shell 1 still carries the role note of tester: restart it to drop it"]);
-    assert.match(moved.roleNotes.tester, /^started before it had this role/);
+    assert.deepEqual(moved.staleNotes, ["shell 1 still works as tester from when it started. To clear that, right-click it and choose Restart."]);
+    assert.match(moved.roleNotes.tester, /^This agent started before it had this role/);
     assert.deepEqual((await roleNoteReport(project, "other-team", {}, deps)).staleNotes, []);
   }));
 
-test("ordering: a resumed codex session keeps its first note, so a changed role stays flagged", () =>
+test("ordering: a resumed codex session keeps its first note, and a changed role still needs nothing from the user", () =>
   withRig(presetOf("codex"), ROLE, async ({ deps, start, gap }) => {
     const implementer = { team: "ux-review", role: "implementer" };
     await start("c1", "codex");
     deps.paneRole = async () => implementer;
     await start("c1", "codex resume abc");
-    assert.match(await gap(implementer, "c1"), /^started with the role note of tester: start a new session to give it this one \(a resumed Codex session keeps its first note\)$/);
+    assert.equal((await deps.records.get("c1")).role.role, "tester", "the resumed session keeps its first note");
+    assert.equal(await gap(implementer, "c1"), null, "Aya tells it the new role; the user has nothing to do");
     await start("c1", "codex");
     assert.equal(await gap(implementer, "c1"), null, "a fresh codex start takes the new role");
   }));
@@ -284,7 +286,7 @@ test("a spawn that only attaches to a live pane changes neither its record nor i
       assert.equal(out.command, agent, `${agent}: the command is left alone`);
       assert.deepEqual(await deps.records.get("p1"), before.record, `${agent}: record`);
       assert.equal(told(spawn("p1"), deps), before.files, `${agent}: files`);
-      assert.match(await gap(implementer, "p1"), /^started with the role note of tester/);
+      assert.equal(await gap(implementer, "p1"), null);
     });
   }
 });
@@ -308,7 +310,7 @@ for (const [agent, resumeCommand] of Object.entries(RESUME)) {
           const gap = await gapOf(NEW_ROLE, "p1");
           if (agent === "codex" && resumed && !before) {
             assert.deepEqual(record, { role: null, carried: false, unknown: true });
-            assert.match(gap, /^started before Aya recorded what it was told: start a new session/);
+            assert.match(gap, /^Aya cannot tell whether this agent got its role when it started\. To be sure, pick a new session/);
           } else if (agent === "codex" && resumed) {
             assert.deepEqual(record, before, "a resumed codex session keeps its first note");
           } else {
@@ -345,7 +347,7 @@ test("a resumed codex pane that could never be told its role says that, not just
   withRig(presetOf("codex", "cd sub && codex resume abc"), NEW_ROLE, async ({ deps, start, gap }) => {
     await start("p1");
     assert.deepEqual(await deps.records.get("p1"), { role: null, carried: false, unknown: true });
-    assert.match(await gap(NEW_ROLE, "p1"), /^cannot tell this CLI its role/);
+    assert.match(await gap(NEW_ROLE, "p1"), /^Aya cannot give this agent its role when it starts/);
   }));
 
 // A bare `resume` word makes a codex start a resume, not one inside a quoted prompt; the program may be any wrapper.
@@ -372,11 +374,11 @@ for (const [command, resumes] of Object.entries(CODEX_COMMANDS)) {
 }
 
 // A pty host outlives the app, so a running pane may predate the launch records.
-const UNKNOWN = /^started before Aya recorded what it was told: (restart it|start a new session) to give it the role note/;
+const UNKNOWN = /^Aya cannot tell whether this agent got its role when it started\. To be sure, (right-click the pane and choose Restart|pick a new session for this role in its pane list)\.$/;
 const GAP_CELLS = {
   none: { record: undefined, live: UNKNOWN, idle: null },
   carried: { record: { role: NEW_ROLE, carried: true }, live: null, idle: null },
-  "not carried": { record: { role: null, carried: false }, live: /^started before it had this role/, idle: /^started before it had this role/ },
+  "not carried": { record: { role: null, carried: false }, live: /^This agent started before it had this role/, idle: /^This agent started before it had this role/ },
   unknown: { record: { role: null, carried: false, unknown: true }, live: UNKNOWN, idle: UNKNOWN },
 };
 for (const agent of ["claude", "grok", "opencode", "codex"]) {
@@ -442,7 +444,7 @@ test("opencode: a login shell too slow to answer costs the note, visibly; a late
       script("sleep 6");
       assert.equal((await start("a")).command, "opencode", "no answer within the wait: no note");
       assert.deepEqual(await deps.records.get("a"), { role: ROLE, carried: false });
-      assert.match(await gap(ROLE, "a"), /^cannot tell this CLI its role: your shell's environment could not be read/);
+      assert.match(await gap(ROLE, "a"), /^Aya cannot give this agent its role when it starts: your shell's environment could not be read/);
       script("sleep 0.3");
       assert.match((await start("b")).command, /^OPENCODE_CONFIG='[^']*' opencode$/, "a slow shell that answers in time: note");
       assert.deepEqual(noTold(await deps.records.get("b")), { role: ROLE, carried: true });
@@ -485,7 +487,7 @@ test("a running pane with no record whose CLI could never be told says that, not
   for (const [agent, command] of [["cursor", "cursor"], ["claude", "cd sub && claude"]]) {
     await withRig(presetOf(agent, command), NEW_ROLE, async ({ deps, gap }) => {
       deps.running = async () => true;
-      assert.match(await gap(NEW_ROLE, "p1"), /^cannot tell this CLI its role/, command);
+      assert.match(await gap(NEW_ROLE, "p1"), /^Aya cannot give this agent its role when it starts/, command);
     });
   }
 });
@@ -501,7 +503,7 @@ test("opencode: an inline OPENCODE_CONFIG_CONTENT in the command is the user's o
 // give it now is not what it carries. A claude or codex role pane always takes the brief, so a preset toggle
 // changes nothing it would be told now.
 for (const agent of ["claude", "grok", "opencode", "codex"]) {
-  const restart = agent === "codex" ? "start a new session" : "restart it";
+  const how = agent === "codex" ? "pick a new session for this role in its pane list" : "right-click the pane and choose Restart";
   for (const [change, mutate, flagged] of [
     ["nothing changed", () => {}, false],
     ["brief turned on after the start", (p) => void (p.agentBrief = true), !TEAM_BRIEF_AGENTS.includes(agent)],
@@ -517,7 +519,7 @@ for (const agent of ["claude", "grok", "opencode", "codex"]) {
           mutate(preset);
           const gap = await gapOf();
           if (!flagged) return assert.equal(gap, null);
-          assert.match(gap ?? "", new RegExp(`^started with an older brief: ${restart} to give it the current one$`));
+          assert.equal(gap, `This agent started with older instructions from Aya. To give it the current ones, ${how}.`);
         });
       });
     }
@@ -548,8 +550,8 @@ for (const [agent, received] of Object.entries(RECEIVED)) {
         const older = text.replace("Run `aya team whoami` now", "Run `aya team whoami`");
         assert.notEqual(older, text);
         await deps.records.set("t1", { role: ROLE, carried: true, told: toldDigest(older) });
-        const restart = agent === "codex" ? "start a new session" : "restart it";
-        assert.equal(await gap(), `started with an older brief: ${restart} to give it the current one`);
+        const how = agent === "codex" ? "pick a new session for this role in its pane list" : "right-click the pane and choose Restart";
+        assert.equal(await gap(), `This agent started with older instructions from Aya. To give it the current ones, ${how}.`);
       }));
   }
 }
@@ -564,7 +566,7 @@ test("restart: the digest of what a pane was told survives in the records file, 
     const launch = await deps.records.get("t1");
     await deps.records.set("t1", { ...launch, told: "0".repeat(TOLD_DIGEST_HEX_CHARS) });
     deps.records = fileLaunchRecords(file);
-    assert.match((await gap()) ?? "", /^started with an older brief:/);
+    assert.match((await gap()) ?? "", /^This agent started with older instructions from Aya\./);
   });
 });
 
@@ -650,7 +652,7 @@ for (const { agent, presetBrief, pane, brief, note } of TEAM_BRIEF_CELLS) {
       assert.deepEqual(preset, saved, "the preset itself is never changed");
       if (!role) return;
       if (note) assert.equal(await gap(), null, "what the pane got is what Aya would give it now");
-      else assert.match((await gap()) ?? "", /^cannot tell this CLI its role: \S/);
+      else assert.match((await gap()) ?? "", /^Aya cannot give this agent its role when it starts: \S/);
     });
   });
 }

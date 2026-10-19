@@ -87,7 +87,7 @@ test.describe(`opencode with a login shell that takes ${RC_SECONDS} s to start`,
 test.describe("role given or changed while panes run", () => {
   test.use(teamSeed(BARE_TEAM, { presetList: presets("claude"), assignments: null, seed: HERMETIC_SHELL }));
 
-  test("a running pane given a role says it started without the note, and moving the role marks the old pane", async ({ window, seeded }) => {
+  test("a running pane given a role says it started before the role and how to keep it, and moving the role marks the old pane", async ({ window, seeded }) => {
     await firstTerminalShown(window);
     for (const id of ["tab-left", "tab-right"]) {
       await expect.poll(() => dumpOf(seeded.projectDir, id) !== null, { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
@@ -95,11 +95,12 @@ test.describe("role given or changed while panes run", () => {
     const aya = cli(seeded.ayaHome);
     aya(["team", "open", "ux-review", "tester=pane:tab-right"]);
     const card = (await openTeams(window)).getByTestId("team-ux-review");
-    await expect(card.getByLabel("tester role note")).toContainText("started before it had this role");
-    await expect(card.getByLabel("tester role note")).toContainText("aya team whoami");
+    await expect(card.getByLabel("tester role note")).toContainText("This agent started before it had this role");
+    await expect(card.getByLabel("tester role note")).toContainText("right-click the pane and choose Restart");
+    await expect(card.getByLabel("tester role note")).not.toContainText("aya team whoami");
 
     aya(["team", "open", "ux-review", "--replace", "tester=pane:tab-left"]);
-    await expect(card.getByLabel("tester role note")).toContainText("started before it had this role");
+    await expect(card.getByLabel("tester role note")).toContainText("This agent started before it had this role");
   });
 });
 
@@ -107,13 +108,13 @@ for (const agent of AGENTS) {
   test.describe(`${agent}: a running pane Aya has no launch record of`, () => {
     test.use(teamSeed(BARE_TEAM, { presetList: presets(agent), assignments: null, seed: HERMETIC_SHELL }));
 
-    test("given a role, it says it started before Aya recorded what it was told", async ({ window, seeded }) => {
+    test("given a role, it says Aya cannot tell whether the agent got it", async ({ window, seeded }) => {
       await firstTerminalShown(window);
       await expect.poll(() => dumpOf(seeded.projectDir, "tab-right") !== null, { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
       rmSync(join(seeded.ayaHome, "pane-launch-roles.json"), { force: true });
       cli(seeded.ayaHome)(["team", "open", "ux-review", "tester=pane:tab-right"]);
       const card = (await openTeams(window)).getByTestId("team-ux-review");
-      await expect(card.getByLabel("tester role note")).toContainText("started before Aya recorded what it was told");
+      await expect(card.getByLabel("tester role note")).toContainText("Aya cannot tell whether this agent got its role when it started");
     });
   });
 }
@@ -121,13 +122,13 @@ for (const agent of AGENTS) {
 test.describe("a pane launched with a role that is then taken away", () => {
   test.use(teamSeed(BARE_TEAM, { presetList: presets("claude"), assignments: { tester: "tab-right" }, seed: HERMETIC_SHELL }));
 
-  test("the Teams window marks the pane that still carries the old note", async ({ window, seeded }) => {
+  test("the Teams window marks the pane that still works as the old role", async ({ window, seeded }) => {
     await firstTerminalShown(window);
     await expect.poll(() => dumpOf(seeded.projectDir, "tab-right") !== null, { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
     expect(told(dumpOf(seeded.projectDir, "tab-right")!)).toMatch(NOTE);
     cli(seeded.ayaHome)(["team", "open", "ux-review", "--replace", "tester=pane:tab-left"]);
     const card = (await openTeams(window)).getByTestId("team-ux-review");
-    await expect(card.getByLabel("stale role notes")).toContainText("still carries the role note of tester");
+    await expect(card.getByLabel("stale role notes")).toContainText("still works as tester from when it started");
   });
 });
 
@@ -139,12 +140,12 @@ test.describe("a pane that is re-mounted while it runs", () => {
     await expect.poll(() => dumpOf(seeded.projectDir, "tab-right") !== null, { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
     cli(seeded.ayaHome)(["team", "open", "ux-review", "--replace", "tester=pane:tab-left"]);
     const stale = () => openTeams(window).then((teams) => teams.getByTestId("team-ux-review").getByLabel("stale role notes"));
-    await expect(await stale()).toContainText("still carries the role note of tester");
+    await expect(await stale()).toContainText("still works as tester from when it started");
 
     const replays = () => (existsSync(join(seeded.ayaHome, "pty-events.log")) ? readFileSync(join(seeded.ayaHome, "pty-events.log"), "utf8") : "");
     await window.reload();
     await firstTerminalShown(window);
     await expect.poll(() => /spawn-replay[^\n]*tab-right/.test(replays()), { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
-    await expect(await stale()).toContainText("still carries the role note of tester");
+    await expect(await stale()).toContainText("still works as tester from when it started");
   });
 });
