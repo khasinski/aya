@@ -438,6 +438,10 @@ test("team-card launch text is plain language and names the available next step"
   assert.match(blocks, /Restart terminal|Settings > Diagnostics > PTY host > Restart/);
   assert.doesNotMatch(blocks, /launch flags|preflight|socket|launch record|--no-daemon|allowUnixSockets/);
 
+  const unknownNotes = ["$SHELL", "aider"].map((command) => launchNoteOf({ command, cwd: "/p", mode: launchMode(command, config()) })).join(" ");
+  assert.match(unknownNotes, /Open a Claude, Codex, or OpenCode terminal from New terminal for this role/);
+  assert.doesNotMatch(unknownNotes, /agent pane/);
+
   const notes = [
     launchNoteOf({ command: "npx codex", cwd: "/p", mode: launchMode("npx codex", config()) }),
     launchNoteOf({ command: "claude --permission-mode plan", cwd: "/p", mode: launchMode("claude --permission-mode plan", config()) }),

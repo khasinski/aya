@@ -55,7 +55,7 @@ export type LaunchConfig = LaunchFiles & {
 };
 
 const reaches = (cli: string, mode: string): LaunchMode => ({ cli, mode, reach: "reaches", why: null, fix: [], autoFix: false });
-const unknown = (cli: string, mode: string, why: string, todo?: string, displayWhy = "Aya could not confirm whether this pane can join the team", displayTodo = "Use an agent pane if you want Aya to check team access"): LaunchMode => ({ cli, mode, reach: "unknown", why, fix: [], autoFix: false, todo, displayWhy, displayTodo });
+const unknown = (cli: string, mode: string, why: string, todo?: string, displayWhy = "Aya could not confirm whether this pane can join the team", displayTodo = "Open a Claude, Codex, or OpenCode terminal from New terminal for this role"): LaunchMode => ({ cli, mode, reach: "unknown", why, fix: [], autoFix: false, todo, displayWhy, displayTodo });
 const blocked = (cli: string, mode: string, why: string, fix: string[], autoFix: boolean, displayWhy = "This pane's current access settings prevent it from sending team messages"): LaunchMode => ({ cli, mode, reach: "blocked", why, fix, autoFix, displayWhy });
 
 function parse(command: string): { assignments: string[]; name: string; head: string; tail: string; rawWords: string[]; words: string[] } {
@@ -455,13 +455,13 @@ function grokMode(words: string[]): LaunchMode {
 export function launchMode(command: string, config: LaunchConfig): LaunchMode {
   const lead = cdLead(command);
   if (lead) return launchMode(command.slice(lead.at), config);
-  if (isShellCommand(command)) return unknown("shell", "shell", "a shell runs whatever is typed into it", undefined, "This pane accepts commands you type, so Aya cannot tell whether they can send team messages", "Use an agent pane if you want Aya to check team access");
+  if (isShellCommand(command)) return unknown("shell", "shell", "a shell runs whatever is typed into it", undefined, "This pane accepts commands you type, so Aya cannot tell whether they can send team messages", "Open a Claude, Codex, or OpenCode terminal from New terminal for this role");
   const { name, words } = parse(command);
   if (name === "codex") return codexMode(words, config);
   if (name === "opencode") return opencodeMode(command, words, config);
   if (name === "claude") return claudeMode(words, config);
   if (name === "grok") return grokMode(words);
-  return unknown(name, name, `Aya reads the launch flags of claude, codex, opencode and grok run directly (a cd <dir> && in front is fine), not of ${name}`, undefined, "Aya could not identify how this pane connects, so it cannot confirm whether the pane can join the team", "Open the agent directly in a new pane, or choose a preset Aya supports");
+  return unknown(name, name, `Aya reads the launch flags of claude, codex, opencode and grok run directly (a cd <dir> && in front is fine), not of ${name}`, undefined, "Aya could not identify how this pane connects, so it cannot confirm whether the pane can join the team", "Open a Claude, Codex, or OpenCode terminal from New terminal for this role");
 }
 
 const CLAUDE_MANAGED_SETTINGS = "/Library/Application Support/ClaudeCode/managed-settings.json";

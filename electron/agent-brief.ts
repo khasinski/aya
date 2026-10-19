@@ -131,7 +131,8 @@ export function withRoleNote(
   return { command: `${command.trim()} -c ${shellQuote(`developer_instructions=${JSON.stringify(text)}`)}` };
 }
 
-export const roleNoteStatus = (problem: string) => `Aya cannot give this agent its role when it starts: ${problem}. Aya tells it the role at Start instead.`;
+export const roleNoteStatus = (_problem: string) =>
+  "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.";
 
 export const BRIEF_BEGIN =
   "<!-- aya:brief:begin - managed by Aya; turn off \"Tell the agent about aya\" in the preset to remove -->";
