@@ -166,14 +166,16 @@ export class TeamStore {
       const before = await this.assignments();
       const next = Object.fromEntries(Object.entries(before).filter(([, p]) => p !== paneId));
       if (role) next[role] = paneId;
-      await writeFileAtomic(this.file(TEAM_FILES.assignments), JSON.stringify(next, null, 2));
       // A pane that leaves or changes its role has not read its next one yet: what it read before does not count.
+      // Dropped before the assignment is written, so a write that fails or a quit in between leaves the pane
+      // counted as not having read its role (the window warns), never a new role counted as read.
       const was = Object.entries(before).find(([, p]) => p === paneId)?.[0];
       const state = await this.readState();
       if (was !== role && paneId in stringRecord(state.whoamiRole)) {
         const { [paneId]: _, ...read } = stringRecord(state.whoamiRole);
         await writeFileAtomic(this.file(TEAM_FILES.state), JSON.stringify({ ...state, whoamiRole: read }));
       }
+      await writeFileAtomic(this.file(TEAM_FILES.assignments), JSON.stringify(next, null, 2));
     });
   }
 

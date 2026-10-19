@@ -175,6 +175,22 @@ adminTest("a pane that leaves its role, for another role or team, drops the role
   assert.deepEqual(await a.rolesRead(), { "pane-i": "tester" }, "another pane's read stays");
 });
 
+// The read role is dropped before the new assignment is written: a write that fails in between (or a quit) leaves
+// the pane counted as not having read its role, never a new role counted as read.
+adminTest("a reassignment whose write fails leaves the pane counted as not having read its role", async (t) => {
+  await saveTeam(t.teamHome, t.project, TEAM);
+  const dir = teamDir(t.teamHome, "game", "ux-review");
+  const store = new TeamStore(dir);
+  await assignRole(t.teamHome, t.project, "ux-review", "implementer", "pane-t");
+  await store.noteWhoami("implementer", new Date().toISOString(), "pane-t");
+  // A directory in place of assignments.json: the assignment cannot be written over it.
+  const file = join(dir, "assignments.json");
+  rmSync(file);
+  mkdirSync(join(file, "blocked"), { recursive: true });
+  await assert.rejects(store.assign("tester", "pane-t"));
+  assert.deepEqual(await store.rolesRead(), {});
+});
+
 adminTest("a pane from another project cannot take a role", async (t) => {
   await saveTeam(t.teamHome, t.project, TEAM);
   await assert.rejects(assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-elsewhere"), /not in this project/);
