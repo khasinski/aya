@@ -64,3 +64,35 @@ export async function cleanupNativeOwner(home) {
     fs.rmSync(file, { force: true });
   }
 }
+
+/** Stop only child processes this fixture spawned; never signal a numeric PGID. */
+export async function stopFixtureChildren(children) {
+  for (const child of new Set(children)) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    try { child.kill("SIGTERM"); }
+    catch (error) { if (error.code !== "ESRCH") throw error; }
+    if (await waitForChildExit(child, 5_000)) continue;
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill("SIGKILL"); }
+      catch (error) { if (error.code !== "ESRCH") throw error; }
+    }
+    if (!(await waitForChildExit(child, 2_000))) {
+      throw new Error(`Fixture child ${child.pid} did not exit during cleanup`);
+    }
+  }
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let timer;
+    const finish = (exited) => {
+      clearTimeout(timer);
+      child.removeListener("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    child.once("exit", onExit);
+    timer = setTimeout(() => finish(child.exitCode !== null || child.signalCode !== null), timeoutMs);
+  });
+}
