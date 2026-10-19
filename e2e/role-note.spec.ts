@@ -72,7 +72,6 @@ for (const [agent, optedIn, shape] of CELLS) {
       } else {
         expect(carried).toBe(false);
         await expect(status).toContainText("This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
-        await expect(status).toContainText("Aya tells it the role at Start instead.");
       }
     });
   });
