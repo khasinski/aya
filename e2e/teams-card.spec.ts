@@ -36,6 +36,13 @@ const LOG = [
   msg("tester", "developer", "2 failing: timer.test.ts resumes from 0 after reload.", { delivered: false, held: "shows an approval prompt" }),
 ].join("\n");
 
+async function expectTwoPublicLaunchNotes(card: Locator) {
+  const notes = card.locator('[aria-label$="launch note"]');
+  await expect(notes).toHaveCount(2);
+  const text = (await notes.allTextContents()).join(" ");
+  expect(text).not.toMatch(/launch flags|preflight|socket|launch record|--dangerously|sandbox_workspace/);
+}
+
 test.use(
   teamSeed(TEAM, {
     presetList: [SHELL_PRESET, CLAUDE_PRESET],
@@ -72,7 +79,7 @@ test("the log reads as a chat: oldest first, opened at the newest, the delivery 
   await expect(entries.last()).toContainText("to developer");
   await expect(entries.last()).toBeInViewport();
   // The role notes come in seconds after the dialog opened and grow the card above the log: its end stays in view.
-  await expect(card.getByText(/may not reach Aya/)).toHaveCount(2);
+  await expectTwoPublicLaunchNotes(card);
   await expect(entries.last()).toBeInViewport({ ratio: 0.5 });
   await expect(chat.getByText("Delivery test: run aya team whoami, then send one word to ux-reviewer.")).toHaveCount(0);
   await chat.getByRole("button", { name: /Delivery test: 3\/3 answered/ }).click();
@@ -82,10 +89,10 @@ test("the log reads as a chat: oldest first, opened at the newest, the delivery 
 // On a slow machine the notes are in before the dialog first paints (CI): the card still fits the dialog.
 test("the team's name and its newest message show together when the role notes were in before the dialog opened", async ({ window }) => {
   const first = await openTeams(window);
-  await expect(first.getByTestId("team-ux-review").getByText(/may not reach Aya/)).toHaveCount(2);
+  await expectTwoPublicLaunchNotes(first.getByTestId("team-ux-review"));
   await first.getByRole("button", { name: "Close", exact: true }).click();
   const card = (await openTeams(window)).getByTestId("team-ux-review");
-  await expect(card.getByText(/may not reach Aya/)).toHaveCount(2);
+  await expectTwoPublicLaunchNotes(card);
   await expect(card.getByText("ux-review", { exact: true })).toBeInViewport();
   const chat = card.getByRole("log", { name: "ux-review messages" });
   await expect(chat.locator(".aya-chat-entry").last()).toBeInViewport({ ratio: 0.5 });
@@ -97,7 +104,7 @@ test("the team's name and its newest message show together when the role notes w
 test("the log opens at its newest message again after the role notes came in and the page reloaded", async ({ window }) => {
   const atNewest = (chat: Locator) => chat.evaluate((el) => el.scrollTop > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
   const card = (await openTeams(window)).getByTestId("team-ux-review");
-  await expect(card.getByText(/may not reach Aya/)).toHaveCount(2);
+  await expectTwoPublicLaunchNotes(card);
   await window.reload();
   const chat = (await openTeams(window)).getByTestId("team-ux-review").getByRole("log", { name: "ux-review messages" });
   await expect(chat.locator(".aya-chat-entry").last()).toContainText("2 failing: timer.test.ts resumes from 0 after reload.");

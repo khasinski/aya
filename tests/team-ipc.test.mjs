@@ -40,6 +40,7 @@ function register({
       roleLaunch: async () => ({ reach: "unknown", refused: null }),
       launchBlock: async () => null,
       launchNote: async () => null,
+      launchUncertain: async () => false,
       paneAlive: async () => true,
       openPanes,
       newPaneId: () => "new-1",

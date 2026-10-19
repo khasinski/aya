@@ -30,6 +30,10 @@ export interface LaunchMode {
   todo?: string;
   /** Shown, never held. */
   note?: string;
+  /** Plain-language reason for the team card and CLI; `why` remains diagnostic data. */
+  displayWhy?: string;
+  /** A concrete user action paired with displayWhy. */
+  displayTodo?: string;
 }
 
 /** Lowest precedence first. */
@@ -51,8 +55,8 @@ export type LaunchConfig = LaunchFiles & {
 };
 
 const reaches = (cli: string, mode: string): LaunchMode => ({ cli, mode, reach: "reaches", why: null, fix: [], autoFix: false });
-const unknown = (cli: string, mode: string, why: string, todo?: string): LaunchMode => ({ cli, mode, reach: "unknown", why, fix: [], autoFix: false, todo });
-const blocked = (cli: string, mode: string, why: string, fix: string[], autoFix: boolean): LaunchMode => ({ cli, mode, reach: "blocked", why, fix, autoFix });
+const unknown = (cli: string, mode: string, why: string, todo?: string, displayWhy = "Aya could not confirm whether this pane can join the team", displayTodo = "Use an agent pane if you want Aya to check team access"): LaunchMode => ({ cli, mode, reach: "unknown", why, fix: [], autoFix: false, todo, displayWhy, displayTodo });
+const blocked = (cli: string, mode: string, why: string, fix: string[], autoFix: boolean, displayWhy = "This pane's current access settings prevent it from sending team messages"): LaunchMode => ({ cli, mode, reach: "blocked", why, fix, autoFix, displayWhy });
 
 function parse(command: string): { assignments: string[]; name: string; head: string; tail: string; rawWords: string[]; words: string[] } {
   const { lead, assignments, program } = splitProgram(command);
@@ -94,7 +98,7 @@ const CODEX_FULL_ACCESS = "danger-full-access";
 const CODEX_NEVER_ASK = "never";
 /** What a role's Codex pane runs with, unless its preset picks a sandbox or approval policy itself. */
 const CODEX_TEAM_ARGS = [CODEX_SANDBOX_OPTIONS[0], CODEX_FULL_ACCESS, CODEX_APPROVAL_OPTIONS[0], CODEX_NEVER_ASK];
-const CODEX_PRESET_DECIDES = `Codex's sandbox and approvals are as the preset sets them, not ${CODEX_TEAM_ARGS.join(" ")}, so it may stop for approvals on git and aya`;
+const CODEX_PRESET_DECIDES = "This pane keeps the access and approval choices from its preset. Codex may ask before running team actions; review the preset if you want fewer prompts.";
 
 interface CodexSandbox {
   sandbox?: string;
@@ -313,9 +317,9 @@ function codexPresetDecides(words: string[]): boolean {
 
 function codexMode(words: string[], config: LaunchConfig): LaunchMode {
   const sub = firstPositional(words);
-  if (sub !== undefined && NON_TUI.has(sub)) return unknown("codex", `codex ${sub}`, `codex ${sub} is not an interactive session`);
+  if (sub !== undefined && NON_TUI.has(sub)) return unknown("codex", `codex ${sub}`, `codex ${sub} is not an interactive session`, undefined, "This command runs once and exits instead of opening an interactive Codex pane", "Open an interactive Codex pane to use it with a team");
   if (optionValues(words, ["--remote"], VALUE_OPTIONS).length) {
-    return unknown("codex", "remote app server", "its commands run on a remote app server");
+    return unknown("codex", "remote app server", "its commands run on a remote app server", undefined, "This Codex pane runs on another computer, so Aya cannot confirm that it can join the team", "Open Codex on this computer to use it with the team");
   }
   const cli = codexCli(words);
   const user = config.codex.map(codexToml);
@@ -325,15 +329,15 @@ function codexMode(words: string[], config: LaunchConfig): LaunchMode {
   const bypass = CODEX_BYPASS.some((flag) => words.includes(flag));
   const legacy = legacyProfile(words, [...user, cli], profileFile);
   if (legacy) {
-    return unknown("codex", "legacy profile setting", `this Codex version cannot start with that profile setting: ${legacy}`, "remove it from Codex's config.toml, then restart the pane");
+    return unknown("codex", "legacy profile setting", `this Codex version cannot start with that profile setting: ${legacy}`, "remove it from Codex's config.toml, then restart the pane", "This Codex setup uses an older profile setting that Codex no longer supports", "Remove the old profile setting in Codex, then choose Restart terminal");
   }
   if (!bypass && [...files, ...project, cli].some((l) => l.unread)) {
-    return unknown("codex", "unread config", "Codex config in a form Aya does not read (a sandbox setting it cannot parse), so it cannot tell what applies", "fix that setting, then restart it");
+    return unknown("codex", "unread config", "Codex config in a form Aya does not read (a sandbox setting it cannot parse), so it cannot tell what applies", "fix that setting, then restart it", "Aya could not understand one of Codex's access settings, so it cannot confirm what this pane can do", "Review that setting in Codex, then choose Restart terminal");
   }
   const decides = (l: CodexSandbox) =>
     (l.sandbox !== undefined && cli.sandbox === undefined) || (l.network !== undefined && cli.network === undefined && (cli.sandbox ?? WORKSPACE_WRITE) === WORKSPACE_WRITE);
   if (!bypass && !config.codexTrusted && project.some(decides)) {
-    return unknown("codex", "untrusted project config", "the project's .codex/config.toml applies only once the project is trusted, and it is not marked trusted in Codex's config.toml", "trust the project in Codex, then restart the pane");
+    return unknown("codex", "untrusted project config", "the project's .codex/config.toml applies only once the project is trusted, and it is not marked trusted in Codex's config.toml", "trust the project in Codex, then restart the pane", "Codex has not trusted this project, so its project settings may not apply", "Trust the project in Codex, then choose Restart terminal");
   }
   // Measured: the command line over the project's config over the user's.
   const layers = [...files, ...(config.codexTrusted ? project : []), cli];
@@ -343,28 +347,28 @@ function codexMode(words: string[], config: LaunchConfig): LaunchMode {
   const presetDecides = codexPresetDecides(words);
   if (!bypass && sandbox === WORKSPACE_WRITE && !network) {
     // The network switch is neither a sandbox nor an approval choice, so a preset that made those keeps them.
-    return blocked("codex", mode, "Codex sandbox workspace-write blocks the socket", presetDecides ? CODEX_NETWORK_ON : CODEX_TEAM_ARGS, true);
+    return blocked("codex", mode, "Codex sandbox workspace-write blocks the socket", presetDecides ? CODEX_NETWORK_ON : CODEX_TEAM_ARGS, true, "Codex's current access settings prevent it from sending team messages");
   }
   if (!bypass && sandbox === "read-only") {
-    return blocked("codex", mode, "Codex sandbox read-only blocks the socket", CODEX_TEAM_ARGS, false);
+    return blocked("codex", mode, "Codex sandbox read-only blocks the socket", CODEX_TEAM_ARGS, false, "Codex is read-only, so it cannot do this role's work");
   }
   if (!bypass && sandbox !== WORKSPACE_WRITE && sandbox !== CODEX_FULL_ACCESS) {
-    return unknown("codex", mode, `Codex sandbox ${sandbox} is not measured`);
+    return unknown("codex", mode, `Codex sandbox ${sandbox} is not measured`, undefined, "Aya has not checked what this Codex access setting allows", "Choose an access setting you understand, then choose Restart terminal");
   }
   if (!words.includes(NO_DAEMON)) {
-    return blocked("codex", `${mode}, shared daemon`, "Codex runs on its shared daemon (no --no-daemon), so its aya calls can speak as another Codex pane; update Codex to one with --no-daemon", [], false);
+    return blocked("codex", `${mode}, shared daemon`, "Codex runs on its shared daemon (no --no-daemon), so its aya calls can speak as another Codex pane; update Codex to one with --no-daemon", [], false, "This Codex session is shared with other panes, so Aya cannot tell which role sent a message");
   }
   const approval = layers.reduce<string | undefined>((v, l) => l.approval ?? v, undefined);
   // `untrusted` runs only Codex's own list of read-only commands without asking; aya is not on it.
   if (!bypass && approval === "untrusted") {
-    const note = "Codex's approval policy untrusted asks before each command it runs, so each aya call this role makes waits for you to approve it in its pane; restart it with -a on-request to let them run";
+    const note = "Codex will ask you before running each team action. Approve those requests in Codex, or change its approval settings.";
     return { ...reaches("codex", `${mode}, approval untrusted`), note };
   }
   if (bypass || (sandbox === CODEX_FULL_ACCESS && approval === CODEX_NEVER_ASK)) return reaches("codex", mode);
   if (presetDecides) return { ...reaches("codex", mode), note: CODEX_PRESET_DECIDES };
   // Measured on 0.160: git cannot write .git/index.lock there, and aya team send waits for an approval.
   if (sandbox === WORKSPACE_WRITE) {
-    return { ...reaches("codex", mode), note: `Codex sandbox workspace-write will stop for approvals on git and aya; open a new pane for it, or restart this one with ${formatArgs(CODEX_TEAM_ARGS)}` };
+    return { ...reaches("codex", mode), note: "Codex may ask before changing files or running team actions. Approve requests in Codex, or choose a preset with fewer prompts." };
   }
   return reaches("codex", mode);
 }
@@ -386,7 +390,7 @@ function defaultAgent(text: string): string | undefined {
 
 function opencodeMode(command: string, words: string[], config: LaunchConfig): LaunchMode {
   const sub = firstPositional(words, OPENCODE_VALUE_OPTIONS);
-  if (sub !== undefined && OPENCODE_COMMANDS.has(sub)) return unknown("opencode", `opencode ${sub}`, `opencode ${sub} is not an interactive session`);
+  if (sub !== undefined && OPENCODE_COMMANDS.has(sub)) return unknown("opencode", `opencode ${sub}`, `opencode ${sub} is not an interactive session`, undefined, "This command runs once and exits instead of opening an interactive OpenCode pane", "Open an interactive OpenCode pane to use it with a team");
   const explicit = optionValues(words, ["--agent"], OPENCODE_VALUE_OPTIONS).at(-1);
   const content = paneEnv({}, parse(command).assignments).OPENCODE_CONFIG_CONTENT ?? config.opencodeContent ?? "";
   const configured = [...config.opencode, content].reduce<string | undefined>((agent, text) => defaultAgent(text) ?? agent, undefined);
@@ -394,9 +398,9 @@ function opencodeMode(command: string, words: string[], config: LaunchConfig): L
   const mode = `agent ${agent}`;
   if (agent === OPENCODE_DEFAULT_AGENT) return reaches("opencode", mode);
   if (agent === "plan") {
-    return blocked("opencode", mode, "OpenCode's plan agent is read-only (edits denied), so the role never does its work", ["--agent", OPENCODE_DEFAULT_AGENT], explicit === undefined);
+    return blocked("opencode", mode, "OpenCode's plan agent is read-only (edits denied), so the role never does its work", ["--agent", OPENCODE_DEFAULT_AGENT], explicit === undefined, "OpenCode's planning mode is read-only, so it cannot make the changes this role needs");
   }
-  return unknown("opencode", mode, `OpenCode agent ${agent}: its permissions are not measured`);
+  return unknown("opencode", mode, `OpenCode agent ${agent}: its permissions are not measured`, undefined, `Aya has not checked what OpenCode's ${agent} mode allows`, "Choose OpenCode's build mode for this role, or review its access settings and choose Restart terminal");
 }
 
 interface ClaudeSandbox {
@@ -415,10 +419,10 @@ function holdsSocket(entry: unknown, socket: string): boolean {
 function claudeMode(words: string[], config: LaunchConfig): LaunchMode {
   const chosen = optionValues(words, ["--permission-mode"]).at(-1);
   if (chosen === "plan") {
-    return unknown("claude", "plan mode", "Claude Code's plan mode may not act on the role's work (measured: it refused 1 of 2 runs)", "restart it without --permission-mode plan");
+    return unknown("claude", "plan mode", "Claude Code's plan mode may not act on the role's work (measured: it refused 1 of 2 runs)", "restart it without --permission-mode plan", "Claude Code's planning mode may not make changes needed for this role", "Choose a mode that can make changes, then choose Restart terminal");
   }
   if (config.claudeSettingsUnread) {
-    return unknown("claude", "settings unreadable", "could not read the file --settings names", "fix that path, then restart it");
+    return unknown("claude", "settings unreadable", "could not read the file --settings names", "fix that path, then restart it", "Aya could not read one of Claude Code's access settings", "Check that setting in Claude Code, then choose Restart terminal");
   }
   const settings = optionValues(words, ["--settings"]).at(-1);
   const inline = settings?.trim().startsWith("{") ? [settings] : [];
@@ -426,11 +430,11 @@ function claudeMode(words: string[], config: LaunchConfig): LaunchMode {
   try {
     layers = [...config.claude, ...inline].map((text) => (text.trim() ? (JSON.parse(text) as ClaudeSandbox) : {}));
   } catch {
-    return unknown("claude", "settings unreadable", "could not read Claude Code's settings", "fix that file, then restart it");
+    return unknown("claude", "settings unreadable", "could not read Claude Code's settings", "fix that file, then restart it", "Aya could not understand Claude Code's access settings", "Check those settings in Claude Code, then choose Restart terminal");
   }
   const defaultMode = layers.reduce<unknown>((mode, l) => l?.permissions?.defaultMode ?? mode, undefined);
   if (defaultMode === "plan" && chosen === undefined && !words.includes("--dangerously-skip-permissions")) {
-    return blocked("claude", "plan mode", "Claude Code's default is plan mode, which does not act on the role's work", ["--permission-mode", "default"], false);
+    return blocked("claude", "plan mode", "Claude Code's default is plan mode, which does not act on the role's work", ["--permission-mode", "default"], false, "Claude Code is in planning mode, so it cannot make the changes this role needs");
   }
   const enabled = layers.reduce((on, l) => (typeof l?.sandbox?.enabled === "boolean" ? l.sandbox.enabled : on), false);
   if (!enabled) return reaches("claude", "no sandbox");
@@ -440,7 +444,7 @@ function claudeMode(words: string[], config: LaunchConfig): LaunchMode {
   });
   if (allowed) return reaches("claude", "sandbox on, Aya's socket allowed");
   const allowSocket = JSON.stringify({ sandbox: { network: { allowUnixSockets: [config.socket] } } });
-  return blocked("claude", "sandbox on", "Claude Code's sandbox is on and does not allow Aya's socket", ["--settings", allowSocket], settings === undefined);
+  return blocked("claude", "sandbox on", "Claude Code's sandbox is on and does not allow Aya's socket", ["--settings", allowSocket], settings === undefined, "Claude Code's current access settings prevent it from sending team messages");
 }
 
 function grokMode(words: string[]): LaunchMode {
@@ -451,13 +455,13 @@ function grokMode(words: string[]): LaunchMode {
 export function launchMode(command: string, config: LaunchConfig): LaunchMode {
   const lead = cdLead(command);
   if (lead) return launchMode(command.slice(lead.at), config);
-  if (isShellCommand(command)) return unknown("shell", "shell", "a shell runs whatever is typed into it");
+  if (isShellCommand(command)) return unknown("shell", "shell", "a shell runs whatever is typed into it", undefined, "This pane accepts commands you type, so Aya cannot tell whether they can send team messages", "Use an agent pane if you want Aya to check team access");
   const { name, words } = parse(command);
   if (name === "codex") return codexMode(words, config);
   if (name === "opencode") return opencodeMode(command, words, config);
   if (name === "claude") return claudeMode(words, config);
   if (name === "grok") return grokMode(words);
-  return unknown(name, name, `Aya reads the launch flags of claude, codex, opencode and grok run directly (a cd <dir> && in front is fine), not of ${name}`);
+  return unknown(name, name, `Aya reads the launch flags of claude, codex, opencode and grok run directly (a cd <dir> && in front is fine), not of ${name}`, undefined, "Aya could not identify how this pane connects, so it cannot confirm whether the pane can join the team", "Open the agent directly in a new pane, or choose a preset Aya supports");
 }
 
 const CLAUDE_MANAGED_SETTINGS = "/Library/Application Support/ClaudeCode/managed-settings.json";
@@ -554,18 +558,24 @@ export function teamLaunch(command: string, config: LaunchConfig): { args: strin
     const mode = launchMode(withLaunchArgs(command, args), config);
     if (mode.reach !== "blocked") return { args };
     if (!mode.autoFix || tried.has(mode.why ?? "")) {
-      return { refused: mode.fix.length ? `${mode.why}; pick a preset that allows it (one that runs ${mode.cli} with ${formatArgs(mode.fix)})` : `${mode.why}` };
+      return { refused: `${mode.displayWhy ?? "This pane's current access settings prevent it from doing this role's work"}; ${blockedAction(mode)}` };
     }
     tried.add(mode.why ?? "");
     args.push(...mode.fix);
   }
 }
 
+function blockedAction(mode: LaunchMode): string {
+  if (mode.cli === "codex" && mode.mode.includes("shared daemon")) return "Use a separate Codex pane for each team role";
+  if (["opencode", "claude", "codex"].includes(mode.cli)) {
+    return "Choose a preset with access that allows team messages, or change this pane's access settings and choose Restart terminal";
+  }
+  return "Choose a pane that can do the role's work";
+}
+
 export function cantReach(mode: LaunchMode): string | null {
   if (mode.reach !== "blocked") return null;
-  const fix = formatArgs(mode.fix);
-  if (mode.autoFix) return `can't reach Aya: ${mode.why}; open a new pane for it, or restart this one with ${fix}`;
-  return mode.fix.length ? `can't reach Aya: ${mode.why}; restart it with ${fix}` : `can't reach Aya: ${mode.why}`;
+  return `can't reach Aya: ${mode.displayWhy ?? "This pane's current access settings prevent it from doing this role's work"}; ${blockedAction(mode)}`;
 }
 
 /** The host did not answer, as opposed to null: no record. */
@@ -577,10 +587,10 @@ export const LAUNCH_UNSUPPORTED = "unsupported";
 /** null when the pane is not there (yet) or was not recorded. */
 export type LaunchAnswer = PaneLaunch | typeof LAUNCH_UNREACHABLE | typeof LAUNCH_STARTING | typeof LAUNCH_UNSUPPORTED | null;
 
-export const NO_LAUNCH_RECORD = "Aya has no record of how this pane was launched, so it cannot tell whether it reaches Aya; restart it";
-const LAUNCH_ASK_FAILED = "Aya could not ask its terminal host how this pane was launched, so it cannot tell whether it reaches Aya; try again";
-const LAUNCH_STILL_STARTING = "Aya does not know yet how this pane was launched, because it is still starting, so it cannot tell whether it reaches Aya; try again";
-const LAUNCH_HOST_OLD = "Aya's terminal host is older than this Aya and does not record how panes are launched, so it cannot tell whether it reaches Aya; restart Aya's terminals";
+export const NO_LAUNCH_RECORD = "Aya could not check this pane's team access. Choose Restart terminal to check again.";
+const LAUNCH_ASK_FAILED = "Aya could not check this pane's team access. Choose Restart terminal to try again.";
+const LAUNCH_STILL_STARTING = "Aya is still opening this pane. It will check team access when the pane is ready.";
+const LAUNCH_HOST_OLD = "This pane was opened by an older Aya, so team access cannot be checked. Use Settings > Diagnostics > PTY host > Restart to check again.";
 
 export function launchBlockOf(launch: LaunchAnswer): string | null {
   if (launch === LAUNCH_UNREACHABLE) return LAUNCH_ASK_FAILED;
@@ -593,13 +603,13 @@ export function launchBlockOf(launch: LaunchAnswer): string | null {
 /** Only a measured can't reach holds a team; a pane Aya has no verdict for is typed into. */
 export const launchHoldOf = (launch: LaunchAnswer): string | null => (typeof launch === "object" && launch?.mode ? cantReach(launch.mode) : null);
 
-const CANNOT_TELL = new Set([NO_LAUNCH_RECORD, LAUNCH_ASK_FAILED, LAUNCH_STILL_STARTING, LAUNCH_HOST_OLD]);
-const MAY_NOT_REACH = "may not reach Aya";
 const NOTE_SEPARATOR = "; ";
 
-/** Whether Aya cannot tell that a pane reaches it: no verdict yet (`block`), or an unknown one not settled (`note`). */
-export const launchUnsure = (block: string | null, note: string | null): boolean =>
-  (block !== null && CANNOT_TELL.has(block)) || (note?.split(NOTE_SEPARATOR).some((part) => part.startsWith(MAY_NOT_REACH)) ?? false);
+/** Whether the structured launch result is not yet enough to confirm team access. */
+export const launchUnsure = (launch: LaunchAnswer, reached = false): boolean =>
+  (typeof launch === "string" && [LAUNCH_UNREACHABLE, LAUNCH_STARTING, LAUNCH_UNSUPPORTED].includes(launch)) ||
+  launch === null ||
+  (typeof launch === "object" && launch !== null && (!launch.mode || (launch.mode.reach === "unknown" && !reached)));
 
 /** The launch answer may still change: no pane at the host yet, or the host did not answer. */
 export const launchPending = (block: string | null): boolean => block === NO_LAUNCH_RECORD || block === LAUNCH_ASK_FAILED;
@@ -611,12 +621,14 @@ export const launchStarting = (block: string | null): boolean => block === LAUNC
 export function launchNoteOf(launch: LaunchAnswer, reached = false): string | null {
   if (typeof launch !== "object" || launch === null) return null;
   const widened = launch.added?.includes(CODEX_NETWORK_ON[1])
-    ? `Aya opened it with -c ${CODEX_NETWORK_ON[1]} so it reaches Aya; Codex's sandbox then lets its commands reach every network host, not only Aya's socket`
+    ? "Aya allowed this Codex pane to connect to any network host, not only Aya. Its commands can reach other computers and services on your network; change the preset if you do not want that."
     : launch.added?.includes(CODEX_FULL_ACCESS)
-      ? `Aya opened it with ${formatArgs(CODEX_TEAM_ARGS)} so git and aya never wait for an approval; Codex then runs its commands without a sandbox`
+      ? "Aya opened this Codex pane without a sandbox so its commands can run without approval. It can access your files and run commands directly; choose a more restricted preset if you do not want that."
       : null;
   const mode = launch.mode;
-  const unsure = mode?.reach === "unknown" && !reached ? `${MAY_NOT_REACH}: ${mode.why}${mode.todo ? `; ${mode.todo}` : ""}` : null;
+  const unsure = mode?.reach === "unknown" && !reached
+    ? `${mode.displayWhy ?? "Aya could not confirm whether this pane can join the team"}${mode.displayTodo ? `. ${mode.displayTodo}.` : "."}`
+    : null;
   const notes = [widened, mode?.note ?? null, unsure].filter((n): n is string => n !== null);
   return notes.length ? notes.join(NOTE_SEPARATOR) : null;
 }

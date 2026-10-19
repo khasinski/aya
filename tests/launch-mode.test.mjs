@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { UNREAD_SPELLINGS } from "./helpers/wrapped-spellings.mjs";
-import { cantReach, launchFiles, launchHoldOf, launchMode, launchNoteOf, launchUnsure, teamLaunch, withLaunchArgs } from "../dist-electron/launch-mode.js";
+import { cantReach, launchFiles, launchHoldOf, launchMode, launchNoteOf, launchUnsure, teamLaunch, withLaunchArgs, LAUNCH_UNREACHABLE, LAUNCH_STARTING, LAUNCH_UNSUPPORTED, NO_LAUNCH_RECORD, launchBlockOf } from "../dist-electron/launch-mode.js";
 
 const SOCK = "/Users/me/.aya/aya.sock";
 const NET = "sandbox_workspace_write.network_access=true";
@@ -220,20 +220,20 @@ const TEAM = [
   ["codex --no-daemon", {}, FULL_NEVER],
   ["codex --no-daemon -s danger-full-access", {}, []],
   ["codex --no-daemon -a on-request", {}, ["-c", NET]],
-  ["codex --no-daemon -s read-only", {}, /read-only blocks the socket.*pick a preset that allows it/],
+  ["codex --no-daemon -s read-only", {}, /Codex is read-only.*Choose a preset with access/],
   ["codex --no-daemon", { codexUser: RO }, /read-only/],
   ["codex --no-daemon", { codexUser: 'sandbox_mode = "workspace-write"\napproval_policy = "on-request"' }, FULL_NEVER],
-  ["codex --dangerously-bypass-approvals-and-sandbox", {}, /shared daemon.*update Codex/],
-  ["codex", {}, /shared daemon/],
+  ["codex --dangerously-bypass-approvals-and-sandbox", {}, /shared with other panes.*separate Codex pane/],
+  ["codex", {}, /shared with other panes.*separate Codex pane/],
   ["opencode", {}, []],
   ["opencode", { ocProject: ['{"default_agent": "plan"}'] }, ["--agent", "build"]],
-  ["opencode --agent plan", {}, /plan agent is read-only.*pick a preset/],
+  ["opencode --agent plan", {}, /planning mode is read-only.*Choose a preset with access/],
   ["opencode", { ocContent: '{"default_agent":"plan"}' }, ["--agent", "build"]],
   [`OPENCODE_CONFIG_CONTENT='{"default_agent":"plan"}' opencode`, {}, ["--agent", "build"]],
-  ["claude", { claude: [JSON.stringify({ permissions: { defaultMode: "plan" } })] }, /plan mode.*pick a preset/],
+  ["claude", { claude: [JSON.stringify({ permissions: { defaultMode: "plan" } })] }, /planning mode.*Choose a preset/],
   ["claude", {}, []],
   ["claude", { claude: [SANDBOXED] }, ["--settings", JSON.stringify({ sandbox: { network: { allowUnixSockets: [SOCK] } } })]],
-  [`claude --settings '${SANDBOXED}'`, {}, /sandbox is on/],
+  [`claude --settings '${SANDBOXED}'`, {}, /current access settings prevent it from sending team messages/],
   ["grok", {}, []],
   ["$SHELL", {}, []],
 ];
@@ -268,39 +268,39 @@ for (const [command, args, expected] of INSERT) {
 test("the message for a pane that can't reach Aya names the fix Aya would use", () => {
   assert.equal(
     cantReach(launchMode("codex --no-daemon", config())),
-    "can't reach Aya: Codex sandbox workspace-write blocks the socket; open a new pane for it, or restart this one with -s danger-full-access -a never",
+    "can't reach Aya: Codex's current access settings prevent it from sending team messages; Choose a preset with access that allows team messages, or change this pane's access settings and choose Restart terminal",
   );
   assert.equal(
     cantReach(launchMode("codex --no-daemon -s read-only", config())),
-    "can't reach Aya: Codex sandbox read-only blocks the socket; restart it with -s danger-full-access -a never",
+    "can't reach Aya: Codex is read-only, so it cannot do this role's work; Choose a preset with access that allows team messages, or change this pane's access settings and choose Restart terminal",
   );
-  assert.match(cantReach(launchMode("codex -s danger-full-access", config())), /^can't reach Aya: .*shared daemon.*update Codex/);
+  assert.match(cantReach(launchMode("codex -s danger-full-access", config())), /^can't reach Aya: This Codex session is shared with other panes.*Use a separate Codex pane/);
   assert.equal(cantReach(launchMode("codex --no-daemon --yolo", config())), null);
   assert.equal(
     cantReach(launchMode("opencode --agent plan", config())),
-    "can't reach Aya: OpenCode's plan agent is read-only (edits denied), so the role never does its work; restart it with --agent build",
+    "can't reach Aya: OpenCode's planning mode is read-only, so it cannot make the changes this role needs; Choose a preset with access that allows team messages, or change this pane's access settings and choose Restart terminal",
     "a new pane of the same preset would not help",
   );
-  assert.match(cantReach(launchMode(`claude --settings '${SANDBOXED}'`, config())), /does not allow Aya's socket; restart it with --settings /);
+  assert.match(cantReach(launchMode(`claude --settings '${SANDBOXED}'`, config())), /Claude Code's current access settings prevent it from sending team messages; Choose a preset/);
   assert.equal(cantReach(launchMode("$SHELL", config())), null, "a shell is unknown but not held");
 });
 
 // [command, config, what the note tells the user]: an unknown verdict is never held, only noted in the window.
 const NOTED_UNKNOWN = [
-  ["codex --no-daemon", { codexProject: [FULL], trusted: false }, /^may not reach Aya: .*not marked trusted.*; trust the project in Codex, then restart the pane/],
-  ["codex --no-daemon", { codexUser: "sandbox_mode = mode_var" }, /^may not reach Aya: .*form Aya does not read.*; fix that setting, then restart it/],
-  ["codex --no-daemon -c sandbox_mode=$X", {}, /^may not reach Aya: .*form Aya does not read/],
-  ["codex --no-daemon -p careful", { codexUser: "[profiles.careful]\nmodel = \"x\"" }, /^may not reach Aya: this Codex version cannot start with that profile setting: .*; remove it from Codex's config\.toml, then restart the pane/],
-  ["codex --no-daemon", { codexUser: 'profile = "careful"' }, /^may not reach Aya: this Codex version cannot start with that profile setting: .*legacy .profile./],
-  ["claude --permission-mode plan", {}, /^may not reach Aya: .*plan mode.*; restart it without --permission-mode plan/],
-  ["claude", { claude: ["{not json"] }, /^may not reach Aya: .*could not read.*; fix that file, then restart it/],
-  ["$SHELL", {}, /^may not reach Aya: a shell runs whatever is typed into it$/],
-  ["aider", {}, /^may not reach Aya: /],
-  ["codex exec hi", {}, /^may not reach Aya: codex exec is not an interactive session$/],
-  ["opencode run hi", {}, /^may not reach Aya: /],
-  ["opencode --agent algo", {}, /^may not reach Aya: OpenCode agent algo/],
-  ["codex --no-daemon", { codexUser: 'sandbox_mode = "external-sandbox"' }, /^may not reach Aya: Codex sandbox external-sandbox is not measured$/],
-  ["npx codex", {}, /^may not reach Aya: /],
+  ["codex --no-daemon", { codexProject: [FULL], trusted: false }, /^Codex has not trusted this project.*Trust the project in Codex, then choose Restart terminal\./],
+  ["codex --no-daemon", { codexUser: "sandbox_mode = mode_var" }, /^Aya could not understand one of Codex's access settings.*Review that setting in Codex, then choose Restart terminal\./],
+  ["codex --no-daemon -c sandbox_mode=$X", {}, /^Aya could not understand one of Codex's access settings/],
+  ["codex --no-daemon -p careful", { codexUser: "[profiles.careful]\nmodel = \"x\"" }, /^This Codex setup uses an older profile setting.*Remove the old profile setting in Codex, then choose Restart terminal\./],
+  ["codex --no-daemon", { codexUser: 'profile = "careful"' }, /^This Codex setup uses an older profile setting/],
+  ["claude --permission-mode plan", {}, /^Claude Code's planning mode may not make changes.*Choose a mode that can make changes, then choose Restart terminal\./],
+  ["claude", { claude: ["{not json"] }, /^Aya could not understand Claude Code's access settings.*Check those settings in Claude Code, then choose Restart terminal\./],
+  ["$SHELL", {}, /^This pane accepts commands you type/],
+  ["aider", {}, /^Aya could not identify how this pane connects/],
+  ["codex exec hi", {}, /^This command runs once and exits instead of opening an interactive Codex pane/],
+  ["opencode run hi", {}, /^This command runs once and exits instead of opening an interactive OpenCode pane/],
+  ["opencode --agent algo", {}, /^Aya has not checked what OpenCode's algo mode allows/],
+  ["codex --no-daemon", { codexUser: 'sandbox_mode = "external-sandbox"' }, /^Aya has not checked what this Codex access setting allows/],
+  ["npx codex", {}, /^Aya could not identify how this pane connects/],
 ];
 
 for (const [command, cfg, expected] of NOTED_UNKNOWN) {
@@ -394,29 +394,63 @@ for (const [agent, [args, reach, mode]] of Object.entries(PROGRAMS)) {
 const UNREAD = [...UNREAD_SPELLINGS, "cd sub && env codex", "cd sub && npx claude", "FOO=1 env grok --x"];
 
 test("every spelling Aya does not read through is unknown, noted and never held", () => {
-  const wrong = UNREAD.filter((c) => {
+    const wrong = UNREAD.filter((c) => {
     const mode = launchMode(c, config());
-    return mode.reach !== "unknown" || cantReach(mode) !== null || !/^may not reach Aya: /.test(launchNoteOf({ command: c, cwd: "/p", mode }) ?? "");
+    return mode.reach !== "unknown" || cantReach(mode) !== null || !/Aya could not identify how this pane connects/.test(launchNoteOf({ command: c, cwd: "/p", mode }) ?? "");
   });
   assert.deepEqual(wrong, []);
 });
 
-test("a pane whose agent has called aya since its spawn reaches Aya: the unknown note goes, other notes stay", () => {
+test("a pane whose agent has called aya since its spawn reaches Aya: only structured uncertainty goes away", () => {
   const mode = launchMode("npx codex", config());
-  assert.match(launchNoteOf({ command: "npx codex", cwd: "/p", mode }, false), /^may not reach Aya: /);
+  assert.match(launchNoteOf({ command: "npx codex", cwd: "/p", mode }, false), /Aya could not identify how this pane connects/);
   assert.equal(launchNoteOf({ command: "npx codex", cwd: "/p", mode }, true), null);
   const untrusted = launchMode("codex --no-daemon -s danger-full-access -a untrusted", config());
-  assert.match(launchNoteOf({ command: "codex", cwd: "/p", mode: untrusted }, true), /approval policy untrusted/);
+  assert.match(launchNoteOf({ command: "codex", cwd: "/p", mode: untrusted }, true), /Codex will ask you before running each team action/);
 });
 
 test("Aya adds no flags to a command it does not read through", () => {
   for (const c of UNREAD) assert.deepEqual(teamLaunch(c, config()), { args: [] }, c);
 });
 
-test("an unknown verdict behind another note is still unsure: launchUnsure splits the note where launchNoteOf joined it", () => {
-  const mode = { reach: "unknown", why: "not measured" };
-  const note = launchNoteOf({ command: "codex", cwd: "/p", added: ["-c", "sandbox_workspace_write.network_access=true"], mode });
-  assert.match(note, /^Aya opened it with .+; may not reach Aya: not measured$/);
-  assert.equal(launchUnsure(null, note), true);
-  assert.equal(launchUnsure(null, launchNoteOf({ command: "codex", cwd: "/p", mode: { ...mode, reach: "reaches" } })), false);
+test("launch uncertainty comes from the launch result, not user-facing note text", () => {
+  const mode = launchMode("npx codex", config());
+  const unknownLaunch = { command: "codex", cwd: "/p", added: ["-c", "sandbox_workspace_write.network_access=true"], mode };
+  const note = launchNoteOf(unknownLaunch);
+  assert.match(note, /^Aya allowed this Codex pane to connect to any network host.*Aya could not identify how this pane connects/);
+  assert.equal(launchUnsure(unknownLaunch), true);
+  const reachedLaunch = { ...unknownLaunch, mode: { ...mode, reach: "reaches" } };
+  assert.equal(launchUnsure(reachedLaunch), false);
+  assert.equal(launchUnsure({ ...reachedLaunch, note: "may not reach Aya: user supplied wording" }), false);
+  assert.equal(launchUnsure(null), true);
+  assert.equal(launchUnsure(LAUNCH_UNREACHABLE), true);
+});
+
+test("team-card launch text is plain language and names the available next step", () => {
+  const blocks = [
+    NO_LAUNCH_RECORD,
+    launchBlockOf(LAUNCH_UNREACHABLE),
+    launchBlockOf(LAUNCH_STARTING),
+    launchBlockOf(LAUNCH_UNSUPPORTED),
+    cantReach(launchMode("codex --no-daemon", config())),
+    cantReach(launchMode("claude", config({ claude: [SANDBOXED] }))),
+  ].join(" ");
+  assert.match(blocks, /Restart terminal|Settings > Diagnostics > PTY host > Restart/);
+  assert.doesNotMatch(blocks, /launch flags|preflight|socket|launch record|--no-daemon|allowUnixSockets/);
+
+  const notes = [
+    launchNoteOf({ command: "npx codex", cwd: "/p", mode: launchMode("npx codex", config()) }),
+    launchNoteOf({ command: "claude --permission-mode plan", cwd: "/p", mode: launchMode("claude --permission-mode plan", config()) }),
+    launchNoteOf({ command: "codex --no-daemon", cwd: "/p", added: ["-c", NET], mode: launchMode("codex --no-daemon", config()) }),
+    launchNoteOf({ command: "codex --no-daemon", cwd: "/p", added: ["-s", "danger-full-access"], mode: launchMode("codex --no-daemon", config()) }),
+  ].join(" ");
+  assert.match(notes, /Aya allowed this Codex pane to connect to any network host/);
+  assert.match(notes, /without a sandbox.*access your files/);
+  assert.doesNotMatch(notes, /launch flags|preflight|socket|launch record|--dangerously|sandbox_workspace/);
+});
+
+test("structured user-facing launch copy survives the closed recovery checkpoint schema", async () => {
+  const { validateRecoveryLaunch } = await import("../dist-electron/pty-core-checkpoint.js");
+  const launch = { command: "npx codex", cwd: "/project", mode: launchMode("npx codex", config()) };
+  assert.doesNotThrow(() => validateRecoveryLaunch("pane-1", { ptyId: "pane-1", command: "npx codex", cwd: "/project", cols: 80, rows: 24 }, launch, 1));
 });

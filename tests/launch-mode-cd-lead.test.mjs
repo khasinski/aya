@@ -64,7 +64,7 @@ for (const command of NOT_FOLLOWED) {
   test(`behind a cd Aya does not follow: noted, never held | ${command}`, () => {
     const mode = launchMode(command, config());
     assert.equal(cantReach(mode), null);
-    assert.match(launchNoteOf({ command, cwd: "/p", mode }) ?? "", /^may not reach Aya: /);
+    assert.match(launchNoteOf({ command, cwd: "/p", mode }) ?? "", /Aya could not identify how this pane connects/);
   });
 }
 
@@ -113,8 +113,8 @@ test("on disk: cd ~/x reads the folder under the pane's HOME; the codex project 
 
 // `untrusted` asks before every command not on Codex's read-only list, so each aya call waits for the user;
 // a sandbox or approval policy the preset picks is its own: only full access with -a never cannot stop.
-const UNTRUSTED = /approval policy untrusted.*each aya call .*waits for you to approve it/;
-const PRESET = /as the preset sets them.*may stop for approvals on git and aya/;
+const UNTRUSTED = /Codex will ask you before running each team action/;
+const PRESET = /keeps the access and approval choices from its preset.*may ask before running team actions/;
 const APPROVAL = [
   ["codex --no-daemon -s danger-full-access -a untrusted", {}, UNTRUSTED],
   ["codex --no-daemon -s danger-full-access --ask-for-approval untrusted", {}, UNTRUSTED],

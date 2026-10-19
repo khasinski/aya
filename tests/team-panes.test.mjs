@@ -27,7 +27,7 @@ const { TeamRunner } = await import("../dist-electron/team-runner.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 const { HOLD_NOT_RUNNING, HOLD_STARTING } = await import("../dist-electron/pane-holds.js");
 const { withLaunchHolds } = await import("../dist-electron/team-control.js");
-const { cantReach, launchBlockOf, launchNoteOf, launchMode, teamLaunch, LAUNCH_UNREACHABLE, LAUNCH_STARTING, LAUNCH_UNSUPPORTED } = await import("../dist-electron/launch-mode.js");
+const { cantReach, launchBlockOf, launchNoteOf, launchMode, launchUnsure, teamLaunch, LAUNCH_UNREACHABLE, LAUNCH_STARTING, LAUNCH_UNSUPPORTED } = await import("../dist-electron/launch-mode.js");
 
 const TEAM = `# ux-review
 
@@ -57,7 +57,7 @@ const WRAPPED_PRESET = { id: "wrapped", name: "Wrapped Codex", icon: "o", color:
 // What main derives (electron/launch-mode.ts) for the Codex tab pane-x, launched in
 // Codex's default sandbox, and for a new pane of the read-only preset.
 const NO_CONFIG = { codex: [], opencode: [], claude: [], socket: "/h/.aya/aya.sock" };
-const NETWORK_NOTE = "Aya opened it with -c sandbox_workspace_write.network_access=true so it reaches Aya; Codex's sandbox then lets its commands reach every network host, not only Aya's socket";
+const NETWORK_NOTE = "Aya allowed this Codex pane to connect to any network host, not only Aya. Its commands can reach other computers and services on your network; change the preset if you do not want that.";
 const X_BLOCKED = cantReach(launchMode("codex --no-daemon", NO_CONFIG));
 const RO_REFUSED = teamLaunch("codex --no-daemon -s read-only", NO_CONFIG).refused;
 const WRAPPED_COMMAND = "env codex";
@@ -121,6 +121,7 @@ function setup({ slug = "game", saved = true, state = null, assignments = {}, al
     roleLaunch: async (p) => ROLE_LAUNCH[p.id] ?? { reach: "reaches", refused: null },
     launchBlock: async (pane) => (launchOf ? launchBlockOf(launchOf(pane)) : (launchBlocks[pane] ?? null)),
     launchNote: async (pane) => (launchOf ? launchNoteOf(launchOf(pane)) : (launchNotes[pane] ?? null)),
+    launchUncertain: async (pane) => launchUnsure(launchOf ? launchOf(pane) : (launchBlocks[pane] ?? null)),
     paneAlive: async (pane) => alive.includes(pane) || pane.startsWith("new-"),
     openPanes: async (slug, panes) => {
       opened.push(...panes);
@@ -343,7 +344,7 @@ const USE_CASES = [
     name: "refused: a new pane whose preset launches Codex read-only: Aya does not escalate it",
     picks: "tester=codex-ro",
     refused:
-      /^role "tester": preset "codex-ro" \(Codex read-only\) can't reach Aya: Codex sandbox read-only blocks the socket; pick a preset that allows it \(one that runs codex with -s danger-full-access -a never\); nothing/,
+      /^role "tester": preset "codex-ro" \(Codex read-only\) can't reach Aya: Codex is read-only, so it cannot do this role's work; Choose a preset with access that allows team messages, or change this pane's access settings and choose Restart terminal; nothing/,
   },
   {
     name: "an open pane whose launch mode can't reach Aya takes the role, and says so",
@@ -453,7 +454,7 @@ test("a new pane is asked how it was launched only once the host has recorded it
       over = true;
       assert.notEqual(result, "hung", "still waiting after three windows");
       assert.ok(Date.now() - started >= window, "waits the whole window");
-      assert.match(result.panes[0].cantReach, /no record of how this pane was launched/);
+      assert.match(result.panes[0].cantReach, /Aya could not check this pane's team access/);
     } finally {
       over = true;
       t.cleanup();
@@ -471,7 +472,7 @@ test("a new pane is asked how it was launched only once the host has recorded it
     const started = Date.now();
     try {
       const result = await down.open(picks("tester=pane-w1"));
-      assert.match(result.panes[0].cantReach, /could not ask.*try again/);
+      assert.match(result.panes[0].cantReach, /could not check this pane's team access.*Restart terminal to try again/);
       assert.ok(Date.now() - started < 500, "an open pane is not waited on");
     } finally {
       down.cleanup();
@@ -482,7 +483,7 @@ test("a new pane is asked how it was launched only once the host has recorded it
     const started = Date.now();
     try {
       const result = await t.open(picks("tester=pane-w1"));
-      assert.match(result.panes[0].cantReach, /no record/);
+      assert.match(result.panes[0].cantReach, /could not check this pane's team access.*Restart terminal to check again/);
       assert.ok(Date.now() - started < 500, "no waiting for a pane that was already running");
     } finally {
       t.cleanup();
@@ -490,8 +491,7 @@ test("a new pane is asked how it was launched only once the host has recorded it
   });
 });
 
-// "May not reach Aya" shows for a pane with no or an unknown verdict; main hands that over as `unsure`,
-// so the window reads none of main's wording. [launch answer, unsure]
+// The uncertainty label is set from the structured launch answer, not the pane's user-facing note.
 const UNSURE = [
   ["no record", () => null, true],
   ["the host did not answer", () => LAUNCH_UNREACHABLE, true],
@@ -510,7 +510,7 @@ for (const [label, launch, unsure] of UNSURE) {
 panesTest("a new pane of a wrapped preset is opened, noted and not held, with no flags added to it", { presets: [...PRESETS, WRAPPED_PRESET], launchOf: () => ({ command: WRAPPED_COMMAND, cwd: "/p", added: [], mode: launchMode(WRAPPED_COMMAND, NO_CONFIG) }) }, async (t) => {
   const result = await t.open(picks("tester=new:wrapped"));
   assert.equal(result.panes[0].cantReach, null);
-  assert.match(result.panes[0].note, /^may not reach Aya: /);
+  assert.match(result.panes[0].note, /Aya could not identify how this pane connects/);
   assert.deepEqual(teamLaunch(WRAPPED_COMMAND, NO_CONFIG), { args: [] });
 });
 
@@ -558,7 +558,7 @@ test("a new pane's launch is pending while its host has no pane yet or is still 
       const started = Date.now();
       const result = await t.open(picks("tester=claude"));
       const took = Date.now() - started;
-      assert.match(result.panes[0].cantReach, /still starting/);
+      assert.match(result.panes[0].cantReach, /Aya is still opening this pane/);
       assert.ok(took >= SPAWN_WAIT_WINDOWS * t.deps.startWaitMs && took < (SPAWN_WAIT_WINDOWS + 1.5) * t.deps.startWaitMs, `waited ${took} ms`);
     } finally {
       t.cleanup();
@@ -570,7 +570,7 @@ test("a new pane's launch is pending while its host has no pane yet or is still 
     try {
       const started = Date.now();
       const result = await t.open(picks("tester=claude"));
-      assert.match(result.panes[0].cantReach, /no record of how this pane was launched/);
+      assert.match(result.panes[0].cantReach, /Aya could not check this pane's team access/);
       assert.ok(Date.now() - started < 500, "a spawn that ended without a record is final");
     } finally {
       t.cleanup();
@@ -581,7 +581,7 @@ test("a new pane's launch is pending while its host has no pane yet or is still 
     try {
       const started = Date.now();
       const result = await t.open(picks("tester=claude"));
-      assert.match(result.panes[0].cantReach, /older.*does not record how panes are launched/);
+      assert.match(result.panes[0].cantReach, /older Aya.*team access cannot be checked/);
       assert.ok(Date.now() - started < 500, "an old host is never going to record");
     } finally {
       t.cleanup();
@@ -974,7 +974,7 @@ test("the summary names each role's pane, who lost one, and leaves Start to the 
   assert.match(formatOpened("t", { panes: [result.panes[0]], leftWithoutPane: [] }, { running: true, paused: false }), /^team t: gave 1 role a pane, 0 new:\n/);
   const widened = { panes: [{ ...result.panes[0], note: NETWORK_NOTE }], leftWithoutPane: [] };
   assert.match(formatOpened("t", widened, { running: false, paused: false }), new RegExp(`\\(id pane-c\\)\\n    ${NETWORK_NOTE.slice(0, 40)}`));
-  assert.match(formatOpened("t", widened, { running: true, paused: false }), /told its role\n    Aya opened it with -c sandbox_workspace_write/);
+  assert.match(formatOpened("t", widened, { running: true, paused: false }), /told its role\n    Aya allowed this Codex pane to connect to any network host/);
   const blocked = { panes: [{ role: "implementer", paneId: "pane-x", name: "Codex", preset: null, notReached: null, cantReach: X_BLOCKED, note: null }], leftWithoutPane: [] };
   const told = formatOpened("t", blocked, { running: false, paused: false });
   assert.ok(told.includes(`\n  implementer -> pane "Codex" (id pane-x); ${X_BLOCKED}\n`), told);

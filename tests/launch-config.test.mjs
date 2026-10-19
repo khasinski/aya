@@ -172,10 +172,10 @@ test("a preset checked for a role's pane: as the host would launch it, --no-daem
   const check = (command, dir) =>
     roleLaunchCheck(command, w.repo, { ...w.env, PATH: `${join(w.root, dir)}:/usr/bin:/bin` }, w.socket, "/bin/sh");
   assert.deepEqual(await check("codex", "new"), { reach: "reaches", refused: null });
-  assert.match((await check("codex -s read-only", "new")).refused, /^Codex sandbox read-only blocks the socket; pick a preset/);
+  assert.match((await check("codex -s read-only", "new")).refused, /^Codex is read-only, so it cannot do this role's work; Choose a preset/);
   const old = await check("codex --yolo", "old");
   assert.equal(old.reach, "blocked");
-  assert.match(old.refused, /shared daemon/);
+  assert.match(old.refused, /shared with other panes.*separate Codex pane/);
   assert.deepEqual(await check("$SHELL", "new"), { reach: "unknown", refused: null });
 });
 

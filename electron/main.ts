@@ -51,7 +51,7 @@ import {
 } from "./intelligence-chat";
 import { withLaunchHolds, withSpawnHolds, type TeamControlDeps } from "./team-control";
 import { roleLaunchCheck } from "./launch-config";
-import { launchBlockOf, launchHoldOf, launchNoteOf } from "./launch-mode";
+import { launchBlockOf, launchHoldOf, launchNoteOf, launchUnsure } from "./launch-mode";
 import { reachedAyaPanes } from "./reached-aya";
 import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
@@ -230,6 +230,7 @@ const teamPaneHost: PaneHost = {
     roleLaunchCheck(preset.command, project?.directory ?? os.homedir(), process.env, CONTROL_SOCKET_PATH, userShell()),
   launchBlock: async (terminalId) => launchBlockOf(await ptyHost.launch(terminalId)),
   launchNote,
+  launchUncertain: async (terminalId) => launchUnsure(await ptyHost.launch(terminalId), await reachedAya.has(terminalId)),
   // A pane still in its spawn preflight has no PTY yet but is live all the same.
   paneAlive: paneAliveOf((terminalId) => ptyHost.getSize(terminalId), startingHold),
   // The window that shows the project adds the tabs; main picked their ids.

@@ -956,7 +956,7 @@ for (const [label, [command, config, reach]] of Object.entries(LAUNCHES)) {
     launchTest(`the Teams window's role status | ${cell}`, teamState, command, config, async (w) => {
       const [team] = await listTeams(w.deps.teamHome, (await w.deps.listProjects())[0], w.deps.holdReason, undefined, async (pane) => (pane === "pane-i" ? w.note : null));
       assert.equal(team.paneHolds.implementer, held ? w.block : null);
-      if (reach === "unknown") assert.match(team.paneNotes.implementer, /^may not reach Aya: /, "the window says so, as a note");
+      if (reach === "unknown") assert.match(team.paneNotes.implementer, /Aya could not identify how this pane connects/, "the window says so, as a note");
     });
   }
 
@@ -980,7 +980,7 @@ worldTest("same project, two Codex panes on the shared daemon: neither is typed 
     { role: "tester", reason: holdOf("pane-t") },
     { role: "implementer", reason: holdOf("pane-i") },
   ]);
-  assert.match(holdOf("pane-t"), /shared daemon.*speak as another Codex pane/);
+  assert.match(holdOf("pane-t"), /shared with other panes.*Use a separate Codex pane/);
   const borrowed = await handleTeamRequest({ type: "team-whoami" }, "pane-t", w.deps);
   assert.match(borrowed.output, /you +tester/);
   assert.equal(w.typed.length, 0);
