@@ -230,15 +230,19 @@ test("ordering: a role taken away leaves the pane listed as still working as tha
     assert.deepEqual((await roleNoteReport(project, "other-team", {}, deps)).staleNotes, []);
   }));
 
-// Aya tells a pane its new role when it is given one in a running team; in a stopped or paused team only the next
-// Start does, so until then the window says the pane started as another role.
-test("ordering: a pane that started as another role is noted only while the team does not run", () =>
+// A pane that started as another role needs nothing once it has read this role with whoami. Until then: in a
+// stopped or paused team the next Start tells it; in a running team a held delivery test is not typed again.
+test("ordering: a pane that started as another role is noted until it reads this role", () =>
   withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
     await start("p1");
     const project = { slug: "g", tabs: [{ id: "p1", presetId: "p", name: "shell 1" }] };
-    const report = (running) => roleNoteReport(project, "ux-review", { implementer: "p1" }, deps, running);
-    assert.deepEqual((await report(true)).roleNotes, { implementer: null }, "a running team tells it the role");
-    assert.deepEqual((await report(false)).roleNotes, { implementer: "This agent started as tester. Aya tells it this role at the next Start." });
+    const note = async (running, read) => (await roleNoteReport(project, "ux-review", { implementer: "p1" }, deps, { running, read })).roleNotes.implementer;
+    for (const running of [true, false]) {
+      assert.equal(await note(running, { p1: "implementer" }), null, "it read this role");
+      assert.notEqual(await note(running, { p2: "implementer" }), null, "another pane's read does not count");
+    }
+    assert.equal(await note(true, { p1: "tester" }), "This agent started as tester and has not read this role yet. If that stays, right-click the pane and choose Restart.");
+    assert.equal(await note(false, {}), "This agent started as tester. Aya tells it this role at the next Start.");
   }));
 
 test("ordering: a resumed codex session keeps its first note, and a changed role still needs nothing from the user", () =>

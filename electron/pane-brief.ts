@@ -248,11 +248,17 @@ async function capabilityGap(tab: WorkingTab, preset: Preset, deps: PaneBriefDep
   return "problem" in plan ? roleNoteStatus(plan.problem) : null;
 }
 
+/** What the team knows of a pane: whether the team runs, and the role of the team the pane last read with whoami. */
+export interface RoleNoteContext {
+  running: boolean;
+  read: string | null;
+}
+
 /** What the window says about a role's pane, as the one thing the user can do about it: why its CLI cannot be
- *  told the role, or why it should start again, else null. A pane that started with another role needs nothing:
- *  Aya tells it the role when it is given one in a running team, else at the next Start, and it reads it with
- *  whoami; until that Start the window says so. */
-export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps, running = true): Promise<string | null> {
+ *  told the role, or why it should start again, else null. A pane that started with another role needs nothing
+ *  once it has read this role with whoami (Aya's delivery test asks it to, at Start or when it is given the role
+ *  in a running team); until then the window says so. Without a context the pane counts as having read it. */
+export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps, context?: RoleNoteContext): Promise<string | null> {
   const preset = (await deps.listPresets()).find((p) => p.id === tab.presetId);
   // A shell pane already shows "runs a shell" as its hold.
   if (!preset || isShellCommand(preset.command)) return null;
@@ -266,7 +272,13 @@ export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneB
     const now = digest(carriedText(briefOn(preset, presetAgent(preset), current), current));
     return launch.told && launch.told !== now ? `This agent started with older instructions from Aya. To give it the current ones, ${how}.` : null;
   }
-  if (launch.carried && launch.role) return running ? null : `This agent started as ${launch.role.role}. Aya tells it this role at the next Start.`;
+  if (launch.carried && launch.role) {
+    if (!context || context.read === current.role) return null;
+    // A held delivery test is not typed again, so a running team says what to do if the pane never reads the role.
+    return context.running
+      ? `This agent started as ${launch.role.role} and has not read this role yet. If that stays, ${how}.`
+      : `This agent started as ${launch.role.role}. Aya tells it this role at the next Start.`;
+  }
   return (await capabilityGap(tab, preset, deps)) ?? `This agent started before it had this role and can lose it in a long session. To keep it, ${how}.`;
 }
 
@@ -281,13 +293,13 @@ export async function roleNoteReport(
   team: string,
   assignments: Record<string, string>,
   deps: PaneBriefDeps,
-  running = true,
+  teamState?: { running: boolean; read: Record<string, string> },
 ): Promise<RoleNoteReport> {
   const assigned = new Set(Object.values(assignments));
   const roleNotes: Record<string, string | null> = {};
   for (const [role, pane] of Object.entries(assignments)) {
     const tab = project.tabs.find((t) => t.id === pane);
-    if (tab) roleNotes[role] = await roleNoteGap(tab, { team, role }, deps, running);
+    if (tab) roleNotes[role] = await roleNoteGap(tab, { team, role }, deps, teamState && { running: teamState.running, read: teamState.read[pane] ?? null });
   }
   const staleNotes: string[] = [];
   const presets = await deps.listPresets();

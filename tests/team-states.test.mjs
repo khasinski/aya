@@ -345,6 +345,7 @@ for (const teamState of ["running", "paused"]) {
         await INBOX[inbox](w);
         const who = await handleTeamRequest({ type: "team-whoami" }, "pane-t", w.deps);
         assert.match(who.output, /team +ux-review\nyou +tester/, "whoami is answered from the saved team");
+        assert.deepEqual(await w.store.rolesRead(), { "pane-t": "tester" }, "whoami records the role this pane read");
         const logged = (await w.store.log()).length;
         const send = handleTeamRequest({ type: "team-send", role: "implementer", text: "early" }, "pane-t", w.deps);
         if (teamState === "paused") {
