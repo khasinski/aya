@@ -234,7 +234,7 @@ export function TeamCard({
                   </div>
                   {team.roleNotes[role.id] && (
                     <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} role note`}>
-                      ⚠ {team.roleNotes[role.id]}; its first message tells it to run aya team whoami
+                      ⚠ {team.roleNotes[role.id]}
                     </div>
                   )}
                   {team.olderRoles?.[role.id] && (
