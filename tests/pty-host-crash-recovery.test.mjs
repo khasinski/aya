@@ -8,18 +8,78 @@ fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.res
 const require=createRequire(import.meta.url);
 const {PtyHostClient}=require('../dist-electron/pty-host-client.js');
 const registry=require('../dist-electron/pty-owner-registry.js');
+const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
+const {hostCreationProof}=require('../dist-electron/pty-host-start-guard.js');
 const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 const script=path.resolve('dist-electron/pty-host.js');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(f,message='crash recovery timeout'){const end=Date.now()+12000;while(!await f()){if(Date.now()>end)throw Error(typeof message==='function'?message():message);await sleep(5);}}
 function request(){return {ptyId:'shell',agent:'custom',command:`exec /bin/sh -c 'stty -echo; echo READY; while [ ! -f "$HOME/release" ]; do sleep .01; done; echo UNREAD_DURING_GAP; touch "$HOME/produced"; while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf "R:%s:%s\\n" "$$" "$line" ;; esac; done'`,cwd:process.env.HOME,cols:80,rows:24};}
 async function setup(command){fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});const events=[],logs=[],client=new PtyHostClient(script);client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});await client.spawn({...request(),...(command?{command}:{})});await wait(async()=>(await client.getBuffer('shell')).includes('READY'));const status=await client.hostStatus(),pid=await client.getPid('shell');client.fixtureKnownProcesses=[{kind:'initial-host',pid:status.pid,startIdentity:client.lastHostStart},{kind:'initial-owner',pid:status.owner?.pid,startIdentity:status.owner?.startIdentity,startTime:status.owner?.startTime,instanceId:status.owner?.instanceId}];return{client,events,logs,status,pid};}
+async function retireFixtureHosts(...clients){
+ const known=clients.filter(Boolean).flatMap(c=>[...(c.fixtureKnownProcesses??[]),{kind:'host',pid:c.lastHostPid,startIdentity:c.lastHostStart},{kind:'spawned-host',pid:c.pendingPlannedHost?.pid},{kind:'owner',pid:c.recoveryOwner?.pid,startTime:c.recoveryOwner?.startTime,instanceId:c.recoveryOwner?.instanceId}]);
+ const pendingChildren=[...new Set(clients.map(c=>c?.pendingPlannedHost).filter(child=>child&&child.exitCode===null&&child.signalCode===null))];
+ const hosts=new Map();for(const item of known)if((item.kind==='host'||item.kind==='initial-host')&&item.pid&&item.startIdentity)hosts.set(`${item.pid}:${item.startIdentity}`,{pid:item.pid,startIdentity:item.startIdentity});
+ for(const c of clients){c?.dispose();c?.dropSocket();}
+ for(const {pid,startIdentity} of hosts.values()){
+  const current=ownerProcessStartIdentity(pid);
+  if(current!==startIdentity){if(current===null)continue;throw Error(`Refusing to stop reused fixture host PID ${pid}`);}
+  try{process.kill(pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;continue;}
+  const deadline=Date.now()+5000;
+  while(ownerProcessStartIdentity(pid)===startIdentity){
+   if(Date.now()>=deadline){
+    if(ownerProcessStartIdentity(pid)===startIdentity)process.kill(pid,'SIGKILL');
+    const killDeadline=Date.now()+2000;
+    while(ownerProcessStartIdentity(pid)===startIdentity&&Date.now()<killDeadline)await sleep(20);
+    if(ownerProcessStartIdentity(pid)===startIdentity)throw Error(`Fixture host ${pid} did not stop during cleanup`);
+    break;
+   }
+   await sleep(20);
+  }
+ }
+ for(const child of pendingChildren){
+  if(child.exitCode!==null||child.signalCode!==null)continue;
+  try{child.kill('SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}
+  if(await childExitedWithin(child,5000))continue;
+  if(child.exitCode===null&&child.signalCode===null)try{child.kill('SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}
+  if(!await childExitedWithin(child,2000))throw Error(`Pending fixture host ${child.pid} did not stop during cleanup`);
+ }
+}
+function childExitedWithin(child,ms){
+ if(child.exitCode!==null||child.signalCode!==null)return Promise.resolve(true);
+ return new Promise(resolve=>{
+  const finish=exited=>{clearTimeout(timer);child.removeListener('exit',onExit);resolve(exited);};
+  const onExit=()=>finish(true);const timer=setTimeout(()=>finish(child.exitCode!==null||child.signalCode!==null),ms);child.once('exit',onExit);
+ });
+}
 async function cleanup(...clients){
  const known=clients.filter(Boolean).flatMap(c=>[...(c.fixtureKnownProcesses??[]),{kind:'host',pid:c.lastHostPid,startIdentity:c.lastHostStart},{kind:'spawned-host',pid:c.pendingPlannedHost?.pid},{kind:'owner',pid:c.recoveryOwner?.pid,startTime:c.recoveryOwner?.startTime,instanceId:c.recoveryOwner?.instanceId}]);
- for(const c of clients){c?.dispose();c?.dropSocket();}await cleanupNativeOwner(process.env.AYA_HOME);
+ await retireFixtureHosts(...clients);
+ await cleanupNativeOwner(process.env.AYA_HOME);
  try{fs.rmSync(process.env.AYA_HOME,{recursive:true,force:true});fs.rmSync(process.env.HOME,{recursive:true,force:true});}
  catch(error){if(error.code==='ENOTEMPTY')require('./helpers/pty-host-failure-diagnostics.cjs').cleanupFailure(process.env.AYA_HOME,known,error);throw error;}
 }
+test('crash-recovery cleanup stops its exact JS host before removing the fixture home',{timeout:12000},async()=>{
+ const {client,status}=await setup();
+ try{await cleanup(client);assert.notEqual(ownerProcessStartIdentity(status.pid),client.lastHostStart,'fixture cleanup left its JS host alive');}
+ finally{await cleanup(client);}
+});
+test('cleanup retires a spawned successor when socket opening fails before identity refresh',{timeout:20000},async()=>{
+ const {client,status}=await setup();let child;const originalChild=client.pendingPlannedHost;
+ try{
+  process.kill(status.pid,'SIGKILL');await wait(()=>originalChild.exitCode!==null||originalChild.signalCode!==null);await wait(()=>hostCreationProof().state==='gone');
+  const ownerBefore=registry.readOwnerRecord(),ownerIdentity=ownerProcessStartIdentity(ownerBefore.pid),panePid=ownerBefore.panes.find(p=>p.id==='shell').pid;
+  child=client.startHost();client.pendingPlannedHost=child;
+  assert.equal(client.lastHostPid,status.pid,'the client must still hold the old identity before socket/version succeeds');
+  client.openStartedHostSocket=async()=>{throw Error('controlled socket open failure after successor spawn');};
+  await assert.rejects(client.openStartedHostSocket(undefined,child),/controlled socket open failure/);
+  assert.equal(child.exitCode,null);assert.equal(child.signalCode,null);
+  await retireFixtureHosts(client);
+  assert.ok(child.exitCode!==null||child.signalCode!==null,'cleanup left the pending successor alive');
+  const ownerAfter=registry.readOwnerRecord();assert.equal(ownerAfter.pid,ownerBefore.pid);assert.equal(ownerAfter.startTime,ownerBefore.startTime);assert.equal(ownerAfter.instanceId,ownerBefore.instanceId);
+  assert.equal(ownerProcessStartIdentity(ownerAfter.pid),ownerIdentity);assert.equal(registry.ownerRecordIsLive(ownerAfter),true);assert.doesNotThrow(()=>process.kill(panePid,0));
+ }finally{await cleanup(client);}
+});
 test('main restarts a SIGKILLed JS host and attaches the same owner/child with unread output and new I/O',{timeout:20000},async()=>{
  const {client,events,logs,status,pid}=await setup();
  let release;const gate=new Promise(resolve=>{release=resolve;}),attempt=client.recoverCrashedHost.bind(client);

@@ -15,7 +15,7 @@ const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-handoff-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
-const { waitFor, fakeWebContents, ptyEventsFor, cleanupNativeOwner } = await import("./helpers/pty-host.mjs");
+const { waitFor, fakeWebContents, ptyEventsFor, cleanupNativeOwner, stopFixtureChildren } = await import("./helpers/pty-host.mjs");
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 const SOCKET = join(TMP_AYA_HOME, "pty-host.sock");
@@ -30,21 +30,19 @@ const isAlive = (pid) => {
 };
 
 test("after a restart, the old host's exit leaves the new host's socket in place", async (t) => {
-  const pids = new Set();
+  const children = new Set();
+  let app;
   t.after(async () => {
-    for (const pid of pids) {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+    app?.dispose();app?.dropSocket();
+    await stopFixtureChildren(children);
     await cleanupNativeOwner(TMP_AYA_HOME);
     rmSync(TMP_AYA_HOME, { recursive: true, force: true });
   });
 
   const wc = fakeWebContents();
-  const app = new PtyHostClient(HOST_SCRIPT);
+  app = new PtyHostClient(HOST_SCRIPT);
+  const startHost = app.startHost.bind(app);
+  app.startHost = (...args) => { const child = startHost(...args); children.add(child); return child; };
   app.attachWebContents(wc);
   // A pane that ignores the hang-up, so the old host is still shutting down (until its SIGKILL step) when the new
   // one binds the socket: the order in which the race happened.
@@ -59,12 +57,10 @@ test("after a restart, the old host's exit leaves the new host's socket in place
     ptyEventsFor(wc, "slow").some((e) => e.type === "data" && e.chunk.includes("ready")),
   );
   const oldPid = (await app.hostStatus()).pid;
-  pids.add(oldPid);
 
   // What Aya does with a stale host: ask it to shut down, then talk to a fresh one.
   await app.restart();
   const newPid = (await app.hostStatus()).pid;
-  pids.add(newPid);
   assert.notEqual(newPid, oldPid, "a new host took over");
 
   await waitFor(() => !isAlive(oldPid), 10_000);
@@ -74,9 +70,15 @@ test("after a restart, the old host's exit leaves the new host's socket in place
   // Actual new-main continuity is tested through announced relaunch elsewhere.
   const nextStart = new PtyHostClient(HOST_SCRIPT);nextStart.hostAuthKey=Buffer.from(app.hostAuthKey);
   const reached = (await nextStart.hostStatus()).pid;
-  pids.add(reached);
   assert.equal(reached, newPid, "a later client reaches the same host");
   await nextStart.shutdown();
+});
+
+test("fixture cleanup does not signal a reused PID through an exited child handle", async () => {
+  let signals = 0;
+  const exitedChild = { pid: process.pid, exitCode: 0, signalCode: null, kill: () => { signals++; return true; } };
+  await stopFixtureChildren([exitedChild]);
+  assert.equal(signals, 0, "cleanup must not signal the unrelated process now using that PID");
 });
 
 test("a host whose socket another host replaced leaves that socket alone when it exits", async (t) => {
@@ -89,17 +91,11 @@ test("a host whose socket another host replaced leaves that socket alone when it
       stdio: "ignore",
       env: { ...process.env, AYA_HOME: home },
     });
-    hosts.push(child.pid);
-    return child.pid;
+    hosts.push(child);
+    return child;
   };
   t.after(async () => {
-    for (const pid of hosts) {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+    await stopFixtureChildren(hosts);
     await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   });
@@ -118,8 +114,8 @@ test("a host whose socket another host replaced leaves that socket alone when it
   await waitFor(() => existsSync(socket) && statSync(socket).ino !== firstInode);
   const secondInode = statSync(socket).ino;
 
-  process.kill(first, "SIGTERM");
-  await waitFor(() => !isAlive(first), 10_000);
+  first.kill("SIGTERM");
+  await waitFor(() => !isAlive(first.pid), 10_000);
   assert.equal(replacement.listening, true);
   assert.equal(existsSync(socket), true, "the second host's socket survives the first host's exit");
   assert.equal(statSync(socket).ino, secondInode);
@@ -144,17 +140,11 @@ test("a displaced host that exits on its own, not through shutdown, leaves the s
       stdio: "ignore",
       env: { ...process.env, AYA_HOME: home },
     });
-    hosts.push(child.pid);
-    return child.pid;
+    hosts.push(child);
+    return child;
   };
   t.after(async () => {
-    for (const pid of hosts) {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+    await stopFixtureChildren(hosts);
     await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   });
@@ -170,7 +160,7 @@ test("a displaced host that exits on its own, not through shutdown, leaves the s
   const secondInode = statSync(socket).ino;
 
   writeFileSync(flag, "");
-  await waitFor(() => !isAlive(first), 10_000);
+  await waitFor(() => !isAlive(first.pid), 10_000);
   assert.equal(replacement.listening, true);
   assert.equal(existsSync(socket), true, "the successor's socket survives the displaced host's exit");
   assert.equal(statSync(socket).ino, secondInode);

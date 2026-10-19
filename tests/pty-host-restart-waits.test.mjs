@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as net from "node:net";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -15,7 +15,7 @@ const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-restart-waits-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
-const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
+const { waitFor, fakeWebContents, ptyEventsFor, cleanupNativeOwner, stopFixtureChildren } = await import("./helpers/pty-host.mjs");
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 const LOG = join(TMP_AYA_HOME, "pty-events.log");
@@ -35,24 +35,24 @@ const events = () =>
 
 /** A client with one pane that ignores the hang-up: its host takes until its SIGKILL step to exit. */
 async function slowHost(t) {
+  mkdirSync(TMP_AYA_HOME, { recursive: true });
   const wc = fakeWebContents();
   const client = new PtyHostClient(HOST_SCRIPT);
   client.attachWebContents(wc);
-  const pids = new Set();
-  t.after(() => {
-    for (const pid of pids) {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+  const children = new Set();
+  const startHost = client.startHost.bind(client);
+  client.startHost = (...args) => { const child = startHost(...args); children.add(child); return child; };
+  t.after(async () => {
+    client.dispose();
+    client.dropSocket();
+    await stopFixtureChildren(children);
+    await cleanupNativeOwner(TMP_AYA_HOME);
+    rmSync(TMP_AYA_HOME, { recursive: true, force: true });
   });
   await client.spawn({ ptyId: "slow", command: "trap '' HUP TERM; echo ready; sleep 60", cwd: TMP_AYA_HOME, cols: 80, rows: 24 });
   await waitFor(() => ptyEventsFor(wc, "slow").some((e) => e.type === "data" && e.chunk.includes("ready")));
   const oldPid = (await client.hostStatus()).pid;
-  pids.add(oldPid);
-  return { client, oldPid, pids };
+  return { client, oldPid };
 }
 
 /** The new host started only after the old one's last line: nothing overlapped. */
@@ -65,21 +65,19 @@ function assertStartedAfterOldExit(oldPid, newPid) {
 }
 
 test("restart() resolves only once the old host has exited", async (t) => {
-  const { client, oldPid, pids } = await slowHost(t);
+  const { client, oldPid } = await slowHost(t);
   assert.equal(await client.restart(), true);
   assert.equal(isAlive(oldPid), false, "the old host is gone when restart() resolves");
   const newPid = (await client.hostStatus()).pid;
-  pids.add(newPid);
   assert.notEqual(newPid, oldPid);
   assertStartedAfterOldExit(oldPid, newPid);
   await client.shutdown();
 });
 
 test("a request sent during restart() waits, and reaches a host started after the old one exited", async (t) => {
-  const { client, oldPid, pids } = await slowHost(t);
+  const { client, oldPid } = await slowHost(t);
   // What a window does while Diagnostics restarts the host: it keeps asking.
   const [, status] = await Promise.all([client.restart(), client.hostStatus()]);
-  pids.add(status.pid);
   assert.notEqual(status.pid, oldPid, "the request did not reach the host being replaced");
   assertStartedAfterOldExit(oldPid, status.pid);
   await client.shutdown();
@@ -88,6 +86,7 @@ test("a request sent during restart() waits, and reaches a host started after th
 /** A stand-in host on the socket: answers "version" without a pid (as hosts before the registry did), takes
  *  "shutdown", and closes its connection `closeAfterMs` later, or never when null. */
 async function fakeHost(t, closeAfterMs) {
+  mkdirSync(TMP_AYA_HOME, { recursive: true });
   const socketPath = join(TMP_AYA_HOME, "pty-host.sock");
   rmSync(socketPath, { force: true });
   const conns = new Set();
