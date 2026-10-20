@@ -129,11 +129,23 @@ function SidebarImpl({
   // Worktrees are available for local repositories without an opt-in flag.
   const showWorktrees = worktrees.length > 0;
   const [targetCwd, setTargetCwd] = useState<string>(projectDir ?? "");
-  const [createWorktreeOpen, setCreateWorktreeOpen] = useState(false);
+  const [createWorktreeTarget, setCreateWorktreeTarget] = useState<{
+    projectId: string;
+    projectDir: string;
+  } | null>(null);
   const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<Worktree | null>(null);
   useEffect(() => {
     setTargetCwd(projectDir ?? "");
   }, [projectDir]);
+  useEffect(() => {
+    if (
+      createWorktreeTarget &&
+      (createWorktreeTarget.projectId !== (projectId ?? "") ||
+        createWorktreeTarget.projectDir !== projectDir)
+    ) {
+      setCreateWorktreeTarget(null);
+    }
+  }, [createWorktreeTarget, projectDir, projectId]);
   const worktreeName = (p: string): string =>
     p.replace(/\/+$/, "").split("/").pop() || p;
   // One section per worktree (main first). Terminals whose cwd matches no known
@@ -351,7 +363,7 @@ function SidebarImpl({
           <button
             type="button"
             className="aya-worktree-add"
-            onClick={projectRemote ? undefined : () => setCreateWorktreeOpen(true)}
+            onClick={projectRemote || !projectDir ? undefined : () => setCreateWorktreeTarget({ projectId: projectId ?? "", projectDir })}
             disabled={projectRemote || !onCreateWorktrees || !onStartWorktrees}
             title={projectRemote ? "Worktrees are available for local projects only" : "Create worktrees for this repository"}
           >
@@ -392,12 +404,15 @@ function SidebarImpl({
         </div>
         {statusRail}
       </div>
-      {createWorktreeOpen && projectDir && onCreateWorktrees && onStartWorktrees && (
+      {createWorktreeTarget &&
+        createWorktreeTarget.projectId === (projectId ?? "") &&
+        createWorktreeTarget.projectDir === projectDir &&
+        onCreateWorktrees && onStartWorktrees && (
         <WorktreeCreateDialog
-          projectId={projectId ?? ""}
-          projectDir={projectDir}
+          projectId={createWorktreeTarget.projectId}
+          projectDir={createWorktreeTarget.projectDir}
           presets={presets}
-          onCancel={() => setCreateWorktreeOpen(false)}
+          onCancel={() => setCreateWorktreeTarget(null)}
           onCreate={onCreateWorktrees}
           onStart={onStartWorktrees}
         />

@@ -125,6 +125,27 @@ test.describe("remote project", () => {
 test.describe("project switching during worktree creation", () => {
   test.use({ seedOptions: { gitRepo: true, split: false, secondProject: true, singleTab: true } });
 
+  test("closes the create dialog when its project changes before submit", async ({ app, window, seeded }) => {
+    const worktreesBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: seeded.projectDir,
+    }).toString();
+
+    await window.locator(".aya-worktree-add").click();
+    const dialog = window.getByRole("dialog", { name: "Start in worktrees" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel("Worktree name").fill("must-not-start");
+
+    await fireShortcut(app, "project-2");
+    await expect(dialog).toHaveCount(0);
+    await fireShortcut(app, "project-1");
+
+    await expect(window.locator(".aya-worktree-header")).toHaveCount(1);
+    assert.equal(
+      execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: seeded.projectDir }).toString(),
+      worktreesBefore,
+    );
+  });
+
   test("starts new panes in the project where the worktree dialog was opened", async ({ app, window, seeded }) => {
     const hook = join(seeded.projectDir, ".git", "hooks", "post-checkout");
     writeFileSync(hook, "#!/bin/sh\nsleep 2\n", { mode: 0o755 });
