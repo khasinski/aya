@@ -11,10 +11,10 @@
 //                     server  { t:"event", channel, payload }   (push)
 //                     server  { t:"hello", ... }                (on connect)
 //
-// Invokes are dispatched to the SAME ipcMain handlers the desktop renderer
-// uses (captured in ipc/web-capture.ts). Channels whose handler is window-scoped are
-// overridden below with their windowless semantics — the same null-window
-// path projects:state already documents for the remote server.
+// Invokes use the explicit web-bridge allowlist below, then dispatch to the
+// same ipcMain handlers the desktop renderer uses (captured in
+// ipc/web-capture.ts). Window-scoped channels with existing web semantics are
+// overridden below.
 //
 // SECURITY: sessions are in-memory (restart = re-login), the cookie is
 // HttpOnly + SameSite=Strict, login is rate-limited per client address, and
@@ -100,10 +100,111 @@ const CHANNEL_OVERRIDES: Record<
   "app:set-dock-badge": async () => undefined,
 };
 
+// This is the invoke surface declared by src/web/bridge.ts. Keep it explicit:
+// a newly added bridge call must be reviewed here before Aya Web can dispatch
+// it. The windowless overrides above are separately kept available because
+// they already define the intended Aya Web behavior for those channels.
+export const WEB_BRIDGE_INVOKE_CHANNELS = [
+  "agent:waiting",
+  "app:cli-status",
+  "app:diagnostics",
+  "app:install-cli",
+  "env:complete-path",
+  "env:create-dir",
+  "env:cwd",
+  "env:dir-exists",
+  "env:expand",
+  "env:git",
+  "env:git-changed-files",
+  "env:git-diff",
+  "env:git-root",
+  "env:git-worktree-status",
+  "env:github-cli-available",
+  "env:github-link",
+  "env:home",
+  "harness:search",
+  "intelligence:ollama-status",
+  "intelligence:pull-ollama-model",
+  "local-summary:summarize",
+  "machines:command",
+  "machines:configure",
+  "machines:discover",
+  "machines:setup",
+  "machines:status",
+  "mic:request",
+  "mic:status",
+  "presets:list",
+  "presets:save",
+  "presets:scan-harnesses",
+  "projects:create",
+  "projects:create-remote",
+  "projects:list",
+  "projects:read-repo-config",
+  "projects:save-state",
+  "projects:state",
+  "projects:update",
+  "pty-host:restart",
+  "pty-host:retry-recovery",
+  "pty-host:stop-others",
+  "pty:buffer",
+  "pty:confirm-restart",
+  "pty:cwd",
+  "pty:kill",
+  "pty:resize",
+  "pty:search",
+  "pty:spawn",
+  "pty:write",
+  "remote:create-directory",
+  "remote:create-project",
+  "remote:health",
+  "remote:list-directory",
+  "remote:list-presets",
+  "sessions:list-monitored",
+  "snippets:list",
+  "snippets:save",
+  "status-hook:install",
+  "status-hook:status",
+  "status-hook:uninstall",
+  "teams:assign",
+  "teams:draft-role",
+  "teams:list",
+  "teams:open-panes",
+  "teams:pause",
+  "teams:presets",
+  "teams:release-pane",
+  "teams:remove",
+  "teams:resume",
+  "teams:save",
+  "teams:start",
+  "themes:list",
+  "themes:save",
+  "updates:check",
+  "updates:install",
+  "updates:status",
+  "usage-hook:install",
+  "usage-hook:status",
+  "usage-hook:uninstall",
+  "usage:get",
+  "usage:get-codex",
+  "usage:get-grok",
+  "web:configure",
+  "web:regenerate-password",
+  "web:status",
+] as const;
+
+export const WEB_OVERRIDE_CHANNELS = Object.keys(CHANNEL_OVERRIDES).sort();
+export const WEB_ALLOWED_CHANNELS = new Set([
+  ...WEB_BRIDGE_INVOKE_CHANNELS,
+  ...WEB_OVERRIDE_CHANNELS,
+]);
+
 export async function dispatchWebInvoke(
   channel: string,
   args: unknown[],
 ): Promise<unknown> {
+  if (!WEB_ALLOWED_CHANNELS.has(channel)) {
+    throw new Error("Not available in Aya Web");
+  }
   const override = CHANNEL_OVERRIDES[channel];
   if (override) return override(args);
   if (!hasCapturedIpcHandler(channel)) {

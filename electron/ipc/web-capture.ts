@@ -1,11 +1,10 @@
 // Aya Web (experimental) — capture of ipcMain.handle registrations.
 //
-// The web server exposes the SAME API surface the renderer gets over
-// contextBridge, but over WebSocket. Electron has no API to look up a
-// registered invoke handler, so we wrap ipcMain.handle before registerIpc()
-// runs and record every (channel -> handler) pair. Handlers are then invoked
-// directly with a stub event (sender: null). Channels whose handler needs a
-// real BrowserWindow are overridden in web-server.ts and never reach these.
+// Electron has no API to look up a registered invoke handler, so we wrap
+// ipcMain.handle before registerIpc() runs and record every (channel ->
+// handler) pair. This registry is broader than the Aya Web API: web-server.ts
+// applies its explicit allowlist before dispatch. Allowed handlers are invoked
+// with a stub event (sender: null); window-scoped web overrides bypass this.
 
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 

@@ -1,13 +1,19 @@
 // Aya Web server: login auth (cookie, rate limit, origin check), static
 // serving with traversal protection, and the WebSocket invoke/result/event
 // bridge. Drives a real server on an ephemeral port — no Electron needed
-// (window-scoped channels are overridden, everything else is registry-based
-// and the registry is empty here, so unknown channels must error cleanly).
+// (window-scoped channels are overridden and unlisted invokes are denied).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { PASSWORD, startTestServer, wsOpen } from "./helpers/web-server.mjs";
-import { IMMUTABLE_MAX_AGE_S, SESSION_TOKEN_BYTES } from "../dist-electron/web-server.js";
+import {
+  IMMUTABLE_MAX_AGE_S,
+  SESSION_TOKEN_BYTES,
+  WEB_ALLOWED_CHANNELS,
+  WEB_BRIDGE_INVOKE_CHANNELS,
+  WEB_OVERRIDE_CHANNELS,
+} from "../dist-electron/web-server.js";
 
 async function login(base, user = "tester", password = PASSWORD, headers = {}) {
   const res = await fetch(`${base}/api/login`, {
@@ -125,13 +131,31 @@ test("websocket requires a session and speaks the bridge protocol", async () => 
       const listed = await next();
       assert.deepEqual(listed, { t: "result", id: 1, ok: true, value: [] });
 
-      // Unknown channel -> clean error result, socket stays usable.
+      // A raw authenticated client cannot invoke a captured desktop-only
+      // channel by bypassing bridge.ts.
       ws.send(
-        JSON.stringify({ t: "invoke", id: 2, channel: "nope:nope", args: [] }),
+        JSON.stringify({
+          t: "invoke",
+          id: 2,
+          channel: "env:clipboard-read",
+          args: [],
+        }),
+      );
+      const denied = await next();
+      assert.deepEqual(denied, {
+        t: "result",
+        id: 2,
+        ok: false,
+        error: "Not available in Aya Web",
+      });
+
+      // Unlisted channel -> clean denial, socket stays usable.
+      ws.send(
+        JSON.stringify({ t: "invoke", id: 3, channel: "nope:nope", args: [] }),
       );
       const failed = await next();
       assert.equal(failed.ok, false);
-      assert.match(failed.error, /Unknown channel/);
+      assert.equal(failed.error, "Not available in Aya Web");
 
       // Server push reaches the client.
       handle.broadcast("pty:event", { ptyId: "p1", type: "data", data: "x" });
@@ -146,6 +170,23 @@ test("websocket requires a session and speaks the bridge protocol", async () => 
   } finally {
     await cleanup();
   }
+});
+
+test("web allowlist exactly tracks bridge invokes plus existing overrides", () => {
+  const bridgeSource = readFileSync(
+    new URL("../src/web/bridge.ts", import.meta.url),
+    "utf8",
+  );
+  const bridgeCalls = [...bridgeSource.matchAll(/\binv\("([^"]+)"\)/g)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual([...WEB_BRIDGE_INVOKE_CHANNELS].sort(), bridgeCalls);
+
+  const expectedAllowed = [...new Set([
+    ...bridgeCalls,
+    ...WEB_OVERRIDE_CHANNELS,
+  ])].sort();
+  assert.deepEqual([...WEB_ALLOWED_CHANNELS].sort(), expectedAllowed);
 });
 
 test("session tokens are 32 random bytes; hashed assets cache for a year", () => {
