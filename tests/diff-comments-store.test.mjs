@@ -47,7 +47,9 @@ test("comments persist across a fresh read, stay per project, and sent comments 
   assert.equal((await deleteDiffComment(home, "project-a", "1123456789abcdef")).length, 0);
   const file = diffCommentsFile(home, "project-a");
   assert.equal(lstatSync(file).mode & 0o777, 0o600);
-  assert.equal(JSON.parse(readFileSync(file, "utf8")).projectSlug, "project-a");
+  const persisted = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(persisted.version, 1);
+  assert.equal(persisted.projectSlug, "project-a");
 });
 
 test("unsafe comment paths and malformed or oversized records fail closed", async (t) => {

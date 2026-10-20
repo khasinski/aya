@@ -85,9 +85,16 @@ test.describe("saved comments on the working diff", () => {
       expect(received).toContain("committed.txt");
       expect(received).toContain("> +twoX");
       expect(received).toContain("\x1b[200~");
-      await expect(afterRestart.locator(".aya-diff-comment").filter({ hasText: "Please rename this value" })).toContainText("Sent to Review target");
+      const sentComment = afterRestart.locator(".aya-diff-comment").filter({ hasText: "Please rename this value" });
+      await expect(sentComment.locator(".aya-diff-comment-sent")).toHaveText("Sent to Review target");
+      await expect(sentComment.locator(".aya-diff-comment-note")).toHaveText("Please rename this value");
+      await expect(sentComment).not.toContainText("Sent to Review target;");
+      await expect(afterRestart.getByTestId("diff-review-bar")).toContainText("1 sent");
+      const clearSent = afterRestart.getByRole("button", { name: "Clear sent" });
+      await expect(clearSent).toBeEnabled();
+      await expect(clearSent).toHaveCSS("cursor", "pointer");
       await afterRestart.screenshot({ path: "/tmp/diff-comments-after-sent.png" });
-      await afterRestart.getByRole("button", { name: "Clear sent" }).click();
+      await clearSent.click();
       await expect(afterRestart.locator(".aya-diff-review-bar")).toHaveCount(0);
       await afterRestart.screenshot({ path: "/tmp/diff-comments-after-clear-sent.png" });
     } finally {

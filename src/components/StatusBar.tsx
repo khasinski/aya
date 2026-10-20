@@ -897,10 +897,10 @@ function DiffPanel({
                 {under.map((comment) => (
                   <div key={comment.id}>
                     <div className="aya-diff-comment">
-                      <span className="aya-diff-comment-note">
-                        {comment.sentAt ? <strong>Sent to {comment.sentTo}; </strong> : null}
-                        {comment.note}
-                      </span>
+                      <div className="aya-diff-comment-content">
+                        {comment.sentAt ? <span className="aya-diff-comment-sent">Sent to {comment.sentTo}</span> : null}
+                        <span className="aya-diff-comment-note">{comment.note}</span>
+                      </div>
                       <button className="aya-diff-comment-action" type="button" aria-label={`Edit comment on ${comment.file}`} title="Edit comment" onClick={() => { setEditing(null); setEditingCommentId(comment.id); setDraft(comment.note); }}>Edit</button>
                       <button className="aya-diff-comment-remove" type="button" aria-label={`Delete comment on ${comment.file}`} title="Delete comment" onClick={() => onDeleteComment(comment.id)}>×</button>
                     </div>
@@ -966,11 +966,13 @@ function DiffPanel({
           {outdated.map((comment) => (
             <div key={comment.id}>
               <div className="aya-diff-comment aya-diff-comment--outdated">
-                <span className="aya-diff-comment-note">
-                  {comment.sentAt ? <strong>Sent to {comment.sentTo}; </strong> : null}
-                  {comment.file}:{comment.newLine ?? comment.oldLine} {comment.newLine === null ? "(removed line in HEAD)" : ""}<br />
-                  <code>{comment.line}</code><br />{comment.note}
-                </span>
+                <div className="aya-diff-comment-content">
+                  {comment.sentAt ? <span className="aya-diff-comment-sent">Sent to {comment.sentTo}</span> : null}
+                  <span className="aya-diff-comment-note">
+                    {comment.file}:{comment.newLine ?? comment.oldLine} {comment.newLine === null ? "(removed line in HEAD)" : ""}<br />
+                    <code>{comment.line}</code><br />{comment.note}
+                  </span>
+                </div>
                 <button className="aya-diff-comment-action" type="button" aria-label={`Edit outdated comment on ${comment.file}`} title="Edit comment" onClick={() => { setEditing(null); setEditingCommentId(comment.id); setDraft(comment.note); }}>Edit</button>
                 <button className="aya-diff-comment-remove" type="button" aria-label={`Delete outdated comment on ${comment.file}`} title="Delete comment" onClick={() => onDeleteComment(comment.id)}>×</button>
               </div>
@@ -995,10 +997,14 @@ function DiffPanel({
       {comments.length > 0 && (
         <div className="aya-diff-review-bar" data-testid="diff-review-bar">
           <span className="aya-diff-review-count">
-            {comments.length} {comments.length === 1 ? "comment" : "comments"}
+            {unsent.length === 0
+              ? `${comments.length} sent`
+              : unsent.length === comments.length
+                ? `${comments.length} ${comments.length === 1 ? "comment" : "comments"}`
+                : `${unsent.length} to send · ${comments.length - unsent.length} sent`}
             {outdated.length > 0 ? ` (${outdated.length} outdated)` : ""}
           </span>
-          {comments.some((comment) => comment.sentAt) && <button className="aya-statusbar-popover-action" type="button" onClick={onClearSent}>Clear sent</button>}
+          {comments.some((comment) => comment.sentAt) && <button className="aya-diff-clear-sent" type="button" onClick={onClearSent}>Clear sent</button>}
           <span className="aya-diff-review-spacer" />
           {targets.length === 0 ? (
             <span className="aya-diff-review-hint">No pane in this project to send to.</span>
