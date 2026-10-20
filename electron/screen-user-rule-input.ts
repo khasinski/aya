@@ -13,7 +13,7 @@ export class GuardedRuleInput {
   constructor(private provider:Pick<UserRuleProvider,"configuration"|"evaluate">,private host:{
     snapshot:(id:string)=>Promise<VtSnapshot|null>;
     check:(id:string,fence:VtSnapshotFence)=>Promise<boolean>;
-    writeFenced:(id:string,data:string,fence:VtSnapshotFence)=>Promise<boolean>;
+    writeFenced:(id:string,data:string,fence:VtSnapshotFence,policyEpoch:number)=>Promise<boolean>;
     writeLegacy:(id:string,data:string,stillAllowed?:()=>boolean)=>Promise<boolean|void>;
   }){
     this.coordinator=new UserRuleCoordinator({configuration:()=>provider.configuration(),evaluate:request=>provider.evaluate(request),checkSnapshot:(id,fence)=>host.check(id,fence)});
@@ -61,7 +61,7 @@ export class GuardedRuleInput {
     // No await between the last main-owned epoch/cancel check and dispatch.
     // The host rechecks the fence at its actual first accepted master byte.
     // A stale revision or uncertain/lost ACK is propagated, never retried here.
-    return this.host.writeFenced(id,data,result.fence);
+    return this.host.writeFenced(id,data,result.fence,state.epoch);
   }
   dispose():void{this.disposed=true;this.coordinator.dispose();}
 }

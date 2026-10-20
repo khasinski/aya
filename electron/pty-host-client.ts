@@ -1053,11 +1053,21 @@ export class PtyHostClient {
   }
 
   /** User-rule decisions never degrade to an unfenced write on an old host. */
-  async writeAtSnapshot(ptyId: string, data: string, fence: VtSnapshotFence): Promise<boolean> {
+  async setUserRulePolicyEpoch(epoch:string):Promise<boolean>{
+    if(!/^[a-f0-9]{32}:[0-9]{1,16}$/.test(epoch))return false;
+    const socket=this.socket;
+    if(this.disposed||this.crashBlocked||!socket||socket.destroyed)return false;
+    try{return await this.sendRequest(socket,{id:0,type:"rule-policy-epoch",epoch})===true;}catch{return false;}
+  }
+  async writeAtSnapshot(ptyId: string, data: string, fence: VtSnapshotFence, policyEpoch:string): Promise<boolean> {
     if (!validVtSnapshotFence(fence)) throw Object.assign(new Error("Terminal screen identity is unavailable. This input was not sent."), {code:"PTY_HOST_STALE_REVISION"});
+    if(!/^[a-f0-9]{32}:[0-9]{1,16}$/.test(policyEpoch))throw Object.assign(new Error("Screen rules are unavailable. This input was not sent."),{code:"PTY_HOST_RULES_UNAVAILABLE"});
     const socket = this.socket;
     if (this.disposed || this.crashBlocked || !socket || socket.destroyed) throw new Error("The terminal host is not connected. This input was not sent.");
-    const result = await this.sendRequest(socket,{id:0,type:"write-fenced",ptyId,data,fence});
+    // Establish the current policy at the host before dispatch. The epoch is
+    // also carried on the write so a later reload can invalidate it in queue.
+    if(await this.sendRequest(socket,{id:0,type:"rule-policy-epoch",epoch:policyEpoch}).catch(()=>false)!==true)throw new Error("Screen rules could not be checked. This input was not sent.");
+    const result = await this.sendRequest(socket,{id:0,type:"write-fenced",ptyId,data,fence,policyEpoch});
     if (result === true || result === false) return result;
     throw new Error("Terminal input outcome is unknown. Check the pane before retrying; Aya did not resend it.");
   }
@@ -1540,7 +1550,7 @@ export class PtyHostClient {
     if (!pending) return;
     this.pending.delete(message.id);
     if (message.ok) pending.resolve(message.result);
-    else pending.reject(Object.assign(new Error(message.error), { code: message.code === "PTY_HOST_STALE_REVISION" ? message.code : "PTY_HOST_REMOTE_ERROR" }));
+    else pending.reject(Object.assign(new Error(message.error), { code: message.code === "PTY_HOST_STALE_REVISION"||message.code === "PTY_HOST_RULES_CHANGED" ? message.code : "PTY_HOST_REMOTE_ERROR" }));
   }
 
   private sendToSinks(events: PtyEvent[]): void {

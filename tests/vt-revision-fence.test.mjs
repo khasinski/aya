@@ -70,12 +70,16 @@ test('close/reopen rejects old generation and a planned restore rejects the old 
 test('fenced protocol verbs are distinct and closed; legacy snapshots remain readable without permission to fence',async()=>{
  open();const current=await vtSnapshot('p'),f=fence(current);
  for(const type of ['write-fenced','snapshot-check','composer-seen-checked']){
-  const request={id:1,type,ptyId:'p',fence:f,...(type==='write-fenced'?{data:'yes\r'}:{})};
+  const request={id:1,type,ptyId:'p',fence:f,...(type==='write-fenced'?{data:'yes\r',policyEpoch:'a'.repeat(32)+':1'}:{})};
   assert.equal(isPtyHostRequest(request),true);
   for(const invalid of [undefined,null,{}, {...f,extra:true},Object.assign(Object.create(f),{a:1,b:2}),{...f,revision:'bad'}, {...f,generation:''}])
    assert.equal(isPtyHostRequest({...request,fence:invalid}),false);
   assert.equal(isPtyHostRequest({...request,extra:true}),false);
  }
+ assert.equal(isPtyHostRequest({id:2,type:'rule-policy-epoch',epoch:'b'.repeat(32)+':4'}),true);
+ for(const epoch of [4,'bad','b'.repeat(32)+':01:2'])assert.equal(isPtyHostRequest({id:2,type:'rule-policy-epoch',epoch}),false);
+ assert.equal(isPtyHostRequest({id:3,type:'write-fenced',ptyId:'p',data:'x',fence:f,policyEpoch:'b'.repeat(32)+':4'}),true);
+ assert.equal(isPtyHostRequest({id:3,type:'write-fenced',ptyId:'p',data:'x',fence:f,policyEpoch:'stale'}),false);
  const {revision,...legacy}=current;assert.ok(revision);assert.equal(asVtSnapshot(legacy),legacy);
  assert.equal(validVtSnapshotFence(fence(legacy)),false);assert.equal(asVtSnapshot({...current,revision:'bad'}),null);
 });

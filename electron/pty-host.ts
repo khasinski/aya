@@ -89,6 +89,7 @@ let server: net.Server | null = null;
 // The socket file this host bound, by device and inode. When this host exits after a restart, the path may already
 // belong to its successor, and removing it then would leave that host serving with no socket.
 let ownSocket: { dev: number; ino: number } | null = null;
+let userRulePolicyEpoch: string | null = null;
 
 // Guards against overlapping shutdowns (a socket "shutdown" request racing a
 // SIGTERM): the SECOND shutdownPtyChildren call would find the ptys map already
@@ -338,7 +339,15 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     // the control server turns into a failed `aya pane send` instead of a
     // silent no-op. An older host answers null here; the client reads any
     // non-false result as "delivered", so it degrades to the old behaviour.
-    return writePty(request.ptyId, request.data, request.type === "write-fenced" ? request.fence : undefined);
+    if(request.type === "write-fenced"){
+      const checkPolicy=()=>{if(userRulePolicyEpoch!==request.policyEpoch)throw Object.assign(new Error("Screen rules changed while this input was queued. This input was not sent."),{code:"PTY_HOST_RULES_CHANGED"});};
+      return writePty(request.ptyId, request.data, request.fence, checkPolicy);
+    }
+    return writePty(request.ptyId, request.data);
+  }
+  if(request.type==="rule-policy-epoch"){
+    userRulePolicyEpoch=request.epoch;
+    return true;
   }
   if (request.type === "resize") {
     resizePty(request.ptyId, request.cols, request.rows);
@@ -530,7 +539,7 @@ function attachAuthenticatedClient(socket:net.Socket,initialBuffer:string):void 
               id: requestId,
               ok: false,
               error: err instanceof Error ? err.message : String(err),
-              ...((err as {code?:string})?.code === "PTY_HOST_STALE_REVISION" ? {code:"PTY_HOST_STALE_REVISION" as const} : {}),
+              ...(["PTY_HOST_STALE_REVISION","PTY_HOST_RULES_CHANGED"].includes((err as {code?:string})?.code??"") ? {code:(err as {code:"PTY_HOST_STALE_REVISION"|"PTY_HOST_RULES_CHANGED"}).code} : {}),
             });
           }
         })();

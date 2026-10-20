@@ -26,6 +26,7 @@ import { installApplicationMenu, setStaleMenuIcon } from "./app-menu";
 import { showAyaAboutPanel } from "./about-panel";
 import { statSync } from "node:fs";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { getOrCreateProject, listProjects, listProjectState, saveProjectState } from "./config";
 import { bundledAyaCliPath } from "./cli-path";
@@ -162,16 +163,18 @@ const builtinRuleSet: ScreenRuleSet = builtinState.available ? builtinState.rule
   sets: { generic: [], claude: [], codex: [], opencode: [], grok: [], antigravity: [] },
 };
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
+const userRulePolicyInstance=crypto.randomBytes(16).toString("hex");
+const hostRuleEpoch=(epoch:number)=>`${userRulePolicyInstance}:${epoch}`;
 const userRuleProvider = new UserRuleProvider(path.join(AYA_HOME, "screen-rules"), builtinRuleSet, {
   log: (reason, digest) => diagnosticsLog.append("user-screen-rules-unavailable", { reason, digest }),
-  changed: (state) => ptyHost.setUserRuleStatusObserver(!state.available || state.manifest
+  changed: (state) => { void ptyHost.setUserRulePolicyEpoch(hostRuleEpoch(state.epoch)); ptyHost.setUserRuleStatusObserver(!state.available || state.manifest
     ? (id, snapshot) => userRulePanes.status(id, snapshot)
-    : null),
+    : null); },
 });
 const userRuleInput = new GuardedRuleInput(userRuleProvider, {
   snapshot: (id) => ptyHost.appliedSnapshotForRules(id),
   check: (id, fence) => ptyHost.checkSnapshot(id, fence),
-  writeFenced: (id, data, fence) => ptyHost.writeAtSnapshot(id, data, fence),
+  writeFenced: (id, data, fence, epoch) => ptyHost.writeAtSnapshot(id, data, fence, hostRuleEpoch(epoch)),
   writeLegacy: (id, data, stillAllowed) => ptyHost.write(id, data, stillAllowed),
 });
 const userRulePanes = new UserRulePanePolicy(userRuleInput, userRuleProvider, {

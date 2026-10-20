@@ -10,7 +10,10 @@ export type PtyHostRequest =
   | { id: number; type: "spawn"; req: SpawnRequest }
   | { id: number; type: "write"; ptyId: string; data: string }
   // A separate verb makes an older host refuse rather than ignore a fence.
-  | { id: number; type: "write-fenced"; ptyId: string; data: string; fence: VtSnapshotFence }
+  // The opaque main-instance/provider epoch is checked again at the host's
+  // queued first-byte boundary, independently of the VT revision fence.
+  | { id: number; type: "write-fenced"; ptyId: string; data: string; fence: VtSnapshotFence; policyEpoch: string }
+  | { id: number; type: "rule-policy-epoch"; epoch: string }
   | { id: number; type: "snapshot-check"; ptyId: string; fence: VtSnapshotFence }
   | { id: number; type: "composer-seen-checked"; ptyId: string; fence: VtSnapshotFence }
   | { id: number; type: "resize"; ptyId: string; cols: number; rows: number }
@@ -55,7 +58,7 @@ export type PtyHostRequest =
 
 export type PtyHostResponse = (
   | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: string; code?: "PTY_HOST_STALE_REVISION" }) & { ownerBacked?: true; hostPid?: number;ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean} };
+  | { id: number; ok: false; error: string; code?: "PTY_HOST_STALE_REVISION"|"PTY_HOST_RULES_CHANGED" }) & { ownerBacked?: true; hostPid?: number;ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean} };
 
 export interface PtyOwnerStatus {
   pid: number;
@@ -100,11 +103,12 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
     return Number.isSafeInteger(r.id)&&Object.keys(value).length===3&&["id","type","transferAttempt"].every(key=>Object.hasOwn(value,key))&&typeof record.transferAttempt==="string"&&/^[a-f0-9]{64}$/.test(record.transferAttempt);
   }
   if (r.type === "write-fenced" || r.type === "snapshot-check" || r.type === "composer-seen-checked") {
-    const keys = r.type === "write-fenced" ? ["id", "type", "ptyId", "fence", "data"] : ["id", "type", "ptyId", "fence"];
+    const keys = r.type === "write-fenced" ? ["id", "type", "ptyId", "fence", "data", "policyEpoch"] : ["id", "type", "ptyId", "fence"];
     return Number.isSafeInteger(r.id) && typeof r.ptyId === "string" && r.ptyId.length > 0 && r.ptyId.length <= 256 &&
       Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) && validVtSnapshotFence(r.fence) &&
-      (r.type !== "write-fenced" || typeof r.data === "string");
+      (r.type !== "write-fenced" || typeof r.data === "string" && typeof r.policyEpoch === "string" && /^[a-f0-9]{32}:[0-9]{1,16}$/.test(r.policyEpoch));
   }
+  if (r.type === "rule-policy-epoch") return Number.isSafeInteger(r.id) && Object.keys(value).length === 3 && ["id", "type", "epoch"].every(key => Object.hasOwn(value, key)) && typeof (value as {epoch?:unknown}).epoch === "string" && /^[a-f0-9]{32}:[0-9]{1,16}$/.test((value as {epoch:string}).epoch);
   return typeof r.id === "number" && typeof r.type === "string";
 }
 

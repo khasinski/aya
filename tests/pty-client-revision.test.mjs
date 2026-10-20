@@ -2,17 +2,18 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {PtyHostClient} from '../dist-electron/pty-host-client.js';
 const fence={generation:'g',revision:'12345678-1234-1234-1234-123456789012:1'};
+const policyEpoch='a'.repeat(32)+':1';
 test('checked input uses only its distinct verb, requires a boolean outcome, and never falls back on a legacy refusal',async()=>{
  for(const answer of [true,false,null,undefined]){
-  const c=new PtyHostClient('/unused'),calls=[];c.socket={destroyed:false,destroy(){this.destroyed=true;}};c.sendRequest=async(_socket,request)=>{calls.push(request.type);return answer;};c.readExistingRequest=async request=>{calls.push(request.type);return answer;};
+  const c=new PtyHostClient('/unused'),calls=[];c.socket={destroyed:false,destroy(){this.destroyed=true;}};c.sendRequest=async(_socket,request)=>{calls.push(request.type);return request.type==='rule-policy-epoch'?true:answer;};c.readExistingRequest=async request=>{calls.push(request.type);return answer;};
   try{
-   if(typeof answer==='boolean')assert.equal(await c.writeAtSnapshot('p','text',fence),answer);
-   else await assert.rejects(c.writeAtSnapshot('p','text',fence),/outcome is unknown.*did not resend/);
-   assert.deepEqual(calls,['write-fenced']);
+   if(typeof answer==='boolean')assert.equal(await c.writeAtSnapshot('p','text',fence,policyEpoch),answer);
+   else await assert.rejects(c.writeAtSnapshot('p','text',fence,policyEpoch),/outcome is unknown.*did not resend/);
+   assert.deepEqual(calls,['rule-policy-epoch','write-fenced']);
   }finally{c.dispose();}
  }
- const c=new PtyHostClient('/unused'),calls=[];c.socket={destroyed:false,destroy(){this.destroyed=true;}};c.sendRequest=async(_socket,request)=>{calls.push(request.type);throw Error('unknown request');};
- try{await assert.rejects(c.writeAtSnapshot('p','text',fence),/unknown request/);assert.deepEqual(calls,['write-fenced']);}
+ const c=new PtyHostClient('/unused'),calls=[];c.socket={destroyed:false,destroy(){this.destroyed=true;}};c.sendRequest=async(_socket,request)=>{calls.push(request.type);if(request.type==='rule-policy-epoch')return true;throw Error('unknown request');};
+ try{await assert.rejects(c.writeAtSnapshot('p','text',fence,policyEpoch),/unknown request/);assert.deepEqual(calls,['rule-policy-epoch','write-fenced']);}
  finally{c.dispose();}
 });
 test('revision check and composer ACK require exact positive answers; missing fences make no request',async()=>{
@@ -25,7 +26,7 @@ test('revision check and composer ACK require exact positive answers; missing fe
   }
   assert.deepEqual(calls,['snapshot-check','composer-seen-checked','snapshot-check','composer-seen-checked','snapshot-check','composer-seen-checked','snapshot-check','composer-seen-checked']);
   calls.length=0;assert.equal(await c.checkSnapshot('p',{}),false);assert.equal(await c.markComposerAtSnapshot('p',{}),false);
-  await assert.rejects(c.writeAtSnapshot('p','text',{}),error=>error.code==='PTY_HOST_STALE_REVISION'&&error.message.includes('not sent'));
+  await assert.rejects(c.writeAtSnapshot('p','text',{},policyEpoch),error=>error.code==='PTY_HOST_STALE_REVISION'&&error.message.includes('not sent'));
   assert.deepEqual(calls,[]);
  }finally{c.dispose();}
 });
