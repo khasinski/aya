@@ -15,6 +15,7 @@ import {
 } from "../dist-electron/pty.js";
 import xterm from "@xterm/headless";
 import { focusReportingState } from "../dist-test/focus-reporting.js";
+import { consumeReplayModes, initialReplayModeTracker, replayModePrefix } from "../dist-electron/pty-replay-modes.js";
 
 // Per-chunk size (bytes) used to overflow the rolling buffer in the trim test.
 const BUFFER_TEST_CHUNK_SIZE_BYTES = 30000;
@@ -88,6 +89,103 @@ test("replay prefix plus retained toggles matches the live VT mirror modes", asy
     assert.match(replay, /^\x1b\[\?1049h/);
     assert.ok(replay.endsWith("TAIL"));
   } finally { mirror.dispose(); renderer.dispose(); __testClearOutputBuffers(); }
+});
+
+test("mode-like text inside OSC/DCS/SOS/PM/APC payloads does not become replay state after trimming", async () => {
+  __testClearOutputBuffers();
+  const { Terminal } = xterm;
+  const mirror = new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const renderer = new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const payload = [
+    "\x1b]0;title ?1049h BEL\x07",
+    "\x1b]0;title ?1003h ST\x1b\\",
+    "\x1bPqpayload ?1006h ST\x1b\\",
+    "\x1bXpayload ?2004h ST\x1b\\",
+    "\x1b^payload ?1004h ST\x1b\\",
+    "\x1b_payload ?1h ST\x1b\\",
+  ].join("");
+  const filler = "VISIBLE-ROW".padEnd(40_000, "x");
+  const write = (term, data) => new Promise(resolve => term.write(data, resolve));
+  try {
+    await write(mirror, payload + filler.repeat(28));
+    __testAppendToOutputBuffer("control-string-tail", payload);
+    for (let i = 0; i < 28; i++) __testAppendToOutputBuffer("control-string-tail", filler);
+    const replay = getBufferedReplayOutput("control-string-tail");
+    await write(renderer, replay);
+    assert.equal(mirror.buffer.active.type, "normal");
+    assert.equal(mirror.modes.mouseTrackingMode, "none");
+    assert.equal(replay.startsWith("\x1b[?1049h"), false, "string payload must not synthesize an alternate-screen prefix");
+    assert.deepEqual({ buffer: renderer.buffer.active.type, modes: renderer.modes }, { buffer: mirror.buffer.active.type, modes: mirror.modes });
+    assert.ok(replay.includes("VISIBLE-ROW"));
+  } finally { mirror.dispose(); renderer.dispose(); __testClearOutputBuffers(); }
+});
+
+test("a trimmed open DCS string keeps the retained replay inside the string", async () => {
+  __testClearOutputBuffers();
+  const { Terminal } = xterm;
+  const mirror = new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const renderer = new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const write = (term, data) => new Promise(resolve => term.write(data, resolve));
+  const opener = "\x1bPq?1049h" + "discarded".padEnd(40_000, "d");
+  const tail = "retained ?1003h" + "visible-bytes".padEnd(40_000, "r");
+  try {
+    await write(mirror, opener + tail + "\x1b\\");
+    __testAppendToOutputBuffer("open-string-tail", opener);
+    __testAppendToOutputBuffer("open-string-tail", tail);
+    for (let i = 0; i < 25; i++) __testAppendToOutputBuffer("open-string-tail", "filler".padEnd(40_000, "f"));
+    const replay = getBufferedReplayOutput("open-string-tail");
+    assert.ok(replay.startsWith("\x1bP"), "the boundary prefix should reopen the DCS string");
+    assert.equal(replay.startsWith("\x1b[?1049h"), false, "plain mode-like text must not synthesize an alternate-screen prefix");
+    await write(renderer, replay);
+    assert.equal(mirror.buffer.active.type, "normal");
+    assert.equal(renderer.buffer.active.type, mirror.buffer.active.type);
+    assert.equal(mirror.modes.mouseTrackingMode, "none");
+    assert.equal(renderer.modes.mouseTrackingMode, mirror.modes.mouseTrackingMode);
+  } finally { mirror.dispose(); renderer.dispose(); __testClearOutputBuffers(); }
+});
+
+test("replay scanner matches xterm escape handling inside control strings", async () => {
+  const { Terminal } = xterm;
+  const mirror = new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const tracker = initialReplayModeTracker();
+  const write = data => new Promise(resolve => mirror.write(data, resolve));
+  try {
+    const strings = [
+      "\x1b]0;title \x1b[?1049h\x07",
+      "\x1bPpayload \x1b[?1003h\x1b\\",
+      "\x1bXpayload \x1b[?2004h\x1b\\",
+      "\x1b^payload \x1b[?1004h\x1b\\",
+      "\x1b_payload \x1b[?1h\x1b\\",
+      "\x1bPpayload\x9b?1006h\x1b\\",
+    ];
+    for (const part of strings) {
+      consumeReplayModes(tracker, part);
+      await write(part);
+    }
+    assert.equal(tracker.state.alternate, mirror.buffer.active.type === "alternate");
+    assert.equal(tracker.state.mouse, mirror.modes.mouseTrackingMode);
+    assert.equal(tracker.state.focus, mirror.modes.sendFocusMode);
+    assert.equal(tracker.state.bracketedPaste, mirror.modes.bracketedPasteMode);
+    assert.equal(tracker.state.applicationCursor, mirror.modes.applicationCursorKeysMode);
+    assert.ok(replayModePrefix(tracker).startsWith("\x1b[?1049h"));
+  } finally { mirror.dispose(); }
+});
+
+test("replay scanner tracks split ESC and C1 control-string boundaries", () => {
+  const cases = [
+    ["\x1b]", "\x07", "\x1b]"], ["\x1b]", "\x1b\\", "\x1b]"], ["\x1bP", "\x1b\\", "\x1bP"],
+    ["\x1bX", "\x1b\\", "\x1bX"], ["\x1b^", "\x1b\\", "\x1b^"], ["\x1b_", "\x1b\\", "\x1b_"],
+    ["\x9d", "\x9c", "\x1b]"], ["\x90", "\x9c", "\x1bP"], ["\x98", "\x9c", "\x1bX"], ["\x9e", "\x9c", "\x1b^"], ["\x9f", "\x9c", "\x1b_"],
+  ];
+  for (const [start, end, expectedPrefix] of cases) {
+    const tracker = initialReplayModeTracker();
+    const text = `payload${end}`;
+    consumeReplayModes(tracker, start);
+    assert.equal(tracker.scanner.state, "string", `split introducer ${JSON.stringify(start)}`);
+    assert.ok(replayModePrefix(tracker).endsWith(expectedPrefix), `open string prefix for ${JSON.stringify(start)}`);
+    for (const ch of text) consumeReplayModes(tracker, ch);
+    assert.equal(replayModePrefix(tracker), "", `closed string leaves no replay prefix from ${JSON.stringify(start)}`);
+  }
 });
 
 test("searchPtyOutputs finds tokens across ANSI-decorated PTY output", () => {
