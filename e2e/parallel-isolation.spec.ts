@@ -18,23 +18,70 @@ const test = base.extend<{ peerSeeded: SeededEnv; peerApp: ElectronApplication }
   },
 });
 
+const PANE_REQUEST_TIMEOUT_MS = 1_500;
+
+/** Do not leave Playwright awaiting a context-bridged IPC promise past the
+ *  expect.poll deadline: fixture teardown closes the renderer context. */
+async function paneBufferWithin(
+  window: import("@playwright/test").Page,
+  terminalId: string,
+  timeoutMs = PANE_REQUEST_TIMEOUT_MS,
+  simulateStalledRequest = false,
+): Promise<string | null> {
+  return window.evaluate(async ({ id, timeoutMs, simulateStalledRequest }) => {
+    let timer: number | undefined;
+    try {
+      return await Promise.race([
+        simulateStalledRequest ? new Promise<string>(() => {}) : window.aya.ptyBuffer(id),
+        new Promise<null>((resolve) => { timer = window.setTimeout(() => resolve(null), timeoutMs); }),
+      ]);
+    } finally {
+      if (timer !== undefined) window.clearTimeout(timer);
+    }
+  }, { id: terminalId, timeoutMs, simulateStalledRequest });
+}
+
+async function writePaneWithin(window: import("@playwright/test").Page, terminalId: string, data: string): Promise<boolean> {
+  const result = await window.evaluate(async ({ id, text, timeoutMs }) => {
+    let timer: number | undefined;
+    try {
+      return await Promise.race([
+        window.aya.ptyWrite(id, text).then((written) => written ? "written" as const : "refused" as const),
+        new Promise<"timed-out">((resolve) => { timer = window.setTimeout(() => resolve("timed-out"), timeoutMs); }),
+      ]);
+    } finally {
+      if (timer !== undefined) window.clearTimeout(timer);
+    }
+  }, { id: terminalId, text: data, timeoutMs: PANE_REQUEST_TIMEOUT_MS });
+  if (result === "timed-out") throw new Error(`Pane ${terminalId} did not answer the input request within ${PANE_REQUEST_TIMEOUT_MS} ms.`);
+  return result === "written";
+}
+
 test("concurrent apps keep separate Aya homes, HOME and Electron user data", async ({ app, seeded, peerApp, peerSeeded }) => {
+  const [firstWindow, secondWindow] = await Promise.all([app.firstWindow(), peerApp.firstWindow()]);
+  // ElectronApplication.evaluate can lose its result while the two new apps
+  // are still starting. Wait until both renderers have loaded before querying
+  // the main-process contexts.
+  await Promise.all([firstWindow.waitForLoadState("domcontentloaded"), secondWindow.waitForLoadState("domcontentloaded")]);
   const identity = (running: ElectronApplication) => running.evaluate(({ app }) => ({
     ayaHome: process.env.AYA_HOME,
     home: process.env.HOME,
     userData: app.getPath("userData"),
     pid: process.pid,
   }));
-  const [first, second] = await Promise.all([identity(app), identity(peerApp)]);
+  // Keep each main-process CDP evaluation short and serial even though both
+  // Aya instances remain open concurrently for the isolation assertions.
+  const first = await identity(app);
+  const second = await identity(peerApp);
   // Electron canonicalizes macOS's /tmp -> /private/tmp symlink.
   expect(first).toMatchObject({ ayaHome: seeded.ayaHome, home: appEnv(seeded).HOME, userData: realpathSync(seeded.userDataDir) });
   expect(second).toMatchObject({ ayaHome: peerSeeded.ayaHome, home: appEnv(peerSeeded).HOME, userData: realpathSync(peerSeeded.userDataDir) });
   for (const key of ["ayaHome", "home", "userData", "pid"] as const) {
     expect(first[key], key).not.toBe(second[key]);
   }
-  const [firstWindow, secondWindow] = await Promise.all([app.firstWindow(), peerApp.firstWindow()]);
+  expect(await paneBufferWithin(firstWindow, "tab-left", 25, true)).toBeNull();
   for (const window of [firstWindow, secondWindow]) {
-    await expect.poll(() => window.evaluate(() => window.aya.ptyBuffer("tab-left"))).not.toBe("");
+    await expect.poll(async () => (await paneBufferWithin(window, "tab-left")) ?? "").not.toBe("");
   }
   const hosts = [seeded, peerSeeded].map((seed) => hostPidsForHome(seed.ayaHome));
   expect(hosts[0]).toHaveLength(1);
@@ -49,13 +96,13 @@ test("concurrent apps keep separate Aya homes, HOME and Electron user data", asy
   }
   // Traffic, not just path strings: identical pane ids in two live hosts must
   // address different shells. Split the marker so its command cannot satisfy it.
-  await Promise.all([firstWindow, secondWindow].map((window, i) => window.evaluate(
-    (n) => window.aya.ptyWrite("tab-left", `printf 'ISOLATION-%s\\n' ${n}\n`), i,
-  )));
-  const buffers = await Promise.all([firstWindow, secondWindow].map(async (window, i) => {
-    await expect.poll(() => window.evaluate(() => window.aya.ptyBuffer("tab-left"))).toContain(`ISOLATION-${i}`);
-    return window.evaluate(() => window.aya.ptyBuffer("tab-left"));
-  }));
+  await writePaneWithin(firstWindow, "tab-left", "printf 'ISOLATION-%s\\n' 0\n");
+  await writePaneWithin(secondWindow, "tab-left", "printf 'ISOLATION-%s\\n' 1\n");
+  const buffers: string[] = [];
+  for (const [index, window] of [firstWindow, secondWindow].entries()) {
+    await expect.poll(async () => (await paneBufferWithin(window, "tab-left")) ?? "").toContain(`ISOLATION-${index}`);
+    buffers.push((await paneBufferWithin(window, "tab-left")) ?? "");
+  }
   expect(buffers[0]).not.toContain("ISOLATION-1");
   expect(buffers[1]).not.toContain("ISOLATION-0");
 });
