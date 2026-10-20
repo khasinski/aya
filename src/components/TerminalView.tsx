@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
   type MouseEvent,
 } from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
@@ -410,6 +411,8 @@ function TerminalViewComponent({
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );
+  const [attachmentNotice, setAttachmentNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [copyingAttachments, setCopyingAttachments] = useState(false);
   const sendInput = useCallback((data: string) => {
     if(handoverInputPausedRef.current)return;
     const showFailure = (detail: string) => xtermRef.current?.write(`\r\n[${detail}]\r\n`);
@@ -1474,6 +1477,54 @@ function TerminalViewComponent({
     xtermRef.current?.focus();
   };
 
+  const addFilesToPrompt = useCallback(async (files: File[]) => {
+    if (copyingAttachments || files.length === 0) return;
+    if (files.some((file) => file.size > 25 * 1024 * 1024) || files.reduce((total, file) => total + file.size, 0) > 50 * 1024 * 1024) {
+      setAttachmentNotice({ text: "These files are too large to add to the prompt. The limit is 25 MB per file and 50 MB total.", error: true });
+      return;
+    }
+    setCopyingAttachments(true);
+    setAttachmentNotice({ text: "Copying files to the prompt...", error: false });
+    try {
+      const payload = await Promise.all(files.map(async (file) => ({
+        name: file.name,
+        mimeType: file.type,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      })));
+      await window.aya.addPromptAttachments(terminal.id, payload);
+      setAttachmentNotice({ text: `${files.length} ${files.length === 1 ? "file path" : "file paths"} added to the prompt. Nothing was submitted.`, error: false });
+      xtermRef.current?.focus();
+    } catch (error) {
+      setAttachmentNotice({ text: (error instanceof Error ? error.message : "Aya could not add those files to the prompt. Nothing was typed.").replace(/^Error invoking remote method '[^']+': (Error: )?/, ""), error: true });
+    } finally {
+      setCopyingAttachments(false);
+    }
+  }, [copyingAttachments, terminal.id]);
+
+  const addClipboardImageToPrompt = useCallback(async () => {
+    if (copyingAttachments) return;
+    setCopyingAttachments(true);
+    setAttachmentNotice({ text: "Saving the clipboard image...", error: false });
+    try {
+      await window.aya.addClipboardImageToPrompt(terminal.id);
+      setAttachmentNotice({ text: "Image path added to the prompt. Nothing was submitted.", error: false });
+      xtermRef.current?.focus();
+    } catch (error) {
+      setAttachmentNotice({ text: (error instanceof Error ? error.message : "Aya could not add the clipboard image. Nothing was typed.").replace(/^Error invoking remote method '[^']+': (Error: )?/, ""), error: true });
+    } finally {
+      setCopyingAttachments(false);
+    }
+  }, [copyingAttachments, terminal.id]);
+
+  const handleFileDrop = (event: DragEvent<HTMLDivElement>) => {
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onActivatePane?.();
+    void addFilesToPrompt(files);
+  };
+
   const selectAllTerminal = () => {
     xtermRef.current?.selectAll();
     setContextMenu(null);
@@ -1570,7 +1621,19 @@ function TerminalViewComponent({
         }
         onWheelCapture={() => setIsScrollbarHidden(false)}
         onContextMenu={openTerminalContextMenu}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+        }}
+        onDrop={handleFileDrop}
+        onPasteCapture={(event) => {
+          if (event.clipboardData.getData("text/plain")) return;
+          const hasImage = Array.from(event.clipboardData.types).some((type) => type === "Files" || type.startsWith("image/"));
+          if (!hasImage) return;
+          event.preventDefault();
+          void addClipboardImageToPrompt();
+        }}
       >
+        {attachmentNotice && <div data-testid="prompt-attachment-notice" className={`aya-prompt-attachment-notice ${attachmentNotice.error ? "aya-prompt-attachment-notice--error" : ""}`} role={attachmentNotice.error ? "alert" : "status"}>{attachmentNotice.text}</div>}
         {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}{terminal.recoveryRetryable&&<button type="button" data-testid="terminal-recovery-retry" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.retryPtyHostRecovery().catch(error=>setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`));}}>Try again</button>}</div>}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (

@@ -597,6 +597,10 @@ export interface AyaApi {
    *  output buffer. Returns one hit per matching pty (the first match plus
    *  an extra-occurrences count). */
   ptySearch(query: string): Promise<BufferSearchHit[]>;
+  /** Copy dropped files into the project's private attachment folder and type their paths without submitting. */
+  addPromptAttachments(terminalId: string, files: Array<{ name: string; mimeType: string; bytes: Uint8Array }>): Promise<void>;
+  /** Save an image from the clipboard as PNG and type its path without submitting. */
+  addClipboardImageToPrompt(terminalId: string): Promise<void>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;

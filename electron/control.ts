@@ -25,7 +25,7 @@ import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
 import { handleTeamAuthorRequest } from "./team-author";
-import { HOLD_BUSY, HOLD_DRAFT, isDialogHold, isUserOnlyHold } from "./pane-holds";
+import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
 import { oneLine, printable } from "./printable";
 import { handleTeamRequest, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
@@ -339,6 +339,38 @@ function deliverToPane(
       await afterEnter?.();
     }
   });
+}
+
+/** Adds paths to the user's input without submitting them. It shares pane-send's
+ *  serialization and host writer, and checks the screen again at the write boundary. */
+export async function typeAttachmentPaths(
+  writePane: NonNullable<ControlServerOptions["writePane"]>,
+  paneHold: NonNullable<ControlServerOptions["paneHold"]>,
+  terminalId: string,
+  paneName: string,
+  paths: string,
+): Promise<void> {
+  const guard = () => assertAttachmentPaneCanReceiveInput(paneHold, terminalId, paneName);
+  await deliverToPane(writePane, terminalId, paneName, paths, false, guard);
+}
+
+export async function assertAttachmentPaneCanReceiveInput(
+  paneHold: NonNullable<ControlServerOptions["paneHold"]>,
+  terminalId: string,
+  paneName: string,
+): Promise<void> {
+  const safeName = paneName.replace(/[\x00-\x1f\x7f-\x9f]/g, " ").slice(0, 80) || "this terminal";
+  let hold: string | null;
+  try { hold = await paneHold(terminalId); }
+  catch { throw new PaneHeldError("Aya could not check this pane safely. Nothing was typed."); }
+  if (hold === HOLD_STARTING) throw new PaneHeldError(`Not sent: ${safeName} is still starting. Wait for it to finish opening, then try again. Nothing was typed.`);
+  if (hold === HOLD_NOT_RUNNING) throw new PaneHeldError(`Not sent: ${safeName} is not running. Start it, then try again. Nothing was typed.`);
+  if (isDialogHold(hold)) {
+    throw new PaneHeldError(`Not sent: ${safeName} is waiting for your answer to a question. Answer it in that pane, then try again. Nothing was typed.`);
+  }
+  if (hold && hold !== HOLD_SHELL && hold !== HOLD_BUSY && hold !== HOLD_DRAFT) {
+    throw new PaneHeldError("Aya could not check this pane safely. Nothing was typed.");
+  }
 }
 
 /** One pane-send per terminal at a time: each finishes its text, gap and Enter before the next begins. */

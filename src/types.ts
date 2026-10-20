@@ -756,6 +756,10 @@ export interface AyaApi {
    *  PTY host, dead process, unsupported platform). */
   ptyCwd(ptyId: string): Promise<string | null>;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
+  /** Copy dropped files into the project's private attachment folder and type their paths without submitting. */
+  addPromptAttachments(terminalId: string, files: Array<{ name: string; mimeType: string; bytes: Uint8Array }>): Promise<void>;
+  /** Save a clipboard image as PNG and type its path without submitting. */
+  addClipboardImageToPrompt(terminalId: string): Promise<void>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;

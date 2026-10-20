@@ -72,6 +72,8 @@ export function createWebAya(transport: WebTransport): AyaApi {
     ptyBuffer: inv("pty:buffer"),
     ptyCwd: inv("pty:cwd"),
     ptySearch: inv("pty:search"),
+    addPromptAttachments: async () => { throw new Error("Adding files to a terminal prompt is only available in the Aya desktop app."); },
+    addClipboardImageToPrompt: async () => { throw new Error("Adding clipboard images to a terminal prompt is only available in the Aya desktop app."); },
     harnessSearch: inv("harness:search"),
     restartPtyHost: inv("pty-host:restart"),
     retryPtyHostRecovery: inv("pty-host:retry-recovery"),
