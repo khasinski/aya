@@ -96,10 +96,12 @@ interface OutputBuffer {
 }
 const outputBuffers = new Map<string, OutputBuffer>();
 function restoreOutputBuffer(value: PaneCoreCheckpoint["output"], legacyCurrentModes?: ReplayModeState): OutputBuffer {
+  const legacyModes = value.replayModes ? undefined : legacyCurrentModes
+    ? legacyReplayModeTracker(legacyCurrentModes, value.chunks.join("")) : undefined;
   return { chunks: [...value.chunks], total: value.total, version: value.version, end: value.end,
     replayModes: value.replayModes ? validateReplayModeTracker(value.replayModes) :
-      legacyCurrentModes ? legacyReplayModeTracker(legacyCurrentModes, value.chunks.join("")) : initialReplayModeTracker(),
-    replayModesKnown: value.replayModes !== undefined || legacyCurrentModes !== undefined };
+      legacyModes ?? initialReplayModeTracker(),
+    replayModesKnown: value.replayModes !== undefined || (legacyCurrentModes !== undefined && legacyModes !== null) };
 }
 // Restored processes read immediately. Keep their replay and real exit outcome
 // until the first renderer attaches, even if the child exits during that gap.

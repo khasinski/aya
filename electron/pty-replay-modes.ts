@@ -29,25 +29,27 @@ const BEL = "\x07";
 const mouseMode: Record<number, ReplayModeState["mouse"]> = { 9: "x10", 1000: "vt200", 1002: "drag", 1003: "any" };
 const stringIntroducer: Record<ControlString, string> = { osc: "]", dcs: "P", sos: "X", pm: "^", apc: "_" };
 type ModeChange =
-  | { field: "mouse"; enabled: boolean; mouse: ReplayModeState["mouse"]; previous: ReplayModeState["mouse"] }
-  | { field: Exclude<keyof ReplayModeState, "mouse">; enabled: boolean; previous: boolean };
+  | { field: "mouse"; enabled: boolean; mouse: ReplayModeState["mouse"] }
+  | { field: Exclude<keyof ReplayModeState, "mouse">; enabled: boolean }
+  | { field: "reset"; kind: "ris" | "decstr" };
 
 function setMode(tracker: ReplayModeTracker, field: keyof ReplayModeState, value: ReplayModeState[keyof ReplayModeState], onChange?: (change: ModeChange) => void): void {
-  const previous = tracker.state[field];
   (tracker.state as unknown as Record<string, unknown>)[field] = value;
-  if (field === "mouse") onChange?.({ field, enabled: value !== "none", mouse: value as ReplayModeState["mouse"], previous: previous as ReplayModeState["mouse"] });
-  else onChange?.({ field, enabled: value as boolean, previous: previous as boolean });
+  if (field === "mouse") onChange?.({ field, enabled: value !== "none", mouse: value as ReplayModeState["mouse"] });
+  else onChange?.({ field, enabled: value as boolean });
 }
 
 function resetModes(tracker: ReplayModeTracker, onChange?: (change: ModeChange) => void): void {
+  onChange?.({ field: "reset", kind: "ris" });
   const defaults = initialReplayModeTracker().state;
-  for (const field of Object.keys(defaults) as (keyof ReplayModeState)[]) setMode(tracker, field, defaults[field] as ReplayModeState[keyof ReplayModeState], onChange);
+  tracker.state = defaults;
 }
 
 function softResetModes(tracker: ReplayModeTracker, onChange?: (change: ModeChange) => void): void {
-  setMode(tracker, "applicationCursor", false, onChange);
-  setMode(tracker, "focus", false, onChange);
-  setMode(tracker, "bracketedPaste", false, onChange);
+  onChange?.({ field: "reset", kind: "decstr" });
+  tracker.state.applicationCursor = false;
+  tracker.state.focus = false;
+  tracker.state.bracketedPaste = false;
 }
 
 function controlStringForC1(ch: string): ControlString | null {
@@ -85,7 +87,10 @@ function scanCsi(tracker: ReplayModeTracker, sequence: string, ch: string, onCha
     if (mode === 1) setMode(tracker, "applicationCursor", enabled, onChange);
     else if (mode === 47 || mode === 1047 || mode === 1049) setMode(tracker, "alternate", enabled, onChange);
     else if (mouseMode[mode]) {
-      setMode(tracker, "mouse", enabled ? mouseMode[mode] : (tracker.state.mouse === mouseMode[mode] ? "none" : tracker.state.mouse), onChange);
+      // The pinned xterm mirror clears its single mouseTrackingMode field on
+      // any tracked DECRST, even when another tracking mode was most recently
+      // enabled. Keep this aligned with that observable renderer behavior.
+      setMode(tracker, "mouse", enabled ? mouseMode[mode] : "none", onChange);
     }
     else if (mode === 1004) setMode(tracker, "focus", enabled, onChange);
     else if (mode === 1006) setMode(tracker, "sgrMouse", enabled, onChange);
@@ -140,18 +145,18 @@ export function consumeReplayModes(tracker: ReplayModeTracker, text: string, onC
 }
 
 /** Reconstruct the state immediately before a legacy retained tail. Older
- * hosts did not serialize this boundary. Explicit boolean DECSET/DECRSTs can
- * be undone from the current VT state; mouse disables are conditional, so
- * keep their current state as the conservative baseline. */
-export function legacyReplayModeTracker(current: ReplayModeState, retained: string): ReplayModeTracker {
+ * hosts did not serialize this boundary. Invert explicit boolean DECSET/DECRST
+ * operations from the supplied current VT state. A reset or mouse transition
+ * is not invertible without the missing boundary state, so fail closed. */
+export function legacyReplayModeTracker(current: ReplayModeState, retained: string): ReplayModeTracker | null {
   const changes: ModeChange[] = [];
   const scanned = initialReplayModeTracker();
   consumeReplayModes(scanned, retained, change => changes.push(change));
   const state = structuredClone(current);
   for (let i = changes.length - 1; i >= 0; i--) {
     const change = changes[i];
-    if (change.field === "mouse") state.mouse = change.previous;
-    else state[change.field] = change.previous;
+    if (change.field === "reset" || change.field === "mouse") return null;
+    state[change.field] = !change.enabled;
   }
   return { state, scanner: { state: "ground" } };
 }
