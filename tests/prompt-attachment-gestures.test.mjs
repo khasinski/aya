@@ -69,9 +69,9 @@ test("trusted file drop resolves OS paths in preload and uses only a one-use tok
   h.cleanup();
 });
 
-test("trusted image paste is routed only from the focused terminal pane", async () => {
+test("trusted no-text paste in a focused terminal is checked by main even without image MIME types", async () => {
   const h = harness();
-  const paste = event({ isTrusted: true, target: h.target, clipboardData: { types: ["image/png"], getData: () => "" } });
+  const paste = event({ isTrusted: true, target: h.target, clipboardData: { types: [], getData: () => "" } });
   h.listeners.get("paste")(paste);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(paste.defaultPrevented, true);
@@ -80,6 +80,15 @@ test("trusted image paste is routed only from the focused terminal pane", async 
     ["prompt-attachments:clipboard-image", "opaque-one-use-token"],
   ]);
   assert.equal(h.reports.at(-1).kind, "image");
+  h.cleanup();
+});
+
+test("a trusted text paste stays with the terminal instead of requesting clipboard image access", () => {
+  const h = harness();
+  const paste = event({ isTrusted: true, target: h.target, clipboardData: { types: ["text/plain"], getData: (type) => type === "text/plain" ? "hello" : "" } });
+  h.listeners.get("paste")(paste);
+  assert.deepEqual(h.calls, []);
+  assert.equal(paste.defaultPrevented, false);
   h.cleanup();
 });
 

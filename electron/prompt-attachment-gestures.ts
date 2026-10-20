@@ -51,9 +51,11 @@ export function installPromptAttachmentGestures(deps: PromptAttachmentGestureDep
     const value = event as ClipboardEvent;
     const pane = terminalForEvent(value);
     if (!value.isTrusted || !pane || !value.clipboardData || value.clipboardData.getData("text/plain")) return;
-    const hasImage = Array.from(value.clipboardData.types).some((type) => type === "Files" || type.startsWith("image/"));
     const active = deps.document.activeElement;
-    if (!hasImage || !active || !pane.element.contains(active)) return;
+    // Some platforms expose clipboard images without advertising an image MIME
+    // type in the DOM event. Main inspects the clipboard only after this trusted,
+    // focused-pane paste gesture and refuses if it contains no image.
+    if (!active || !pane.element.contains(active)) return;
     value.preventDefault();
     value.stopImmediatePropagation();
     deps.report({ terminalId: pane.id, kind: "image", count: 1, phase: "started" });

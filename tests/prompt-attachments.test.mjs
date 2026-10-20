@@ -64,7 +64,8 @@ test("clipboard image files use private per-project folders and cleanup files ol
 
   const old = join(directory, "old.txt");
   (await import("node:fs/promises")).writeFile(old, "old", { mode: 0o600 });
-  const oldDate = new Date(Date.now() - PROMPT_ATTACHMENT_RETENTION_MS - 1000);
+  // Leave margin for filesystems that round timestamps to whole seconds.
+  const oldDate = new Date(Date.now() - PROMPT_ATTACHMENT_RETENTION_MS - 24 * 60 * 60 * 1000);
   utimesSync(old, oldDate, oldDate);
   await saveLocalAttachment(home, "project-a", Buffer.from("next"), ".txt");
   assert.equal(existsSync(old), false);
