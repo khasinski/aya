@@ -412,6 +412,7 @@ function TerminalViewComponent({
     null,
   );
   const [attachmentNotice, setAttachmentNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [copiedAttachmentPath, setCopiedAttachmentPath] = useState<string | null>(null);
   const [copyingAttachments, setCopyingAttachments] = useState(false);
   const sendInput = useCallback((data: string) => {
     if(handoverInputPausedRef.current)return;
@@ -1479,20 +1480,22 @@ function TerminalViewComponent({
 
   const addFilesToPrompt = useCallback(async (files: File[]) => {
     if (copyingAttachments || files.length === 0) return;
-    if (files.some((file) => file.size > 25 * 1024 * 1024) || files.reduce((total, file) => total + file.size, 0) > 50 * 1024 * 1024) {
-      setAttachmentNotice({ text: "These files are too large to add to the prompt. The limit is 25 MB per file and 50 MB total.", error: true });
-      return;
-    }
     setCopyingAttachments(true);
-    setAttachmentNotice({ text: "Copying files to the prompt...", error: false });
+    setCopiedAttachmentPath(null);
+    setAttachmentNotice({ text: "Adding file paths...", error: false });
     try {
-      const payload = await Promise.all(files.map(async (file) => ({
+      const payload = files.map((file) => ({
         name: file.name,
         mimeType: file.type,
-        bytes: new Uint8Array(await file.arrayBuffer()),
-      })));
-      await window.aya.addPromptAttachments(terminal.id, payload);
-      setAttachmentNotice({ text: `${files.length} ${files.length === 1 ? "file path" : "file paths"} added to the prompt. Nothing was submitted.`, error: false });
+        path: window.aya.getDroppedFilePath(file),
+      }));
+      const result = await window.aya.addPromptAttachments(terminal.id, payload);
+      if (result.status === "copied-not-added") {
+        setAttachmentNotice({ text: result.message, error: true });
+        setCopiedAttachmentPath(result.copyText);
+      } else {
+        setAttachmentNotice({ text: `${files.length === 1 ? "File path added" : `${files.length} file paths added`}. Nothing was submitted.`, error: false });
+      }
       xtermRef.current?.focus();
     } catch (error) {
       setAttachmentNotice({ text: (error instanceof Error ? error.message : "Aya could not add those files to the prompt. Nothing was typed.").replace(/^Error invoking remote method '[^']+': (Error: )?/, ""), error: true });
@@ -1501,13 +1504,25 @@ function TerminalViewComponent({
     }
   }, [copyingAttachments, terminal.id]);
 
+  const copyAttachmentPath = useCallback(async () => {
+    if (!copiedAttachmentPath) return;
+    await window.aya.writeClipboard(copiedAttachmentPath);
+    setCopiedAttachmentPath(null);
+    setAttachmentNotice({ text: "Path copied. Paste it into the pane when you are ready.", error: false });
+  }, [copiedAttachmentPath]);
+
   const addClipboardImageToPrompt = useCallback(async () => {
     if (copyingAttachments) return;
     setCopyingAttachments(true);
     setAttachmentNotice({ text: "Saving the clipboard image...", error: false });
     try {
-      await window.aya.addClipboardImageToPrompt(terminal.id);
-      setAttachmentNotice({ text: "Image path added to the prompt. Nothing was submitted.", error: false });
+      const result = await window.aya.addClipboardImageToPrompt(terminal.id);
+      if (result.status === "copied-not-added") {
+        setAttachmentNotice({ text: result.message, error: true });
+        setCopiedAttachmentPath(result.copyText);
+      } else {
+        setAttachmentNotice({ text: "Image saved and its path added. Nothing was submitted.", error: false });
+      }
       xtermRef.current?.focus();
     } catch (error) {
       setAttachmentNotice({ text: (error instanceof Error ? error.message : "Aya could not add the clipboard image. Nothing was typed.").replace(/^Error invoking remote method '[^']+': (Error: )?/, ""), error: true });
@@ -1630,10 +1645,11 @@ function TerminalViewComponent({
           const hasImage = Array.from(event.clipboardData.types).some((type) => type === "Files" || type.startsWith("image/"));
           if (!hasImage) return;
           event.preventDefault();
+          event.stopPropagation();
           void addClipboardImageToPrompt();
         }}
       >
-        {attachmentNotice && <div data-testid="prompt-attachment-notice" className={`aya-prompt-attachment-notice ${attachmentNotice.error ? "aya-prompt-attachment-notice--error" : ""}`} role={attachmentNotice.error ? "alert" : "status"}>{attachmentNotice.text}</div>}
+        {attachmentNotice && <div data-testid="prompt-attachment-notice" className={`aya-prompt-attachment-notice ${attachmentNotice.error ? "aya-prompt-attachment-notice--error" : ""}`} role={attachmentNotice.error ? "alert" : "status"}>{attachmentNotice.text}{copiedAttachmentPath && <button type="button" onClick={() => void copyAttachmentPath()}>Copy path</button>}</div>}
         {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}{terminal.recoveryRetryable&&<button type="button" data-testid="terminal-recovery-retry" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.retryPtyHostRecovery().catch(error=>setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`));}}>Try again</button>}</div>}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (

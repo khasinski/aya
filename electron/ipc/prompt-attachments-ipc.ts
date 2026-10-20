@@ -1,14 +1,19 @@
 import type { Clipboard, IpcMain, IpcMainInvokeEvent } from "electron";
-import { assertAttachmentPaneCanReceiveInput, typeAttachmentPaths } from "../control";
+import * as path from "node:path";
+import { assertAttachmentPaneCanReceiveInput, PaneInputChangedError, typeAttachmentPaths } from "../control";
+import { paneInputRevision } from "../pane-input-queue";
+import { PaneHeldError } from "../team-control";
 import {
   MAX_PROMPT_ATTACHMENT_BATCH_BYTES,
   MAX_PROMPT_ATTACHMENT_BYTES,
   attachmentPathsInput,
+  deleteRemoteAttachments,
+  readDroppedFile,
   safeAttachmentExtension,
   saveLocalAttachment,
   uploadRemoteAttachment,
 } from "../prompt-attachments";
-import type { ProjectConfig } from "../types";
+import type { ProjectConfig, PromptAttachmentResult } from "../types";
 
 export interface PromptAttachmentIpcDeps {
   ipcMain: Pick<IpcMain, "handle">;
@@ -19,9 +24,11 @@ export interface PromptAttachmentIpcDeps {
   writePane(terminalId: string, data: string): Promise<boolean | void>;
   /** Test seam; production uses the hardened SSH runner. */
   upload?: typeof uploadRemoteAttachment;
+  /** Test seam; production removes remote copies after a failed batch. */
+  cleanup?: typeof deleteRemoteAttachments;
 }
 
-interface IncomingAttachment { name: string; mimeType?: string; bytes: Buffer }
+interface IncomingAttachment { name: string; mimeType?: string; sourcePath?: string; bytes?: Buffer }
 
 function incomingAttachments(value: unknown): IncomingAttachment[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 16) throw new Error("Choose between 1 and 16 files.");
@@ -31,14 +38,18 @@ function incomingAttachments(value: unknown): IncomingAttachment[] {
     if (typeof item !== "object" || item === null || Array.isArray(item)) throw new Error("Aya could not read one of those files.");
     const record = item as Record<string, unknown>;
     if (typeof record.name !== "string" || record.name.length < 1 || record.name.length > 512) throw new Error("Aya could not read one of those files.");
-    let bytes: Buffer;
-    if (record.bytes instanceof Uint8Array) bytes = Buffer.from(record.bytes.buffer, record.bytes.byteOffset, record.bytes.byteLength);
+    let sourcePath: string | undefined;
+    let bytes: Buffer | undefined;
+    if (typeof record.path === "string" && path.isAbsolute(record.path) && !/[\x00-\x1f\x7f-\x9f]/.test(record.path)) sourcePath = record.path;
+    else if (record.bytes instanceof Uint8Array) bytes = Buffer.from(record.bytes.buffer, record.bytes.byteOffset, record.bytes.byteLength);
     else if (record.bytes instanceof ArrayBuffer) bytes = Buffer.from(record.bytes);
     else throw new Error("Aya could not read one of those files.");
-    if (bytes.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("A file is too large to add to the prompt (25 MB per file limit).");
-    total += bytes.byteLength;
-    if (total > MAX_PROMPT_ATTACHMENT_BATCH_BYTES) throw new Error("These files are too large to add together (50 MB total limit).");
-    result.push({ name: record.name, ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}), bytes: Buffer.from(bytes) });
+    if (bytes) {
+      if (bytes.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("A file is too large to add to the prompt (25 MB per file limit).");
+      total += bytes.byteLength;
+      if (total > MAX_PROMPT_ATTACHMENT_BATCH_BYTES) throw new Error("These files are too large to add together (50 MB total limit).");
+    }
+    result.push({ name: record.name, ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}), ...(sourcePath ? { sourcePath } : {}), ...(bytes ? { bytes: Buffer.from(bytes) } : {}) });
   }
   return result;
 }
@@ -51,27 +62,81 @@ async function projectAndPane(deps: PromptAttachmentIpcDeps, terminalId: string)
   return matches[0];
 }
 
-async function addAttachmentsToPane(deps: PromptAttachmentIpcDeps, terminalId: unknown, value: unknown): Promise<void> {
+async function addAttachmentsToPane(deps: PromptAttachmentIpcDeps, terminalId: unknown, value: unknown): Promise<PromptAttachmentResult> {
   if (typeof terminalId !== "string" || !terminalId || terminalId.length > 128) throw new Error("Aya could not find that terminal. Nothing was typed.");
+  const startedAtInputRevision = paneInputRevision(terminalId);
   const attachments = incomingAttachments(value);
   const { project, pane } = await projectAndPane(deps, terminalId);
   await assertAttachmentPaneCanReceiveInput(deps.holdReason, terminalId, pane.name);
 
   const paths: string[] = [];
+  const copiedToLocal = !project.remote && attachments.some((attachment) => attachment.bytes);
+  const inputChangedResult = (hostLabel?: string): Extract<PromptAttachmentResult, { status: "copied-not-added" }> => ({
+    status: "copied-not-added",
+    message: hostLabel
+      ? `File copied to ${hostLabel} but not added, because you typed in the pane meanwhile.`
+      : copiedToLocal
+        ? "Image saved but not added, because you typed in the pane meanwhile."
+        : "File path not added, because you typed in the pane meanwhile.",
+    copyText: attachmentPathsInput(paths),
+  });
   const hostLabel = project.remote?.label.replace(/[\x00-\x1f\x7f-\x9f]/g, " ").slice(0, 100) || "remote host";
-  for (const attachment of attachments) {
-    const extension = safeAttachmentExtension(attachment.name, attachment.mimeType);
-    const file = project.remote
-      ? await (deps.upload ?? uploadRemoteAttachment)(project.remote.sshTarget, project.slug, attachment.bytes, extension, hostLabel)
-      : await saveLocalAttachment(deps.ayaHome, project.slug, attachment.bytes, extension);
-    paths.push(file);
+  if (!project.remote) {
+    for (const attachment of attachments) {
+      if (attachment.sourcePath) paths.push(attachment.sourcePath);
+      else if (attachment.bytes) paths.push(await saveLocalAttachment(deps.ayaHome, project.slug, attachment.bytes, safeAttachmentExtension(attachment.name, attachment.mimeType)));
+      else throw new Error("Aya could not read that file. Nothing was typed.");
+    }
+  } else {
+    const prepared: Array<{ name: string; mimeType?: string; bytes: Buffer }> = [];
+    let total = 0;
+    for (const attachment of attachments) {
+      const loaded = attachment.sourcePath ? await readDroppedFile(attachment.sourcePath) : { bytes: attachment.bytes!, name: attachment.name };
+      total += loaded.bytes.byteLength;
+      if (total > MAX_PROMPT_ATTACHMENT_BATCH_BYTES) throw new Error("These files are too large to copy together (50 MB total limit). Nothing was typed.");
+      prepared.push({ name: attachment.name || loaded.name, ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}), bytes: loaded.bytes });
+    }
+    try {
+      for (const attachment of prepared) {
+        paths.push(await (deps.upload ?? uploadRemoteAttachment)(
+          project.remote.sshTarget,
+          project.slug,
+          attachment.bytes,
+          safeAttachmentExtension(attachment.name, attachment.mimeType),
+          hostLabel,
+          undefined,
+          attachment.name,
+        ));
+      }
+      await typeAttachmentPaths(deps.writePane, deps.holdReason, terminalId, pane.name, attachmentPathsInput(paths), startedAtInputRevision);
+      return { status: "added" };
+    } catch (error) {
+      if (error instanceof PaneInputChangedError) {
+        return { ...inputChangedResult(hostLabel), copyText: attachmentPathsInput(paths).trim() };
+      }
+      if (error instanceof PaneHeldError && paths.length) {
+        return {
+          status: "copied-not-added",
+          message: `File copied to ${hostLabel} but not added. ${error.message}`,
+          copyText: attachmentPathsInput(paths).trim(),
+        };
+      }
+      await (deps.cleanup ?? deleteRemoteAttachments)(project.remote.sshTarget, project.slug, paths.map((remotePath) => remotePath.split("/").at(-1) ?? "")).catch(() => {});
+      throw error;
+    }
   }
-  await typeAttachmentPaths(deps.writePane, deps.holdReason, terminalId, pane.name, attachmentPathsInput(paths));
+  try {
+    await typeAttachmentPaths(deps.writePane, deps.holdReason, terminalId, pane.name, attachmentPathsInput(paths), startedAtInputRevision);
+  } catch (error) {
+    if (error instanceof PaneInputChangedError && paths.length) return { ...inputChangedResult(), copyText: attachmentPathsInput(paths).trim() };
+    throw error;
+  }
+  return { status: "added" };
 }
 
 export function registerPromptAttachmentIpc(deps: PromptAttachmentIpcDeps): void {
   deps.ipcMain.handle("prompt-attachments:drop", async (_event: IpcMainInvokeEvent, terminalId: unknown, files: unknown) => {
-    try { await addAttachmentsToPane(deps, terminalId, files); }
+    try { return await addAttachmentsToPane(deps, terminalId, files); }
     catch (error) { throw safeAttachmentError(error); }
   });
   deps.ipcMain.handle("prompt-attachments:clipboard-image", async (_event: IpcMainInvokeEvent, terminalId: unknown) => {
@@ -81,7 +146,7 @@ export function registerPromptAttachmentIpc(deps: PromptAttachmentIpcDeps): void
       if (image.isEmpty()) throw new Error("There is no image in the clipboard to add to the prompt.");
       const bytes = image.toPNG();
       if (bytes.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("The clipboard image is too large to add to the prompt (25 MB limit).");
-      await addAttachmentsToPane(deps, terminalId, [{ name: "clipboard.png", mimeType: "image/png", bytes }]);
+      return await addAttachmentsToPane(deps, terminalId, [{ name: "clipboard.png", mimeType: "image/png", bytes }]);
     } catch (error) { throw safeAttachmentError(error); }
   });
 }

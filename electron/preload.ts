@@ -1,7 +1,7 @@
 // Preload — exposes a typed `window.aya` API to the renderer using
 // contextBridge. The renderer has no direct Node access.
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { createOpenProjectBuffer } from "./open-project-buffer";
 import { installWheelZoom } from "./zoom-preload";
 
@@ -45,6 +45,7 @@ const api: AyaApi = {
   ptyBuffer: (ptyId) => ipcRenderer.invoke("pty:buffer", ptyId),
   ptyCwd: (ptyId) => ipcRenderer.invoke("pty:cwd", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
+  getDroppedFilePath: (file) => webUtils.getPathForFile(file),
   addPromptAttachments: (terminalId, files) => ipcRenderer.invoke("prompt-attachments:drop", terminalId, files),
   addClipboardImageToPrompt: (terminalId) => ipcRenderer.invoke("prompt-attachments:clipboard-image", terminalId),
   harnessSearch: (req) => ipcRenderer.invoke("harness:search", req),

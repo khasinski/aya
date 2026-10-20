@@ -19,12 +19,13 @@ export const REMOTE_ATTACHMENT_RECEIVER = [
   "IFS= read -r filename || exit 20",
   "IFS= read -r expected_size || exit 20",
   "case $project_id in ''|*[!a-z0-9_-]*) exit 21;; esac",
-  "case $filename in ''|*[!a-z0-9.-]*) exit 22;; esac",
-  "prefix=${filename%%.*}",
+  "case $filename in ''|*[!a-z0-9._-]*) exit 22;; esac",
+  "prefix=${filename%%-*}",
   "[ ${#prefix} -eq 32 ] || exit 22",
   "case $prefix in *[!a-f0-9]*) exit 22;; esac",
-  "suffix=${filename#\"$prefix\"}",
-  "case $suffix in '' ) :;; .*) extension=${suffix#.}; [ -n \"$extension\" ] && [ ${#extension} -le 10 ] || exit 22; case $extension in *[!a-z0-9]*) exit 22;; esac;; *) exit 22;; esac",
+  "suffix=${filename#\"$prefix\"-}",
+  "[ -n \"$suffix\" ] && [ ${#suffix} -le 90 ] || exit 22",
+  "case $suffix in *[!a-z0-9._-]*) exit 22;; .*|*..*|*-|*.) exit 22;; esac",
   "case $expected_size in ''|*[!0-9]*) exit 23;; esac",
   ` [ \"$expected_size\" -le ${MAX_PROMPT_ATTACHMENT_BYTES} ] || exit 24`.trim(),
   "uid=$(id -u)",
@@ -56,8 +57,35 @@ export const REMOTE_ATTACHMENT_RECEIVER = [
   `printf '${REMOTE_PATH_MARKER}%s\\n' \"$output\"`,
 ].join("\n");
 
+export const REMOTE_ATTACHMENT_CLEANUP = [
+  "set -eu",
+  "umask 077",
+  "IFS= read -r project_id || exit 20",
+  "case $project_id in ''|*[!a-z0-9_-]*) exit 21;; esac",
+  "uid=$(id -u)",
+  "owner_of() { stat -c %u \"$1\" 2>/dev/null || stat -f %u \"$1\" 2>/dev/null; }",
+  "if [ -n \"${XDG_RUNTIME_DIR:-}\" ]; then root=$XDG_RUNTIME_DIR; else root=$HOME/.cache; fi",
+  "[ -d \"$root\" ] && [ ! -L \"$root\" ] && [ \"$(owner_of \"$root\")\" = \"$uid\" ] || exit 24",
+  "[ -d \"$root/aya\" ] && [ ! -L \"$root/aya\" ] && [ \"$(owner_of \"$root/aya\")\" = \"$uid\" ] || exit 25",
+  "[ -d \"$root/aya/attachments\" ] && [ ! -L \"$root/aya/attachments\" ] && [ \"$(owner_of \"$root/aya/attachments\")\" = \"$uid\" ] || exit 26",
+  "[ -d \"$root/aya/attachments/$project_id\" ] && [ ! -L \"$root/aya/attachments/$project_id\" ] || exit 0",
+  "[ \"$(owner_of \"$root/aya/attachments/$project_id\")\" = \"$uid\" ] || exit 22",
+  "directory=$root/aya/attachments/$project_id",
+  "while IFS= read -r filename; do",
+  "  case $filename in *[!a-z0-9._-]*) exit 23;; esac",
+  "  prefix=${filename%%-*}",
+  "  [ ${#prefix} -eq 32 ] || exit 23",
+  "  case $prefix in *[!a-f0-9]*) exit 23;; esac",
+  "  rm -f -- \"$directory/$filename\"",
+  "done",
+].join("\n");
+
 export function remoteAttachmentCommand(): string {
   return `sh -c ${shellQuote(REMOTE_ATTACHMENT_RECEIVER)}`;
+}
+
+export function remoteAttachmentCleanupCommand(): string {
+  return `sh -c ${shellQuote(REMOTE_ATTACHMENT_CLEANUP)}`;
 }
 
 export function safeAttachmentExtension(name: string, mimeType = ""): string {
@@ -66,9 +94,20 @@ export function safeAttachmentExtension(name: string, mimeType = ""): string {
   return /^[a-z0-9]{1,10}$/.test(extension) ? `.${extension}` : "";
 }
 
-export function attachmentFilename(extension: string): string {
+function safeRemoteBasename(name: string): string {
+  const leaf = name.split(/[\\/]/).at(-1) ?? "";
+  const stem = path.basename(leaf, path.extname(leaf))
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72)
+    .toLowerCase();
+  return stem || "attachment";
+}
+
+export function attachmentFilename(extension: string, originalName = ""): string {
   const safeExtension = /^\.[a-z0-9]{1,10}$/.test(extension) ? extension : "";
-  return `${randomBytes(16).toString("hex")}${safeExtension}`;
+  return `${randomBytes(16).toString("hex")}-${safeRemoteBasename(originalName)}${safeExtension}`;
 }
 
 export function attachmentPathsInput(paths: string[]): string {
@@ -134,6 +173,30 @@ export async function saveLocalAttachment(ayaHome: string, projectId: string, by
   return file;
 }
 
+export async function readDroppedFile(sourcePath: string): Promise<{ bytes: Buffer; name: string }> {
+  assertNoControlPath(sourcePath);
+  if (!path.isAbsolute(sourcePath)) throw new Error("Aya could not read that dropped file safely. Nothing was typed.");
+  const handle = await fs.open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("Aya could not read that dropped file safely. Nothing was typed.");
+    if (stat.size > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("This file is too large for Aya to copy to the remote project (25 MB limit).");
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= MAX_PROMPT_ATTACHMENT_BYTES) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, MAX_PROMPT_ATTACHMENT_BYTES + 1 - total));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("This file is too large for Aya to copy to the remote project (25 MB limit).");
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    return { bytes: Buffer.concat(chunks, total), name: path.basename(sourcePath) };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
 function remoteInput(projectId: string, filename: string, bytes: Buffer): Buffer {
   return Buffer.concat([
     Buffer.from(`${safeProjectId(projectId)}\n${filename}\n${bytes.byteLength}\n`, "utf8"),
@@ -148,10 +211,11 @@ export async function uploadRemoteAttachment(
   extension: string,
   hostLabel = "remote project",
   runner: typeof runSsh = runSsh,
+  originalName = "",
 ): Promise<string> {
   const safeHost = hostLabel.replace(/[\x00-\x1f\x7f-\x9f]/g, " ").slice(0, 100) || "remote host";
   if (bytes.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error(`This file is too large for Aya to copy to ${safeHost} (25 MB limit).`);
-  const filename = attachmentFilename(extension);
+  const filename = attachmentFilename(extension, originalName);
   const command = remoteAttachmentCommand();
   const run = await runner(sshTarget, [command], {
     input: remoteInput(projectId, filename, bytes),
@@ -170,6 +234,19 @@ export async function uploadRemoteAttachment(
     throw new Error("Aya could not confirm the file was copied to the remote project. Nothing was typed.");
   }
   return remotePath;
+}
+
+export async function deleteRemoteAttachments(
+  sshTarget: string,
+  projectId: string,
+  filenames: string[],
+  runner: typeof runSsh = runSsh,
+): Promise<void> {
+  if (!filenames.length) return;
+  const safeNames = filenames.filter((name) => /^[a-f0-9]{32}(?:-[a-z0-9_-]{1,72})?(?:\.[a-z0-9]{1,10})?$/.test(name));
+  if (safeNames.length !== filenames.length) return;
+  const input = Buffer.from(`${safeProjectId(projectId)}\n${safeNames.join("\n")}\n`, "utf8");
+  await runner(sshTarget, [remoteAttachmentCleanupCommand()], { input, deadlineMs: 5_000, maxOutputBytes: 1024 });
 }
 
 function remoteCopyFailure(run: SshRun, hostLabel: string): string {

@@ -1,6 +1,6 @@
 import { formatPaneState, type PaneStateResult } from "./pane-state";
 import type { BrowserWindow } from "electron";
-import { oneAtATime } from "./keyed-queue";
+import { notePaneInput, paneInputRevision, withPaneInputLock } from "./pane-input-queue";
 import { listenOwnerOnly } from "./owner-socket";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -315,7 +315,7 @@ function deliverToPane(
   beforeEnter?: () => Promise<void>,
   afterEnter?: () => Promise<void>,
 ): Promise<void> {
-  return withPaneLock(terminalId, async () => {
+  return withPaneInputLock(terminalId, async () => {
     await guard?.();
     // Raw bytes, unlike the snippet drawer's bracketed paste: macOS bash 3.2 has
     // none and would take the markers as command text. "\r" is Enter, not "\n".
@@ -324,6 +324,7 @@ function deliverToPane(
         `pane "${name}" did not accept the text - it may have exited, or be starting up with a full input queue. Nothing was submitted; check the pane before retrying.`,
       );
     }
+    notePaneInput(terminalId);
     if (submit) {
       try {
         await new Promise((resolve) =>
@@ -331,6 +332,7 @@ function deliverToPane(
         );
         await beforeEnter?.();
         if ((await writePane(terminalId, "\r")) === false) throw new TextPastedError(`pane "${name}" exited before the text was submitted`);
+        notePaneInput(terminalId);
       } catch (err) {
         if (err instanceof TextPastedError || err instanceof PaneHeldError) throw err;
         throw new TextPastedError(`pane "${name}" did not take the Enter after the text: ${err instanceof Error ? err.message : err}`);
@@ -349,8 +351,18 @@ export async function typeAttachmentPaths(
   terminalId: string,
   paneName: string,
   paths: string,
+  expectedInputRevision?: number,
 ): Promise<void> {
-  const guard = () => assertAttachmentPaneCanReceiveInput(paneHold, terminalId, paneName);
+  const guard = async () => {
+    const checkInputRevision = () => {
+      if (expectedInputRevision !== undefined && paneInputRevision(terminalId) !== expectedInputRevision) throw new PaneInputChangedError();
+    };
+    checkInputRevision();
+    await assertAttachmentPaneCanReceiveInput(paneHold, terminalId, paneName);
+    // The hold read is asynchronous. A keyboard request can arrive while it
+    // waits, so recheck at the last point before deliverToPane writes bytes.
+    checkInputRevision();
+  };
   await deliverToPane(writePane, terminalId, paneName, paths, false, guard);
 }
 
@@ -374,7 +386,9 @@ export async function assertAttachmentPaneCanReceiveInput(
 }
 
 /** One pane-send per terminal at a time: each finishes its text, gap and Enter before the next begins. */
-const withPaneLock = oneAtATime();
+export class PaneInputChangedError extends Error {
+  constructor() { super("The pane received other text while the file was copying."); }
+}
 
 /** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
 const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);

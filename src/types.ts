@@ -738,6 +738,10 @@ export interface WebConfigureRequest {
 export interface HandoverCaptureRequest {requestId:string;ptyId:string;maxBytes:number}
 export interface HandoverDisplay {json:string|null;generation:string;offset:number;notice:string|null}
 
+export type PromptAttachmentResult =
+  | { status: "added" }
+  | { status: "copied-not-added"; message: string; copyText: string };
+
 export interface AyaApi {
   /** True under `npm run dev` (AYA_DEV=1). */
   isDev: boolean;
@@ -756,10 +760,12 @@ export interface AyaApi {
    *  PTY host, dead process, unsupported platform). */
   ptyCwd(ptyId: string): Promise<string | null>;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
-  /** Copy dropped files into the project's private attachment folder and type their paths without submitting. */
-  addPromptAttachments(terminalId: string, files: Array<{ name: string; mimeType: string; bytes: Uint8Array }>): Promise<void>;
+  /** Get the OS path for a file supplied by an actual file drop. */
+  getDroppedFilePath(file: File): string;
+  /** Type dropped file paths locally, or copy them to a remote project first. */
+  addPromptAttachments(terminalId: string, files: Array<{ name: string; mimeType: string; path: string }>): Promise<PromptAttachmentResult>;
   /** Save a clipboard image as PNG and type its path without submitting. */
-  addClipboardImageToPrompt(terminalId: string): Promise<void>;
+  addClipboardImageToPrompt(terminalId: string): Promise<PromptAttachmentResult>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;

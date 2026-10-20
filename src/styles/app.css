@@ -1038,6 +1038,10 @@ body {
   pointer-events: none; box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
 }
 .aya-prompt-attachment-notice--error { border-color: color-mix(in oklab, var(--status-error) 55%, var(--border)); color: var(--status-error); }
+.aya-prompt-attachment-notice button {
+  margin-left: 8px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-tertiary); color: inherit; font: inherit; cursor: pointer; pointer-events: auto;
+}
 .aya-dirty-file-list {
   max-height: 300px;
   overflow: auto;

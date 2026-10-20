@@ -15,17 +15,33 @@ async function waitForReady(window: import("@playwright/test").Page, terminalId:
 }
 
 async function dropFiles(
+  window: import("@playwright/test").Page,
   host: import("@playwright/test").Locator,
-  files: Array<{ name: string; type: string; body: string }>,
-) {
-  await host.evaluate((node, entries) => {
+  paths: string[],
+): Promise<boolean> {
+  await window.evaluate(() => {
+    let input = document.querySelector<HTMLInputElement>("#prompt-attachment-test-input");
+    if (!input) {
+      input = document.createElement("input");
+      input.id = "prompt-attachment-test-input";
+      input.type = "file";
+      input.multiple = true;
+      document.body.append(input);
+    }
+  });
+  await window.locator("#prompt-attachment-test-input").setInputFiles(paths);
+  return host.evaluate((node) => {
     const transfer = new DataTransfer();
-    for (const entry of entries) transfer.items.add(new File([entry.body], entry.name, { type: entry.type }));
+    const input = document.querySelector<HTMLInputElement>("#prompt-attachment-test-input");
+    for (const file of Array.from(input?.files ?? [])) transfer.items.add(file);
+    const over = new DragEvent("dragover", { dataTransfer: transfer, bubbles: true, cancelable: true });
+    node.dispatchEvent(over);
     node.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
-  }, files);
+    return over.defaultPrevented;
+  });
 }
 
-async function putClipboardImage(app: import("@playwright/test").ElectronApplication, window: import("@playwright/test").Page) {
+async function putClipboardImage(app: import("@playwright/test").ElectronApplication, window: import("@playwright/test").Page): Promise<Buffer> {
   const png = await window.screenshot();
   const state = await app.evaluate(({ clipboard, nativeImage }, base64: string) => {
     const image = nativeImage.createFromBuffer(Buffer.from(base64, "base64"));
@@ -33,6 +49,7 @@ async function putClipboardImage(app: import("@playwright/test").ElectronApplica
     return { imageEmpty: image.isEmpty(), clipboardEmpty: clipboard.readImage().isEmpty() };
   }, png.toString("base64"));
   expect(state).toEqual({ imageEmpty: false, clipboardEmpty: false });
+  return png;
 }
 
 async function pasteImage(textarea: import("@playwright/test").Locator) {
@@ -64,17 +81,15 @@ test.describe("local prompt attachments", () => {
     await window.screenshot({ path: before });
     await testInfo.attach("before - empty prompt", { path: before, contentType: "image/png" });
 
-    await dropFiles(leftHost, [
-      { name: "quarterly report.txt", type: "text/plain", body: "report" },
-      { name: "photo.png", type: "image/png", body: "png bytes" },
-    ]);
+    const droppedPaths = [join(seeded.root, "quarterly report.txt"), join(seeded.root, "photo.png")];
+    writeFileSync(droppedPaths[0], "report");
+    writeFileSync(droppedPaths[1], "png bytes");
+    expect(await dropFiles(window, leftHost, droppedPaths)).toBe(true);
     const localDirectory = join(seeded.ayaHome, "prompt-attachments", "e2e-proj");
     await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Nothing was submitted");
-    await expect.poll(() => readdirSync(localDirectory).length).toBe(2);
-    const droppedPaths = readdirSync(localDirectory).map((name) => join(localDirectory, name));
-    expect(droppedPaths.some((path) => path.endsWith(".txt"))).toBe(true);
-    expect(droppedPaths.some((path) => path.endsWith(".png"))).toBe(true);
-    expect(droppedPaths.every((path) => (statSync(path).mode & 0o777) === 0o600)).toBe(true);
+    await expect(window.getByTestId("prompt-attachment-notice")).toContainText("2 file paths added");
+    expect(existsSync(localDirectory)).toBe(false);
+    expect(readFileSync(droppedPaths[1]).equals(Buffer.from("png bytes"))).toBe(true);
     await expect.poll(() => paneBuffer(window, left)).toContain(droppedPaths[0].slice(0, 25));
     expect(existsSync(paneLog(seeded.projectDir, left))).toBe(false);
     await window.locator(`[data-testid="terminal-pane"][data-terminal-id="${left}"] .xterm-helper-textarea`).press("Enter");
@@ -82,18 +97,22 @@ test.describe("local prompt attachments", () => {
     const typedDrop = readFileSync(paneLog(seeded.projectDir, left), "utf8").trim();
     for (const path of droppedPaths) expect(typedDrop).toContain(`'${path}'`);
 
-    await putClipboardImage(app, window);
+    const clipboardPng = await putClipboardImage(app, window);
     const leftTextarea = window.locator(`[data-testid="terminal-pane"][data-terminal-id="${left}"] .xterm-helper-textarea`);
     await pasteImage(leftTextarea);
-    await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Image path added");
-    await expect.poll(() => readdirSync(localDirectory).length).toBe(3);
+    await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Image saved and its path added");
+    await expect.poll(() => readdirSync(localDirectory).length).toBe(1);
     const imagePath = readdirSync(localDirectory).map((name) => join(localDirectory, name)).find((path) => path.endsWith(".png") && !droppedPaths.includes(path));
     expect(imagePath).toBeTruthy();
+    expect(readFileSync(imagePath!).equals(clipboardPng)).toBe(true);
+    await expect.poll(() => paneBuffer(window, left)).toContain(imagePath!);
     expect(existsSync(paneLog(seeded.projectDir, left))).toBe(true);
     await leftTextarea.press("Enter");
     await expect.poll(() => readFileSync(paneLog(seeded.projectDir, left), "utf8")).toContain(`'${imagePath}'`);
 
-    await dropFiles(rightHost, [{ name: "do-not-type.txt", type: "text/plain", body: "secret" }]);
+    const heldFile = join(seeded.root, "do-not-type.txt");
+    writeFileSync(heldFile, "secret");
+    expect(await dropFiles(window, rightHost, [heldFile])).toBe(true);
     await expect(window.getByRole("alert")).toContainText("Not sent:");
     await expect(window.getByRole("alert")).toContainText("Nothing was typed");
     expect(existsSync(paneLog(seeded.projectDir, right))).toBe(false);
@@ -127,7 +146,9 @@ test.describe("remote prompt attachments", () => {
     writeFileSync(stale, "old attachment", { mode: 0o600 });
     const oldTime = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
     utimesSync(stale, oldTime, oldTime);
-    await dropFiles(host, [{ name: "remote file.txt", type: "text/plain", body: "remote bytes" }]);
+    const sourceFile = join(seeded.root, "remote file.txt");
+    writeFileSync(sourceFile, "remote bytes");
+    expect(await dropFiles(window, host, [sourceFile])).toBe(true);
     await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Nothing was submitted");
     await expect.poll(() => existsSync(directory) ? readdirSync(directory).length : 0).toBe(1);
     const remotePath = join(directory, readdirSync(directory)[0]);
@@ -136,6 +157,7 @@ test.describe("remote prompt attachments", () => {
     expect(statSync(join(seeded.root, "remote-runtime", "aya", "attachments")).mode & 0o777).toBe(0o700);
     expect(statSync(directory).mode & 0o777).toBe(0o700);
     expect(statSync(remotePath).mode & 0o777).toBe(0o600);
+    expect(remotePath).toMatch(/[a-f0-9]{32}-remote-file\.txt$/);
     expect(readFileSync(remotePath, "utf8")).toBe("remote bytes");
     await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Nothing was submitted");
     expect(existsSync(paneLog(seeded.projectDir, terminalId))).toBe(false);

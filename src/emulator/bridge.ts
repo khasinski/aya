@@ -184,6 +184,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     // scenario's spawn cwd (its worktree binding or the project dir).
     ptyCwd: async () => null as never,
     ptySearch: async () => [] as never,
+    getDroppedFilePath: () => { throw new Error("Adding files to terminal prompts is unavailable in this preview."); },
     addPromptAttachments: async () => { throw new Error("Adding files to a terminal prompt is unavailable in this preview."); },
     addClipboardImageToPrompt: async () => { throw new Error("Adding clipboard images to a terminal prompt is unavailable in this preview."); },
     harnessSearch: async () => [] as never,
