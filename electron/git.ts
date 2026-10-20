@@ -315,7 +315,7 @@ export async function worktreeBranchRemovalInfo(
   return {
     branch,
     canDelete: count === 0,
-    reason: count === 0 ? null : `It has ${count} commit${count === 1 ? "" : "s"} not on its upstream or ${base}.`,
+    reason: count === 0 ? null : `It has ${count} commit${count === 1 ? "" : "s"} that ${count === 1 ? "is" : "are"} not pushed or merged into ${base}.`,
     unmerged: count,
   };
 }

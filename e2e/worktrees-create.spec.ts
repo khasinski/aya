@@ -72,6 +72,17 @@ test("create worktrees from one prompt and offer safe branch deletion", async ({
   await unsafeDialog.screenshot({ path: join(SHOTS, "remove-unshared-branch-after.png") });
   await unsafeDialog.getByRole("button", { name: "Remove worktree" }).click();
   await expect(unsafeDialog).toHaveCount(0);
+
+  await window.locator(".aya-worktree-add").click();
+  const noPrompt = window.getByRole("dialog", { name: "Start in worktrees" });
+  await noPrompt.getByLabel("Worktree name").fill("blank");
+  await noPrompt.getByLabel("Number of worktrees").fill("1");
+  await expect(noPrompt.getByRole("button", { name: "Start worktrees" })).toBeEnabled();
+  await noPrompt.getByRole("button", { name: "Start worktrees" }).click();
+  const rowsAfterBlank = window.locator(".aya-sidebar-row");
+  await expect(rowsAfterBlank).toHaveCount(2);
+  const blankPaneId = await rowsAfterBlank.last().getAttribute("data-terminal-id");
+  await expect.poll(() => paneBuffer(window, blankPaneId!), { timeout: 5_000 }).toBe("");
 });
 
 test.describe("remote project", () => {

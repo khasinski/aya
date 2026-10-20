@@ -832,7 +832,8 @@
 }
 .aya-worktree-delete-branch input[type="checkbox"] { width: auto; flex: 0 0 auto; }
 .aya-worktree-dialog-reason,
-.aya-worktree-dialog-error { color: var(--fg-secondary); font-size: 12px; }
+.aya-worktree-dialog-error,
+.aya-worktree-dialog-hint { color: var(--fg-secondary); font-size: 12px; }
 .aya-worktree-dialog-error { color: var(--status-error); }
 
 .aya-attention-modal {

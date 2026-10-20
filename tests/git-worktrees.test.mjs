@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { makeRepo as makeEmptyRepo } from "./helpers/git.mjs";
@@ -296,6 +296,9 @@ test("batch creation validates the ref, skips taken names, and reports safe bran
   const sibling = `${repo}.worktrees`;
   try {
     execSync("git branch aya/task-1", { cwd: repo });
+    const invalid = await createWorktreeBatch({ directory: repo, slug: "invalid", count: 1, base: "not-a-ref" });
+    assert.deepEqual(invalid, { created: [], errors: ["That starting ref was not found."] });
+    assert.equal(existsSync(sibling), false, "invalid refs do not leave a worktree folder behind");
     const batch = await createWorktreeBatch({ directory: repo, slug: "Task", count: 2, base: "main" });
     assert.equal(batch.errors.length, 0);
     assert.equal(batch.created.length, 2);
@@ -325,7 +328,7 @@ test("branch deletion is unchecked when commits are not on the base or upstream"
     const info = await worktreeBranchRemovalInfo(repo, path, "main");
     assert.equal(info.canDelete, false);
     assert.equal(info.unmerged, 1);
-    assert.match(info.reason, /1 commit not on its upstream or main/);
+    assert.match(info.reason, /1 commit that is not pushed or merged into main/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
     rmSync(`${repo}.worktrees`, { recursive: true, force: true });

@@ -37,7 +37,7 @@ export function WorktreeCreateDialog({ projectDir, presets, onCancel, onCreate, 
     event.preventDefault();
     if (busy) return;
     const preset = presets.find((item) => item.id === presetId);
-    if (!preset || !prompt.trim() || !slug.trim() || !base.trim()) return;
+    if (!preset || !slug.trim() || !base.trim()) return;
     setBusy(true);
     setError(null);
     try {
@@ -80,11 +80,12 @@ export function WorktreeCreateDialog({ projectDir, presets, onCancel, onCreate, 
         <label>Prompt
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-label="Prompt" rows={5} />
         </label>
+        <p className="aya-worktree-dialog-hint">Leave the prompt blank to open the panes without sending a task.</p>
         {finished && <p role="status">Started {finished.created.map((item) => item.branch).join(", ")}.</p>}
         {error && <p className="aya-worktree-dialog-error" role="status">{error}</p>}
         <div className="aya-modal-actions">
           <button className="aya-modal-btn" type="button" onClick={onCancel} disabled={busy}>{finished ? "Done" : "Cancel"}</button>
-          {!finished && <button className="aya-modal-btn aya-modal-btn--primary" type="submit" disabled={busy || !presets.length || !prompt.trim() || !slug.trim() || !base.trim()}>{busy ? "Creating…" : "Start worktrees"}</button>}
+          {!finished && <button className="aya-modal-btn aya-modal-btn--primary" type="submit" disabled={busy || !presets.length || !slug.trim() || !base.trim()}>{busy ? "Creating…" : "Start worktrees"}</button>}
         </div>
       </form>
     </div>
