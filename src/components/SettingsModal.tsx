@@ -2259,29 +2259,25 @@ export function SettingsModal({
                           </div>
                           <section className="aya-settings-rule-diagnostics" aria-label="User screen rules">
                             <h3>User screen rules</h3>
-                            {diagnostics.userScreenRules.reason && (
-                              <p>Unavailable: {diagnostics.userScreenRules.reason}</p>
-                            )}
-                            {diagnostics.userScreenRules.quarantinedDigest && (
-                              <p>Quarantined digest: <code>{diagnostics.userScreenRules.quarantinedDigest}</code></p>
-                            )}
+                            <p>Files are in {diagnostics.userScreenRules.directory}.</p>
+                            {diagnostics.userScreenRules.fileProblem ? (
+                              <p>{diagnostics.userScreenRules.directory}/{diagnostics.userScreenRules.fileProblem}. Aya continues to use built-in rules, so prompts are still detected.</p>
+                            ) : diagnostics.userScreenRules.reason && !diagnostics.userScreenRules.available ? (
+                              <p>Your rules are currently unavailable. Aya continues to use built-in rules, so prompts are still detected.</p>
+                            ) : null}
                             <ul>
-                              {diagnostics.userScreenRules.sets.map((set) => (
+                              {diagnostics.userScreenRules.sets.filter((set) => set.status === "loaded").map((set) => (
                                 <li key={set.agent}>
-                                  <strong>{set.agent}</strong>: {set.status}
-                                  {set.version ? `; version ${set.version}` : ""}
-                                  {set.digest ? <>{"; digest "}<code>{set.digest}</code></> : ""}
-                                  {set.sources?.length ? `; source ${set.sources.join(", ")}` : ""}
-                                  {set.status === "unavailable" && diagnostics.userScreenRules.reason
-                                    ? `; reason: ${diagnostics.userScreenRules.reason}`
-                                    : ""}
+                                  <strong>{({claude:"Claude",codex:"Codex",opencode:"OpenCode",grok:"Grok",antigravity:"Antigravity",generic:"Generic"} as const)[set.agent]}</strong>: built-in rules + {set.ruleCount ?? 0} of your rules ({(set.sources ?? []).map((source) => source.split("/").at(-1)).join(", ")})
                                 </li>
                               ))}
+                              {diagnostics.userScreenRules.available && !diagnostics.userScreenRules.sets.some((set) => set.status === "loaded") ? (
+                                <li>All agents: built-in rules only</li>
+                              ) : diagnostics.userScreenRules.available && diagnostics.userScreenRules.sets.some((set) => set.status === "built-in only") ? (
+                                <li>Other agents: built-in rules only</li>
+                              ) : null}
                             </ul>
                           </section>
-                          <pre className="aya-settings-diagnostics-json">
-                            {diagnosticsJson}
-                          </pre>
                         </>
                       ) : null}
                     </div>

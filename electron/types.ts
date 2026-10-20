@@ -450,9 +450,12 @@ export interface DiagnosticsReport {
     available: boolean;
     reason?: string;
     quarantinedDigest?: string;
+    directory: string;
+    fileProblem?: string;
     sets: Array<{
       agent: "generic" | "claude" | "codex" | "opencode" | "grok" | "antigravity";
       status: "loaded" | "built-in only" | "unavailable";
+      ruleCount?: number;
       version?: string;
       digest?: string;
       sources?: string[];

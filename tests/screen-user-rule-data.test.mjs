@@ -30,6 +30,7 @@ test('closed schema, duplicate decoded keys, strict UTF8 and bounded fields appl
  const valid=envelope('claude');assert.equal(parseUserRuleFile(bytes(valid),'claude').rules.length,1);
  for(const invalid of [{...valid,extra:true},{...valid,agent:'codex'},{...valid,schemaVersion:2},{...valid,ruleSetVersion:'bad\nversion'},{...valid,rules:[rule('x',{extra:1})]},{...valid,rules:[rule('x',{kind:'code'})]},{...valid,rules:[rule('x',{region:'allFiles'})]},{...valid,rules:[rule('x',{flags:'g'})]},{...valid,rules:[rule('x',{flags:'ii'})]},{...valid,rules:[rule('x',{pattern:'x'.repeat(2049)})]},{...valid,rules:[rule('x',{pattern:''})]},{...valid,rules:[rule('x'),rule('x')]}])assert.throws(()=>parseUserRuleFile(bytes(invalid),'claude'));
  assert.throws(()=>parseUserRuleFile(Buffer.from('{"schemaVersion":1,"schemaVers\\u0069on":1}'),'claude'),/duplicate key/);
+ assert.throws(()=>parseUserRuleFile(bytes(envelope('claude',[rule('broken',{pattern:42})])),'claude'),/rule 1 pattern is not text/);
  assert.throws(()=>parseUserRuleFile(Buffer.from([0xff]),'claude'));
  assert.throws(()=>parseUserRuleFile(Buffer.alloc(65537,32),'claude'),/file size/);
  assert.equal(parseUserRuleFile(bytes(envelope('claude',[rule('x',{pattern:'(',flags:'imu'})])),'claude').rules[0].pattern,'(','syntax validation belongs to worker');
@@ -58,12 +59,12 @@ test('effective cap includes generic and reviewed built-in rules',()=>{
 });
 test('private metadata, symlinks, hardlinks, FIFO and unsafe directory are refused',()=>{
  const f=fixture(),file=path.join(f.root,'claude.json');try{
-  f.write('claude');fs.chmodSync(file,0o644);assert.throws(()=>readUserScreenRules(f.root,builtin),/metadata/);fs.chmodSync(file,0o600);
-  fs.linkSync(file,path.join(f.root,'copy'));assert.throws(()=>readUserScreenRules(f.root,builtin),/metadata/);fs.unlinkSync(path.join(f.root,'copy'));
+  f.write('claude');fs.chmodSync(file,0o644);assert.throws(()=>readUserScreenRules(f.root,builtin),/private to your account/);fs.chmodSync(file,0o600);
+  fs.linkSync(file,path.join(f.root,'copy'));assert.throws(()=>readUserScreenRules(f.root,builtin),/private to your account/);fs.unlinkSync(path.join(f.root,'copy'));
   fs.renameSync(file,path.join(f.root,'real'));fs.symlinkSync('real',file);assert.throws(()=>readUserScreenRules(f.root,builtin));fs.unlinkSync(file);
-  execFileSync('/usr/bin/mkfifo',[file]);assert.throws(()=>readUserScreenRules(f.root,builtin),/metadata/);fs.unlinkSync(file);
-  fs.chmodSync(f.root,0o755);assert.throws(()=>readUserScreenRules(f.root,builtin),/metadata/);fs.chmodSync(f.root,0o700);
-  fs.symlinkSync(f.root,path.join(f.root,'linked'));assert.throws(()=>readUserScreenRules(path.join(f.root,'linked'),builtin),/metadata/);
+  execFileSync('/usr/bin/mkfifo',[file]);assert.throws(()=>readUserScreenRules(f.root,builtin),/private to your account/);fs.unlinkSync(file);
+  fs.chmodSync(f.root,0o755);assert.throws(()=>readUserScreenRules(f.root,builtin),/folder must be private/);fs.chmodSync(f.root,0o700);
+  fs.symlinkSync(f.root,path.join(f.root,'linked'));assert.throws(()=>readUserScreenRules(path.join(f.root,'linked'),builtin),/folder must be private/);
  }finally{f.close();}
 });
 test('unknownJSON and a bounded directory scan fail closed; editor temporary files do not add rules',()=>{
@@ -97,7 +98,7 @@ test('exact64KiB valid data is accepted; wrong UID and file replacement refuse b
   fs.writeFileSync(file,Buffer.concat([valid,Buffer.alloc(65536-valid.length,32)]),{mode:0o600});assert.equal(readUserRuleFile(file).length,65536);assert.ok(readUserScreenRules(f.root,builtin));
   const stat=fs.statSync(file);let reads=0;
   const io={...fs,openSync:()=>99,closeSync:()=>{},fstatSync:()=>({...stat,uid:stat.uid+1,isFile:()=>true}),readSync:()=>{reads++;throw Error('must not read');}};
-  assert.throws(()=>readUserRuleFile(file,io),/metadata/);assert.equal(reads,0);
+  assert.throws(()=>readUserRuleFile(file,io),/private to your account/);assert.equal(reads,0);
  }finally{f.close();}
 });
 test('a directory replaced during discovery cannot publish a candidate',()=>{
@@ -119,7 +120,7 @@ test('same-user ancestor ABA is outside the identity guarantee but never bypasse
    fs.opendirSync=(name,...args)=>{if(name===directory&&!swapped){fs.renameSync(active,parked);fs.renameSync(replacement,active);swapped=true;}return opendir(name,...args);};
    fs.lstatSync=(name,...args)=>{const stat=lstat(name,...args);if(name===path.join(directory,'claude.json'))restore();return stat;};
    if(safe)assert.equal(readUserScreenRules(directory,builtin).sets.claude[0].id,'replacement','trusted same-user replacement has no extra rule authority');
-   else assert.throws(()=>readUserScreenRules(directory,builtin),/unsafe directory or file metadata/);
+   else assert.throws(()=>readUserScreenRules(directory,builtin),/private to your account/);
   }finally{restore();fs.opendirSync=opendir;fs.lstatSync=lstat;f.close();}
  }
 });

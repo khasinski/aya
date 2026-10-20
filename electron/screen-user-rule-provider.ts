@@ -9,13 +9,32 @@ import {UserRuleRuntime, type UserRuleRequest, type UserRuleResult} from "./scre
 import type {UserRuleConfiguration} from "./screen-user-rule-coordinator";
 export const USER_RELOAD_LIMITS=Object.freeze({scanMs:1000,coalesceMs:100,stableMs:100});
 type Runtime=Pick<UserRuleRuntime,"replace"|"evaluate"|"dispose">;
-type Candidate={ok:true;manifest:UserRuleManifest|null;key:string}|{ok:false;key:"invalid"};
+type Candidate={ok:true;manifest:UserRuleManifest|null;key:string}|{ok:false;key:"invalid";problem:string};
+function publicFileProblem(error:unknown):string{
+  const code=(error as NodeJS.ErrnoException)?.code;
+  const message=error instanceof Error?error.message:"";
+  const file=message.match(/^(generic|claude|codex|opencode|grok|antigravity)\.json: (.*)$/);
+  let detail=file?.[2]??message;
+  if(code==="EACCES"||code==="EPERM")detail="file or folder permissions prevent Aya from reading it";
+  else if(code==="ELOOP")detail="a rule file must not be a symbolic link";
+  else if(code==="ENOENT")detail="a rule file changed while Aya was reading it";
+  else if(/JSON|position \d+|Unexpected|Expected property name/i.test(detail))detail="file is not valid JSON";
+  else if(detail==="invalid object")detail="file contains an invalid object";
+  else if(detail==="unknown JSON filename")detail="the folder contains an unsupported JSON filename";
+  else if(detail==="folder must be private to your account")detail="folder permissions must be private to your account";
+  else if(!/^(file is missing|required|schema version|agent must|rule-set version|rules must|rule count|rule \d+|file must be|file size|file changed|directory|aggregate|effective|a rule file|duplicate|invalid kind|unsupported)/i.test(detail)){
+    detail="file could not be read safely";
+  }
+  return file?file[1]+".json: "+detail:detail;
+}
 export interface UserRuleProviderState extends UserRuleConfiguration {reason?:string}
 export interface UserRuleDiagnostics {
   available:boolean;
   reason?:string;
   quarantinedDigest?:string;
-  sets:{agent:RuleAgent;status:"loaded"|"built-in only"|"unavailable";version?:string;digest?:string;sources?:string[]}[];
+  directory:string;
+  fileProblem?:string;
+  sets:{agent:RuleAgent;status:"loaded"|"built-in only"|"unavailable";ruleCount?:number;version?:string;digest?:string;sources?:string[]}[];
 }
 export class UserRuleProvider {
   private state:UserRuleProviderState=Object.freeze({epoch:0,available:false,manifest:null,reason:"user rules have not been loaded"});
@@ -32,6 +51,7 @@ export class UserRuleProvider {
   private parentWatch:fs.FSWatcher|null=null;
   private lastDiagnostic:string|null=null;
   private quarantinedDigest:string|null=null;
+  private fileProblem:string|undefined;
   constructor(private directory:string,private builtin:ScreenRuleSet,private options:{
     read?:()=>UserRuleManifest|null;
     createRuntime?:(onFailure:(reason:string,digest:string|null)=>void)=>Runtime;
@@ -56,13 +76,15 @@ export class UserRuleProvider {
       available:state.available,
       ...(state.reason?{reason:state.reason}:{}),
       ...(this.quarantinedDigest?{quarantinedDigest:this.quarantinedDigest}:{}),
+      directory:this.directory,
+      ...(this.fileProblem?{fileProblem:this.fileProblem}:{}),
       sets:RULE_AGENTS.map(agent=>{
         const effective=files.filter(entry=>entry.source===`user/${agent}.json`||(agent!=="generic"&&entry.source==="user/generic.json"));
         const status=!state.available?"unavailable" as const:effective.length?"loaded" as const:"built-in only" as const;
         if(!effective.length)return {agent,status};
         const identity=effective.map(file=>`${file.source}@${file.version}`).join(", ");
         const digest=createHash("sha256").update(JSON.stringify([agent,effective.map(file=>[file.source,file.version,file.digest])])).digest("hex");
-        return {agent,status,version:identity,digest,sources:effective.map(file=>file.source)};
+        return {agent,status,ruleCount:state.manifest?.sets[agent].length??0,version:identity,digest,sources:effective.map(file=>file.source)};
       }),
     });
   }
@@ -76,7 +98,7 @@ export class UserRuleProvider {
   }
   private read():Candidate{
     try{const manifest=this.options.read?this.options.read():readUserScreenRules(this.directory,this.builtin);return{ok:true,manifest,key:manifest?.digest??"absent"};}
-    catch{return{ok:false,key:"invalid"};}
+    catch(error){return{ok:false,key:"invalid",problem:publicFileProblem(error)};}
   }
   /** Nonblocking startup: main need not delay window creation for a worker. */
   start():void{
@@ -104,6 +126,7 @@ export class UserRuleProvider {
   }
   private begin(candidate=this.read()):void{
     if(this.disposed)return;this.clearTimer();this.observedKey=candidate.key;this.desiredKey=candidate.key;this.desiredManifest=candidate.ok?candidate.manifest:null;
+    this.fileProblem=candidate.ok?undefined:candidate.problem;
     this.publish(false,this.state.manifest,"user rules are reloading");const epoch=this.state.epoch;
     // Require a stable second read, including deletion. A rename's brief gap
     // cannot publish builtin-only clearance over an unapplied user hold.
@@ -122,6 +145,7 @@ export class UserRuleProvider {
     const after=this.read();if(after.key!==candidate.key){this.begin(after);return;}
     if(!candidate.ok||!ready){
       const reason=candidate.ok?"user rule compilation or evaluation failed":"invalid or unsafe user rule files";
+      if(candidate.ok)this.fileProblem=undefined;
       if(candidate.ok&&manifest)this.quarantinedDigest=manifest.digest;
       this.publish(false,manifest,reason);this.diagnostic(reason,manifest?.digest??null);return;
     }

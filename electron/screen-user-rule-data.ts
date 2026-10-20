@@ -16,27 +16,33 @@ export interface UserRuleManifest {
   readonly files: readonly {source: string; version: string; digest: string}[];
 }
 export const MAX_USER_DIRECTORY_ENTRIES = 256;
-function fail(reason: string): never { throw new Error(`User screen rules unavailable: ${reason}`); }
+function fail(reason: string): never { throw new Error(reason); }
 function closed(value: unknown, fields: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) fail("invalid object");
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== fields.length || fields.some(key => !Object.hasOwn(record, key))) fail("unexpected or missing fields");
+  if (Object.keys(record).length !== fields.length || fields.some(key => !Object.hasOwn(record, key))) fail("file is missing required fields or contains extra fields");
   return record;
 }
 function label(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9._-]{1,80}$/.test(value); }
 export function parseUserRuleFile(bytes: Buffer, agent: RuleAgent): {version: string; rules: readonly UserScreenRule[]} {
   const root = closed(parseScreenRuleJson(bytes), ["schemaVersion", "ruleSetVersion", "agent", "rules"]);
-  if (root.schemaVersion !== 1 || root.agent !== agent || !label(root.ruleSetVersion)) fail("invalid file version or agent");
-  if (!Array.isArray(root.rules) || root.rules.length > 128) fail("rule count");
+  if (root.schemaVersion !== 1) fail("schema version must be 1");
+  if (root.agent !== agent) fail(`agent must be ${agent}`);
+  if (!label(root.ruleSetVersion)) fail("rule-set version must be a short name");
+  if (!Array.isArray(root.rules)) fail("rules must be a list");
+  if (root.rules.length > 128) fail("rule count exceeds 128");
   const version = root.ruleSetVersion;
   const ids = new Set<string>();
   const rules = root.rules.map(value => {
     const r = closed(value, ["id", "kind", "region", "pattern", "flags"]);
-    if (typeof r.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(r.id) || ids.has(r.id)) fail("invalid or duplicate rule id");
+    if (typeof r.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(r.id)) fail(`rule ${ids.size + 1} id must be a short name`);
+    if (ids.has(r.id)) fail(`rule ${ids.size + 1} id is duplicated`);
     ids.add(r.id);
-    if (!["prompt", "suppressor", "dialog", "busy", "usage-limit", "account-setting"].includes(r.kind as string) || !["tail", "lastLine", "screen"].includes(r.region as string)) fail("invalid kind or region");
-    if (typeof r.pattern !== "string" || !r.pattern.length || r.pattern.length > 2048) fail("pattern length");
-    if (typeof r.flags !== "string" || !/^[imu]*$/.test(r.flags) || new Set(r.flags).size !== r.flags.length) fail("invalid flags");
+    if (!["prompt", "suppressor", "dialog", "busy", "usage-limit", "account-setting"].includes(r.kind as string)) fail(`rule ${ids.size} kind is not supported`);
+    if (!["tail", "lastLine", "screen"].includes(r.region as string)) fail(`rule ${ids.size} region is not supported`);
+    if (typeof r.pattern !== "string") fail(`rule ${ids.size} pattern is not text`);
+    if (!r.pattern.length || r.pattern.length > 2048) fail(`rule ${ids.size} pattern must be 1 to 2048 characters`);
+    if (typeof r.flags !== "string" || !/^[imu]*$/.test(r.flags) || new Set(r.flags).size !== r.flags.length) fail(`rule ${ids.size} flags are invalid`);
     return Object.freeze({id:r.id,kind:r.kind as RuleKind,region:r.region as ScreenRegion,pattern:r.pattern,flags:r.flags,source:`user/${agent}.json`,version});
   });
   return {version,rules:Object.freeze(rules)};
@@ -45,7 +51,8 @@ function sameFile(a: fs.Stats, b: fs.Stats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.uid === b.uid && a.nlink === b.nlink && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 }
 function privateEntry(stat: fs.Stats, directory: boolean): void {
-  if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== process.getuid?.() || (stat.mode & 0o7777) !== (directory ? 0o700 : 0o600) || (!directory && stat.nlink !== 1)) fail("unsafe directory or file metadata");
+  if (directory && (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o7777) !== 0o700)) fail("folder must be private to your account");
+  if (!directory && (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o7777) !== 0o600 || stat.nlink !== 1)) fail("file must be regular and private to your account (permissions 0600)");
 }
 /** Bounded descriptor read, including files growing after the initial stat. */
 export function readUserRuleFile(file: string, io = fs): Buffer {
@@ -89,7 +96,12 @@ export function readUserScreenRules(directory: string, builtin: ScreenRuleSet): 
     let total = builtinIds.size;
     for (const agent of RULE_AGENTS) {
       const name = `${agent}.json`; if (!names.has(name)) continue;
-      const bytes = readUserRuleFile(path.join(directory, name)), parsed = parseUserRuleFile(bytes, agent);
+      let bytes: Buffer, parsed: ReturnType<typeof parseUserRuleFile>;
+      try { bytes = readUserRuleFile(path.join(directory, name)); parsed = parseUserRuleFile(bytes, agent); }
+      catch (error) {
+        const detail = error instanceof SyntaxError ? "file is not valid JSON" : error instanceof Error ? error.message : "file could not be read safely";
+        fail(`${name}: ${detail}`);
+      }
       for (const rule of parsed.rules) {
         if (builtinIds.has(rule.id) || ids.has(rule.id)) fail("rule id collides with another user or built-in rule");
         ids.add(rule.id); if (++total > 256) fail("aggregate authored rule count");
