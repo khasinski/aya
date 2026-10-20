@@ -289,6 +289,7 @@ export class PtyHostClient {
   private readonly ruleStatusStates=new Map<string,{generation:string;revision:string;waiting:boolean;dialog?:string}>();
   private readonly ruleStatusPending=new Map<string,VtSnapshot>();
   private readonly ruleStatusTimers=new Map<string,ReturnType<typeof setTimeout>>();
+  private readonly paneWaiters = new Map<string, Set<(state: PaneStateResult) => void>>();
   // Panes this client spawned and has not seen end: the ones a lost host takes
   // down without a word.
   private readonly live = new Set<string>();
@@ -1022,6 +1023,21 @@ export class PtyHostClient {
     return asVtSnapshot(await this.readExistingSnapshot(ptyId));
   }
 
+  /** Listen to the existing host snapshot and lifecycle stream; no additional screen polling. */
+  subscribePaneState(ptyId: string, listener: (state: PaneStateResult) => void): () => void {
+    let listeners = this.paneWaiters.get(ptyId);
+    if (!listeners) this.paneWaiters.set(ptyId, (listeners = new Set()));
+    listeners.add(listener);
+    return () => {
+      listeners!.delete(listener);
+      if (listeners!.size === 0) this.paneWaiters.delete(ptyId);
+    };
+  }
+
+  private notifyPaneWaiters(ptyId: string, state: PaneStateResult): void {
+    for (const listener of this.paneWaiters.get(ptyId) ?? []) listener(state);
+  }
+
   private async readExistingSnapshot(ptyId: string): Promise<unknown> {
     return this.readExistingRequest({ id: 0, type: "snapshot", ptyId });
   }
@@ -1489,7 +1505,10 @@ export class PtyHostClient {
       if ("type" in message && message.type === "snapshot") {
         flushEvents();
         const snapshot = asVtSnapshot(message.snapshot);
-        if (snapshot) this.acceptSnapshot(message.ptyId, snapshot, message.replay === true);
+        if (snapshot) {
+          this.notifyPaneWaiters(message.ptyId, explainPaneSnapshot(snapshot));
+          this.acceptSnapshot(message.ptyId, snapshot, message.replay === true);
+        }
         continue;
       }
       if ("type" in message && message.type === "event") {
@@ -1524,7 +1543,9 @@ export class PtyHostClient {
           this.screenStates.delete(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);
           this.latestRuleSnapshots.delete(message.event.ptyId);this.ruleStatusStates.delete(message.event.ptyId);
           const ruleTimer=this.ruleStatusTimers.get(message.event.ptyId);if(ruleTimer)clearTimeout(ruleTimer);this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);
+          this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState("has exited", "stopped"));
         }
+        if (message.event.type === "spawn-failed") this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState("could not be started", "stopped"));
         events.push(message.event);
         continue;
       }

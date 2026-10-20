@@ -911,6 +911,12 @@ app.whenReady().then(async () => {
       return isUserOnlyHold(hold) ? hold : null;
     },
     paneState: (terminalId) => userRulePanes.paneState(terminalId),
+    // The host stream only says that a pane changed; its state is read through
+    // the user's screen rules, like pane-state, except an exit, which is final.
+    subscribePaneState: (terminalId, listener) => ptyHost.subscribePaneState(terminalId, (state) => {
+      if (state.state === "stopped") listener(state);
+      else void userRulePanes.paneState(terminalId).then(listener, () => {});
+    }),
     team: teamDeps,
     teamRunner,
     teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),

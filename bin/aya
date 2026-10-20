@@ -38,6 +38,8 @@ Usage:
   aya pane state target [--explain] [--project slug]
                                      Show the pane's fresh state; --explain adds the matching rules
                                      Unknown is a state answer (exit 0), never a host start
+  aya pane wait target... [--until idle|waiting|exited[,..]] [--any] [--timeout seconds] [--project slug]
+                                     Wait for pane state; default: all targets idle, 30 second timeout
   aya pane read target [--project slug]
                                      Print another pane's recent output;
                                      target is a pane name or an id from
@@ -220,6 +222,16 @@ function requestFromArgs() {
   if (kind === "pane-state") {
     return {type:"pane-state",target:process.argv[4],explain:process.argv[5] === "explain",projectSlug:process.argv[6] || optionalEnv("AYA_PROJECT_SLUG")};
   }
+  if (kind === "pane-wait") {
+    return {
+      type: "pane-wait",
+      targets: JSON.parse(process.argv[4]),
+      until: process.argv[5].split(","),
+      any: process.argv[6] === "any",
+      timeoutMs: Number(process.argv[7]),
+      projectSlug: process.argv[8] || optionalEnv("AYA_PROJECT_SLUG"),
+    };
+  }
   if (kind === "pane-read") {
     return {
       type: "pane-read",
@@ -302,7 +314,9 @@ const request = {
 const connectDeadline = Date.now() + Number(connectWait || 0) * 1000;
 // Aya answers a send once its text, gap and Enter went in, so a pane that never frees up must not hold the caller
 // (an agent's tool call) forever.
-const REPLY_TIMEOUT_MS = Number(process.env.AYA_REPLY_TIMEOUT_MS) || 120_000;
+const REPLY_TIMEOUT_MS = request.type === "pane-wait"
+  ? request.timeoutMs + 5_000
+  : Number(process.env.AYA_REPLY_TIMEOUT_MS) || 120_000;
 let response = "";
 
 function connect() {
@@ -374,11 +388,13 @@ function onEnd() {
   }
   if (!parsed.ok) {
     console.error(`aya: ${parsed.error || "command failed"}`);
-    process.exitCode = 1;
+    process.exitCode = Number.isInteger(parsed.exitCode) ? parsed.exitCode : 1;
     return;
   }
   // pane read / pane list / capabilities: the payload IS the answer.
   if (typeof parsed.output === "string") process.stdout.write(parsed.output);
+  if (Number.isInteger(parsed.exitCode)) process.exitCode = parsed.exitCode;
+  if (typeof parsed.error === "string") console.error(`aya: ${parsed.error}`);
 }
 
 connect();
@@ -769,6 +785,51 @@ case "$command" in
         done
         if [ -z "$target" ]; then usage_fail; fi
         send_control pane-state "$target" "$explain" "$project"
+        ;;
+      wait)
+        until="idle"
+        any=""
+        timeout="30"
+        targets=""
+        target_count=0
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --until)
+              [ "$#" -ge 2 ] || usage_fail
+              until=$2
+              shift 2
+              ;;
+            --any)
+              [ -z "$any" ] || usage_fail
+              any="any"
+              shift
+              ;;
+            --timeout)
+              [ "$#" -ge 2 ] || usage_fail
+              timeout=$2
+              shift 2
+              ;;
+            --)
+              shift
+              while [ "$#" -gt 0 ]; do targets="${targets}${targets:+
+ }$1"; target_count=$((target_count + 1)); shift; done
+              ;;
+            -*) usage_fail ;;
+            *) targets="${targets}${targets:+
+ }$1"; target_count=$((target_count + 1)); shift ;;
+          esac
+        done
+        [ -n "$targets" ] || usage_fail
+        [ "$target_count" -le 64 ] || usage_fail
+        case "$timeout" in ''|*[!0-9]*) usage_fail ;; esac
+        [ "${#timeout}" -le 5 ] || usage_fail
+        if [ "$timeout" -gt 86400 ]; then usage_fail; fi
+        case "$until" in
+          idle|waiting|exited|idle,waiting|idle,exited|waiting,idle|waiting,exited|exited,idle|exited,waiting|idle,waiting,exited|idle,exited,waiting|waiting,idle,exited|waiting,exited,idle|exited,idle,waiting|exited,waiting,idle) ;;
+          *) usage_fail ;;
+        esac
+        targets_json=$(printf '%s\n' "$targets" | node -e 'let s="";process.stdin.on("data",x=>s+=x).on("end",()=>process.stdout.write(JSON.stringify(s.trimEnd().split("\n").map(x=>x.trim()))))')
+        send_control pane-wait "$targets_json" "$until" "$any" "$((timeout * 1000))" "$project"
         ;;
       read)
         target="${1:-}"

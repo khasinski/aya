@@ -53,6 +53,7 @@ export type ControlRequest =
       projectSlug?: string;
     }
   | { type: "pane-state"; target?: string; targetId?: string; projectSlug?: string; explain: boolean }
+  | { type: "pane-wait"; targets: string[]; projectSlug?: string; until: Array<"idle" | "waiting" | "exited">; any: boolean; timeoutMs: number }
   // Type into another pane. `submit` appends a carriage return, i.e. presses
   // Enter — without it the text is left on the pane's input line.
   | {
@@ -222,6 +223,15 @@ export function parseControlRequest(value: unknown): ControlRequest {
       projectSlug: optionalString(value.projectSlug),
       selfTerminalId: optionalString(value.selfTerminalId),
     };
+  }
+  if (type === "pane-wait") {
+    if (!Array.isArray(value.targets) || value.targets.length < 1 || value.targets.length > 64 || value.targets.some((v) => typeof v !== "string" || !v.trim())) throw new Error("pane-wait requires one or more targets");
+    const allowed = new Set(["idle", "waiting", "exited"]);
+    if (!Array.isArray(value.until) || value.until.length < 1 || value.until.some((v) => !allowed.has(v))) throw new Error("pane-wait.until must contain idle, waiting, or exited");
+    if (typeof value.any !== "boolean") throw new Error("pane-wait.any must be boolean");
+    const timeoutMs = value.timeoutMs;
+    if (typeof timeoutMs !== "number" || !Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 86_400_000) throw new Error("pane-wait.timeoutMs must be between 0 and 86400000");
+    return { type, targets: value.targets.map((v: string) => v.trim()), projectSlug: optionalString(value.projectSlug), until: [...new Set(value.until)] as Array<"idle" | "waiting" | "exited">, any: value.any, timeoutMs };
   }
   if (type === "pane-read" || type === "pane-send" || type === "pane-state") {
     const target = optionalString(value.target);
