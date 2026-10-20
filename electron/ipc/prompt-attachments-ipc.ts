@@ -1,4 +1,5 @@
-import type { Clipboard, IpcMain, IpcMainInvokeEvent } from "electron";
+import type { BrowserWindow, Clipboard, IpcMain, IpcMainInvokeEvent, WebContents } from "electron";
+import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { assertAttachmentPaneCanReceiveInput, PaneInputChangedError, typeAttachmentPaths } from "../control";
 import { paneInputRevision } from "../pane-input-queue";
@@ -19,6 +20,8 @@ export interface PromptAttachmentIpcDeps {
   ipcMain: Pick<IpcMain, "handle">;
   clipboard: Pick<Clipboard, "readText" | "readImage">;
   ayaHome: string;
+  /** Accept only an attached, top-level renderer belonging to an Aya window. */
+  trustedWindow(event: IpcMainInvokeEvent): BrowserWindow | null;
   listProjects(): Promise<ProjectConfig[]>;
   holdReason(terminalId: string): Promise<string | null>;
   writePane(terminalId: string, data: string): Promise<boolean | void>;
@@ -135,18 +138,69 @@ async function addAttachmentsToPane(deps: PromptAttachmentIpcDeps, terminalId: u
 }
 
 export function registerPromptAttachmentIpc(deps: PromptAttachmentIpcDeps): void {
-  deps.ipcMain.handle("prompt-attachments:drop", async (_event: IpcMainInvokeEvent, terminalId: unknown, files: unknown) => {
-    try { return await addAttachmentsToPane(deps, terminalId, files); }
+  type Gesture = { sender: WebContents; window: BrowserWindow; terminalId: string; kind: "drop" | "paste"; files?: unknown; expiresAt: number };
+  const gestures = new Map<string, Gesture>();
+  const authorize = (event: IpcMainInvokeEvent): BrowserWindow => {
+    const window = deps.trustedWindow(event);
+    if (!window || window.isDestroyed() || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("This action is available only from an Aya terminal window.");
+    }
+    return window;
+  };
+  const registerGesture = (event: IpcMainInvokeEvent, kind: Gesture["kind"], terminalId: unknown, files?: unknown): string => {
+    const window = authorize(event);
+    if (typeof terminalId !== "string" || !terminalId || terminalId.length > 128) throw new Error("Aya could not find that terminal.");
+    // Expire abandoned preload requests and cap memory even if a renderer closes mid-flow.
+    const now = Date.now();
+    for (const [key, value] of gestures) if (value.expiresAt <= now) gestures.delete(key);
+    if (gestures.size >= 64) throw new Error("Aya could not add the file to the prompt. Try again.");
+    const token = crypto.randomBytes(32).toString("hex");
+    gestures.set(token, { sender: event.sender, window, terminalId, kind, ...(kind === "drop" ? { files } : {}), expiresAt: now + 5_000 });
+    return token;
+  };
+  deps.ipcMain.handle("prompt-attachments:register-drop", async (event: IpcMainInvokeEvent, terminalId: unknown, files: unknown) => {
+    try {
+      // This channel is called only by preload's trusted `drop` listener. The
+      // renderer bridge exposes neither this IPC nor the resulting token.
+      authorize(event);
+      const parsed = incomingAttachments(files).map((file) => ({ name: file.name, mimeType: file.mimeType, path: file.sourcePath }));
+      if (parsed.some((file) => !file.path)) throw new Error("Aya could not read one of those files.");
+      return registerGesture(event, "drop", terminalId, parsed);
+    } catch (error) { throw safeAttachmentError(error); }
+  });
+  deps.ipcMain.handle("prompt-attachments:register-paste", async (event: IpcMainInvokeEvent, terminalId: unknown) => {
+    try {
+      authorize(event);
+      return registerGesture(event, "paste", terminalId);
+    } catch (error) { throw safeAttachmentError(error); }
+  });
+  const consume = (event: IpcMainInvokeEvent, token: unknown, kind: Gesture["kind"]): Gesture => {
+    const window = authorize(event);
+    if (typeof token !== "string") throw new Error("Aya could not add the file to the prompt. Nothing was typed.");
+    const gesture = gestures.get(token);
+    if (gesture?.expiresAt !== undefined && gesture.expiresAt <= Date.now()) gestures.delete(token);
+    if (!gesture || gesture.expiresAt <= Date.now() || gesture.sender !== event.sender || gesture.window !== window || gesture.kind !== kind || gesture.window.isDestroyed()) {
+      throw new Error("Aya could not add the file to the prompt. Nothing was typed.");
+    }
+    gestures.delete(token);
+    return gesture;
+  };
+  deps.ipcMain.handle("prompt-attachments:drop", async (event: IpcMainInvokeEvent, token: unknown) => {
+    try {
+      const gesture = consume(event, token, "drop");
+      return await addAttachmentsToPane(deps, gesture.terminalId, gesture.files);
+    }
     catch (error) { throw safeAttachmentError(error); }
   });
-  deps.ipcMain.handle("prompt-attachments:clipboard-image", async (_event: IpcMainInvokeEvent, terminalId: unknown) => {
+  deps.ipcMain.handle("prompt-attachments:clipboard-image", async (event: IpcMainInvokeEvent, token: unknown) => {
     try {
+      const gesture = consume(event, token, "paste");
       if (deps.clipboard.readText()) throw new Error("The clipboard contains text. Copy the image again, then paste it into the terminal.");
       const image = deps.clipboard.readImage();
       if (image.isEmpty()) throw new Error("There is no image in the clipboard to add to the prompt.");
       const bytes = image.toPNG();
       if (bytes.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("The clipboard image is too large to add to the prompt (25 MB limit).");
-      return await addAttachmentsToPane(deps, terminalId, [{ name: "clipboard.png", mimeType: "image/png", bytes }]);
+      return await addAttachmentsToPane(deps, gesture.terminalId, [{ name: "clipboard.png", mimeType: "image/png", bytes }]);
     } catch (error) { throw safeAttachmentError(error); }
   });
 }

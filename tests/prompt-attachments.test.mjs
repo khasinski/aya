@@ -26,6 +26,19 @@ function privateHome(t) {
   return home;
 }
 
+const ipcSender = { mainFrame: {} };
+const ipcEvent = { sender: ipcSender, senderFrame: ipcSender.mainFrame };
+const ipcWindow = { isDestroyed: () => false, isFocused: () => true };
+const trustedWindow = (event) => event.sender === ipcSender ? ipcWindow : null;
+async function invokeDrop(handlers, terminalId, files, event = ipcEvent) {
+  const token = await handlers.get("prompt-attachments:register-drop")(event, terminalId, files);
+  return handlers.get("prompt-attachments:drop")(event, token);
+}
+async function invokeClipboardImage(handlers, terminalId, event = ipcEvent) {
+  const token = await handlers.get("prompt-attachments:register-paste")(event, terminalId);
+  return handlers.get("prompt-attachments:clipboard-image")(event, token);
+}
+
 test("attachment names are random and retain only a safe extension", () => {
   const extension = safeAttachmentExtension("../../secret name.$(touch pwn).PNG", "image/png");
   assert.equal(extension, ".png");
@@ -151,12 +164,16 @@ test("remote upload errors are plain and a timeout or password never produces a 
   assert.equal(invoked, false);
 });
 
-test("an approval hold refuses before local or remote copy and typing", async () => {
+test("an approval hold refuses before local or remote copy and typing", async (t) => {
+  const home = privateHome(t);
+  const source = join(home, "secret.txt");
+  writeFileSync(source, "secret");
   const handlers = new Map();
   let uploadCalls = 0;
   const writes = [];
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => false, toPNG: () => Buffer.from("image") }) },
     ayaHome: "/unused",
     listProjects: async () => [{ slug: "project-a", remote: { label: "Build host", sshTarget: "devbox" }, tabs: [{ id: "pane-1", name: "Reviewer" }] }],
@@ -164,16 +181,20 @@ test("an approval hold refuses before local or remote copy and typing", async ()
     writePane: async (_id, data) => { writes.push(data); return true; },
     upload: async () => { uploadCalls += 1; throw new Error("copy must not run while held"); },
   });
-  await assert.rejects(handlers.get("prompt-attachments:drop")({}, "pane-1", [{ name: "secret.txt", bytes: new Uint8Array([1]) }]), /Not sent: Reviewer is waiting for your answer.*Nothing was typed/);
+  await assert.rejects(invokeDrop(handlers, "pane-1", [{ name: "secret.txt", path: source }]), /Not sent: Reviewer is waiting for your answer.*Nothing was typed/);
   assert.equal(uploadCalls, 0);
   assert.deepEqual(writes, []);
 });
 
-test("remote authentication failure is shown plainly and never reaches the pane writer", async () => {
+test("remote authentication failure is shown plainly and never reaches the pane writer", async (t) => {
+  const home = privateHome(t);
+  const source = join(home, "secret.txt");
+  writeFileSync(source, "secret");
   const handlers = new Map();
   const writes = [];
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => false, toPNG: () => Buffer.from("image") }) },
     ayaHome: "/unused",
     listProjects: async () => [{ slug: "project-a", remote: { label: "Build host", sshTarget: "devbox" }, tabs: [{ id: "pane-1", name: "Reviewer" }] }],
@@ -181,8 +202,59 @@ test("remote authentication failure is shown plainly and never reaches the pane 
     writePane: async (_id, data) => { writes.push(data); return true; },
     upload: async () => { throw new Error("Aya could not copy the file to Build host: it needs a password. Copy it yourself or set up key login. Nothing was typed."); },
   });
-  await assert.rejects(handlers.get("prompt-attachments:drop")({}, "pane-1", [{ name: "secret.txt", bytes: new Uint8Array([1]) }]), /needs a password.*Nothing was typed/);
+  await assert.rejects(invokeDrop(handlers, "pane-1", [{ name: "secret.txt", path: source }]), /needs a password.*Nothing was typed/);
   assert.deepEqual(writes, []);
+});
+
+test("attachment IPC rejects untrusted senders and raw paths without a one-use gesture", async () => {
+  const handlers = new Map();
+  let clipboardReads = 0;
+  let writes = 0;
+  registerPromptAttachmentIpc({
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
+    clipboard: { readText: () => { clipboardReads += 1; return ""; }, readImage: () => { clipboardReads += 1; return { isEmpty: () => false, toPNG: () => Buffer.from("secret") }; } },
+    ayaHome: "/unused",
+    listProjects: async () => [{ slug: "project-a", tabs: [{ id: "pane-1", name: "Reviewer" }] }],
+    holdReason: async () => null,
+    writePane: async () => { writes += 1; return true; },
+  });
+  const otherSender = { sender: { mainFrame: {} }, senderFrame: {} };
+  const childFrame = { sender: ipcSender, senderFrame: {} };
+  await assert.rejects(handlers.get("prompt-attachments:register-drop")(otherSender, "pane-1", [{ name: "key", path: "/Users/test/.ssh/id_ed25519" }]));
+  await assert.rejects(handlers.get("prompt-attachments:register-paste")(otherSender, "pane-1"));
+  await assert.rejects(handlers.get("prompt-attachments:register-drop")(childFrame, "pane-1", [{ name: "key", path: "/Users/test/.ssh/id_ed25519" }]));
+  await assert.rejects(handlers.get("prompt-attachments:drop")(ipcEvent, "/Users/test/.ssh/id_ed25519", [{ name: "key", path: "/Users/test/.ssh/id_ed25519" }]));
+  await assert.rejects(handlers.get("prompt-attachments:clipboard-image")(ipcEvent, "pane-1"));
+  assert.equal(clipboardReads, 0);
+  assert.equal(writes, 0);
+});
+
+test("drop tokens are bound to their renderer and consumed only once", async (t) => {
+  const home = privateHome(t);
+  const source = join(home, "selected.txt");
+  writeFileSync(source, "selected bytes");
+  const handlers = new Map();
+  const writes = [];
+  let authorizedWindow = ipcWindow;
+  registerPromptAttachmentIpc({
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow: (event) => event.sender === ipcSender ? authorizedWindow : null,
+    clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) }) },
+    ayaHome: home,
+    listProjects: async () => [{ slug: "project-a", tabs: [{ id: "pane-1", name: "Reviewer" }] }],
+    holdReason: async () => null,
+    writePane: async (id, data) => { writes.push([id, data]); return true; },
+  });
+  const token = await handlers.get("prompt-attachments:register-drop")(ipcEvent, "pane-1", [{ name: "selected.txt", path: source }]);
+  await assert.rejects(handlers.get("prompt-attachments:drop")({ sender: { mainFrame: {} }, senderFrame: {} }, token));
+  authorizedWindow = { isDestroyed: () => false, isFocused: () => true };
+  await assert.rejects(handlers.get("prompt-attachments:drop")(ipcEvent, token));
+  authorizedWindow = ipcWindow;
+  assert.deepEqual(await handlers.get("prompt-attachments:drop")(ipcEvent, token), { status: "added" });
+  await assert.rejects(handlers.get("prompt-attachments:drop")(ipcEvent, token));
+  assert.equal(writes.length, 1);
+  assert.match(writes[0][1], /selected\.txt/);
 });
 
 test("local drops type the original path and do not copy it into Aya home", async (t) => {
@@ -193,13 +265,14 @@ test("local drops type the original path and do not copy it into Aya home", asyn
   const writes = [];
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) }) },
     ayaHome: join(home, "aya"),
     listProjects: async () => [{ slug: "project-a", tabs: [{ id: "pane-local", name: "Reviewer" }] }],
     holdReason: async () => null,
     writePane: async (_id, data) => { writes.push(data); return true; },
   });
-  const result = await handlers.get("prompt-attachments:drop")({}, "pane-local", [{ name: "quarterly report.txt", mimeType: "text/plain", path: source }]);
+  const result = await invokeDrop(handlers, "pane-local", [{ name: "quarterly report.txt", mimeType: "text/plain", path: source }]);
   assert.deepEqual(result, { status: "added" });
   assert.equal(writes.join(""), ` '${source}' `);
   assert.equal(existsSync(join(home, "aya", "prompt-attachments")), false);
@@ -217,6 +290,7 @@ test("a delayed remote copy is kept for Copy path when pane input changes before
   const delayed = new Promise((resolve) => { release = resolve; });
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) }) },
     ayaHome: home,
     listProjects: async () => [{ slug: "project-a", remote: { label: "Build host", sshTarget: "devbox" }, tabs: [{ id: "pane-delay", name: "Reviewer" }] }],
@@ -228,7 +302,7 @@ test("a delayed remote copy is kept for Copy path when pane input changes before
       return `/run/user/501/aya/attachments/project-a/${"a".repeat(32)}-${originalName.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
     },
   });
-  const pending = handlers.get("prompt-attachments:drop")({}, "pane-delay", [{ name: "report.txt", mimeType: "text/plain", path: source }]);
+  const pending = invokeDrop(handlers, "pane-delay", [{ name: "report.txt", mimeType: "text/plain", path: source }]);
   await uploadBegan;
   await withPaneInputLock("pane-delay", async () => notePaneInput("pane-delay"));
   release();
@@ -250,6 +324,7 @@ test("pane input arriving during the final hold check still blocks remote path t
   const checkingHold = new Promise((resolve) => { finishHold = resolve; });
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) }) },
     ayaHome: home,
     listProjects: async () => [{ slug: "project-a", remote: { label: "Build host", sshTarget: "devbox" }, tabs: [{ id: "pane-hold-race", name: "Reviewer" }] }],
@@ -261,7 +336,7 @@ test("pane input arriving during the final hold check still blocks remote path t
     writePane: async (_id, data) => { writes.push(data); return true; },
     upload: async () => `/run/user/501/aya/attachments/project-a/${"c".repeat(32)}-report.txt`,
   });
-  const pending = handlers.get("prompt-attachments:drop")({}, "pane-hold-race", [{ name: "report.txt", path: source }]);
+  const pending = invokeDrop(handlers, "pane-hold-race", [{ name: "report.txt", path: source }]);
   while (holdCalls < 2) await new Promise((resolve) => setImmediate(resolve));
   // pty:write marks input intent as soon as its IPC arrives, before it queues
   // behind this attachment's per-pane write lock.
@@ -280,6 +355,7 @@ test("clipboard image reports its saved path when pane input changes before typi
   let holdCalls = 0;
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => false, toPNG: () => Buffer.from("clipboard image") }) },
     ayaHome: home,
     listProjects: async () => [{ slug: "project-a", tabs: [{ id: "pane-image-race", name: "Reviewer" }] }],
@@ -290,7 +366,7 @@ test("clipboard image reports its saved path when pane input changes before typi
     },
     writePane: async (_id, data) => { writes.push(data); return true; },
   });
-  const result = await handlers.get("prompt-attachments:clipboard-image")({}, "pane-image-race");
+  const result = await invokeClipboardImage(handlers, "pane-image-race");
   assert.equal(result.status, "copied-not-added");
   assert.match(result.message, /Image saved but not added, because you typed in the pane meanwhile/);
   assert.match(result.copyText, /prompt-attachments\/project-a\/[a-f0-9]{32}-attachment\.png/);
@@ -309,6 +385,7 @@ test("a later remote upload failure removes earlier copies and sends no path", a
   let uploadCount = 0;
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) }) },
     ayaHome: home,
     listProjects: async () => [{ slug: "project-a", remote: { label: "Build host", sshTarget: "devbox" }, tabs: [{ id: "pane-partial", name: "Reviewer" }] }],
@@ -321,7 +398,7 @@ test("a later remote upload failure removes earlier copies and sends no path", a
     },
     cleanup: async (_target, _project, names) => { cleaned.push(...names); },
   });
-  await assert.rejects(handlers.get("prompt-attachments:drop")({}, "pane-partial", [
+  await assert.rejects(invokeDrop(handlers, "pane-partial", [
     { name: "one.txt", path: first },
     { name: "two.txt", path: second },
   ]), /needs a password/);
@@ -340,6 +417,7 @@ test("a remote batch whose final pane write fails removes every uploaded copy", 
   let uploadCount = 0;
   registerPromptAttachmentIpc({
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
     clipboard: { readText: () => "", readImage: () => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) }) },
     ayaHome: home,
     listProjects: async () => [{ slug: "project-a", remote: { label: "Build host", sshTarget: "devbox" }, tabs: [{ id: "pane-write-fails", name: "Reviewer" }] }],
@@ -351,7 +429,7 @@ test("a remote batch whose final pane write fails removes every uploaded copy", 
     },
     cleanup: async (_target, _project, names) => { cleaned.push(...names); },
   });
-  await assert.rejects(handlers.get("prompt-attachments:drop")({}, "pane-write-fails", [
+  await assert.rejects(invokeDrop(handlers, "pane-write-fails", [
     { name: "one.txt", path: first },
     { name: "two.txt", path: second },
   ]), /Aya could not add the file to the prompt.*Nothing was typed/);

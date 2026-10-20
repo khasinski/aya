@@ -572,6 +572,10 @@ function registerIpc(): TeamRunner {
     ipcMain,
     clipboard,
     ayaHome: AYA_HOME,
+    trustedWindow: (event) => {
+      const window = senderWindow(event);
+      return window && event.senderFrame === event.sender.mainFrame ? window : null;
+    },
     listProjects,
     holdReason: (ptyId) => ptyHost.holdReason(ptyId),
     writePane: (ptyId, data) => ptyHost.write(ptyId, data),

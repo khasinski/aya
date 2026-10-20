@@ -19,26 +19,17 @@ async function dropFiles(
   host: import("@playwright/test").Locator,
   paths: string[],
 ): Promise<boolean> {
-  await window.evaluate(() => {
-    let input = document.querySelector<HTMLInputElement>("#prompt-attachment-test-input");
-    if (!input) {
-      input = document.createElement("input");
-      input.id = "prompt-attachment-test-input";
-      input.type = "file";
-      input.multiple = true;
-      document.body.append(input);
-    }
-  });
-  await window.locator("#prompt-attachment-test-input").setInputFiles(paths);
-  return host.evaluate((node) => {
-    const transfer = new DataTransfer();
-    const input = document.querySelector<HTMLInputElement>("#prompt-attachment-test-input");
-    for (const file of Array.from(input?.files ?? [])) transfer.items.add(file);
-    const over = new DragEvent("dragover", { dataTransfer: transfer, bubbles: true, cancelable: true });
-    node.dispatchEvent(over);
-    node.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
-    return over.defaultPrevented;
-  });
+  const box = await host.boundingBox();
+  if (!box) throw new Error("The terminal is not visible for a file drop.");
+  const cdp = await window.context().newCDPSession(window);
+  const data = { items: [], files: paths, dragOperationsMask: 1 };
+  const x = box.x + Math.min(80, box.width / 2);
+  const y = box.y + Math.min(80, box.height / 2);
+  await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", x, y, data });
+  await cdp.send("Input.dispatchDragEvent", { type: "dragOver", x, y, data });
+  await cdp.send("Input.dispatchDragEvent", { type: "drop", x, y, data });
+  await cdp.detach();
+  return true;
 }
 
 async function putClipboardImage(app: import("@playwright/test").ElectronApplication, window: import("@playwright/test").Page): Promise<Buffer> {
@@ -46,18 +37,16 @@ async function putClipboardImage(app: import("@playwright/test").ElectronApplica
   const state = await app.evaluate(({ clipboard, nativeImage }, base64: string) => {
     const image = nativeImage.createFromBuffer(Buffer.from(base64, "base64"));
     clipboard.writeImage(image);
-    return { imageEmpty: image.isEmpty(), clipboardEmpty: clipboard.readImage().isEmpty() };
+    const copied = clipboard.readImage();
+    return { imageEmpty: image.isEmpty(), clipboardEmpty: copied.isEmpty(), clipboardPng: copied.toPNG().toString("base64") };
   }, png.toString("base64"));
-  expect(state).toEqual({ imageEmpty: false, clipboardEmpty: false });
-  return png;
+  expect(state.imageEmpty).toBe(false);
+  expect(state.clipboardEmpty).toBe(false);
+  return Buffer.from(state.clipboardPng, "base64");
 }
 
 async function pasteImage(textarea: import("@playwright/test").Locator) {
-  await textarea.evaluate((node) => {
-    const transfer = new DataTransfer();
-    transfer.items.add(new File(["clipboard image"], "clipboard.png", { type: "image/png" }));
-    node.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
-  });
+  await textarea.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
 }
 
 const presetList = [
@@ -69,6 +58,10 @@ test.describe("local prompt attachments", () => {
   test.use({ seedOptions: { presetList, rightTab: { presetId: "held", name: "waiting reader" } } });
 
   test("dropped files and a clipboard image are typed, not submitted, and held panes receive nothing", async ({ window, app, seeded }, testInfo) => {
+    expect(await window.evaluate(() => {
+      const exposed = window.aya as unknown as Record<string, unknown>;
+      return ["getDroppedFilePath", "addPromptAttachments", "addClipboardImageToPrompt"].filter((key) => key in exposed);
+    })).toEqual([]);
     const left = seeded.tabIds.left;
     const right = seeded.tabIds.right;
     await waitForReady(window, left);

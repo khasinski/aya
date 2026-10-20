@@ -601,12 +601,6 @@ export interface AyaApi {
    *  output buffer. Returns one hit per matching pty (the first match plus
    *  an extra-occurrences count). */
   ptySearch(query: string): Promise<BufferSearchHit[]>;
-  /** Get the OS path for a file supplied by an actual file drop. */
-  getDroppedFilePath(file: File): string;
-  /** Type dropped file paths locally, or copy them to a remote project first. */
-  addPromptAttachments(terminalId: string, files: Array<{ name: string; mimeType: string; path: string }>): Promise<PromptAttachmentResult>;
-  /** Save an image from the clipboard as PNG and type its path without submitting. */
-  addClipboardImageToPrompt(terminalId: string): Promise<PromptAttachmentResult>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
