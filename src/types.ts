@@ -1252,8 +1252,8 @@ export interface TeamSummary {
   assignments: Record<string, string>;
   /** Per role with a pane in the project: why a message would wait now, null when it would not. */
   paneHolds: Record<string, string | null>;
-  /** Per role with a pane: why its CLI holds no note for this role, null when it does. */
-  roleNotes: Record<string, string | null>;
+  /** Per role with a pane: a note explaining what Aya can do, plus whether the user needs to act. */
+  roleNotes: Record<string, { text: string; severity: "info" | "action" } | null>;
   /** Roles whose note a restart of their pane (it resumes) gives; not a CLI that cannot take one, nor Codex. */
   restartable: string[];
   /** Panes that started with a role note of this team that they no longer play. */

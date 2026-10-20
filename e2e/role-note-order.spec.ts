@@ -96,6 +96,8 @@ test.describe("role given or changed while panes run", () => {
     aya(["team", "open", "ux-review", "tester=pane:tab-right"]);
     const card = (await openTeams(window)).getByTestId("team-ux-review");
     await expect(card.getByLabel("tester role note")).toContainText("This agent started before it had this role");
+    await expect(card.getByLabel("tester role note")).toHaveClass(/aya-teams-role-alert/);
+    await expect(card.getByLabel("tester role note")).toContainText("⚠");
     await expect(card.getByLabel("tester role note")).toContainText("click Restart");
     await expect(card.getByLabel("tester role note")).not.toContainText("aya team whoami");
 

@@ -221,6 +221,7 @@ export function TeamCard({
           {definition.roles.map((role) => {
             const status = roleStatus(team, role.id, project.tabs, waiting);
             const note = roleNote(team, role.id, project.tabs);
+            const roleNoteStatus = team.roleNotes[role.id];
             const notReachedNow = notReachedLine(team, role.id, project.tabs, notReached[role.id]);
             const unsent = unsentLine(team, role.id);
             return (
@@ -236,10 +237,10 @@ export function TeamCard({
                   <div className="aya-teams-mustnot">
                     <span className="aya-teams-label">Must not</span> {role.mustNot}
                   </div>
-                  {team.roleNotes[role.id] && (
-                    <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} role note`}>
-                      ⚠ {team.roleNotes[role.id]}
-                      {onRestartPane && team.restartable.includes(role.id) && project.tabs.some((t) => t.id === team.assignments[role.id]) && (
+                  {roleNoteStatus && (
+                    <div className={roleNoteStatus.severity === "action" ? "aya-teams-role-alert" : "aya-teams-note"} role="status" aria-label={`${role.id} role note`}>
+                      {roleNoteStatus.severity === "action" && <>⚠ </>}{roleNoteStatus.text}
+                      {roleNoteStatus.severity === "action" && onRestartPane && team.restartable.includes(role.id) && project.tabs.some((t) => t.id === team.assignments[role.id]) && (
                         <>
                           {" "}
                           <button
@@ -256,8 +257,8 @@ export function TeamCard({
                     </div>
                   )}
                   {team.olderRoles?.[role.id] && (
-                    <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} older role`}>
-                      ⚠ {olderRoleNote(team.olderRoles[role.id])}
+                    <div className="aya-teams-note" role="status" aria-label={`${role.id} older role`}>
+                      {olderRoleNote(team.olderRoles[role.id])}
                     </div>
                   )}
                   {note && (
