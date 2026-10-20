@@ -124,20 +124,21 @@ function StatusBarImpl({
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
   const [sendingComments, setSendingComments] = useState(false);
+  const diffCommentsProject = project && !project.remote ? project.slug : null;
 
   useEffect(() => {
     let current = true;
     setComments([]);
     setCommentError(null);
-    if (!project || project.remote) { setCommentsLoading(false); return; }
+    if (!diffCommentsProject) { setCommentsLoading(false); return; }
     setCommentsLoading(true);
-    void window.aya.listDiffComments(project.slug).then((saved) => {
+    void window.aya.listDiffComments(diffCommentsProject).then((saved) => {
       if (current) setComments(saved);
     }).catch((err: unknown) => {
       if (current) setCommentError(err instanceof Error ? err.message : "Aya could not load saved comments.");
     }).finally(() => { if (current) setCommentsLoading(false); });
     return () => { current = false; };
-  }, [project?.slug, project?.remote]);
+  }, [diffCommentsProject]);
 
   useEffect(() => {
     if (!showDirtyFiles) return;
