@@ -49,7 +49,53 @@ async function putClipboardImage(app: import("@playwright/test").ElectronApplica
 
 async function pasteImage(textarea: import("@playwright/test").Locator) {
   await textarea.focus();
-  await textarea.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
+  const shortcut = process.platform === "darwin"
+    ? "Meta+V"
+    : process.platform === "linux"
+      ? "Control+Shift+V"
+      : "Control+V";
+  await textarea.press(shortcut);
+}
+
+async function observePasteEvents(window: import("@playwright/test").Page) {
+  await window.evaluate(() => {
+    const target = window as Window & { __ayaPasteEvents?: unknown[] };
+    target.__ayaPasteEvents = [];
+    window.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+        const targetElement = event.target instanceof Element ? event.target : null;
+        const activeElement = document.activeElement;
+        target.__ayaPasteEvents?.push({
+          type: "keydown", key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey, repeat: event.repeat, trusted: event.isTrusted,
+          target: targetElement?.tagName,
+          targetPane: targetElement?.closest("[data-terminal-id]")?.getAttribute("data-terminal-id"),
+          active: activeElement?.className,
+          activePane: activeElement?.closest("[data-terminal-id]")?.getAttribute("data-terminal-id"),
+        });
+      }
+    }, true);
+    window.addEventListener("paste", (event) => {
+      const value = event as ClipboardEvent;
+      target.__ayaPasteEvents?.push({
+        type: "paste",
+        trusted: value.isTrusted,
+        active: document.activeElement?.className,
+        target: (value.target as Element | null)?.tagName,
+        clipboardData: Boolean(value.clipboardData),
+        types: value.clipboardData ? Array.from(value.clipboardData.types) : [],
+        text: value.clipboardData?.getData("text/plain") ?? null,
+        files: value.clipboardData?.files.length ?? null,
+      });
+    }, true);
+    document.addEventListener("aya:prompt-attachment-result", (event) => {
+      const detail = (event as CustomEvent<{ terminalId: string; kind: string; phase: string }>).detail;
+      target.__ayaPasteEvents?.push({ type: "attachment", ...detail });
+    }, true);
+  });
+}
+
+async function readPasteEvents(window: import("@playwright/test").Page) {
+  return window.evaluate(() => (window as Window & { __ayaPasteEvents?: unknown[] }).__ayaPasteEvents ?? []);
 }
 
 const presetList = [
@@ -95,8 +141,18 @@ test.describe("local prompt attachments", () => {
 
     const clipboardPng = await putClipboardImage(app, window);
     const leftTextarea = window.locator(`[data-testid="terminal-pane"][data-terminal-id="${left}"] .xterm-helper-textarea`);
+    await observePasteEvents(window);
+    await leftTextarea.focus();
+    expect(await leftTextarea.evaluate((element) => document.activeElement === element)).toBe(true);
     await pasteImage(leftTextarea);
-    await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Saving the clipboard image");
+    const pasteEvents = await readPasteEvents(window);
+    await testInfo.attach("clipboard paste event diagnostics", { body: JSON.stringify(pasteEvents, null, 2), contentType: "application/json" });
+    expect(pasteEvents).toContainEqual(expect.objectContaining({
+      type: "keydown",
+      trusted: true,
+      ...(process.platform === "linux" ? { ctrlKey: true, shiftKey: true } : {}),
+    }));
+    expect(pasteEvents).toContainEqual(expect.objectContaining({ type: "attachment", terminalId: left, kind: "image", phase: "started" }));
     await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Image saved and its path added");
     await expect.poll(() => readdirSync(localDirectory).length).toBe(1);
     const imagePath = readdirSync(localDirectory).map((name) => join(localDirectory, name)).find((path) => path.endsWith(".png") && !droppedPaths.includes(path));
@@ -106,6 +162,22 @@ test.describe("local prompt attachments", () => {
     expect(existsSync(paneLog(seeded.projectDir, left))).toBe(true);
     await leftTextarea.press("Enter");
     await expect.poll(() => readFileSync(paneLog(seeded.projectDir, left), "utf8")).toContain(`'${imagePath}'`);
+
+    const contextClipboardPng = await putClipboardImage(app, window);
+    await leftHost.click({ button: "right" });
+    const contextPaste = window.getByTestId("terminal-context-paste");
+    await expect(contextPaste).toBeVisible();
+    await contextPaste.click();
+    await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Image saved and its path added");
+    await expect.poll(() => readdirSync(localDirectory).length).toBe(2);
+    const contextImagePath = readdirSync(localDirectory)
+      .map((name) => join(localDirectory, name))
+      .find((path) => path !== imagePath);
+    expect(contextImagePath).toBeTruthy();
+    expect(readFileSync(contextImagePath!).equals(contextClipboardPng)).toBe(true);
+    await expect.poll(() => paneBuffer(window, left)).toContain(contextImagePath!);
+    await leftTextarea.press("Enter");
+    await expect.poll(() => readFileSync(paneLog(seeded.projectDir, left), "utf8")).toContain(`'${contextImagePath}'`);
 
     const heldFile = join(seeded.root, "do-not-type.txt");
     writeFileSync(heldFile, "secret");

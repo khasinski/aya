@@ -69,10 +69,28 @@ export function installPromptAttachmentGestures(deps: PromptAttachmentGestureDep
       }
     })();
   };
+  const contextPaste = (event: Event) => {
+    const value = event as MouseEvent;
+    const pane = terminalForEvent(value);
+    const target = value.target as Element | null;
+    if (!value.isTrusted || !pane || !target?.closest("[data-aya-terminal-paste]")) return;
+    deps.report({ terminalId: pane.id, kind: "image", count: 1, phase: "started" });
+    void (async () => {
+      try {
+        const token = await deps.invoke("prompt-attachments:register-paste", pane.id);
+        const result = await deps.invoke("prompt-attachments:context-menu-image", token);
+        deps.report({ terminalId: pane.id, kind: "image", count: 1, phase: "finished", result });
+      } catch (error) {
+        deps.report({ terminalId: pane.id, kind: "image", count: 1, phase: "finished", error });
+      }
+    })();
+  };
   deps.document.addEventListener("drop", drop, true);
   deps.document.addEventListener("paste", paste, true);
+  deps.document.addEventListener("click", contextPaste, true);
   return () => {
     deps.document.removeEventListener("drop", drop, true);
     deps.document.removeEventListener("paste", paste, true);
+    deps.document.removeEventListener("click", contextPaste, true);
   };
 }

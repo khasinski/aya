@@ -203,6 +203,17 @@ export function registerPromptAttachmentIpc(deps: PromptAttachmentIpcDeps): void
       return await addAttachmentsToPane(deps, gesture.terminalId, [{ name: "clipboard.png", mimeType: "image/png", bytes }]);
     } catch (error) { throw safeAttachmentError(error); }
   });
+  deps.ipcMain.handle("prompt-attachments:context-menu-image", async (event: IpcMainInvokeEvent, token: unknown) => {
+    try {
+      const gesture = consume(event, token, "paste");
+      if (deps.clipboard.readText()) return { status: "not-image" };
+      const image = deps.clipboard.readImage();
+      if (image.isEmpty()) return { status: "not-image" };
+      const bytes = image.toPNG();
+      if (bytes.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("The clipboard image is too large to add to the prompt (25 MB limit).");
+      return await addAttachmentsToPane(deps, gesture.terminalId, [{ name: "clipboard.png", mimeType: "image/png", bytes }]);
+    } catch (error) { throw safeAttachmentError(error); }
+  });
 }
 
 function safeAttachmentError(error: unknown): Error {

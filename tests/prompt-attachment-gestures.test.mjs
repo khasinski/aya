@@ -8,7 +8,8 @@ function harness() {
   const activeElement = {};
   const pane = { id: "pane-gesture", element: paneElement };
   paneElement.getAttribute = () => pane.id;
-  const target = { closest: (selector) => selector === "[data-terminal-id]" ? paneElement : null };
+  const pasteButton = {};
+  const target = { closest: (selector) => selector === "[data-terminal-id]" ? paneElement : selector === "[data-aya-terminal-paste]" ? pasteButton : null };
   const doc = {
     activeElement,
     addEventListener: (type, listener) => listeners.set(type, listener),
@@ -99,5 +100,25 @@ test("an image paste outside the focused terminal does not request clipboard acc
   h.listeners.get("paste")(paste);
   assert.deepEqual(h.calls, []);
   assert.equal(paste.defaultPrevented, false);
+  h.cleanup();
+});
+
+test("the trusted terminal context-menu Paste checks the clipboard through a pane-bound one-use token", async () => {
+  const h = harness();
+  h.listeners.get("click")(event({ isTrusted: true, target: h.target }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(h.calls, [
+    ["prompt-attachments:register-paste", "pane-gesture"],
+    ["prompt-attachments:context-menu-image", "opaque-one-use-token"],
+  ]);
+  assert.deepEqual(h.reports.map(({ phase, kind }) => [phase, kind]), [["started", "image"], ["finished", "image"]]);
+  h.cleanup();
+});
+
+test("an untrusted context-menu Paste click cannot inspect the clipboard", () => {
+  const h = harness();
+  h.listeners.get("click")(event({ target: h.target }));
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.reports, []);
   h.cleanup();
 });

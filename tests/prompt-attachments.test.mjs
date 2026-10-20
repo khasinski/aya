@@ -38,6 +38,10 @@ async function invokeClipboardImage(handlers, terminalId, event = ipcEvent) {
   const token = await handlers.get("prompt-attachments:register-paste")(event, terminalId);
   return handlers.get("prompt-attachments:clipboard-image")(event, token);
 }
+async function invokeContextMenuImage(handlers, terminalId, event = ipcEvent) {
+  const token = await handlers.get("prompt-attachments:register-paste")(event, terminalId);
+  return handlers.get("prompt-attachments:context-menu-image")(event, token);
+}
 
 test("attachment names are random and retain only a safe extension", () => {
   const extension = safeAttachmentExtension("../../secret name.$(touch pwn).PNG", "image/png");
@@ -231,8 +235,40 @@ test("attachment IPC rejects untrusted senders and raw paths without a one-use g
   await assert.rejects(handlers.get("prompt-attachments:register-drop")(childFrame, "pane-1", [{ name: "key", path: "/Users/test/.ssh/id_ed25519" }]));
   await assert.rejects(handlers.get("prompt-attachments:drop")(ipcEvent, "/Users/test/.ssh/id_ed25519", [{ name: "key", path: "/Users/test/.ssh/id_ed25519" }]));
   await assert.rejects(handlers.get("prompt-attachments:clipboard-image")(ipcEvent, "pane-1"));
+  await assert.rejects(handlers.get("prompt-attachments:context-menu-image")(ipcEvent, "pane-1"));
   assert.equal(clipboardReads, 0);
   assert.equal(writes, 0);
+});
+
+test("context-menu Paste routes an image through the same one-use pane gesture and ignores text", async (t) => {
+  const home = privateHome(t);
+  const handlers = new Map();
+  const writes = [];
+  let text = "";
+  let imageReads = 0;
+  registerPromptAttachmentIpc({
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    trustedWindow,
+    clipboard: {
+      readText: () => text,
+      readImage: () => { imageReads += 1; return { isEmpty: () => false, toPNG: () => Buffer.from("clipboard-png") }; },
+    },
+    ayaHome: home,
+    listProjects: async () => [{ slug: "project-a", tabs: [{ id: "pane-1", name: "Reviewer" }] }],
+    holdReason: async () => null,
+    writePane: async (_id, data) => { writes.push(data); return true; },
+  });
+
+  text = "ordinary text";
+  assert.deepEqual(await invokeContextMenuImage(handlers, "pane-1"), { status: "not-image" });
+  assert.equal(imageReads, 0);
+  assert.deepEqual(writes, []);
+
+  text = "";
+  assert.deepEqual(await invokeContextMenuImage(handlers, "pane-1"), { status: "added" });
+  assert.equal(imageReads, 1);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0], /prompt-attachments/);
 });
 
 test("drop tokens are bound to their renderer and consumed only once", async (t) => {

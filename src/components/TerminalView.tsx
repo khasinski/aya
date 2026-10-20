@@ -430,6 +430,8 @@ function TerminalViewComponent({
       }
       if (detail.error) {
         setAttachmentNotice({ text: detail.error.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""), error: true });
+      } else if (detail.result?.status === "not-image") {
+        setAttachmentNotice(null);
       } else if (detail.result?.status === "copied-not-added") {
         setAttachmentNotice({ text: detail.result.message ?? "The path was not added. Nothing was typed.", error: true });
         setCopiedAttachmentPath(detail.result.copyText ?? null);
@@ -1661,6 +1663,7 @@ function TerminalViewComponent({
           </button>
           <button
             data-testid="terminal-context-paste"
+            data-aya-terminal-paste
             className="aya-terminal-context-item"
             type="button"
             disabled={terminal.disconnected}

@@ -199,6 +199,7 @@ test("raw Aya Web invokes cannot register or use prompt-attachment authority", a
     "prompt-attachments:register-drop",
     "prompt-attachments:register-paste",
     "prompt-attachments:drop",
+    "prompt-attachments:context-menu-image",
   ]) ipcMain.handle(channel, () => { invoked += 1; });
   ipcMain.handle("prompt-attachments:clipboard-image", () => { invoked += 1; clipboardReads += 1; });
 
@@ -213,6 +214,7 @@ test("raw Aya Web invokes cannot register or use prompt-attachment authority", a
         [11, "prompt-attachments:drop"],
         [12, "prompt-attachments:register-paste"],
         [13, "prompt-attachments:clipboard-image"],
+        [14, "prompt-attachments:context-menu-image"],
       ]) {
         ws.send(JSON.stringify({ t: "invoke", id, channel, args: ["pane", [{ path: "/private/key" }]] }));
         const result = await next();

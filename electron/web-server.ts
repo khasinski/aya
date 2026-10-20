@@ -46,6 +46,7 @@ const WEB_DENIED_CHANNELS = new Set([
   "prompt-attachments:register-paste",
   "prompt-attachments:drop",
   "prompt-attachments:clipboard-image",
+  "prompt-attachments:context-menu-image",
 ]);
 export const SESSION_TOKEN_BYTES = 32;
 // One year: hashed asset filenames never change content.
