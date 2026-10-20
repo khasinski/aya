@@ -90,7 +90,7 @@ test("create worktrees from one prompt and offer safe branch deletion", async ({
   const changedDialog = window.getByRole("dialog", { name: "Remove worktree?" });
   const lateBranch = changedDialog.getByRole("checkbox", { name: `Also delete branch ${lateBranchName}`, exact: true });
   await expect(lateBranch).toBeChecked();
-  execFileSync("git", ["commit", "--allow-empty", "-m", "arrived while remove dialog was open"], { cwd: latePath });
+  execFileSync("git", ["-c", "user.email=e2e@example.test", "-c", "user.name=E2E", "commit", "--allow-empty", "-m", "arrived while remove dialog was open"], { cwd: latePath });
   const warning = window.waitForEvent("dialog").then(async (nativeDialog) => {
     expect(nativeDialog.message()).toBe("The worktree was removed, but Git kept the branch.");
     await nativeDialog.accept();
