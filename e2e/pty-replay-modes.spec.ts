@@ -1,15 +1,19 @@
 import { test, expect } from "./fixtures";
-import { waitForShellReady } from "./helpers/terminal";
+import { agentBin } from "./helpers/agent-bin";
+import { join } from "node:path";
 import { AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 
+const FAKE_CODEX = agentBin("codex", join(__dirname, "helpers", "fake-codex-mouse.cjs"));
+
 test.use({ seedOptions: {
-  singleTab: { presetId: "shell", name: "Shell" }, split: false,
-  presetList: [{ id: "shell", name: "Shell", icon: "$", color: "", command: "exec /bin/sh -i" }],
+  singleTab: { presetId: "codex", name: "Codex" }, split: false,
+  presetList: [{ id: "codex", name: "Codex", icon: "◆", color: "#10a37f", command: FAKE_CODEX }],
 } });
 
-test("a remounted pane restores retained TUI mouse modes after their setup bytes were trimmed", async ({ app, window }) => {
+test("a remounted Codex pane restores mouse tracking after its setup bytes were trimmed", async ({ app, window }) => {
   test.setTimeout(AGENT_TEST_TIMEOUT_MS);
-  await waitForShellReady(window);
+  await expect.poll(() => window.evaluate(() => window.aya.ptyBuffer("tab-left")), { timeout: AGENT_TEST_TIMEOUT_MS })
+    .toContain("FAKE_CODEX_MOUSE_READY");
   await app.evaluate(({ ipcMain }) => {
     const original = (ipcMain as any)._invokeHandlers.get("pty:write");
     (globalThis as any).replayModeWrites = [];
@@ -19,21 +23,12 @@ test("a remounted pane restores retained TUI mouse modes after their setup bytes
       return original(event, id, data);
     });
   });
-  await window.evaluate(() => window.aya.ptyWrite("tab-left", "printf '\\033[?1049h\\033[?1003h\\033[?1006h\\033[?2004h\\033[?1004h\\033[?1h'; printf '\\nMODE_READY\\n'\r"));
-  await expect.poll(() => window.evaluate(() => window.aya.ptyBuffer("tab-left")), { timeout: AGENT_TEST_TIMEOUT_MS }).toContain("MODE_READY");
-  for (let i = 0; i < 27; i++) {
-    await window.evaluate((n) => window.aya.ptyWrite("tab-left", `head -c 40000 /dev/zero | tr '\\000' X; printf '\\nCHUNK_${n}\\n'\r`), i);
-    await expect.poll(() => window.evaluate(() => window.aya.ptyBuffer("tab-left")), { timeout: 3_000 }).toContain(`CHUNK_${i}`);
-  }
-  await window.evaluate(() => window.aya.ptyWrite("tab-left", "cat\r"));
-  await expect.poll(() => window.evaluate(() => window.aya.ptyBuffer("tab-left")), { timeout: 3_000 }).toBeTruthy();
   const before = await window.evaluate(() => window.aya.ptyBuffer("tab-left"));
   const retainedSetups = ["\x1b[?1049h", "\x1b[?1003h", "\x1b[?1006h", "\x1b[?2004h", "\x1b[?1004h", "\x1b[?1h"]
     .map(mode => before.indexOf(mode)).filter(index => index >= 0);
   expect({ retainedSetups, length: before.length }).toEqual({ retainedSetups: [], length: expect.any(Number) });
 
   await window.reload();
-  await waitForShellReady(window);
   const screen = window.locator('[data-testid="terminal-pane"][data-terminal-id="tab-left"] .xterm-screen');
   await expect(screen).toBeVisible();
   await expect.poll(() => screen.evaluate(el => el.closest(".xterm")?.classList.contains("enable-mouse-events"))).toBe(true);
