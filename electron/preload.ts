@@ -172,6 +172,9 @@ const api: AyaApi = {
   getGitHubLink: (directory) =>
     ipcRenderer.invoke("env:github-link", directory),
   createWorktree: (req) => ipcRenderer.invoke("env:git-worktree-add", req),
+  createWorktreeBatch: (req) => ipcRenderer.invoke("env:git-worktree-batch-add", req),
+  worktreeBranchRemovalInfo: (req) => ipcRenderer.invoke("env:git-worktree-removal-info", req),
+  removeWorktreeAndBranch: (req) => ipcRenderer.invoke("env:git-worktree-remove-with-branch", req),
   removeWorktree: (req) => ipcRenderer.invoke("env:git-worktree-remove", req),
   githubCliAvailable: () => ipcRenderer.invoke("env:github-cli-available"),
   pickDirectory: () => ipcRenderer.invoke("env:pick-dir"),

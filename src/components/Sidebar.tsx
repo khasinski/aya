@@ -10,6 +10,7 @@ import { useDragReorder } from "../hooks/useDragReorder";
 import { paneRoles } from "../team-view";
 import { TerminalStatusDot } from "./TerminalStatusDot";
 import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
+import { WorktreeCreateDialog, WorktreeRemoveDialog } from "./WorktreeDialogs";
 
 // Clamp bounds for drag-resizing the sidebar (px).
 const SIDEBAR_MIN_WIDTH_PX = 180;
@@ -29,16 +30,14 @@ interface Props {
   onRename: (id: string, name: string) => void;
   /** Launch a preset. `cwd` targets a git worktree; omitted = the project dir. */
   onLaunch: (preset: Preset, cwd?: string) => void;
-  /** Experimental worktrees: when enabled and the project has >1 worktree, the
-   *  launcher offers a target worktree and rows show their branch. */
-  worktreesEnabled?: boolean;
   worktrees?: Worktree[];
   /** The project's own directory (the "main" worktree cwd). */
   projectDir?: string;
-  /** Create a worktree (opens a prompt). Absent = the action is hidden. */
-  onCreateWorktree?: () => void;
+  projectRemote?: boolean;
+  onCreateWorktrees?: (req: { directory: string; slug: string; count: number; base: string }) => Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
+  onStartWorktrees?: (preset: Preset, checkouts: { path: string; branch: string }[], prompt: string) => void;
   /** Remove a worktree. Never offered for the main checkout. */
-  onRemoveWorktree?: (worktree: Worktree) => void;
+  onRemoveWorktree?: (req: { directory: string; path: string; base: string; deleteBranch: boolean }) => Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }>;
   onResize: (width: number) => void;
   /** Called with the new id order after a successful drag-drop. Only fires
    *  when the order actually changed. */
@@ -79,10 +78,11 @@ function SidebarImpl({
   onClose,
   onRename,
   onLaunch,
-  worktreesEnabled = false,
   worktrees = [],
   projectDir,
-  onCreateWorktree,
+  projectRemote = false,
+  onCreateWorktrees,
+  onStartWorktrees,
   onRemoveWorktree,
   onResize,
   onReorder,
@@ -124,14 +124,11 @@ function SidebarImpl({
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Experimental worktrees: group terminals under their worktree, and launch new
-  // terminals into the selected group. Only kicks in with >1 worktree; defaults
-  // to the project's own dir (main), reset when the active project changes.
-  // Shown whenever worktrees are enabled and the directory is a repo at all —
-  // gating on >1 used to hide the section entirely, which left no way to
-  // create the FIRST worktree.
-  const showWorktrees = worktreesEnabled && worktrees.length > 0;
+  // Worktrees are available for local repositories without an opt-in flag.
+  const showWorktrees = worktrees.length > 0;
   const [targetCwd, setTargetCwd] = useState<string>(projectDir ?? "");
+  const [createWorktreeOpen, setCreateWorktreeOpen] = useState(false);
+  const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<Worktree | null>(null);
   useEffect(() => {
     setTargetCwd(projectDir ?? "");
   }, [projectDir]);
@@ -309,6 +306,9 @@ function SidebarImpl({
                   <span className="aya-worktree-header-name">
                     {worktreeName(g.worktree.path)}
                   </span>
+                  {g.worktree.branch && !g.worktree.isMain && (
+                    <span className="aya-worktree-header-branch">{g.worktree.branch}</span>
+                  )}
                   {g.worktree.isMain && (
                     <span className="aya-worktree-header-tag">main</span>
                   )}
@@ -325,12 +325,12 @@ function SidebarImpl({
                       title={`Remove worktree ${worktreeName(g.worktree.path)}`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onRemoveWorktree(g.worktree);
+                        setRemoveWorktreeTarget(g.worktree);
                       }}
                       onKeyDown={(e) => {
                         if (e.key !== "Enter" && e.key !== " ") return;
                         e.stopPropagation();
-                        onRemoveWorktree(g.worktree);
+                        setRemoveWorktreeTarget(g.worktree);
                       }}
                     >
                       ×
@@ -345,14 +345,15 @@ function SidebarImpl({
               </div>
             ))
           : terminals.map(renderRow)}
-        {groups && onCreateWorktree && (
+        {(groups || projectRemote) && (
           <button
             type="button"
             className="aya-worktree-add"
-            onClick={onCreateWorktree}
-            title="Create a new git worktree for this repository"
+            onClick={projectRemote ? undefined : () => setCreateWorktreeOpen(true)}
+            disabled={projectRemote || !onCreateWorktrees || !onStartWorktrees}
+            title={projectRemote ? "Worktrees are available for local projects only" : "Create worktrees for this repository"}
           >
-            + New worktree…
+            + New worktrees{projectRemote ? " · available for local projects" : "…"}
           </button>
         )}
       </div>
@@ -389,6 +390,25 @@ function SidebarImpl({
         </div>
         {statusRail}
       </div>
+      {createWorktreeOpen && projectDir && onCreateWorktrees && onStartWorktrees && (
+        <WorktreeCreateDialog
+          projectDir={projectDir}
+          presets={presets}
+          onCancel={() => setCreateWorktreeOpen(false)}
+          onCreate={onCreateWorktrees}
+          onStart={onStartWorktrees}
+        />
+      )}
+      {removeWorktreeTarget && projectDir && onRemoveWorktree && (
+        <WorktreeRemoveDialog
+          projectDir={projectDir}
+          base={worktrees.find((w) => w.isMain)?.branch ?? "HEAD"}
+          worktree={removeWorktreeTarget}
+          onCancel={() => setRemoveWorktreeTarget(null)}
+          onRemove={onRemoveWorktree}
+          onRemoved={() => setRemoveWorktreeTarget(null)}
+        />
+      )}
       <div
         className="aya-sidebar-resize"
         style={{

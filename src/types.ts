@@ -932,6 +932,23 @@ export interface AyaApi {
     branch?: string;
     base?: string;
   }): Promise<GitMutationResult>;
+  createWorktreeBatch(req: {
+    directory: string;
+    slug: string;
+    count: number;
+    base: string;
+  }): Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
+  worktreeBranchRemovalInfo(req: {
+    directory: string;
+    path: string;
+    base: string;
+  }): Promise<{ branch: string | null; canDelete: boolean; reason: string | null; unmerged: number | null }>;
+  removeWorktreeAndBranch(req: {
+    directory: string;
+    path: string;
+    base: string;
+    deleteBranch: boolean;
+  }): Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }>;
   /** Remove a git worktree. `force` discards uncommitted changes in it. */
   removeWorktree(req: {
     directory: string;
@@ -1078,6 +1095,8 @@ export interface TerminalState {
   sessionId?: string;
   /** Mirrors WorkingTab.sharedDir. */
   sharedDir?: true;
+  /** One-time prompt for a newly-created worktree pane; never persisted. */
+  initialPrompt?: string;
 }
 
 export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";

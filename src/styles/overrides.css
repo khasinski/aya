@@ -795,6 +795,45 @@
   padding: 20px;
   font-family: var(--font-sans);
 }
+.aya-worktree-dialog {
+  width: min(480px, calc(100vw - 36px));
+  max-height: min(780px, calc(100vh - 36px));
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.aya-worktree-dialog h2,
+.aya-worktree-dialog p { margin: 0; }
+.aya-worktree-dialog > label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+.aya-worktree-dialog input:not([type="checkbox"]),
+.aya-worktree-dialog select,
+.aya-worktree-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  color: var(--fg-primary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+}
+.aya-modal .aya-worktree-delete-branch {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.aya-worktree-delete-branch input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+.aya-worktree-dialog-reason,
+.aya-worktree-dialog-error { color: var(--fg-secondary); font-size: 12px; }
+.aya-worktree-dialog-error { color: var(--status-error); }
 
 .aya-attention-modal {
   width: min(820px, calc(100vw - 48px));

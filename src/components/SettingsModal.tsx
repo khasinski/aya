@@ -54,8 +54,6 @@ interface Props {
   onShowGitHubLinkChange: (show: boolean) => void;
   layoutMode: LayoutMode;
   onLayoutModeChange: (mode: LayoutMode) => void;
-  worktreesEnabled: boolean;
-  onWorktreesEnabledChange: (enabled: boolean) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   terminalSoundsEnabled: boolean;
@@ -297,8 +295,6 @@ export function SettingsModal({
   onShowGitHubLinkChange,
   layoutMode,
   onLayoutModeChange,
-  worktreesEnabled,
-  onWorktreesEnabledChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
   terminalSoundsEnabled,
@@ -1440,39 +1436,6 @@ export function SettingsModal({
             Classic keeps project tabs on top with the terminal list on the
             left. "Projects on left" moves projects into a left rail and puts
             terminal tabs along the top. Split panes are disabled in this layout.
-          </SettingsRow>
-          <SettingsRow
-            icon="account_tree"
-            title={
-              <>
-                Enable worktrees support{" "}
-                <span className="aya-settings-experimental">Experimental</span>
-              </>
-            }
-            control={(
-              <div className="aya-settings-segmented" aria-label="Worktrees support">
-                {([
-                  [true, "On"],
-                  [false, "Off"],
-                ] as const).map(([enabled, label]) => (
-                  <button
-                    key={String(enabled)}
-                    type="button"
-                    className={`aya-settings-segment ${
-                      worktreesEnabled === enabled
-                        ? "aya-settings-segment--active"
-                        : ""
-                    }`}
-                    onClick={() => onWorktreesEnabledChange(enabled)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          >
-            Detect a project's git worktrees, group terminals by worktree, and
-            launch or create terminals in a chosen worktree.
           </SettingsRow>
           <SettingsRow
             icon="manage_search"

@@ -8,12 +8,15 @@ import type { BrowserWindow, Clipboard, Dialog, IpcMain, IpcMainInvokeEvent, Ope
 import { expandPath } from "../config";
 import {
   createWorktree,
+  createWorktreeBatch,
   getGitChangedFiles,
   getGitDiff,
   getGitInfo,
   getGitRoot,
   listWorktreeStatus,
   removeWorktree,
+  removeWorktreeAndBranch,
+  worktreeBranchRemovalInfo,
 } from "../git";
 import { getGitHubLink, isGitHubCliAvailable } from "../github";
 import { optionalTrimmed, requireRecord, requireString } from "../validation";
@@ -107,6 +110,33 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
       requireString(r.path, "env:git-worktree-add.path"),
       optionalTrimmed(r.branch),
       optionalTrimmed(r.base),
+    );
+  });
+  ipcMain.handle("env:git-worktree-batch-add", async (_e, req: unknown) => {
+    const r = requireRecord(req, "env:git-worktree-batch-add");
+    const count = typeof r.count === "number" && Number.isInteger(r.count) ? r.count : NaN;
+    return createWorktreeBatch({
+      directory: requireString(r.directory, "env:git-worktree-batch-add.directory"),
+      slug: requireString(r.slug, "env:git-worktree-batch-add.slug"),
+      count,
+      base: requireString(r.base, "env:git-worktree-batch-add.base"),
+    });
+  });
+  ipcMain.handle("env:git-worktree-removal-info", async (_e, req: unknown) => {
+    const r = requireRecord(req, "env:git-worktree-removal-info");
+    return worktreeBranchRemovalInfo(
+      requireString(r.directory, "env:git-worktree-removal-info.directory"),
+      requireString(r.path, "env:git-worktree-removal-info.path"),
+      requireString(r.base, "env:git-worktree-removal-info.base"),
+    );
+  });
+  ipcMain.handle("env:git-worktree-remove-with-branch", async (_e, req: unknown) => {
+    const r = requireRecord(req, "env:git-worktree-remove-with-branch");
+    return removeWorktreeAndBranch(
+      requireString(r.directory, "env:git-worktree-remove-with-branch.directory"),
+      requireString(r.path, "env:git-worktree-remove-with-branch.path"),
+      requireString(r.base, "env:git-worktree-remove-with-branch.base"),
+      r.deleteBranch === true,
     );
   });
   ipcMain.handle("env:git-worktree-remove", async (_e, req: unknown) => {

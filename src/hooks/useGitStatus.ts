@@ -3,7 +3,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { mergeGitInfo, type GitInfo } from "../project-helpers";
 import { GIT_STATUS_POLL_INTERVAL_MS } from "../ui-timing";
 import { gitContextCwd } from "../worktree";
-import type { GitHubLink, ProjectConfig, TerminalState, Worktree, WorktreeStatus } from "../types";
+import type { GitHubLink, ProjectConfig, TerminalState, WorktreeStatus } from "../types";
 
 interface GitStatusOptions {
   projects: ProjectConfig[];
@@ -170,69 +170,21 @@ export function useGitStatus({
     });
   }, [activeProjectId, worktrees, pinnedCheckout]);
 
-  /** Create a worktree for the active project. Git's own error text is shown
-   *  verbatim — "a branch named 'x' already exists" is exactly what the user
-   *  needs, and a silent failure would look like a broken button. */
-  const createWorktreeForProject = useCallback(async () => {
+  const createWorktreesForProject = useCallback(async (request: { directory: string; slug: string; count: number; base: string }) => {
     const project = projectsRef.current.find((p) => p.slug === activeProjectId);
-    if (!project || project.remote) return;
-    const branch = window.prompt("New worktree — branch name:")?.trim();
-    if (!branch) return;
-    const parent = project.directory.replace(/\/+$/, "");
-    const suggested = `${parent}-${branch.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
-    const path = window.prompt("Worktree directory:", suggested)?.trim();
-    if (!path) return;
-    const result = await window.aya.createWorktree({
-      directory: project.directory,
-      path,
-      branch,
-    });
-    if (!result.ok) {
-      window.alert(`Could not create the worktree:\n\n${result.error}`);
-      return;
-    }
-    setWorktreeNudge((n) => n + 1);
+    if (!project || project.remote || project.directory !== request.directory) return { created: [], errors: ["Worktrees are available for local projects only."] };
+    const result = await window.aya.createWorktreeBatch(request);
+    if (result.created.length) setWorktreeNudge((n) => n + 1);
+    return result;
   }, [activeProjectId, projectsRef]);
 
-  const removeWorktreeForProject = useCallback(
-    async (worktree: Worktree) => {
-      const project = projectsRef.current.find((p) => p.slug === activeProjectId);
-      if (!project || worktree.isMain) return;
-      if (
-        !window.confirm(
-          `Remove the worktree at ${worktree.path}?\n\nThe branch itself is kept.`,
-        )
-      ) {
-        return;
-      }
-      let result = await window.aya.removeWorktree({
-        directory: project.directory,
-        path: worktree.path,
-      });
-      // Git refuses while the checkout is dirty. Losing uncommitted work is
-      // the user's call to make, so ask rather than forcing by default.
-      if (!result.ok && /contains modified or untracked files|not empty/i.test(result.error)) {
-        if (
-          !window.confirm(
-            `${result.error}\n\nDiscard those changes and remove it anyway?`,
-          )
-        ) {
-          return;
-        }
-        result = await window.aya.removeWorktree({
-          directory: project.directory,
-          path: worktree.path,
-          force: true,
-        });
-      }
-      if (!result.ok) {
-        window.alert(`Could not remove the worktree:\n\n${result.error}`);
-        return;
-      }
-      setWorktreeNudge((n) => n + 1);
-    },
-    [activeProjectId, projectsRef],
-  );
+  const removeWorktreeForProject = useCallback(async (request: { directory: string; path: string; base: string; deleteBranch: boolean }) => {
+    const project = projectsRef.current.find((p) => p.slug === activeProjectId);
+    if (!project || project.remote || project.directory !== request.directory) return { ok: false as const, error: "Worktrees are available for local projects only." };
+    const result = await window.aya.removeWorktreeAndBranch(request);
+    if (result.ok) setWorktreeNudge((n) => n + 1);
+    return result;
+  }, [activeProjectId, projectsRef]);
 
   // Status-bar checkout picker: pin a worktree, or go back to following the
   // console. Pinning by path (not index) so a worktree added or removed between
@@ -269,7 +221,7 @@ export function useGitStatus({
     activeGithubLink,
     activeBranch,
     setGithubLinks,
-    createWorktreeForProject,
+    createWorktreesForProject,
     removeWorktreeForProject,
     pinCheckout,
   };

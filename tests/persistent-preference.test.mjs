@@ -1,6 +1,6 @@
 // Codecs behind usePersistentPreference. These back 7 shipped preferences
 // (theme, mac-option, harness-name, github-link, layout, summaries, and the
-// worktrees flag), so their read-with-fallback / write semantics matter: a
+// settings flags), so their read-with-fallback / write semantics matter: a
 // wrong default or a dropped explicit value silently changes a setting. Only
 // the codecs are pure; the hook itself needs React and isn't tested here.
 
@@ -13,7 +13,7 @@ import {
 
 test("boolPreference(false): default off, only \"1\" is true", () => {
   const c = boolPreference(false);
-  assert.equal(c.fallback, false); // missing key -> off (github-link/summaries/worktrees)
+  assert.equal(c.fallback, false); // missing key -> off (e.g. GitHub link)
   assert.equal(c.parse("1"), true);
   assert.equal(c.parse("0"), false);
   assert.equal(c.parse("anything-else"), false);
