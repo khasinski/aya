@@ -2280,6 +2280,9 @@ export function SettingsModal({
                               ) : null}
                             </ul>
                           </section>
+                          <pre className="aya-settings-diagnostics-json">
+                            {diagnosticsJson}
+                          </pre>
                         </>
                       ) : null}
                     </div>
