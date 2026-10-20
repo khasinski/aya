@@ -948,6 +948,7 @@ export interface AyaApi {
     path: string;
     base: string;
     deleteBranch: boolean;
+    expectedBranch: string | null;
   }): Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }>;
   /** Remove a git worktree. `force` discards uncommitted changes in it. */
   removeWorktree(req: {

@@ -33,11 +33,12 @@ interface Props {
   worktrees?: Worktree[];
   /** The project's own directory (the "main" worktree cwd). */
   projectDir?: string;
+  projectId?: string;
   projectRemote?: boolean;
   onCreateWorktrees?: (req: { directory: string; slug: string; count: number; base: string }) => Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
-  onStartWorktrees?: (preset: Preset, checkouts: { path: string; branch: string }[], prompt: string) => void;
+  onStartWorktrees?: (projectId: string, preset: Preset, checkouts: { path: string; branch: string }[], prompt: string) => void;
   /** Remove a worktree. Never offered for the main checkout. */
-  onRemoveWorktree?: (req: { directory: string; path: string; base: string; deleteBranch: boolean }) => Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }>;
+  onRemoveWorktree?: (req: { directory: string; path: string; base: string; deleteBranch: boolean; expectedBranch: string | null }) => Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }>;
   onResize: (width: number) => void;
   /** Called with the new id order after a successful drag-drop. Only fires
    *  when the order actually changed. */
@@ -80,6 +81,7 @@ function SidebarImpl({
   onLaunch,
   worktrees = [],
   projectDir,
+  projectId,
   projectRemote = false,
   onCreateWorktrees,
   onStartWorktrees,
@@ -345,7 +347,7 @@ function SidebarImpl({
               </div>
             ))
           : terminals.map(renderRow)}
-        {(groups || projectRemote) && (
+        {(groups || projectRemote || onCreateWorktrees) && (
           <button
             type="button"
             className="aya-worktree-add"
@@ -392,6 +394,7 @@ function SidebarImpl({
       </div>
       {createWorktreeOpen && projectDir && onCreateWorktrees && onStartWorktrees && (
         <WorktreeCreateDialog
+          projectId={projectId ?? ""}
           projectDir={projectDir}
           presets={presets}
           onCancel={() => setCreateWorktreeOpen(false)}

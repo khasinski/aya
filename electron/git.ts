@@ -189,9 +189,12 @@ export async function createWorktree(
   branch?: string,
   base?: string,
 ): Promise<GitMutationResult> {
+  if ([path, branch, base].some((value) => value?.startsWith("-"))) {
+    return { ok: false, error: "Worktree paths, branches, and starting refs cannot begin with a hyphen." };
+  }
   const args = ["worktree", "add"];
   if (branch) args.push("-b", branch);
-  args.push(path);
+  args.push("--", path);
   if (base) args.push(base);
   try {
     await execFileAsync("git", args, { cwd: directory, ...MUTATION_OPTS });
@@ -230,8 +233,10 @@ export async function createWorktreeBatch(
   if (!Number.isInteger(count) || count < 1 || count > 8) {
     return { created: [], errors: ["Choose between 1 and 8 worktrees."] };
   }
+  if (base.startsWith("-")) return { created: [], errors: ["That starting ref was not found."] };
   const resolved = await execFileAsync("git", ["rev-parse", "--verify", "--quiet", "--end-of-options", `${base}^{commit}`], { cwd: directory, ...OPTS }).catch(() => null);
-  if (!resolved?.stdout.trim()) return { created: [], errors: ["That starting ref was not found."] };
+  const resolvedBase = resolved?.stdout.trim() ?? "";
+  if (!/^[0-9a-f]{40,64}$/i.test(resolvedBase)) return { created: [], errors: ["That starting ref was not found."] };
 
   const repoName = path.basename(path.resolve(directory));
   const parent = path.dirname(path.resolve(directory));
@@ -255,7 +260,7 @@ export async function createWorktreeBatch(
     if (usedBranches.has(branch) || usedPaths.has(path.resolve(checkout))) continue;
     usedBranches.add(branch);
     usedPaths.add(path.resolve(checkout));
-    const result = await createWorktree(directory, checkout, branch, base);
+    const result = await createWorktree(directory, checkout, branch, resolvedBase);
     if (result.ok) created.push({ path: checkout, branch });
     else {
       errors.push(`${branch}: ${result.error}`);
@@ -325,6 +330,7 @@ export async function removeWorktreeAndBranch(
   worktreePath: string,
   base: string,
   deleteBranch: boolean,
+  expectedBranch: string | null,
 ): Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }> {
   const info = await worktreeBranchRemovalInfo(directory, worktreePath, base);
   const listed = await listWorktrees(directory);
@@ -335,9 +341,11 @@ export async function removeWorktreeAndBranch(
     if (listedPath === requestedPath) { target = item; break; }
   }
   if (!target || target.isMain) return { ok: false, error: "Choose a linked worktree to remove." };
-  const removed = await removeWorktree(directory, worktreePath);
+  if (target.branch !== expectedBranch) return { ok: false, error: "This worktree's branch changed while the dialog was open. Close it and review the current branch before removing it." };
+  const validatedPath = target.path;
+  const removed = await removeWorktree(directory, validatedPath);
   if (!removed.ok) return removed;
-  if (!deleteBranch || !info.branch) return { ok: true, path: worktreePath, branchDeleted: false };
+  if (!deleteBranch || !info.branch || info.branch !== expectedBranch) return { ok: true, path: worktreePath, branchDeleted: false };
   // Recheck after removing the checkout, immediately before branch deletion.
   const branch = info.branch;
   if (!branch) return { ok: true, path: worktreePath, branchDeleted: false };

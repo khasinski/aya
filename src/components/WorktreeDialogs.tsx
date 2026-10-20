@@ -5,14 +5,15 @@ const MAX_VISIBLE_WORKTREES = 6;
 const DEFAULT_WORKTREES_PER_PROMPT = 2;
 
 interface CreateProps {
+  projectId: string;
   projectDir: string;
   presets: Preset[];
   onCancel: () => void;
   onCreate: (req: { directory: string; slug: string; count: number; base: string }) => Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
-  onStart: (preset: Preset, checkouts: { path: string; branch: string }[], prompt: string) => void;
+  onStart: (projectId: string, preset: Preset, checkouts: { path: string; branch: string }[], prompt: string) => void;
 }
 
-export function WorktreeCreateDialog({ projectDir, presets, onCancel, onCreate, onStart }: CreateProps) {
+export function WorktreeCreateDialog({ projectId, projectDir, presets, onCancel, onCreate, onStart }: CreateProps) {
   const [slug, setSlug] = useState("");
   const [count, setCount] = useState(DEFAULT_WORKTREES_PER_PROMPT);
   const [base, setBase] = useState("");
@@ -43,7 +44,7 @@ export function WorktreeCreateDialog({ projectDir, presets, onCancel, onCreate, 
     try {
       const result = await onCreate({ directory: projectDir, slug, count, base });
       if (result.created.length) {
-        onStart(preset, result.created, prompt.trim());
+        onStart(projectId, preset, result.created, prompt.trim());
         setFinished(result);
       }
       if (result.errors.length) {
@@ -97,7 +98,7 @@ interface RemoveProps {
   base: string;
   worktree: Worktree;
   onCancel: () => void;
-  onRemove: (req: { directory: string; path: string; base: string; deleteBranch: boolean }) => Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }>;
+  onRemove: (req: { directory: string; path: string; base: string; deleteBranch: boolean; expectedBranch: string | null }) => Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }>;
   onRemoved: () => void;
 }
 
@@ -118,9 +119,9 @@ export function WorktreeRemoveDialog({ projectDir, base, worktree, onCancel, onR
   const submit = async () => {
     if (busy) return;
     setBusy(true);
-    const result = await onRemove({ directory: projectDir, path: worktree.path, base, deleteBranch: deleteBranch && info?.canDelete === true });
+    const result = await onRemove({ directory: projectDir, path: worktree.path, base, deleteBranch: deleteBranch && info?.canDelete === true, expectedBranch: info?.branch ?? null });
     if (!result.ok) { setError(result.error); setBusy(false); return; }
-    if (deleteBranch && !result.branchDeleted) window.alert("The worktree was removed. The branch was kept because it is no longer safe to delete.");
+    if (deleteBranch && !result.branchDeleted) window.alert("The worktree was removed, but Git kept the branch.");
     onRemoved();
     onCancel();
   };

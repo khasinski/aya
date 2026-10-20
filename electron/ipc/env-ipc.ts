@@ -137,6 +137,7 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
       requireString(r.path, "env:git-worktree-remove-with-branch.path"),
       requireString(r.base, "env:git-worktree-remove-with-branch.base"),
       r.deleteBranch === true,
+      r.expectedBranch === null ? null : requireString(r.expectedBranch, "env:git-worktree-remove-with-branch.expectedBranch"),
     );
   });
   ipcMain.handle("env:git-worktree-remove", async (_e, req: unknown) => {

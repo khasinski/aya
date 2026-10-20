@@ -1170,11 +1170,12 @@ export function App() {
                   projectDir={
                     activeProject ? projectBaseCwd(activeProject) : undefined
                   }
+                  projectId={activeProjectId ?? undefined}
                   projectRemote={Boolean(activeProject?.remote)}
                   onCreateWorktrees={createWorktreesForProject}
-                  onStartWorktrees={(preset, checkouts, prompt) => {
+                  onStartWorktrees={(projectId, preset, checkouts, prompt) => {
                     for (const checkout of checkouts) {
-                      launchTerminal(preset, checkout.path, undefined, prompt);
+                      launchTerminal(preset, checkout.path, undefined, prompt, projectId);
                     }
                   }}
                   onRemoveWorktree={removeWorktreeForProject}
