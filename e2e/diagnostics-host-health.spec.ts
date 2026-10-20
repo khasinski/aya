@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test, expect, PTY_HOST_SCRIPT, delay, spawnAuthenticatedHost } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
-import type { ElectronApplication, Page } from "@playwright/test";
+import type { ElectronApplication, Locator, Page } from "@playwright/test";
 
 // Settings > Diagnostics speaks for the same account of the terminal host that Aya's launch check and the Restart
 // Aya red dot use, and says what is wrong. Both states below happened on 2026-10-13: a host serving every pane with
@@ -16,6 +16,13 @@ async function openDiagnostics(app: ElectronApplication, window: Page) {
   await expect(settings).toBeVisible();
   await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
   return settings;
+}
+
+async function copyDiagnostics(app: ElectronApplication, settings: Locator) {
+  const copy = settings.getByRole("button", { name: /Copy JSON|Copied/ });
+  await expect(copy).toBeEnabled();
+  await copy.click();
+  return JSON.parse((await app.evaluate(({ clipboard }) => clipboard.readText())).trim());
 }
 
 const isAlive = (pid: number) => {
@@ -32,9 +39,7 @@ test("a host with no pty-host.sock is warned about, and Restart puts things righ
   const refresh = settings.locator(".aya-modal-btn", { hasText: "Refresh" });
   const report = async () => {
     await refresh.click();
-    const pre = settings.locator(".aya-settings-diagnostics-json");
-    await expect(pre).not.toBeEmpty();
-    return JSON.parse((await pre.innerText()).trim());
+    return copyDiagnostics(app, settings);
   };
   // Once Aya talks to its host: removing the socket earlier would race Aya's own first connection to it.
   await expect.poll(async () => (await report()).ptyHost.pid, { timeout: 15_000 }).toBeGreaterThan(1);
@@ -73,7 +78,7 @@ test("a running host Aya does not use is listed, and Stop other hosts ends it", 
     await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
     const warnings = settings.getByRole("status").filter({ hasText: "Warning:" });
     await expect(warnings).toContainText(`1 other terminal host still runs (pid ${otherPid})`);
-    const json = JSON.parse((await settings.locator(".aya-settings-diagnostics-json").innerText()).trim());
+    const json = await copyDiagnostics(app, settings);
     expect(json.ptyHost.otherHosts.map((h: { pid: number }) => h.pid)).toEqual([otherPid]);
 
     // Aya asks in the main process (Aya Web reaches this too): a no stops nothing, a yes stops the host.
