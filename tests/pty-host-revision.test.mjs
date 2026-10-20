@@ -10,7 +10,7 @@ const {PtyHostClient}=await import('../dist-electron/pty-host-client.js');
 const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 const wait=async predicate=>{const deadline=Date.now()+8000;while(!await predicate()){if(Date.now()>deadline)throw Error('revision host timeout');await new Promise(done=>setTimeout(done,5));}};
 const fence=s=>({generation:s.generation,revision:s.revision});
-test('real host refuses stale snapshot ACK/input and accepts current input exactly once without broadcasts',async()=>{
+test('real host fences the first automatic write after a rule reload and accepts current input exactly once',async()=>{
  const wrapper=path.resolve(`dist-electron/pty-host-revision-${process.pid}.js`),script=path.join(process.env.HOME,'reader.cjs'),inputs=path.join(process.env.HOME,'input.log'),release=path.join(process.env.HOME,'release');
  fs.mkdirSync(process.env.HOME,{recursive:true});
  // Deliberately suppress fanout, not parser application: main cannot learn
@@ -32,7 +32,10 @@ test('real host refuses stale snapshot ACK/input and accepts current input exact
   assert.equal(fs.existsSync(inputs),false);assert.equal(await c.getPid('p'),pid);
   const {GuardedRuleInput}=await import('../dist-electron/screen-user-rule-input.js'),{UserRuleRuntime}=await import('../dist-electron/screen-user-rule-runtime.js'),{RULE_AGENTS}=await import('../dist-electron/screen-rule-data.js');
   const runtime=new UserRuleRuntime(),rule={id:'local-never',kind:'prompt',region:'tail',pattern:'NEVER_LOCAL_RULE',flags:'',source:'user/claude.json',version:'local-1'},manifest={digest:'a'.repeat(64),sets:Object.fromEntries(RULE_AGENTS.map(a=>[a,[rule]])),files:[]};
-  assert.equal(await runtime.replace(manifest),true);const configuration={epoch:1,available:true,manifest};let attempts=0;
+  assert.equal(await runtime.replace(manifest),true);
+  const reloadedManifest={...manifest,digest:'b'.repeat(64),sets:Object.fromEntries(RULE_AGENTS.map(a=>[a,[{...rule,version:'local-2'}]]))};
+  assert.equal(await runtime.replace(reloadedManifest),true,'the new worker candidate is active before its first automatic write');
+  const configuration={epoch:2,available:true,manifest:reloadedManifest};let attempts=0;
   const input=new GuardedRuleInput({configuration:()=>configuration,evaluate:r=>runtime.evaluate(r)},{snapshot:id=>c.appliedSnapshotForRules(id),check:(id,f)=>c.checkSnapshot(id,f),writeLegacy:()=>{throw Error('NO UNFENCED FALLBACK');},writeFenced:async(id,data,f)=>{
    attempts++;fs.writeFileSync(release,'next');await wait(async()=>(await c.getBuffer('p')).includes('SECOND_APPROVAL'));
    return c.writeAtSnapshot(id,data,f);
