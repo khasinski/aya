@@ -171,6 +171,35 @@ test("replay scanner matches xterm escape handling inside control strings", asyn
   } finally { mirror.dispose(); }
 });
 
+test("replay scanner matches xterm mode resets from RIS and DECSTR, including RIS inside DCS", async () => {
+  const { Terminal } = xterm;
+  const makeTerminal = () => new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const stateOf = terminal => ({
+    alternate: terminal.buffer.active.type === "alternate",
+    mouse: terminal.modes.mouseTrackingMode,
+    sgrMouse: terminal._core.coreMouseService._activeEncoding === "SGR",
+    focus: terminal.modes.sendFocusMode,
+    bracketedPaste: terminal.modes.bracketedPasteMode,
+    applicationCursor: terminal.modes.applicationCursorKeysMode,
+  });
+  const write = (terminal, data) => new Promise(resolve => terminal.write(data, resolve));
+  const modes = "\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b[?1h";
+  for (const reset of ["\x1bc", "\x1b[!p", "\x1bPq\x1bc"]) {
+    const mirror = makeTerminal();
+    const replay = makeTerminal();
+    const tracker = initialReplayModeTracker();
+    try {
+      consumeReplayModes(tracker, modes);
+      await write(mirror, modes);
+      consumeReplayModes(tracker, reset);
+      await write(mirror, reset);
+      assert.deepEqual(tracker.state, stateOf(mirror), JSON.stringify(reset));
+      await write(replay, replayModePrefix(tracker));
+      assert.deepEqual(stateOf(replay), stateOf(mirror), `replay prefix after ${JSON.stringify(reset)}`);
+    } finally { mirror.dispose(); replay.dispose(); }
+  }
+});
+
 test("replay scanner tracks split ESC and C1 control-string boundaries", () => {
   const cases = [
     ["\x1b]", "\x07", "\x1b]"], ["\x1b]", "\x1b\\", "\x1b]"], ["\x1bP", "\x1b\\", "\x1bP"],

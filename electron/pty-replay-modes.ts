@@ -28,7 +28,27 @@ const ST = "\x9c";
 const BEL = "\x07";
 const mouseMode: Record<number, ReplayModeState["mouse"]> = { 9: "x10", 1000: "vt200", 1002: "drag", 1003: "any" };
 const stringIntroducer: Record<ControlString, string> = { osc: "]", dcs: "P", sos: "X", pm: "^", apc: "_" };
-type ModeChange = { field: keyof ReplayModeState; enabled: boolean; mouse?: ReplayModeState["mouse"] };
+type ModeChange =
+  | { field: "mouse"; enabled: boolean; mouse: ReplayModeState["mouse"]; previous: ReplayModeState["mouse"] }
+  | { field: Exclude<keyof ReplayModeState, "mouse">; enabled: boolean; previous: boolean };
+
+function setMode(tracker: ReplayModeTracker, field: keyof ReplayModeState, value: ReplayModeState[keyof ReplayModeState], onChange?: (change: ModeChange) => void): void {
+  const previous = tracker.state[field];
+  (tracker.state as unknown as Record<string, unknown>)[field] = value;
+  if (field === "mouse") onChange?.({ field, enabled: value !== "none", mouse: value as ReplayModeState["mouse"], previous: previous as ReplayModeState["mouse"] });
+  else onChange?.({ field, enabled: value as boolean, previous: previous as boolean });
+}
+
+function resetModes(tracker: ReplayModeTracker, onChange?: (change: ModeChange) => void): void {
+  const defaults = initialReplayModeTracker().state;
+  for (const field of Object.keys(defaults) as (keyof ReplayModeState)[]) setMode(tracker, field, defaults[field] as ReplayModeState[keyof ReplayModeState], onChange);
+}
+
+function softResetModes(tracker: ReplayModeTracker, onChange?: (change: ModeChange) => void): void {
+  setMode(tracker, "applicationCursor", false, onChange);
+  setMode(tracker, "focus", false, onChange);
+  setMode(tracker, "bracketedPaste", false, onChange);
+}
 
 function controlStringForC1(ch: string): ControlString | null {
   if (ch === "\x9d") return "osc";
@@ -56,20 +76,20 @@ function scanCsi(tracker: ReplayModeTracker, sequence: string, ch: string, onCha
 
   tracker.scanner = { state: "ground" };
   const body = sequence.slice(sequence.startsWith(CSI) ? 1 : 2, -1);
+  if (ch === "p" && body === "!") { softResetModes(tracker, onChange); return; }
   if ((ch !== "h" && ch !== "l") || !body.startsWith("?")) return;
   const enabled = ch === "h";
   for (const raw of body.slice(1).split(";")) {
     const mode = Number(raw);
     if (!Number.isInteger(mode)) continue;
-    if (mode === 1) { tracker.state.applicationCursor = enabled; onChange?.({ field: "applicationCursor", enabled }); }
-    else if (mode === 47 || mode === 1047 || mode === 1049) { tracker.state.alternate = enabled; onChange?.({ field: "alternate", enabled }); }
+    if (mode === 1) setMode(tracker, "applicationCursor", enabled, onChange);
+    else if (mode === 47 || mode === 1047 || mode === 1049) setMode(tracker, "alternate", enabled, onChange);
     else if (mouseMode[mode]) {
-      tracker.state.mouse = enabled ? mouseMode[mode] : (tracker.state.mouse === mouseMode[mode] ? "none" : tracker.state.mouse);
-      onChange?.({ field: "mouse", enabled, mouse: mouseMode[mode] });
+      setMode(tracker, "mouse", enabled ? mouseMode[mode] : (tracker.state.mouse === mouseMode[mode] ? "none" : tracker.state.mouse), onChange);
     }
-    else if (mode === 1004) { tracker.state.focus = enabled; onChange?.({ field: "focus", enabled }); }
-    else if (mode === 1006) { tracker.state.sgrMouse = enabled; onChange?.({ field: "sgrMouse", enabled }); }
-    else if (mode === 2004) { tracker.state.bracketedPaste = enabled; onChange?.({ field: "bracketedPaste", enabled }); }
+    else if (mode === 1004) setMode(tracker, "focus", enabled, onChange);
+    else if (mode === 1006) setMode(tracker, "sgrMouse", enabled, onChange);
+    else if (mode === 2004) setMode(tracker, "bracketedPaste", enabled, onChange);
   }
 }
 
@@ -90,6 +110,7 @@ export function consumeReplayModes(tracker: ReplayModeTracker, text: string, onC
         // only while consuming ordinary payload bytes.
         if (ch === ESC) scanner.escapePending = true;
         else if (ch === "[") tracker.scanner = { state: "csi", sequence: ESC + "[" };
+        else if (ch === "c") { resetModes(tracker, onChange); tracker.scanner = { state: "ground" }; }
         else {
           const kind = ch === "]" ? "osc" : ch === "P" ? "dcs" : ch === "X" ? "sos" : ch === "^" ? "pm" : ch === "_" ? "apc" : null;
           if (kind) beginString(tracker, kind);
@@ -104,6 +125,7 @@ export function consumeReplayModes(tracker: ReplayModeTracker, text: string, onC
       else {
         const kind = ch === "]" ? "osc" : ch === "P" ? "dcs" : ch === "X" ? "sos" : ch === "^" ? "pm" : ch === "_" ? "apc" : null;
         if (kind) beginString(tracker, kind);
+        else if (ch === "c") { resetModes(tracker, onChange); tracker.scanner = { state: "ground" }; }
         else if (ch === ESC) tracker.scanner = { state: "escape" };
         else if (ch === CSI) tracker.scanner = { state: "csi", sequence: CSI };
         else tracker.scanner = { state: "ground" };
@@ -128,8 +150,8 @@ export function legacyReplayModeTracker(current: ReplayModeState, retained: stri
   const state = structuredClone(current);
   for (let i = changes.length - 1; i >= 0; i--) {
     const change = changes[i];
-    if (change.field === "mouse") continue;
-    state[change.field] = !change.enabled;
+    if (change.field === "mouse") state.mouse = change.previous;
+    else state[change.field] = change.previous;
   }
   return { state, scanner: { state: "ground" } };
 }
