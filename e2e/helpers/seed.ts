@@ -181,6 +181,16 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       writeFileSync(join(base, rel), text);
     }
   }
+  // Real user-rule files are accepted only from a private 0700 directory and
+  // 0600 regular files. Seed them with the same permissions so app e2e tests
+  // exercise rule behavior instead of the unsafe-file refusal path.
+  if (Object.keys(opts.ayaHomeFiles ?? {}).some((rel) => rel.startsWith("screen-rules/"))) {
+    const rulesDir = join(ayaHome, "screen-rules");
+    chmodSync(rulesDir, 0o700);
+    for (const rel of Object.keys(opts.ayaHomeFiles ?? {}).filter((name) => name.startsWith("screen-rules/"))) {
+      chmodSync(join(ayaHome, rel), 0o600);
+    }
+  }
 
   let worktreeDir: string | undefined;
   if (opts.gitRepo) {

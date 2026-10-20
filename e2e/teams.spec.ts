@@ -73,7 +73,9 @@ test.describe("invalid local rule files", () => {
     await expect(settings).toBeVisible();
     await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
     await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
-    await expect(settings.getByRole("region", { name: "User screen rules" })).toContainText("invalid or unsafe user rule files");
+    const section = settings.getByRole("region", { name: "User screen rules" });
+    await expect(section).toContainText(/claude\.json: file is missing required fields or contains extra fields/);
+    await expect(section).toContainText("Aya continues to use built-in rules, so prompts are still detected.");
   });
 });
 
@@ -91,8 +93,11 @@ test.describe("a pathological user rule", () => {
     await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
     await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
     const section = settings.getByRole("region", { name: "User screen rules" });
-    await expect(section).toContainText("user rule compilation or evaluation failed");
-    await expect(section.getByText(/Quarantined digest: [a-f0-9]{64}/)).toBeVisible();
+    await expect(section).toContainText("Your rules are currently unavailable.");
+    await expect(section).toContainText("Aya continues to use built-in rules, so prompts are still detected.");
+    await settings.locator(".aya-modal-btn", { hasText: "Copy JSON" }).click();
+    const report = JSON.parse((await app.evaluate(({ clipboard }) => clipboard.readText())).trim());
+    expect(report.userScreenRules.quarantinedDigest).toMatch(/^[a-f0-9]{64}$/);
   });
 });
 
