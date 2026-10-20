@@ -1189,7 +1189,10 @@ body {
 }
 .aya-diff-comment textarea:focus { border-color: var(--accent); outline: none; }
 .aya-diff-comment-actions { display: flex; gap: 6px; justify-content: flex-end; }
-.aya-diff-outdated-list { padding: 8px 10px; border-top: 1px solid var(--border); }
+.aya-diff-outdated-list {
+  padding: 8px 10px; border-top: 1px solid var(--border); font-family: var(--font-sans); font-size: 12px;
+}
+.aya-diff-outdated-list > p { margin: 3px 0 8px; color: var(--fg-secondary); }
 .aya-diff-comment-error { padding: 6px 10px; color: var(--status-error); }
 .aya-diff-review-bar {
   display: flex; align-items: center; gap: 8px; padding: 8px 10px;

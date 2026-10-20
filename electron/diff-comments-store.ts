@@ -10,6 +10,7 @@ export interface DiffComment {
   line: string;
   newLine: number | null;
   oldLine: number | null;
+  /** Occurrence of the exact diff row inside its hunk. */
   occurrence: number;
   checkout: string;
   note: string;

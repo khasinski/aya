@@ -86,6 +86,10 @@ test.describe("saved comments on the working diff", () => {
       expect(received).toContain("> +twoX");
       expect(received).toContain("\x1b[200~");
       await expect(afterRestart.locator(".aya-diff-comment").filter({ hasText: "Please rename this value" })).toContainText("Sent to Review target");
+      await afterRestart.screenshot({ path: "/tmp/diff-comments-after-sent.png" });
+      await afterRestart.getByRole("button", { name: "Clear sent" }).click();
+      await expect(afterRestart.locator(".aya-diff-review-bar")).toHaveCount(0);
+      await afterRestart.screenshot({ path: "/tmp/diff-comments-after-clear-sent.png" });
     } finally {
       await closeAndWait(app);
     }
@@ -103,6 +107,7 @@ test.describe("saved comments on the working diff", () => {
     const outdated = window.getByTestId("diff-outdated-comments");
     await expect(outdated).toContainText("+twoX");
     await expect(outdated).toContainText("Keep this quote for review");
+    await expect(outdated).toContainText("The line changed since you commented.");
     await window.screenshot({ path: "/tmp/diff-comments-outdated.png" });
   });
 });
@@ -120,7 +125,7 @@ test.describe("held-pane refusal", () => {
     await addComment(window, "Do not choose this setting");
     await window.locator(".aya-diff-review-target select").selectOption(seeded.tabIds.right);
     await window.getByTestId("diff-review-send").click();
-    await expect(window.getByRole("alert")).toContainText("Only the user answers it");
+    await expect(window.getByRole("alert")).toHaveText("Not sent: Review target is waiting for your answer to a question in Claude Code. Answer it in that pane, then send again. Your comment is kept.");
     expect(readBytes(log)).toBe("");
     await expect(window.locator(".aya-diff-comment").filter({ hasText: "Do not choose this setting" })).toBeVisible();
     await window.screenshot({ path: "/tmp/diff-comments-held-refusal.png" });

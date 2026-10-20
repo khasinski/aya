@@ -10,9 +10,9 @@ import type {
 } from "../types";
 import { diffFileLineIndex } from "../diff-navigation";
 import {
-  commentRowIndex,
-  isCommentOutdated,
-  locateDiffLine,
+  commentRowIndexInDiff,
+  diffCommentSendError,
+  indexDiffRows,
   type DiffAnchor,
   type ReviewTarget,
 } from "../diff-review";
@@ -217,7 +217,7 @@ function StatusBarImpl({
       const saved = await window.aya.sendDiffComments({ projectSlug: project.slug, targetId: target.id, checkout: gitDirectory, commentIds: ids });
       setComments(saved); setCommentError(null);
     } catch (err) {
-      setCommentError(err instanceof Error ? err.message : "Aya could not send these comments.");
+      setCommentError(diffCommentSendError(err, target.name));
     } finally {
       setSendingComments(false);
     }
@@ -785,6 +785,7 @@ function DiffPanel({
 }) {
   const lines = useMemo(() => annotateDiff(diff), [diff]);
   const rawLines = useMemo(() => diff.split("\n"), [diff]);
+  const indexedDiff = useMemo(() => indexDiffRows(rawLines), [rawLines]);
   // Which row is being commented on, and the draft note.
   const [editing, setEditing] = useState<number | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -793,17 +794,17 @@ function DiffPanel({
   const commentsByRow = useMemo(() => {
     const byRow = new Map<number, DiffComment[]>();
     for (const comment of comments) {
-      const row = commentRowIndex(rawLines, comment);
+      const row = commentRowIndexInDiff(indexedDiff, comment);
       if (row >= 0) byRow.set(row, [...(byRow.get(row) ?? []), comment]);
     }
     return byRow;
-  }, [comments, rawLines]);
-  const outdated = comments.filter((comment) => isCommentOutdated(rawLines, comment));
+  }, [comments, indexedDiff]);
+  const outdated = comments.filter((comment) => commentRowIndexInDiff(indexedDiff, comment) < 0);
   const unsent = comments.filter((comment) => !comment.sentAt);
   const target = targets.find((t) => t.id === targetId) ?? targets[0] ?? null;
   const saveDraft = () => {
     const note = draft.trim();
-    const place = editing === null ? null : locateDiffLine(rawLines, editing);
+    const place = editing === null ? null : indexedDiff.anchors[editing];
     if (!note) return;
     const work = editingCommentId
       ? onEditComment(editingCommentId, note)
@@ -860,7 +861,7 @@ function DiffPanel({
               query,
             );
             const commentable = prefix !== "";
-            const anchor = commentable ? locateDiffLine(rawLines, index) : null;
+            const anchor = commentable ? indexedDiff.anchors[index] : null;
             const under = commentsByRow.get(index) ?? [];
             return (
               <div key={index}>
@@ -895,9 +896,8 @@ function DiffPanel({
                 </div>
                 {under.map((comment) => (
                   <div key={comment.id}>
-                    <div className={`aya-diff-comment ${isCommentOutdated(rawLines, comment) ? "aya-diff-comment--outdated" : ""}`}>
+                    <div className="aya-diff-comment">
                       <span className="aya-diff-comment-note">
-                        {isCommentOutdated(rawLines, comment) ? <strong>Outdated: </strong> : null}
                         {comment.sentAt ? <strong>Sent to {comment.sentTo}; </strong> : null}
                         {comment.note}
                       </span>
@@ -962,6 +962,7 @@ function DiffPanel({
       {outdated.length > 0 && (
         <div className="aya-diff-outdated-list" data-testid="diff-outdated-comments">
           <strong>Outdated comments</strong>
+          <p>The line changed since you commented.</p>
           {outdated.map((comment) => (
             <div key={comment.id}>
               <div className="aya-diff-comment aya-diff-comment--outdated">
