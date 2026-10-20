@@ -68,7 +68,7 @@ test("create worktrees from one prompt and offer safe branch deletion", async ({
   const unsafeBranch = unsafeDialog.getByRole("checkbox", { name: /Also delete branch aya\/batch-2/ });
   await expect(unsafeBranch).not.toBeChecked();
   await expect(unsafeBranch).toBeDisabled();
-  await expect(unsafeDialog).toContainText("1 commit not on its upstream or feature/foo");
+  await expect(unsafeDialog).toContainText("1 commit that is not pushed or merged into feature/foo");
   await unsafeDialog.screenshot({ path: join(SHOTS, "remove-unshared-branch-after.png") });
   await unsafeDialog.getByRole("button", { name: "Remove worktree" }).click();
   await expect(unsafeDialog).toHaveCount(0);
