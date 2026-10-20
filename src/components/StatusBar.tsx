@@ -6,10 +6,19 @@ import type {
   ProjectConfig,
   TerminalState,
   WorktreeStatus,
+  DiffComment,
 } from "../types";
 import { diffFileLineIndex } from "../diff-navigation";
+import {
+  commentRowIndex,
+  isCommentOutdated,
+  locateDiffLine,
+  type DiffAnchor,
+  type ReviewTarget,
+} from "../diff-review";
 import type { SettingsTab } from "../settings-tabs";
 import { MachinesStatus } from "./MachinesStatus";
+import { uuid } from "../uuid";
 
 // Material Symbols small icon size (px) used for status-bar glyphs
 const ICON_SIZE_SM_PX = 13;
@@ -39,6 +48,9 @@ interface Props {
   attentionCount: number;
   snippetsOpen: boolean;
   snippetsDisabled: boolean;
+  /** Agent panes of the active project a diff review can go to, the default
+   *  first. Empty: comments can be written, not sent. */
+  reviewTargets: ReviewTarget[];
   onOpenProjectDirectory: (directory: string) => void;
   onToggleSnippets: () => void;
   onOpenAttentionCenter: () => void;
@@ -67,6 +79,7 @@ function StatusBarImpl({
   attentionCount,
   snippetsOpen,
   snippetsDisabled,
+  reviewTargets,
   onOpenProjectDirectory,
   onToggleSnippets,
   onOpenAttentionCenter,
@@ -104,6 +117,27 @@ function StatusBarImpl({
   const [diffQuery, setDiffQuery] = useState("");
   // When set, the diff view scrolls to this file's section once it renders.
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
+  // Review comments on the diff, kept while the popover is closed and reopened
+  // (a reload of the diff finds their rows again by content).
+  const [comments, setComments] = useState<DiffComment[]>([]);
+  const [reviewTargetId, setReviewTargetId] = useState<string | null>(null);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [sendingComments, setSendingComments] = useState(false);
+
+  useEffect(() => {
+    let current = true;
+    setComments([]);
+    setCommentError(null);
+    if (!project || project.remote) { setCommentsLoading(false); return; }
+    setCommentsLoading(true);
+    void window.aya.listDiffComments(project.slug).then((saved) => {
+      if (current) setComments(saved);
+    }).catch((err: unknown) => {
+      if (current) setCommentError(err instanceof Error ? err.message : "Aya could not load saved comments.");
+    }).finally(() => { if (current) setCommentsLoading(false); });
+    return () => { current = false; };
+  }, [project?.slug, project?.remote]);
 
   useEffect(() => {
     if (!showDirtyFiles) return;
@@ -144,6 +178,50 @@ function StatusBarImpl({
     setDiffQuery("");
     setScrollToPath(null);
   }, [gitDirectory]);
+
+  const addReviewComment = async (anchor: DiffAnchor, note: string) => {
+    if (!project || !gitDirectory) return;
+    const comment: DiffComment = {
+      ...anchor,
+      id: uuid(),
+      checkout: gitDirectory,
+      note,
+      createdAt: new Date().toISOString(),
+      sentAt: null,
+      sentTo: null,
+    };
+    try {
+      const saved = await window.aya.addDiffComment(project.slug, comment);
+      setComments(saved); setCommentError(null);
+    } catch (err) { setCommentError(err instanceof Error ? err.message : "Aya could not save that comment."); throw err; }
+  };
+  const editReviewComment = async (id: string, note: string) => {
+    if (!project) return;
+    try { setComments(await window.aya.editDiffComment(project.slug, id, note)); setCommentError(null); }
+    catch (err) { setCommentError(err instanceof Error ? err.message : "Aya could not save that comment."); throw err; }
+  };
+  const deleteReviewComment = async (id: string) => {
+    if (!project) return;
+    try { setComments(await window.aya.deleteDiffComment(project.slug, id)); setCommentError(null); }
+    catch (err) { setCommentError(err instanceof Error ? err.message : "Aya could not delete that comment."); }
+  };
+  const clearSentReviewComments = async () => {
+    if (!project) return;
+    try { setComments(await window.aya.clearSentDiffComments(project.slug)); setCommentError(null); }
+    catch (err) { setCommentError(err instanceof Error ? err.message : "Aya could not clear sent comments."); }
+  };
+  const sendReview = async (target: ReviewTarget, ids: string[]) => {
+    if (!project || !gitDirectory) return;
+    setSendingComments(true);
+    try {
+      const saved = await window.aya.sendDiffComments({ projectSlug: project.slug, targetId: target.id, checkout: gitDirectory, commentIds: ids });
+      setComments(saved); setCommentError(null);
+    } catch (err) {
+      setCommentError(err instanceof Error ? err.message : "Aya could not send these comments.");
+    } finally {
+      setSendingComments(false);
+    }
+  };
 
   const toggleDirtyFiles = () => {
     if (!gitDirectory) return;
@@ -420,6 +498,18 @@ function StatusBarImpl({
                   onQueryChange={setDiffQuery}
                   scrollToPath={scrollToPath}
                   onScrolled={() => setScrollToPath(null)}
+                  comments={comments}
+                  commentsLoading={commentsLoading}
+                  commentError={commentError}
+                  onAddComment={addReviewComment}
+                  onEditComment={editReviewComment}
+                  onDeleteComment={deleteReviewComment}
+                  onClearSent={clearSentReviewComments}
+                  targets={reviewTargets}
+                  targetId={reviewTargetId}
+                  onTargetChange={setReviewTargetId}
+                  sending={sendingComments}
+                  onSend={(target, ids) => void sendReview(target, ids)}
                 />
               ) : dirtyFilesLoading ? (
                 <div className="aya-statusbar-popover-empty">Loading...</div>
@@ -661,6 +751,18 @@ function DiffPanel({
   onQueryChange,
   scrollToPath,
   onScrolled,
+  comments,
+  commentsLoading,
+  commentError,
+  onAddComment,
+  onEditComment,
+  onDeleteComment,
+  onClearSent,
+  targets,
+  targetId,
+  onTargetChange,
+  sending,
+  onSend,
 }: {
   diff: string;
   loading: boolean;
@@ -668,8 +770,51 @@ function DiffPanel({
   onQueryChange: (query: string) => void;
   scrollToPath: string | null;
   onScrolled: () => void;
+  comments: DiffComment[];
+  commentsLoading: boolean;
+  commentError: string | null;
+  onAddComment: (anchor: DiffAnchor, note: string) => Promise<void>;
+  onEditComment: (id: string, note: string) => Promise<void>;
+  onDeleteComment: (id: string) => void;
+  onClearSent: () => void;
+  targets: ReviewTarget[];
+  targetId: string | null;
+  onTargetChange: (id: string) => void;
+  sending: boolean;
+  onSend: (target: ReviewTarget, ids: string[]) => void;
 }) {
   const lines = useMemo(() => annotateDiff(diff), [diff]);
+  const rawLines = useMemo(() => diff.split("\n"), [diff]);
+  // Which row is being commented on, and the draft note.
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  // Row -> the comments under it, found again by content after a reload.
+  const commentsByRow = useMemo(() => {
+    const byRow = new Map<number, DiffComment[]>();
+    for (const comment of comments) {
+      const row = commentRowIndex(rawLines, comment);
+      if (row >= 0) byRow.set(row, [...(byRow.get(row) ?? []), comment]);
+    }
+    return byRow;
+  }, [comments, rawLines]);
+  const outdated = comments.filter((comment) => isCommentOutdated(rawLines, comment));
+  const unsent = comments.filter((comment) => !comment.sentAt);
+  const target = targets.find((t) => t.id === targetId) ?? targets[0] ?? null;
+  const saveDraft = () => {
+    const note = draft.trim();
+    const place = editing === null ? null : locateDiffLine(rawLines, editing);
+    if (!note) return;
+    const work = editingCommentId
+      ? onEditComment(editingCommentId, note)
+      : place
+        ? onAddComment(place, note)
+        : Promise.resolve();
+    void work.then(() => { setEditing(null); setEditingCommentId(null); setDraft(""); }).catch(() => {});
+  };
+  const cancelEdit = () => {
+    setEditing(null); setEditingCommentId(null); setDraft("");
+  };
   const matchCount = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return 0;
@@ -714,20 +859,170 @@ function DiffPanel({
               highlightCodeHtml(code, line.language),
               query,
             );
+            const commentable = prefix !== "";
+            const anchor = commentable ? locateDiffLine(rawLines, index) : null;
+            const under = commentsByRow.get(index) ?? [];
             return (
-              <div
-                className={`aya-diff-view-line aya-diff-view-line--${line.kind}`}
-                key={index}
-                ref={index === targetIndex ? targetRef : undefined}
-              >
-                <span className="aya-diff-view-gutter">{index + 1}</span>
-                <span className="aya-diff-view-code">
-                  {prefix ? <span className="aya-diff-prefix">{prefix}</span> : null}
-                  <span dangerouslySetInnerHTML={{ __html: highlighted }} />
-                </span>
+              <div key={index}>
+                <div
+                  className={`aya-diff-view-line aya-diff-view-line--${line.kind} ${
+                    under.length || editing === index ? "aya-diff-view-line--commented" : ""
+                  }`}
+                  ref={index === targetIndex ? targetRef : undefined}
+                >
+                  <span className="aya-diff-view-gutter">
+                    {commentable && (
+                      <button
+                        className="aya-diff-comment-btn"
+                        type="button"
+                        title="Comment on this line"
+                        aria-label={anchor ? `Comment on ${anchor.file} line ${anchor.newLine ?? anchor.oldLine}` : "Comment on this diff line"}
+                        onClick={() => {
+                          setEditing(index);
+                          setEditingCommentId(null);
+                          setDraft("");
+                        }}
+                      >
+                        +
+                      </button>
+                    )}
+                    {index + 1}
+                  </span>
+                  <span className="aya-diff-view-code">
+                    {prefix ? <span className="aya-diff-prefix">{prefix}</span> : null}
+                    <span dangerouslySetInnerHTML={{ __html: highlighted }} />
+                  </span>
+                </div>
+                {under.map((comment) => (
+                  <div key={comment.id}>
+                    <div className={`aya-diff-comment ${isCommentOutdated(rawLines, comment) ? "aya-diff-comment--outdated" : ""}`}>
+                      <span className="aya-diff-comment-note">
+                        {isCommentOutdated(rawLines, comment) ? <strong>Outdated: </strong> : null}
+                        {comment.sentAt ? <strong>Sent to {comment.sentTo}; </strong> : null}
+                        {comment.note}
+                      </span>
+                      <button className="aya-diff-comment-action" type="button" aria-label={`Edit comment on ${comment.file}`} title="Edit comment" onClick={() => { setEditing(null); setEditingCommentId(comment.id); setDraft(comment.note); }}>Edit</button>
+                      <button className="aya-diff-comment-remove" type="button" aria-label={`Delete comment on ${comment.file}`} title="Delete comment" onClick={() => onDeleteComment(comment.id)}>×</button>
+                    </div>
+                    {editingCommentId === comment.id && (
+                      <div className="aya-diff-comment aya-diff-comment--editor">
+                        <textarea autoFocus rows={2} value={draft} aria-label="Edit comment" onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
+                          if (event.key === "Escape") { event.preventDefault(); cancelEdit(); }
+                          else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); saveDraft(); }
+                        }} />
+                        <div className="aya-diff-comment-actions">
+                          <button className="aya-modal-btn aya-modal-btn--primary" type="button" onClick={saveDraft}>Save</button>
+                          <button className="aya-modal-btn" type="button" onClick={cancelEdit}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {editing === index && (
+                  <div className="aya-diff-comment aya-diff-comment--editor">
+                    <textarea
+                      autoFocus
+                      rows={2}
+                      value={draft}
+                      placeholder="What should the agent change here? Enter sends, Shift+Enter adds a line, Esc cancels."
+                      aria-label="Comment on this diff line"
+                      onChange={(event) => setDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          cancelEdit();
+                        } else if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          saveDraft();
+                        }
+                      }}
+                    />
+                    <div className="aya-diff-comment-actions">
+                      <button className="aya-modal-btn aya-modal-btn--primary" type="button" onClick={saveDraft}>
+                        Add
+                      </button>
+                      <button
+                        className="aya-modal-btn"
+                        type="button"
+                        onClick={() => {
+                          setEditing(null);
+                          setDraft("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
+        </div>
+      )}
+      {outdated.length > 0 && (
+        <div className="aya-diff-outdated-list" data-testid="diff-outdated-comments">
+          <strong>Outdated comments</strong>
+          {outdated.map((comment) => (
+            <div key={comment.id}>
+              <div className="aya-diff-comment aya-diff-comment--outdated">
+                <span className="aya-diff-comment-note">
+                  {comment.sentAt ? <strong>Sent to {comment.sentTo}; </strong> : null}
+                  {comment.file}:{comment.newLine ?? comment.oldLine} {comment.newLine === null ? "(removed line in HEAD)" : ""}<br />
+                  <code>{comment.line}</code><br />{comment.note}
+                </span>
+                <button className="aya-diff-comment-action" type="button" aria-label={`Edit outdated comment on ${comment.file}`} title="Edit comment" onClick={() => { setEditing(null); setEditingCommentId(comment.id); setDraft(comment.note); }}>Edit</button>
+                <button className="aya-diff-comment-remove" type="button" aria-label={`Delete outdated comment on ${comment.file}`} title="Delete comment" onClick={() => onDeleteComment(comment.id)}>×</button>
+              </div>
+              {editingCommentId === comment.id && (
+                <div className="aya-diff-comment aya-diff-comment--editor">
+                  <textarea autoFocus rows={2} value={draft} aria-label="Edit comment" onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
+                    if (event.key === "Escape") { event.preventDefault(); cancelEdit(); }
+                    else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); saveDraft(); }
+                  }} />
+                  <div className="aya-diff-comment-actions">
+                    <button className="aya-modal-btn aya-modal-btn--primary" type="button" onClick={saveDraft}>Save</button>
+                    <button className="aya-modal-btn" type="button" onClick={cancelEdit}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {commentsLoading && <div className="aya-statusbar-popover-empty">Loading saved comments...</div>}
+      {commentError && <div className="aya-diff-comment-error" role="alert">{commentError}</div>}
+      {comments.length > 0 && (
+        <div className="aya-diff-review-bar" data-testid="diff-review-bar">
+          <span className="aya-diff-review-count">
+            {comments.length} {comments.length === 1 ? "comment" : "comments"}
+            {outdated.length > 0 ? ` (${outdated.length} outdated)` : ""}
+          </span>
+          {comments.some((comment) => comment.sentAt) && <button className="aya-statusbar-popover-action" type="button" onClick={onClearSent}>Clear sent</button>}
+          <span className="aya-diff-review-spacer" />
+          {targets.length === 0 ? (
+            <span className="aya-diff-review-hint">No pane in this project to send to.</span>
+          ) : (
+            <>
+              <label className="aya-diff-review-target">
+                Send to
+                <select value={target?.id ?? ""} onChange={(event) => onTargetChange(event.target.value)}>
+                  {targets.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="aya-modal-btn aya-modal-btn--primary"
+                type="button"
+                data-testid="diff-review-send"
+                disabled={!target || unsent.length === 0 || commentsLoading || sending}
+                title="Send the unsent comments to this pane"
+                onClick={() => target && onSend(target, unsent.map((comment) => comment.id))}
+              >
+                {sending ? "Sending…" : "Send"}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

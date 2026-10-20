@@ -58,6 +58,23 @@ export interface Snippet {
   autoRun: boolean;
 }
 
+/** A note anchored to a row in the local working-tree diff. Mirrors the
+ *  main-process shape so comments can be validated at IPC before saving. */
+export interface DiffComment {
+  id: string;
+  file: string;
+  hunk: string;
+  line: string;
+  newLine: number | null;
+  oldLine: number | null;
+  occurrence: number;
+  checkout: string;
+  note: string;
+  createdAt: string;
+  sentAt: string | null;
+  sentTo: string | null;
+}
+
 /** Account-wide Claude/Codex usage snapshot (mirrors electron/usage.ts).
  *  Written by a user hook, read-only in Aya. Numbers are account-global -
  *  all sessions share the 5h + weekly limits, never per-project. */
@@ -886,6 +903,12 @@ export interface AyaApi {
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
+  listDiffComments(projectSlug: string): Promise<DiffComment[]>;
+  addDiffComment(projectSlug: string, comment: DiffComment): Promise<DiffComment[]>;
+  editDiffComment(projectSlug: string, id: string, note: string): Promise<DiffComment[]>;
+  deleteDiffComment(projectSlug: string, id: string): Promise<DiffComment[]>;
+  clearSentDiffComments(projectSlug: string): Promise<DiffComment[]>;
+  sendDiffComments(req: { projectSlug: string; targetId: string; checkout: string; commentIds: string[] }): Promise<DiffComment[]>;
   /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
    *  git's own message (e.g. "a branch named 'x' already exists"). */
   createWorktree(req: {

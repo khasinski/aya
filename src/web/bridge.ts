@@ -82,6 +82,12 @@ export function createWebAya(transport: WebTransport): AyaApi {
     listProjects: inv("projects:list"),
     listProjectState: inv("projects:state"),
     saveProjectState: inv("projects:save-state"),
+    listDiffComments: inv("diff-comments:list"),
+    addDiffComment: inv("diff-comments:add"),
+    editDiffComment: inv("diff-comments:edit"),
+    deleteDiffComment: inv("diff-comments:delete"),
+    clearSentDiffComments: inv("diff-comments:clear-sent"),
+    sendDiffComments: inv("diff-comments:send"),
     // Multi-window is a desktop concept; the web client is its own world.
     listOtherWindows: async () => [] as never,
     adoptProjectInWindow: async () => {
