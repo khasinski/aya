@@ -63,10 +63,14 @@ test("clipboard image files use private per-project folders and cleanup files ol
   assert.equal(existsSync(first), true);
 
   const old = join(directory, "old.txt");
-  (await import("node:fs/promises")).writeFile(old, "old", { mode: 0o600 });
+  await (await import("node:fs/promises")).writeFile(old, "old", { mode: 0o600 });
+  assert.equal(existsSync(old), true);
   // Leave margin for filesystems that round timestamps to whole seconds.
-  const oldDate = new Date(Date.now() - PROMPT_ATTACHMENT_RETENTION_MS - 24 * 60 * 60 * 1000);
+  // Use an unambiguous fixed past timestamp rather than deriving it from the
+  // runner clock; CI clocks can be adjusted while the suite is running.
+  const oldDate = new Date("2000-01-01T00:00:00.000Z");
   utimesSync(old, oldDate, oldDate);
+  assert.ok(Date.now() - lstatSync(old).mtimeMs > PROMPT_ATTACHMENT_RETENTION_MS);
   await saveLocalAttachment(home, "project-a", Buffer.from("next"), ".txt");
   assert.equal(existsSync(old), false);
   assert.equal(readdirSync(directory).length, 2);

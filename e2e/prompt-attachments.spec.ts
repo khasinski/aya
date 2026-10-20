@@ -36,16 +36,19 @@ async function putClipboardImage(app: import("@playwright/test").ElectronApplica
   const png = await window.screenshot();
   const state = await app.evaluate(({ clipboard, nativeImage }, base64: string) => {
     const image = nativeImage.createFromBuffer(Buffer.from(base64, "base64"));
+    clipboard.clear();
     clipboard.writeImage(image);
     const copied = clipboard.readImage();
-    return { imageEmpty: image.isEmpty(), clipboardEmpty: copied.isEmpty(), clipboardPng: copied.toPNG().toString("base64") };
+    return { imageEmpty: image.isEmpty(), clipboardEmpty: copied.isEmpty(), clipboardText: clipboard.readText(), clipboardPng: copied.toPNG().toString("base64") };
   }, png.toString("base64"));
   expect(state.imageEmpty).toBe(false);
   expect(state.clipboardEmpty).toBe(false);
+  expect(state.clipboardText).toBe("");
   return Buffer.from(state.clipboardPng, "base64");
 }
 
 async function pasteImage(textarea: import("@playwright/test").Locator) {
+  await textarea.focus();
   await textarea.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
 }
 
@@ -93,6 +96,7 @@ test.describe("local prompt attachments", () => {
     const clipboardPng = await putClipboardImage(app, window);
     const leftTextarea = window.locator(`[data-testid="terminal-pane"][data-terminal-id="${left}"] .xterm-helper-textarea`);
     await pasteImage(leftTextarea);
+    await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Saving the clipboard image");
     await expect(window.getByTestId("prompt-attachment-notice")).toContainText("Image saved and its path added");
     await expect.poll(() => readdirSync(localDirectory).length).toBe(1);
     const imagePath = readdirSync(localDirectory).map((name) => join(localDirectory, name)).find((path) => path.endsWith(".png") && !droppedPaths.includes(path));
