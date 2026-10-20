@@ -10,7 +10,9 @@ export interface PaneStateResult {
   reason?: string; screenEvidence?: boolean;
   hold: string | null; busy: boolean; waiting: boolean | null; generation: string | null;
   rules: { available: boolean; version?: string; digest?: string; reason?: string };
-  evidence: { for: "waiting" | "hold" | "busy"; match?: ScreenRuleMatch; policy?: string; source?: string }[];
+  userRules?: { available:boolean; digest:string|null; reason?:string };
+  userHold?:string|null; inputProtection?:string|null;
+  evidence: { for: "waiting" | "hold" | "busy"; match?: ScreenRuleMatch; policy?: string; source?: string; waiting?:boolean|null }[];
 }
 function ruleMetadata(): PaneStateResult["rules"] {
   const r = builtinScreenRules.get();
@@ -48,11 +50,17 @@ export function formatPaneState(name: string, result: PaneStateResult, explain: 
   const lines = [`${printable(JSON.stringify(name))}: ${result.state}; busy: ${result.busy ? "yes" : "no"}; waiting: ${result.waiting === null ? "unknown" : result.waiting ? "yes" : "no"}; hold: ${result.hold ?? "none"}`];
   if (result.reason) lines.push(`reason: ${result.reason}`);
   if (!result.rules.available) lines.push(`rules unavailable: ${result.rules.reason}`);
+  if (result.userRules && !result.userRules.available) lines.push(`user rules unavailable: ${result.userRules.reason ?? "automated input is held"}`);
   if (explain) {
+    if(result.userRules){
+      if(result.userRules.available)lines.push(`user rules: ${result.userRules.digest}`);
+      if(result.userHold)lines.push(`user hold: ${result.userHold}`);
+      if(result.inputProtection)lines.push(`automated input: blocked; ${result.inputProtection}`);
+    }
     if (result.rules.available) lines.push(`rules: ${result.rules.version} (${result.rules.digest})`);
     if (result.evidence.length === 0 && result.screenEvidence) lines.push("No rule matched.");
     for (const e of result.evidence) {
-      if (e.match) lines.push(`${e.for} rule: ${e.match.id} (${e.match.kind}${e.for === "waiting" ? result.waiting ? "; waiting" : "; clear" : ""})`,`source: ${e.match.source}; rules: ${e.match.version} (${e.match.digest})`,`region: ${e.match.region}`,`excerpt: ${e.match.excerpt}`);
+      if (e.match) lines.push(`${e.for} rule: ${e.match.id} (${e.match.kind}${e.for === "waiting" ? (e.waiting??result.waiting) ? "; waiting" : "; clear" : ""})`,`source: ${e.match.source}; rules: ${e.match.version} (${e.match.digest})`,`region: ${e.match.region}`,`excerpt: ${e.match.excerpt}`);
       else lines.push(`${e.for}: policy:${e.policy}; source: ${e.source ?? "vt-state"}; no data rule matched for this decision`);
     }
   }

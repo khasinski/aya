@@ -2257,6 +2257,29 @@ export function SettingsModal({
                               <strong>{diagnostics.projects.remote}</strong>
                             </div>
                           </div>
+                          <section className="aya-settings-rule-diagnostics" aria-label="User screen rules">
+                            <h3>User screen rules</h3>
+                            <p>Files are in {diagnostics.userScreenRules.directory}.</p>
+                            {diagnostics.userScreenRules.fileProblem ? (
+                              <p>{/^(generic|claude|codex|opencode|grok|antigravity)\.json: /.test(diagnostics.userScreenRules.fileProblem)
+                                ? diagnostics.userScreenRules.fileProblem
+                                : `${diagnostics.userScreenRules.directory}: ${diagnostics.userScreenRules.fileProblem}`}. Aya continues to use built-in rules, so prompts are still detected.</p>
+                            ) : diagnostics.userScreenRules.reason && !diagnostics.userScreenRules.available ? (
+                              <p>Your rules are currently unavailable. Aya continues to use built-in rules, so prompts are still detected.</p>
+                            ) : null}
+                            <ul>
+                              {diagnostics.userScreenRules.sets.filter((set) => set.status === "loaded").map((set) => (
+                                <li key={set.agent}>
+                                  <strong>{({claude:"Claude",codex:"Codex",opencode:"OpenCode",grok:"Grok",antigravity:"Antigravity",generic:"Generic"} as const)[set.agent]}</strong>: built-in rules + {set.ruleCount ?? 0} of your rules ({(set.sources ?? []).map((source) => source.split("/").at(-1)).join(", ")})
+                                </li>
+                              ))}
+                              {diagnostics.userScreenRules.available && !diagnostics.userScreenRules.sets.some((set) => set.status === "loaded") ? (
+                                <li>All agents: built-in rules only</li>
+                              ) : diagnostics.userScreenRules.available && diagnostics.userScreenRules.sets.some((set) => set.status === "built-in only") ? (
+                                <li>Other agents: built-in rules only</li>
+                              ) : null}
+                            </ul>
+                          </section>
                           <pre className="aya-settings-diagnostics-json">
                             {diagnosticsJson}
                           </pre>

@@ -18,6 +18,20 @@ for(const [mode,want,rule,agent="claude"] of [["idle","idle","composer-hint"],["
   });
  });
 }
+test.describe("pane state with a local user rule",()=>{
+ const localRules=JSON.stringify({schemaVersion:1,ruleSetVersion:"e2e-local-1",agent:"claude",rules:[{id:"local-composer-hold",kind:"prompt",region:"screen",pattern:"❯",flags:""}]});
+ test.use({seedOptions:{rightTab:{presetId:"screen-agent",name:"agent"},presetList:[{id:"shell",name:"Shell",icon:"$",color:"",command:"$SHELL"},preset("idle")],ayaHomeFiles:{"screen-rules/claude.json":localRules}}});
+ test("the real CLI explains a user rule and its source",async({seeded,window})=>{
+  await expect.poll(()=>state(seeded.ayaHome),{timeout:20000}).toContain("local-composer-hold");
+  const output=state(seeded.ayaHome);
+  expect(output).toContain('"agent": waiting');
+  expect(output).toContain("waiting rule: local-composer-hold");
+  expect(output).toContain("source: user/claude.json");
+  expect(output).toContain("rules: e2e-local-1");
+  expect(output).not.toMatch(/[\x1b\x00-\x08\x0b-\x1f\x7f-\x9f\u202e\u202d]/);
+  await expect(window.getByTestId("xterm-host").last()).toBeVisible();
+ });
+});
 test.describe("state after a real JS-host crash",()=>{
  test.use({seedOptions:{rightTab:{presetId:"screen-agent",name:"agent"},presetList:[{id:"shell",name:"Shell",icon:"$",color:"",command:"$SHELL"},preset("idle")]}});
  test("a screen not redrawn after recovery is unknown, never idle",async({app,seeded,window})=>{

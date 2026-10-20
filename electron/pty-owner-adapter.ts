@@ -139,14 +139,20 @@ export class OwnerPty implements IPty {
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.operation.then(operation); this.operation = result.catch(() => {}); return result;
   }
-  writeAsync(data: string | Buffer): Promise<void> {
+  writeAsync(data: string | Buffer, beforeFirstByte?: () => void): Promise<void> {
     if (this.mutationsGated) return Promise.reject(new Error("Terminal handover is in progress. This input was not delivered."));
-    if (this.handleFlowControl && data === "\x13") { this.pause(); return Promise.resolve(); }
-    if (this.handleFlowControl && data === "\x11") { this.resume(); return Promise.resolve(); }
+    if (!beforeFirstByte && this.handleFlowControl && data === "\x13") { this.pause(); return Promise.resolve(); }
+    if (!beforeFirstByte && this.handleFlowControl && data === "\x11") { this.resume(); return Promise.resolve(); }
     const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const outcome = this.enqueue(async () => {
+      beforeFirstByte?.();
+      if (this.handleFlowControl && data === "\x13") { this.pause(); return; }
+      if (this.handleFlowControl && data === "\x11") { this.resume(); return; }
       let offset = 0;
       while (offset < bytes.length) {
+        // A queued or backpressured operation may become stale before its
+        // first byte. After any byte succeeds, failures remain uncertain.
+        if (offset === 0) beforeFirstByte?.();
         if (this.exited || this.readEnded || !this.owner.client?.isConnected()) throw new Error("Terminal input could not finish. Check the pane before retrying; some bytes may have reached it.");
         try { offset += fs.writeSync(this.pane.fd, bytes, offset, bytes.length - offset); }
         catch (error) {

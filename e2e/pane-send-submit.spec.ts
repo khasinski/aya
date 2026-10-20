@@ -3,7 +3,7 @@
 // bytes run a command. The exact-byte assertion is the ONLY guard against a
 // bracketed-paste "fix", which breaks bash 3.2 - no pane here runs bash 3.2.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -17,6 +17,7 @@ test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
 const AYA_CLI = join(__dirname, "..", "bin", "aya");
 const RECORDER = join(__dirname, "helpers", "pty-recorder.cjs");
+const USER_ACCOUNT_PROMPT = join(__dirname, "helpers", "user-account-prompt.cjs");
 // The pane runs under a login shell whose PATH is not the runner's.
 const NODE = process.execPath;
 /** Restated, not imported: shrinking PANE_SEND_SUBMIT_DELAY_MS must fail here. */
@@ -30,6 +31,14 @@ const PANE_SEND_TIMEOUT_MS = 15_000;
  *  the developer's live app, so every AYA_* is dropped. */
 function ayaPaneSend(ayaHome: string, args: string[]): void {
   execFileSync(AYA_CLI, ["pane", "send", ...args], {
+    env: { ...envWithoutAya(), AYA_HOME: ayaHome },
+    encoding: "utf8",
+    timeout: PANE_SEND_TIMEOUT_MS,
+  });
+}
+
+function ayaPaneSendResult(ayaHome: string, args: string[]) {
+  return spawnSync(AYA_CLI, ["pane", "send", ...args], {
     env: { ...envWithoutAya(), AYA_HOME: ayaHome },
     encoding: "utf8",
     timeout: PANE_SEND_TIMEOUT_MS,
@@ -174,4 +183,47 @@ test("pane-send with no flag runs the command in an ordinary shell pane", async 
   ayaPaneSend(seeded.ayaHome, ["shell 2", "echo ok-$((21+21))"]);
 
   await paneShows(window, seeded.tabIds.right, "ok-42");
+});
+
+test.describe("pane-send honors a user-defined account prompt", () => {
+  const file = "screen-rules/claude.json";
+  const rules = JSON.stringify({
+    schemaVersion: 1,
+    ruleSetVersion: "e2e-account-1",
+    agent: "claude",
+    rules: [
+      { id: "local-account-dialog", kind: "dialog", region: "screen", pattern: "LOCAL_ACCOUNT_PROMPT", flags: "" },
+      { id: "local-account-setting", kind: "account-setting", region: "screen", pattern: "LOCAL_ACCOUNT_PROMPT", flags: "" },
+    ],
+  });
+  test.use({
+    seedOptions: {
+      rightTab: { presetId: "claude", name: "claude 2" },
+      presetList: [{
+        id: "claude",
+        name: "Claude prompt fixture",
+        icon: "C",
+        color: "",
+        agent: "claude",
+        command: `'${NODE}' '${USER_ACCOUNT_PROMPT}' "$AYA_PROJECT_DIR/user-account-$AYA_TERMINAL_ID.log"`,
+      }],
+      ayaHomeFiles: { [file]: rules },
+    },
+  });
+
+  test("refuses --submit before an answer reaches the agent process", async ({ window, seeded }) => {
+    const target = seeded.tabIds.right;
+    const received = join(seeded.projectDir, `user-account-${target}.log`);
+    await expect.poll(() => existsSync(received), { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
+    await paneShows(window, target, "LOCAL_ACCOUNT_PROMPT");
+
+    const result = ayaPaneSendResult(seeded.ayaHome, ["claude 2", "approve-this-change", "--submit"]);
+
+    expect(result.error, "pane-send did not finish").toBeUndefined();
+    expect(result.status, `pane-send output: ${result.stdout}\n${result.stderr}`).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/user-defined account-setting dialog/);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/nothing was typed/);
+    await window.waitForTimeout(SUBMIT_SETTLE_MS);
+    expect(readFileSync(received, "utf8"), "the protected answer reached the PTY").toBe("");
+  });
 });

@@ -4,7 +4,7 @@ import { prepareSpawn, watchAgentSession } from "./pty-prepare";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
 import { getProcessCwd } from "./process-cwd";
-import type { VtSnapshot } from "./vt-mirror";
+import {validVtSnapshotFence, type VtSnapshot, type VtSnapshotFence} from "./vt-mirror";
 import { spawn,type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
@@ -284,6 +284,11 @@ export class PtyHostClient {
   private readonly preparations = new Map<number, AbortController>();
   private readonly sessionWatches = new Map<string, () => void>();
   private readonly screenStates = new Map<string, { generation: string; waiting: boolean; dialog?: string }>();
+  private userRuleStatusObserver:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}|null>)|null=null;
+  private readonly latestRuleSnapshots=new Map<string,VtSnapshot>();
+  private readonly ruleStatusStates=new Map<string,{generation:string;revision:string;waiting:boolean;dialog?:string}>();
+  private readonly ruleStatusPending=new Map<string,VtSnapshot>();
+  private readonly ruleStatusTimers=new Map<string,ReturnType<typeof setTimeout>>();
   // Panes this client spawned and has not seen end: the ones a lost host takes
   // down without a word.
   private readonly live = new Set<string>();
@@ -300,6 +305,67 @@ export class PtyHostClient {
     this.sinks.add(webContents);
     if(!webContents.isDestroyed()&&this.ownerContinuityUnavailable&&!this.crashBlocked)for(const ptyId of this.live)webContents.send("pty:event",{type:"recovery-unavailable",ptyId,reason:this.continuityNotice});
     if(!webContents.isDestroyed())for(const [ptyId,reason] of this.authRefusedPanes)webContents.send("pty:event",this.principalBusyPanes.has(ptyId)?{type:"host-connection",ptyId,reason,connected:false}:{type:"disconnected",ptyId,reason});
+    if(!webContents.isDestroyed()&&this.userRuleStatusObserver)for(const [ptyId,snapshot] of this.latestRuleSnapshots){
+      const observer=this.userRuleStatusObserver;
+      void observer(ptyId,snapshot).then(status=>{
+        const latest=this.latestRuleSnapshots.get(ptyId);
+        if(!status||webContents.isDestroyed()||this.userRuleStatusObserver!==observer||latest?.generation!==status.generation)return;
+        const alreadyPublished=this.ruleStatusStates.get(ptyId);
+        const sameRevision=latest.revision===status.revision;
+        const ackAdvancedRevision=status.sourceRevision===latest.revision&&status.appliedSnapshot?.generation===status.generation&&status.appliedSnapshot.revision===status.revision;
+        if(!sameRevision&&!ackAdvancedRevision)return;
+        const cached=alreadyPublished?.generation===status.generation&&alreadyPublished.waiting===status.waiting&&alreadyPublished.dialog===status.dialog&&
+          (alreadyPublished.revision===status.revision||ackAdvancedRevision&&alreadyPublished.revision===status.sourceRevision);
+        this.publishRuleStatus(ptyId,status);
+        // Existing rule status may already be cached for another window. A new
+        // sink still needs its own initial waiting state.
+        if(cached&&status.waiting)webContents.send("pty:event",{type:"vt-status",ptyId,waiting:true,...(status.dialog?{dialog:status.dialog}:{})});
+      }).catch(()=>{});
+    }
+  }
+
+  /** User-rule status replaces the builtin-only renderer verdict while active.
+   * The no-files path leaves the existing host status path untouched. */
+  setUserRuleStatusObserver(observer:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}|null>)|null):void{
+    this.userRuleStatusObserver=observer;
+    for(const timer of this.ruleStatusTimers.values())clearTimeout(timer);this.ruleStatusTimers.clear();this.ruleStatusPending.clear();
+    if(observer){for(const [id,snapshot] of this.latestRuleSnapshots)this.evaluateRuleStatus(id,snapshot);return;}
+    for(const [id,snapshot] of this.latestRuleSnapshots){
+      const prior=this.ruleStatusStates.get(id);this.ruleStatusStates.delete(id);
+      const builtin=snapshotStatus(snapshot);
+      if(prior?.waiting&&!builtin.waiting)this.sendToSinks([{type:"vt-status",ptyId:id,waiting:false}]);
+      // This is cached evidence, not a new host observation. In particular it
+      // must never reach the legacy generation-only composer ACK path.
+      this.acceptSnapshot(id,snapshot,false,false);
+    }
+  }
+  private evaluateRuleStatus(ptyId:string,snapshot:VtSnapshot):void{
+    const observer=this.userRuleStatusObserver;if(!observer)return;
+    this.ruleStatusPending.set(ptyId,snapshot);
+    if(this.ruleStatusTimers.has(ptyId))return;
+    const timer=setTimeout(()=>{
+      this.ruleStatusTimers.delete(ptyId);const latest=this.ruleStatusPending.get(ptyId);this.ruleStatusPending.delete(ptyId);
+      if(!latest||this.userRuleStatusObserver!==observer)return;
+      void observer(ptyId,latest).then(status=>{if(!status||this.userRuleStatusObserver!==observer)return;this.publishRuleStatus(ptyId,status);}).catch(()=>{});
+    },50);
+    timer.unref?.();this.ruleStatusTimers.set(ptyId,timer);
+  }
+  private publishRuleStatus(ptyId:string,status:{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}):void{
+    let latest=this.latestRuleSnapshots.get(ptyId);if(!latest||latest.generation!==status.generation)return;
+    // A checked composer ACK advances the authoritative host revision without
+    // emitting a snapshot event. Accept its fresh snapshot only if no newer
+    // received snapshot has displaced the revision that the observer checked.
+    if(status.appliedSnapshot&&status.sourceRevision===latest.revision&&status.appliedSnapshot.generation===status.generation&&status.appliedSnapshot.revision===status.revision){
+      latest=status.appliedSnapshot;this.latestRuleSnapshots.set(ptyId,latest);
+    }
+    if(latest.revision!==status.revision)return;
+    const old=this.ruleStatusStates.get(ptyId);if(old?.generation===status.generation&&old.revision===status.revision&&old.waiting===status.waiting&&old.dialog===status.dialog)return;
+    const priorWaiting=old?.generation===status.generation?old.waiting:false;
+    const edge=(!priorWaiting&&status.waiting)||(priorWaiting&&!status.waiting)||(priorWaiting&&status.waiting&&old?.dialog!==status.dialog);
+    this.ruleStatusStates.set(ptyId,status);
+    // A first non-waiting status must not invent an edge for a new sink.
+    if(!edge)return;
+    this.sendToSinks([{type:"vt-status",ptyId,waiting:status.waiting,...(status.waiting&&status.dialog?{dialog:status.dialog}:{})}]);
   }
 
   detachWebContents(webContents: WebContents | PtyEventSink): void {
@@ -409,8 +475,11 @@ export class PtyHostClient {
   /** Resolves false only when the host positively reports the data went
    *  nowhere. A host from an older build answers null, which reads as
    *  delivered - an unknown answer must not be turned into a failure. */
-  async write(ptyId: string, data: string): Promise<boolean> {
-    const result = await this.request({ id: 0, type: "write", ptyId, data });
+  async write(ptyId: string, data: string, stillAllowed?:()=>boolean): Promise<boolean> {
+    const result = await this.request({ id: 0, type: "write", ptyId, data },stillAllowed?request=>{
+      if(!stillAllowed())throw Object.assign(new Error("User screen rules changed while the terminal connection was opening. This input was not sent."),{code:"PTY_HOST_RULES_UNAVAILABLE"});
+      return request;
+    }:undefined);
     return result !== false;
   }
 
@@ -443,6 +512,7 @@ export class PtyHostClient {
     this.startupCancelled.abort();
     this.crashSupervisor?.dispose();
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
+    for(const timer of this.ruleStatusTimers.values())clearTimeout(timer);this.ruleStatusTimers.clear();this.ruleStatusPending.clear();
     this.stopSessionWatches();
   }
 
@@ -947,9 +1017,17 @@ export class PtyHostClient {
     }
   }
 
+  /** User-rule policy observes only an existing connection, without metadata ACKs or startup. */
+  async appliedSnapshotForRules(ptyId: string): Promise<VtSnapshot | null> {
+    return asVtSnapshot(await this.readExistingSnapshot(ptyId));
+  }
+
   private async readExistingSnapshot(ptyId: string): Promise<unknown> {
+    return this.readExistingRequest({ id: 0, type: "snapshot", ptyId });
+  }
+  private async readExistingRequest(request: PtyHostRequest): Promise<unknown> {
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
-    if (this.socket && !this.socket.destroyed) return withTimeout(this.sendRequest(this.socket, { id: 0, type: "snapshot", ptyId }), 5000);
+    if (this.socket && !this.socket.destroyed) return withTimeout(this.sendRequest(this.socket, request), 5000);
     // Reuse the normal socket-opening/authentication implementation, but never
     // connectWithHostStart or connect's metadata/continuity/exit-ACK path.
     const observer = new PtyHostClient(this.hostScript);
@@ -960,7 +1038,7 @@ export class PtyHostClient {
     try {
       await withTimeout(observer.openSocket(), Math.max(1, deadline - Date.now()));
       if (this.disposed || Date.now() >= deadline || !observer.socket || observer.socket.destroyed) throw new Error(DISPOSED_MESSAGE);
-      return await withTimeout(observer.sendRequest(observer.socket, { id: 0, type: "snapshot", ptyId }), Math.max(1, deadline - Date.now()));
+      return await withTimeout(observer.sendRequest(observer.socket, request), Math.max(1, deadline - Date.now()));
     } finally { observer.dispose(); observer.dropSocket(); }
   }
 
@@ -973,10 +1051,42 @@ export class PtyHostClient {
   private async markComposer(ptyId: string, snapshot: VtSnapshot): Promise<void> {
     await this.request({ id: 0, type: "composer-seen", ptyId, generation: snapshot.generation });
   }
-  private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false): void {
+
+  /** User-rule decisions never degrade to an unfenced write on an old host. */
+  async setUserRulePolicyEpoch(epoch:string):Promise<boolean>{
+    if(!/^[a-f0-9]{32}:[0-9]{1,16}$/.test(epoch))return false;
+    const socket=this.socket;
+    if(this.disposed||this.crashBlocked||!socket||socket.destroyed)return false;
+    try{return await this.sendRequest(socket,{id:0,type:"rule-policy-epoch",epoch})===true;}catch{return false;}
+  }
+  async writeAtSnapshot(ptyId: string, data: string, fence: VtSnapshotFence, policyEpoch:string): Promise<boolean> {
+    if (!validVtSnapshotFence(fence)) throw Object.assign(new Error("Terminal screen identity is unavailable. This input was not sent."), {code:"PTY_HOST_STALE_REVISION"});
+    if(!/^[a-f0-9]{32}:[0-9]{1,16}$/.test(policyEpoch))throw Object.assign(new Error("Screen rules are unavailable. This input was not sent."),{code:"PTY_HOST_RULES_UNAVAILABLE"});
+    const socket = this.socket;
+    if (this.disposed || this.crashBlocked || !socket || socket.destroyed) throw new Error("The terminal host is not connected. This input was not sent.");
+    // Establish the current policy at the host before dispatch. The epoch is
+    // also carried on the write so a later reload can invalidate it in queue.
+    if(await this.sendRequest(socket,{id:0,type:"rule-policy-epoch",epoch:policyEpoch}).catch(()=>false)!==true)throw new Error("Screen rules could not be checked. This input was not sent.");
+    const result = await this.sendRequest(socket,{id:0,type:"write-fenced",ptyId,data,fence,policyEpoch});
+    if (result === true || result === false) return result;
+    throw new Error("Terminal input outcome is unknown. Check the pane before retrying; Aya did not resend it.");
+  }
+  async checkSnapshot(ptyId: string, fence: VtSnapshotFence): Promise<boolean> {
+    if (!validVtSnapshotFence(fence)) return false;
+    try { return (await this.readExistingRequest({id:0,type:"snapshot-check",ptyId,fence})) === true; }
+    catch { return false; }
+  }
+  async markComposerAtSnapshot(ptyId: string, fence: VtSnapshotFence): Promise<boolean> {
+    if (!validVtSnapshotFence(fence)) return false;
+    try { return (await this.readExistingRequest({id:0,type:"composer-seen-checked",ptyId,fence})) === true; }
+    catch { return false; }
+  }
+  private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false, allowComposerAck = true): void {
     if (this.lostOwned.has(ptyId)) return;
+    this.latestRuleSnapshots.set(ptyId,snapshot);
+    if(this.userRuleStatusObserver){this.evaluateRuleStatus(ptyId,snapshot);return;}
     const verdict = snapshotStatus(snapshot);
-    if (verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
+    if (allowComposerAck&&verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
     if (verdict.waiting === null) return;
     const old = this.screenStates.get(ptyId);
     if (!replay && old?.generation === snapshot.generation && old.waiting === verdict.waiting && old.dialog === verdict.dialog) return;
@@ -1383,6 +1493,14 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
+        if(message.event.type==="data"){
+          // The host has applied this output before publishing it. Main may
+          // not have its debounced snapshot yet, so any evaluation against
+          // the previous revision must stop being publishable immediately.
+          this.latestRuleSnapshots.delete(message.event.ptyId);
+          const timer=this.ruleStatusTimers.get(message.event.ptyId);if(timer)clearTimeout(timer);
+          this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);
+        }
         if(PANE_ENDED_EVENTS.has(message.event.type)){this.authRefusedPanes.delete(message.event.ptyId);this.principalBusyPanes.delete(message.event.ptyId);}
         if(message.event.type==="recovery-screen"){
           this.recoveryScreens.set(message.event.ptyId,message.event);
@@ -1404,6 +1522,8 @@ export class PtyHostClient {
           this.sessionWatches.get(message.event.ptyId)?.();
           this.sessionWatches.delete(message.event.ptyId);
           this.screenStates.delete(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);
+          this.latestRuleSnapshots.delete(message.event.ptyId);this.ruleStatusStates.delete(message.event.ptyId);
+          const ruleTimer=this.ruleStatusTimers.get(message.event.ptyId);if(ruleTimer)clearTimeout(ruleTimer);this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);
         }
         events.push(message.event);
         continue;
@@ -1438,7 +1558,7 @@ export class PtyHostClient {
     if (!pending) return;
     this.pending.delete(message.id);
     if (message.ok) pending.resolve(message.result);
-    else pending.reject(Object.assign(new Error(message.error), { code: "PTY_HOST_REMOTE_ERROR" }));
+    else pending.reject(Object.assign(new Error(message.error), { code: message.code === "PTY_HOST_STALE_REVISION"||message.code === "PTY_HOST_RULES_CHANGED" ? message.code : "PTY_HOST_REMOTE_ERROR" }));
   }
 
   private sendToSinks(events: PtyEvent[]): void {
@@ -1464,6 +1584,7 @@ export class PtyHostClient {
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();
     this.screenStates.clear();
+    for(const timer of this.ruleStatusTimers.values())clearTimeout(timer);this.ruleStatusTimers.clear();this.ruleStatusPending.clear();this.latestRuleSnapshots.clear();this.ruleStatusStates.clear();
     // Not gated on dispose: that is the quit, whose closing windows keep a no-session in memory only.
     const lost = this.hostAsked ? [] : [...this.live];
     if (this.ownerBacked||this.ownerContinuityUnavailable) for (const id of lost) this.lostOwned.add(id);
@@ -1473,8 +1594,8 @@ export class PtyHostClient {
       ? {type:"disconnected",ptyId,...(this.ownsOwnerKey&&this.crashSupervisor?{recoveryBlocked:true,retryable:this.recoveryRetryable,...(this.recoveryRetryable?{reason:this.recoveryReason}:{})}:{})}
       : {type:"no-session",ptyId}));
     for (const [, pending] of this.pending) {
-      if(pending.type==="write"&&pending.ptyId)this.uncertainInput.add(pending.ptyId);
-      pending.reject(new Error(pending.type==="write"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));
+      if((pending.type==="write"||pending.type==="write-fenced")&&pending.ptyId)this.uncertainInput.add(pending.ptyId);
+      pending.reject(new Error(pending.type==="write"||pending.type==="write-fenced"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));
     }
     this.pending.clear();
     if(this.crashTask){this.crashAgain=true;return;}

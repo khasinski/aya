@@ -11,8 +11,8 @@ const {newHostAuthCapability}=require('../dist-electron/pty-host-auth-transfer.j
 const {HostSocketAuthenticator}=require('../dist-electron/pty-host-auth-transport.js');
 const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
 import {envWithoutAya} from './helpers/env.mjs';
-async function child(home,source,key){
- const c=spawn(process.execPath,['-e',source],{env:{...envWithoutAya(),AYA_HOME:home,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','pipe','pipe','ignore','ignore','pipe']});
+async function child(home,source,key,method){
+ const c=spawn(process.execPath,['-e',source],{env:{...envWithoutAya(),AYA_HOME:home,...(method?{AYA_TEST_SNAPSHOT_METHOD:method}:{}),ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','pipe','pipe','ignore','ignore','pipe']});
  let out='',error='';c.stdout.on('data',b=>out+=b);c.stderr.on('data',b=>error+=b);c.stdio[5].on('error',()=>{});c.stdio[5].end(key?Buffer.from(key):Buffer.alloc(0));
  const timer=setTimeout(()=>c.kill('SIGKILL'),8000);
  try{return await new Promise((resolve,reject)=>{c.on('error',reject);c.on('exit',code=>{if(code!==0)return reject(Error('observer child failed: '+error));try{resolve(JSON.parse(out));}catch(e){reject(e);}});});}finally{clearTimeout(timer);}
@@ -21,8 +21,8 @@ const preamble=`const {PtyHostClient}=require('./dist-electron/pty-host-client')
 for(const code of ['ENOENT','ECONNREFUSED'])test(`public cold paneState ${code} never starts/unlinks/creates a key or owner`,async()=>{
  const home=mkdtempSync(join(tmpdir(),'aya-state-missing-'));
  try{
-  const result=await child(home,preamble+(code==='ECONNREFUSED'?`PtyHostClient.prototype.openSocket=async()=>{const e=Error('refused');e.code='ECONNREFUSED';throw e;};`:'')+`const fs=require('fs');let removes=0;for(const method of ['rmSync','unlinkSync'])fs[method]=()=>{removes++;throw Error('MUST NOT UNLINK');};(async()=>{const c=new PtyHostClient('/unused');try{const result=await c.paneState('saved');console.log(JSON.stringify({result,starts,removes}));}finally{c.dispose();c.dropSocket();}})();`);
-  assert.equal(result.starts,0);assert.equal(result.removes,0);assert.equal(result.result.state,'unknown');assert.equal(result.result.hold,'terminal host not running');
+  const result=await child(home,preamble+(code==='ECONNREFUSED'?`PtyHostClient.prototype.openSocket=async()=>{const e=Error('refused');e.code='ECONNREFUSED';throw e;};`:'')+`const fs=require('fs');let removes=0;for(const method of ['rmSync','unlinkSync'])fs[method]=()=>{removes++;throw Error('MUST NOT UNLINK');};(async()=>{const c=new PtyHostClient('/unused');try{const rulesSnapshot=await c.appliedSnapshotForRules('saved').catch(()=>null),result=await c.paneState('saved'),fence={generation:'g',revision:'12345678-1234-1234-1234-123456789012:1'},checked=await c.checkSnapshot('saved',fence),marked=await c.markComposerAtSnapshot('saved',fence);let notSent=false;try{await c.writeAtSnapshot('saved','never send',fence);}catch(error){notSent=error.message.includes('not sent');}console.log(JSON.stringify({result,rulesSnapshot,checked,marked,notSent,starts,removes}));}finally{c.dispose();c.dropSocket();}})();`);
+  assert.equal(result.rulesSnapshot,null);assert.equal(result.checked,false);assert.equal(result.marked,false);assert.equal(result.notSent,true);assert.equal(result.starts,0);assert.equal(result.removes,0);assert.equal(result.result.state,'unknown');assert.equal(result.result.hold,'terminal host not running');
   for(const path of ['pty-owner','pty-host-auth','pty-host.sock'])assert.equal(existsSync(join(home,path)),false);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
@@ -47,21 +47,21 @@ async function observingHost(snapshot,run){
  finally{for(const s of sockets)s.destroy();await new Promise(done=>server.close(done));rmSync(home,{recursive:true,force:true});}
 }
 const observedSnapshot=(rows,extra={})=>({generation:'g',agent:'claude',shell:false,composerSeen:true,openedAt:0,lastOutputAt:0,cols:80,rows,cells:rows.map(r=>[...r].map((c,x)=>[x,c,0,0])),...extra});
-const observe=(home,key)=>child(home,preamble+`(async()=>{const c=new PtyHostClient('/unused');const key=require('fs').readFileSync(5);if(key.length)c.hostAuthKey=key;try{const result=await c.paneState('p');console.log(JSON.stringify({result,starts}));}finally{c.dispose();c.dropSocket();}})();`,key);
-for(const [label,snapshot,state] of [
+const observe=(home,key,method='paneState')=>child(home,preamble+`(async()=>{const c=new PtyHostClient('/unused');const key=require('fs').readFileSync(5);if(key.length)c.hostAuthKey=key;try{let result;try{result=await c[process.env.AYA_TEST_SNAPSHOT_METHOD]('p');}catch(error){if(process.env.AYA_TEST_SNAPSHOT_METHOD!=='appliedSnapshotForRules')throw error;result=null;}console.log(JSON.stringify({result,starts}));}finally{c.dispose();c.dropSocket();}})();`,key,method);
+for(const method of ['paneState','appliedSnapshotForRules'])for(const [label,snapshot,state] of [
  ['idle',observedSnapshot(['❯ ']),'idle'],
  ['busy',observedSnapshot(['esc to interrupt']),'busy'],
  ['unknown screen',observedSnapshot(['fragment'],{recoveryUnknown:true}),'unknown'],
  ['no screen evidence',observedSnapshot([]),'unknown'],
-])test(`cold authenticated state observation: ${label}, only snapshot RPC and no metadata ACK`,()=>observingHost(snapshot,async({home,requests,key})=>{
- const r=await observe(home,key);
- assert.equal(r.starts,0);assert.equal(r.result.state,state);assert.deepEqual(requests.map(r=>r.type),['snapshot']);assert.equal(requests[0].ptyId,'p');
+])test(`cold authenticated ${method}: ${label}, only snapshot RPC and no metadata ACK`,()=>observingHost(snapshot,async({home,requests,key})=>{
+ const r=await observe(home,key,method);
+ assert.equal(r.starts,0);if(method==='paneState')assert.equal(r.result.state,state);else assert.deepEqual(r.result,snapshot);assert.deepEqual(requests.map(r=>r.type),['snapshot']);assert.equal(requests[0].ptyId,'p');
  assert.equal(existsSync(join(home,'pty-owner')),false);assert.equal(existsSync(join(home,'pty-host-auth')),false);
 }));
-for(const failure of ['missing','wrong'])test(`cold observer refuses ${failure} capability without sending snapshot or creating a host`,()=>observingHost(observedSnapshot(['esc to interrupt']),async({home,requests})=>{
+for(const method of ['paneState','appliedSnapshotForRules'])for(const failure of ['missing','wrong'])test(`cold ${method} refuses ${failure} capability without sending snapshot or creating a host`,()=>observingHost(observedSnapshot(['esc to interrupt']),async({home,requests})=>{
  const keyPath=join(home,'pty-host-auth','key');
  if(failure==='wrong'){mkdirSync(join(home,'pty-host-auth'));writeFileSync(keyPath,Buffer.alloc(32,7));}
- const r=await observe(home,failure==='wrong'?Buffer.alloc(32,7):undefined);
- assert.equal(r.result.state,'unknown');assert.equal(r.result.busy,false);assert.equal(r.starts,0);assert.deepEqual(requests,[]);assert.equal(existsSync(join(home,'pty-owner')),false);
+ const r=await observe(home,failure==='wrong'?Buffer.alloc(32,7):undefined,method);
+ if(method==='paneState'){assert.equal(r.result.state,'unknown');assert.equal(r.result.busy,false);}else assert.equal(r.result,null);assert.equal(r.starts,0);assert.deepEqual(requests,[]);assert.equal(existsSync(join(home,'pty-owner')),false);
  if(failure==='missing')assert.equal(existsSync(keyPath),false);else assert.deepEqual(readFileSync(keyPath),Buffer.alloc(32,7));
 }));

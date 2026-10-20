@@ -158,7 +158,7 @@ const edgesOf = (row: string): string => [...row.matchAll(COMPOSER_EDGE)].map((m
 
 /** Blanks the rows showing only `pasted` (our text is no prompt), keeping the composer's edges; the whole text over
  *  consecutive rows, lowest first, so a dialog quoting one sentence of it is still read. */
-function withoutPasted(rows: readonly string[], pasted: string): readonly string[] {
+export function withoutPasted(rows: readonly string[], pasted: string): readonly string[] {
   const want = squash(pasted);
   if (!want) return rows;
   const cells = rows.map((row) => squash(row.replace(COMPOSER_EDGE, "")));

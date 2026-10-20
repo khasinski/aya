@@ -63,6 +63,10 @@ function reportSetup(over = {}) {
     cliAdoption: { summary: read("adoption", adoption) },
     pathExists: async (file) => (log.push(file), pathExists(file)),
     pathEntries: () => (log.push("path"), entries),
+    userScreenRules: () => ({ available: true, directory: join(home, "screen-rules"), sets: [
+      { agent: "generic", status: "built-in only" },
+      { agent: "claude", status: "loaded", version: "user/claude.json@local-1", digest: "c".repeat(64), sources: ["user/claude.json"] },
+    ] }),
     ...over,
   };
   return { deps, log, presets, cli, health, adoption, entries };
@@ -112,6 +116,10 @@ test("report preserves metadata, host facts, preset projection, counts and the f
     ],
     projects: { total: 3, open: 2, recent: 1, remote: 1 },
     usage: { claudeAccounts: 2, codexAccounts: 1, hookInstalled: true, hookScriptPath: join(home, "hook.sh") },
+    userScreenRules: { available: true, directory: join(home, "screen-rules"), sets: [
+      { agent: "generic", status: "built-in only" },
+      { agent: "claude", status: "loaded", version: "user/claude.json@local-1", digest: "c".repeat(64), sources: ["user/claude.json"] },
+    ] },
   });
   assert.equal(entries.length, 45, "the source PATH entries are not truncated");
   assert.deepEqual(log, ["presets", "projects", "state", "hook", "cli", "health", "adoption", "version", paths.controlSocketPath, paths.remoteSocketPath, paths.ptyHostSocketPath, "path"]);
@@ -135,6 +143,10 @@ test("production report preserves empty values, an absent shell and a disconnect
   assert.deepEqual(report.projects, { total: 0, open: 0, recent: 0, remote: 0 });
   assert.deepEqual(report.usage, { claudeAccounts: 0, codexAccounts: 0, hookInstalled: false, hookScriptPath: "" });
   assert.deepEqual(report.ptyHost, { expected: { version: "v", scriptHash: "h" }, actual: null, ptyCount: 0, stale: false, pid: null, socket: { exists: false, pid: null }, otherHosts: [], warnings: [] });
+  assert.deepEqual(report.userScreenRules, { available: true, directory: join(home, "screen-rules"), sets: [
+    { agent: "generic", status: "built-in only" },
+    { agent: "claude", status: "loaded", version: "user/claude.json@local-1", digest: "c".repeat(64), sources: ["user/claude.json"] },
+  ] });
 });
 
 test("all seven readers start together; socket checks wait for them and then run in order", async () => {

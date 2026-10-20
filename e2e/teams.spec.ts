@@ -2,7 +2,10 @@
 // role lookup, the pane id from the local assignments, the dated header.
 
 import type { Page } from "@playwright/test";
+import { unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test, expect } from "./fixtures";
+import { fireShortcut } from "./helpers/shortcut";
 import {
   ASK_BRIEFLY_MS,
   TEAM_AGENT_READY_TIMEOUT_MS,
@@ -38,6 +41,63 @@ test.describe("an implementer on an approval prompt", () => {
     const read = teamLog(seeded.projectDir);
     await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt; nothing was typed/);
     expect(read("tab-right")).not.toMatch(/round 5 ready/);
+  });
+});
+
+test.describe("an added local prompt rule", () => {
+  const file = "screen-rules/claude.json";
+  const rules = JSON.stringify({ schemaVersion: 1, ruleSetVersion: "e2e-local-1", agent: "claude", rules: [{ id: "local-team-hold", kind: "prompt", region: "screen", pattern: "LOCAL_RULE_TARGET_MARKER", flags: "" }] });
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset("user-rule-target", "claude")], ayaHomeFiles: { [file]: rules } }));
+
+  test("holds a team message until deleting the file restores delivery", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    const read = teamLog(seeded.projectDir);
+    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer:.*local|FAIL .*implementer:.*approval/);
+    expect(read("tab-right")).not.toMatch(/round 5 ready/);
+    unlinkSync(join(seeded.ayaHome, file));
+    writeFileSync(join(seeded.projectDir, "send-request-tab-left"), "implementer after-file-removal");
+    await expect.poll(() => read("tab-right"), { timeout: 20_000 }).toMatch(/after-file-removal/);
+  });
+});
+
+test.describe("invalid local rule files", () => {
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset("ask", "claude")], ayaHomeFiles: { "screen-rules/claude.json": JSON.stringify({ invalid: true }) } }));
+
+  test("show the failure while builtin approval still blocks delivery", async ({ window, app, seeded }) => {
+    await firstTerminalShown(window);
+    const read = teamLog(seeded.projectDir);
+    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt/);
+    expect(read("tab-right")).not.toMatch(/round 5 ready/);
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await expect(settings).toBeVisible();
+    await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
+    await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
+    const section = settings.getByRole("region", { name: "User screen rules" });
+    await expect(section).toContainText(/claude\.json: file is missing required fields or contains extra fields/);
+    await expect(section).toContainText("Aya continues to use built-in rules, so prompts are still detected.");
+  });
+});
+
+test.describe("a pathological user rule", () => {
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset("user-rule-pathological", "claude")], ayaHomeFiles: { "screen-rules/claude.json": JSON.stringify({ schemaVersion: 1, ruleSetVersion: "e2e-pathological-1", agent: "claude", rules: [{ id: "local-pathological", kind: "prompt", region: "screen", pattern: "^(a|aa)+b$", flags: "" }] }) } }));
+
+  test("is quarantined at the worker deadline without dropping a builtin approval hold", async ({ window, app, seeded }) => {
+    await firstTerminalShown(window);
+    const read = teamLog(seeded.projectDir);
+    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt/);
+    expect(read("tab-right")).not.toMatch(/round 5 ready/);
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await expect(settings).toBeVisible();
+    await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
+    await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
+    const section = settings.getByRole("region", { name: "User screen rules" });
+    await expect(section).toContainText("Your rules are currently unavailable.");
+    await expect(section).toContainText("Aya continues to use built-in rules, so prompts are still detected.");
+    await settings.locator(".aya-modal-btn", { hasText: "Copy JSON" }).click();
+    const report = JSON.parse((await app.evaluate(({ clipboard }) => clipboard.readText())).trim());
+    expect(report.userScreenRules.quarantinedDigest).toMatch(/^[a-f0-9]{64}$/);
   });
 });
 

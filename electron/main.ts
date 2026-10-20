@@ -1,5 +1,10 @@
 import {findAuthTransferTicket} from "./pty-host-auth-ticket";
 import { builtinScreenRules } from "./screen-rule-provider";
+import type { ScreenRuleSet } from "./screen-rule-data";
+import { UserRuleProvider } from "./screen-user-rule-provider";
+import { GuardedRuleInput } from "./screen-user-rule-input";
+import { UserRulePanePolicy } from "./screen-user-rule-pane";
+import { isUserOnlyHold } from "./pane-holds";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
@@ -21,6 +26,7 @@ import { installApplicationMenu, setStaleMenuIcon } from "./app-menu";
 import { showAyaAboutPanel } from "./about-panel";
 import { statSync } from "node:fs";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { getOrCreateProject, listProjects, listProjectState, saveProjectState } from "./config";
 import { bundledAyaCliPath } from "./cli-path";
@@ -149,14 +155,43 @@ import {PlannedUpdate} from "./pty-planned-update";
 import {HandoverDisplays} from "./pty-handover-display";
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
+const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
+builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
+const builtinState = builtinScreenRules.get();
+const builtinRuleSet: ScreenRuleSet = builtinState.available ? builtinState.rules : {
+  version: "unavailable", digest: "unavailable",
+  sets: { generic: [], claude: [], codex: [], opencode: [], grok: [], antigravity: [] },
+};
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
+const userRulePolicyInstance=crypto.randomBytes(16).toString("hex");
+const hostRuleEpoch=(epoch:number)=>`${userRulePolicyInstance}:${epoch}`;
+const userRuleProvider = new UserRuleProvider(path.join(AYA_HOME, "screen-rules"), builtinRuleSet, {
+  log: (reason, digest) => diagnosticsLog.append("user-screen-rules-unavailable", { reason, digest }),
+  changed: (state) => { void ptyHost.setUserRulePolicyEpoch(hostRuleEpoch(state.epoch)); ptyHost.setUserRuleStatusObserver(!state.available || state.manifest
+    ? (id, snapshot) => userRulePanes.status(id, snapshot)
+    : null); },
+});
+const userRuleInput = new GuardedRuleInput(userRuleProvider, {
+  snapshot: (id) => ptyHost.appliedSnapshotForRules(id),
+  check: (id, fence) => ptyHost.checkSnapshot(id, fence),
+  writeFenced: (id, data, fence, epoch) => ptyHost.writeAtSnapshot(id, data, fence, hostRuleEpoch(epoch)),
+  writeLegacy: (id, data, stillAllowed) => ptyHost.write(id, data, stillAllowed),
+});
+const userRulePanes = new UserRulePanePolicy(userRuleInput, userRuleProvider, {
+  snapshot: (id) => ptyHost.appliedSnapshotForRules(id),
+  markComposer: (id, fence) => ptyHost.markComposerAtSnapshot(id, fence),
+  legacyHold: (id, pasted) => ptyHost.holdReason(id, pasted),
+  legacyBusy: (id) => ptyHost.paneBusy(id),
+  legacyState: (id) => ptyHost.paneState(id),
+});
+if (builtinState.available) userRuleProvider.start();
 const spawnGate = createSpawnGate();
 const paneRunning = async (ptyId: string) => (await ptyHost.getSize(ptyId)) !== null;
-const teamHold = settledAfterSubmit((terminalId, pasted) => ptyHost.holdReason(terminalId, pasted));
+const teamHold = settledAfterSubmit((terminalId, pasted) => userRulePanes.holdReason(terminalId, pasted));
 const outputMarks = paneOutputMarks();
 ptyHost.attachWebContents(outputMarks.sink);
 const turnProbe: TurnProbe = {
-  hold: (terminalId, pasted) => ptyHost.holdReason(terminalId, pasted),
+  hold: (terminalId, pasted) => userRulePanes.holdReason(terminalId, pasted),
   outputMark: outputMarks.mark,
   outputPaused: outputMarks.outputPaused,
 };
@@ -176,9 +211,10 @@ const teamDeps: TeamControlDeps = {
   teamHome: AYA_HOME,
   listProjects: () => listProjects(),
   deliver: (terminalId, text, cancelled, entered, pasting) =>
-    deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, teamHold, cancelled, turnProbe, entered, pasting),
+    deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, teamHold, cancelled, turnProbe, entered, pasting,
+      (id, data, context, wasCancelled) => userRuleInput.write("team", id, data, context, wasCancelled)),
   holdReason: withLaunchHolds(startingHold, async (terminalId) => launchHoldOf(await ptyHost.launch(terminalId))),
-  busy: (terminalId) => ptyHost.paneBusy(terminalId),
+  busy: (terminalId) => userRulePanes.paneBusy(terminalId),
   roleNoteReport: (project, team, assignments, state) => roleNoteReport(project, team, assignments, paneBriefDeps, state),
   launchNote,
   screen: paneScreen,
@@ -210,7 +246,7 @@ const relaunchDeps: RelaunchDeps = {
     const launch = await ptyHost.launch(terminalId);
     return typeof launch === "object" && launch !== null ? launch.command : null;
   },
-  busy: (terminalId) => ptyHost.paneBusy(terminalId),
+  busy: (terminalId) => userRulePanes.paneBusy(terminalId),
   foreground: async (terminalId) => {
     const pid = await ptyHost.getPid(terminalId);
     return typeof pid === "number" ? foregroundCommand(pid) : null;
@@ -557,7 +593,7 @@ function registerIpc(): TeamRunner {
     hasDisplay: (ptyId) => handoverDisplays.has(ptyId),
     noteTyping: async (ptyId, text) => {
       // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
-      const answered = await noteUserAnswer(ptyId, text, () => ptyHost.holdReason(ptyId));
+      const answered = await noteUserAnswer(ptyId, text, () => userRulePanes.holdReason(ptyId));
       if (answered) broadcastStatus(answered);
     },
     confirmRestartPane: async (ptyId) => {
@@ -630,10 +666,17 @@ function registerIpc(): TeamRunner {
     ipcMain,
     ayaHome: AYA_HOME,
     listProjects: () => listProjects(),
+    // The same user-rule hold, input protection and checked write as aya pane send.
     sendToPane: (projectSlug, terminalId, text) => sendPaneTextThroughControl({
       listProjects: () => listProjects(),
       writePane: (id, data) => ptyHost.write(id, data),
-      paneHold: (id) => ptyHost.holdReason(id),
+      writePaneChecked: (id, data, context) => userRuleInput.write("direct", id, data, context, context.cancelled),
+      paneHold: (id) => userRulePanes.holdReason(id),
+      paneInputProtection: async (id, pasted, cancelled) => {
+        if (userRuleInput.configured()) return userRuleInput.protection(id, pasted, cancelled);
+        const hold = await userRulePanes.holdReason(id, pasted);
+        return isUserOnlyHold(hold) ? hold : null;
+      },
     }, projectSlug, terminalId, text),
   });
   registerSystemIpc({
@@ -665,6 +708,7 @@ function registerIpc(): TeamRunner {
       cliAdoption,
       pathExists,
       pathEntries,
+      userScreenRules: () => userRuleProvider.diagnostics(),
     }),
     updateStatus: updates.getUpdateStatus,
     checkForUpdates: updates.checkForUpdates,
@@ -859,8 +903,14 @@ app.whenReady().then(async () => {
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
-    paneHold: (terminalId) => ptyHost.holdReason(terminalId),
-    paneState: (terminalId) => ptyHost.paneState(terminalId),
+    writePaneChecked: (terminalId, data, context) => userRuleInput.write("direct", terminalId, data, context, context.cancelled),
+    paneHold: (terminalId) => userRulePanes.holdReason(terminalId),
+    paneInputProtection: async (terminalId, pasted, cancelled) => {
+      if (userRuleInput.configured()) return userRuleInput.protection(terminalId, pasted, cancelled);
+      const hold = await userRulePanes.holdReason(terminalId, pasted);
+      return isUserOnlyHold(hold) ? hold : null;
+    },
+    paneState: (terminalId) => userRulePanes.paneState(terminalId),
     team: teamDeps,
     teamRunner,
     teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),
@@ -982,6 +1032,9 @@ app.on("before-quit", (event) => {
   }
   if (updates.beforeQuit(event)) return;
   appQuitting = true;
+  userRulePanes.dispose();
+  userRuleInput.dispose();
+  void userRuleProvider.dispose();
   if(!IS_E2E_PTY_SHUTDOWN&&!plannedUpdate.hasPreparedHandover&&!ordinaryQuitAnnounced){
     event.preventDefault();
     if(!ordinaryQuitAnnouncementPending){
@@ -1012,9 +1065,6 @@ app.on("before-quit", (event) => {
   ptyHost.dispose();
 });
 
-const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
-builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
-builtinScreenRules.get();
 const gpuDeathHandler = createGpuDeathHandler({
   diagnosticsLog,
   appQuitting: () => appQuitting,

@@ -24,6 +24,9 @@ import {
   beginVtRecovery,
   panes as vtPanes,
   snapshotOf,
+  vtSnapshotMatches,
+  validVtSnapshotFence,
+  type VtSnapshotFence,
   checkpointVtPane,
   restoreVtPane,
   closeAllVtPanes,
@@ -988,9 +991,15 @@ export function getPtyPid(ptyId: string): number | null | undefined {
 
 /** Write to a PTY; false means it went NOWHERE (dead id, queue at cap, failed
  *  spawn). Async but holds NO `await`, so `p.write` keeps its place in order. */
-export async function writePty(ptyId: string, data: string): Promise<boolean> {
+export async function writePty(ptyId: string, data: string, fence?: VtSnapshotFence, additionalFence?:()=>void): Promise<boolean> {
   requireMutableCore();
   const p = ptys.get(ptyId);
+  const checkFence = fence === undefined ? undefined : () => {
+    if (!p || ptys.get(ptyId) !== p || !validVtSnapshotFence(fence) || !vtSnapshotMatches(ptyId, fence)) throw Object.assign(
+      new Error("The terminal screen changed. This input was not sent."), {code: "PTY_HOST_STALE_REVISION"});
+  };
+  const check = fence === undefined ? additionalFence : () => { checkFence?.(); additionalFence?.(); };
+  check?.();
   if (!p) {
     // No PTY yet, but one is on its way: hold the input rather than discard it.
     // Anything else (an exited or unknown id) still drops, as before.
@@ -1008,7 +1017,7 @@ export async function writePty(ptyId: string, data: string): Promise<boolean> {
   // Writing to the user's own PTY is the whole point of a terminal: the
   // "user-provided value" is their own keystrokes going to their own shell, so
   // there is no trust boundary to cross. Not exploitable code injection.
-  await p.writeAsync(data); // lgtm[js/code-injection]
+  await p.writeAsync(data, check); // lgtm[js/code-injection]
   return true;
 }
 
