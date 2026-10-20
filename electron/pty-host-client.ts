@@ -290,6 +290,9 @@ export class PtyHostClient {
   private readonly ruleStatusPending=new Map<string,VtSnapshot>();
   private readonly ruleStatusTimers=new Map<string,ReturnType<typeof setTimeout>>();
   private readonly paneWaiters = new Map<string, Set<(state: PaneStateResult) => void>>();
+  // `stopped` also covers panes that never started. Retain only explicit exit
+  // events so a later pane-wait read can distinguish those cases.
+  private readonly observedPaneExits = new Set<string>();
   // Panes this client spawned and has not seen end: the ones a lost host takes
   // down without a word.
   private readonly live = new Set<string>();
@@ -1007,7 +1010,7 @@ export class PtyHostClient {
     if (this.crashBlocked) return unavailablePaneState("the terminal host is disconnected or recovering; its processes may still be running");
     try {
       const value = await this.readExistingSnapshot(ptyId);
-      if (value === null) return unavailablePaneState("is not running", "stopped");
+      if (value === null) return unavailablePaneState("is not running", "stopped", this.observedPaneExits.has(ptyId));
       if (value === "starting") return unavailablePaneState("is still starting up", "starting");
       if (value === "disconnected") return unavailablePaneState("the terminal host is disconnected; its processes may still be running");
       const snapshot = asVtSnapshot(value);
@@ -1489,6 +1492,7 @@ export class PtyHostClient {
       }
       if ("type" in message && message.type === "spawned") {
         flushEvents();
+        this.observedPaneExits.delete(message.req.ptyId);
         if(message.ownerBacked)this.ownerBacked=true;
         if(message.ownerIdentity)this.cacheRecoveryOwner(message.ownerIdentity);
         if(message.hostPid)this.cacheHostProcess(message.hostPid);
@@ -1543,7 +1547,9 @@ export class PtyHostClient {
           this.screenStates.delete(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);
           this.latestRuleSnapshots.delete(message.event.ptyId);this.ruleStatusStates.delete(message.event.ptyId);
           const ruleTimer=this.ruleStatusTimers.get(message.event.ptyId);if(ruleTimer)clearTimeout(ruleTimer);this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);
-          this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState("has exited", "stopped"));
+          const exited = message.event.type === "exit";
+          if (exited) this.observedPaneExits.add(message.event.ptyId);
+          this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState(exited ? "has exited" : "is not running", "stopped", exited));
         }
         if (message.event.type === "spawn-failed") this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState("could not be started", "stopped"));
         events.push(message.event);

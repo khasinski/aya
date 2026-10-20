@@ -10,8 +10,8 @@ import { startControlServerOn } from "../dist-electron/control.js";
 import { waitForPaneTargets, formatPaneWaitReply } from "../dist-electron/pane-wait.js";
 import { parseControlRequest } from "../dist-electron/control-protocol.js";
 
-function state(name, waiting = false) {
-  return { state: name, hold: null, busy: name === "busy", waiting, generation: "g", rules: { available: true }, evidence: [] };
+function state(name, waiting = false, exited = false) {
+  return { state: name, exited, hold: null, busy: name === "busy", waiting, generation: "g", rules: { available: true }, evidence: [] };
 }
 
 function subject(initial) {
@@ -51,10 +51,23 @@ test("pane wait handles busy-to-idle, waiting, exit, all, any and timeout", asyn
     s.update("a", state("idle"));
     assert.deepEqual(await pending, { met: true, matched: ["Builder", "Reviewer"], pending: [] });
   });
-  await t.test("waiting and exited conditions use pane state", async () => {
-    const s2 = subject({ b: state("waiting", true), c: state("stopped") });
+  await t.test("waiting uses pane state; unstarted and failed-to-start panes are not exited", async () => {
+    const s2 = subject({ b: state("waiting", true), c: state("stopped"), d: state("stopped") });
     assert.equal((await waitForPaneTargets([targets[1]], { until: ["waiting"], any: false, timeoutMs: 100, readState: s2.readState, subscribe: s2.subscribe })).met, true);
-    assert.equal((await waitForPaneTargets([targets[2]], { until: ["exited"], any: false, timeoutMs: 100, readState: s2.readState, subscribe: s2.subscribe })).met, true);
+    for (const id of ["c", "d"]) {
+      // A missing process and a spawn-failed notification are both stopped,
+      // but neither is evidence that a process exited.
+      s2.update(id, state("stopped", false, false));
+      const unstarted = await waitForPaneTargets([{ terminalId: id, name: id }], { until: ["exited"], any: false, timeoutMs: 5, readState: s2.readState, subscribe: s2.subscribe });
+      assert.equal(unstarted.met, false);
+      assert.deepEqual(unstarted.pending, [id]);
+    }
+  });
+  await t.test("an explicit process exit event satisfies exited", async () => {
+    const s2 = subject({ c: state("stopped") });
+    const pending = waitForPaneTargets([targets[2]], { until: ["exited"], any: false, timeoutMs: 100, readState: s2.readState, subscribe: s2.subscribe });
+    s2.update("c", state("stopped", false, true));
+    assert.deepEqual(await pending, { met: true, matched: ["Old shell"], pending: [] });
   });
   await t.test("--any returns when the first target matches", async () => {
     const s2 = subject({ a: state("busy"), b: state("idle") });
@@ -153,7 +166,13 @@ test("CLI parses pane wait flags and preserves timeout / bad-target exit codes",
   assert.equal(anyReply.code, 0);
   assert.match(anyReply.stdout, /Reached waiting for "Builder"/);
 
-  const exited = await cli(socketPath, ["pane", "--project", "p", "wait", "pane:pane-3", "--until", "exited", "--timeout", "1"]);
+  const unstarted = await cli(socketPath, ["pane", "--project", "p", "wait", "pane:pane-3", "--until", "exited", "--timeout", "0"]);
+  assert.equal(unstarted.code, 1);
+  assert.match(unstarted.stdout, /Timed out/);
+
+  const exitedWait = cli(socketPath, ["pane", "--project", "p", "wait", "pane:pane-3", "--until", "exited", "--timeout", "1"]);
+  setTimeout(() => publish("pane-3", state("stopped", false, true)), 20);
+  const exited = await exitedWait;
   assert.equal(exited.code, 0);
   assert.match(exited.stdout, /"Old shell"/);
 

@@ -27,7 +27,7 @@ export function paneWaitMatches(state: PaneStateResult, until: readonly PaneWait
   return until.some((condition) => {
     if (condition === "idle") return state.state === "idle" || state.state === "shell";
     if (condition === "waiting") return state.waiting === true;
-    return state.state === "stopped";
+    return state.exited === true;
   });
 }
 
