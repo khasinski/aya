@@ -55,3 +55,25 @@ test('stale exit receipt is dropped and logged without retry',async()=>{
  client.socket={destroyed:false,write:line=>{const req=JSON.parse(line);calls++;queueMicrotask(()=>client.onResponse({id:req.id,ok:true,result:'stale'}));}};
  try{client.onData(JSON.stringify(event())+'\n');await sleep(150);assert.equal(calls,1);assert.equal(client.observedExits.has('p'),false);assert.ok(logs.some(e=>e.event==='pty-exit-ack-stale'));}finally{client.dispose();}
 });
+
+test('a failed fresh spawn invalidates the previous observed process exit',async()=>{
+ const client=new PtyHostClient('unused');
+ client.readExistingSnapshot=async()=>null;
+ try{
+  client.onData(JSON.stringify({type:'event',event:{type:'exit',ptyId:'p',exitCode:23}})+'\n');
+  assert.equal((await client.paneState('p')).exited,true,'the explicit exit is retained before restart');
+  client.request=async()=>{throw Error('host refused the replacement spawn');};
+  await assert.rejects(client.spawn({ptyId:'p',command:'true',cwd:process.cwd(),cols:80,rows:24}),/refused the replacement spawn/);
+  assert.equal((await client.paneState('p')).exited,false,'a failed new start is not the prior process exit');
+ }finally{client.dispose();}
+});
+
+test('a spawn-failed host event clears retained exit evidence',async()=>{
+ const client=new PtyHostClient('unused');client.readExistingSnapshot=async()=>null;
+ try{
+  client.onData(JSON.stringify({type:'event',event:{type:'exit',ptyId:'p',exitCode:23}})+'\n');
+  assert.equal((await client.paneState('p')).exited,true);
+  client.onData(JSON.stringify({type:'event',event:{type:'spawn-failed',ptyId:'p',reason:'command-not-found',detail:'missing'}})+'\n');
+  assert.equal((await client.paneState('p')).exited,false,'spawn-failed does not preserve an old process exit');
+ }finally{client.dispose();}
+});
