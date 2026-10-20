@@ -107,7 +107,7 @@ test.describe("invalid local user-rule diagnostics", () => {
     const settings = await openDiagnostics(app, window);
     await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
     const section = settings.getByRole("region", { name: "User screen rules" });
-    await expect(section).toContainText(/screen-rules\/claude\.json: rule 1 pattern is not text/);
+    await expect(section).toContainText(/claude\.json: rule 1 pattern is not text/);
     await expect(section).toContainText("Aya continues to use built-in rules, so prompts are still detected.");
     await expect(section.locator("li")).toHaveCount(0);
     await expect(section.locator("p")).toHaveCount(2);

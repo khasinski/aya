@@ -2261,7 +2261,9 @@ export function SettingsModal({
                             <h3>User screen rules</h3>
                             <p>Files are in {diagnostics.userScreenRules.directory}.</p>
                             {diagnostics.userScreenRules.fileProblem ? (
-                              <p>{diagnostics.userScreenRules.directory}/{diagnostics.userScreenRules.fileProblem}. Aya continues to use built-in rules, so prompts are still detected.</p>
+                              <p>{/^(generic|claude|codex|opencode|grok|antigravity)\.json: /.test(diagnostics.userScreenRules.fileProblem)
+                                ? diagnostics.userScreenRules.fileProblem
+                                : `${diagnostics.userScreenRules.directory}: ${diagnostics.userScreenRules.fileProblem}`}. Aya continues to use built-in rules, so prompts are still detected.</p>
                             ) : diagnostics.userScreenRules.reason && !diagnostics.userScreenRules.available ? (
                               <p>Your rules are currently unavailable. Aya continues to use built-in rules, so prompts are still detected.</p>
                             ) : null}
