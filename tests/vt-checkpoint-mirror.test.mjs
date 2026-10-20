@@ -39,7 +39,10 @@ test('real mirror restores generation, composer acknowledgement, timestamps and 
   const p=mirror.panes.get(id);p.lastWaiting=true;p.lastDialog='Claude account offer';
   const cp=await mirror.checkpointVtPane(id);const state=await mirror.vtSnapshot(id);
   mirror.closeVtPane(id);await mirror.restoreVtPane(id,cp,()=>{});
-  assert.deepEqual(await mirror.vtSnapshot(id),state);
+  const restored=await mirror.vtSnapshot(id);
+  assert.notEqual(restored.revision,state.revision,'restoration must create a fresh input-fence revision');
+  const withoutRevision=({revision:_revision,...snapshot})=>snapshot;
+  assert.deepEqual(withoutRevision(restored),withoutRevision(state));
   assert.equal(mirror.vtPaneWaiting(id),true);assert.equal(mirror.vtPaneDialog(id),'Claude account offer');
   assert.equal(snapshotHold(state).hold,snapshotHold(await mirror.vtSnapshot(id)).hold);
   assert.equal(snapshotBusy(state),snapshotBusy(await mirror.vtSnapshot(id)));
