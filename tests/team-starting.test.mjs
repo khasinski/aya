@@ -61,6 +61,7 @@ function setup(phase) {
     roleLaunch: async () => ({ reach: "reaches", refused: null }),
     launchBlock: async () => null,
     launchNote: async () => null,
+    launchUncertain: async () => false,
     paneAlive: async () => !phase.starting,
     openPanes: (slug, panes) => askWindowToOpenPanes(phase.window(send), requests, slug, panes, phase.starting),
     newPaneId: () => "new-1",

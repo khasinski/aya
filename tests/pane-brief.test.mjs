@@ -105,7 +105,7 @@ for (const agent of AGENTS) {
               assert.equal(gap, null);
             } else {
               assert.doesNotMatch(told(out, deps), NOTE);
-              assert.match(gap ?? "", /^Aya cannot give this agent its role when it starts: \S/, "a role that cannot be told must be reported");
+              assert.equal(gap, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.", "explain the safe fallback without exposing setup details");
             }
           }));
       }
@@ -119,7 +119,7 @@ test("codex: the role note is a -c developer_instructions TOML string, and the u
     mkdirSync(deps.defaultCodexHome, { recursive: true });
     writeFileSync(join(deps.defaultCodexHome, "config.toml"), 'developer_instructions = "mine"\n');
     assert.equal((await start()).command, "codex");
-    assert.match(await gap(), /developer_instructions would be replaced/);
+    assert.equal(await gap(), "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
   }));
 
 test("opencode: the pane's file holds the shared brief and the note; a brief-off preset still gets the note", async () => {
@@ -146,16 +146,16 @@ test("codex with the brief on gets it in developer_instructions, before the note
 
 test("a setting of the user's own that the note would replace is left alone and reported", async () => {
   const cases = [
-    ["codex", "codex -c 'developer_instructions=\"mine\"'", {}, /developer_instructions would be replaced/],
-    ["opencode", "opencode", { OPENCODE_CONFIG: "/home/u/opencode.json", OPENCODE_CONFIG_CONTENT: "{}" }, /OPENCODE_CONFIG and OPENCODE_CONFIG_CONTENT are already set/],
-    ["opencode", "opencode", null, /environment could not be read/],
-    ["claude", "claude --append-system-prompt mine", {}, /already sets --append-system-prompt/],
+    ["codex", "codex -c 'developer_instructions=\"mine\"'", {}],
+    ["opencode", "opencode", { OPENCODE_CONFIG: "/home/u/opencode.json", OPENCODE_CONFIG_CONTENT: "{}" }],
+    ["opencode", "opencode", null],
+    ["claude", "claude --append-system-prompt mine", {}],
   ];
-  for (const [agent, command, env, reason] of cases) {
+  for (const [agent, command, env] of cases) {
     await withRig(presetOf(agent, command), ROLE, async ({ deps, start, gap }) => {
       deps.shellEnv = async () => env;
       assert.equal((await start()).command, command, agent);
-      assert.match(await gap(), reason, agent);
+      assert.equal(await gap(), "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.", agent);
     });
   }
 });
@@ -208,7 +208,7 @@ for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
         withRig(presetOf(agent), startedAs && { team: "ux-review", role: startedAs }, async ({ start, gap: gapOf }) => {
           await start();
           const gap = await gapOf({ team: "ux-review", role: now });
-          if (!takesNote) assert.match(gap, /^Aya cannot give this agent its role when it starts: /);
+          if (!takesNote) assert.equal(gap, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
           else if (startedAs === now) assert.equal(gap, null);
           else if (startedAs === null) assert.match(gap, /^This agent started before it had this role and can lose it in a long session\. To keep it, (click Restart|pick a new session for this role in its pane list)\.$/);
           // Aya tells a pane its role at Start and when it is given one; the agent reads it with whoami.
@@ -254,9 +254,17 @@ test("restart offered: not when the preset, edited since, can no longer carry a 
     preset.command = "claude && echo done";
     const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
     const report = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps, { running: true, read: {} });
-    // It says why, rather than "click Restart", which a restart would not fix.
-    assert.match(report.roleNotes.implementer, /^Aya cannot give this agent its role when it starts: /);
+    // It explains the safe Start fallback instead of offering Restart, which would not fix this preset.
+    assert.equal(report.roleNotes.implementer, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
     assert.deepEqual(report.restartable, []);
+  }));
+
+test("a custom agent's role warning explains the Start fallback without exposing its setup reason", () =>
+  withRig(presetOf("custom", "custom"), ROLE, async ({ start, gap }) => {
+    await start();
+    const warning = await gap();
+    assert.equal(warning, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
+    assert.doesNotMatch(warning, /custom|per-session instruction|launch flags/);
   }));
 
 test("restart offered: not for older instructions when the preset, edited since, can no longer carry a note", () =>
@@ -268,7 +276,7 @@ test("restart offered: not for older instructions when the preset, edited since,
     const [preset] = await deps.listPresets();
     preset.command = "claude && echo done";
     const report = await roleNoteReport(project, "ux-review", { tester: "t1" }, deps);
-    assert.match(report.roleNotes.tester, /^Aya cannot give this agent its role when it starts: /);
+    assert.equal(report.roleNotes.tester, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
     assert.deepEqual(report.restartable, []);
   }));
 
@@ -424,7 +432,7 @@ test("a resumed codex pane that could never be told its role says that, not just
   withRig(presetOf("codex", "cd sub && codex resume abc"), NEW_ROLE, async ({ deps, start, gap }) => {
     await start("p1");
     assert.deepEqual(await deps.records.get("p1"), { role: null, carried: false, unknown: true });
-    assert.match(await gap(NEW_ROLE, "p1"), /^Aya cannot give this agent its role when it starts/);
+    assert.equal(await gap(NEW_ROLE, "p1"), "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
   }));
 
 // A bare `resume` word makes a codex start a resume, not one inside a quoted prompt; the program may be any wrapper.
@@ -521,7 +529,7 @@ test("opencode: a login shell too slow to answer costs the note, visibly; a late
       script("sleep 6");
       assert.equal((await start("a")).command, "opencode", "no answer within the wait: no note");
       assert.deepEqual(await deps.records.get("a"), { role: ROLE, carried: false });
-      assert.match(await gap(ROLE, "a"), /^Aya cannot give this agent its role when it starts: your shell's environment could not be read/);
+      assert.equal(await gap(ROLE, "a"), "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
       script("sleep 0.3");
       assert.match((await start("b")).command, /^OPENCODE_CONFIG='[^']*' opencode$/, "a slow shell that answers in time: note");
       assert.deepEqual(noTold(await deps.records.get("b")), { role: ROLE, carried: true });
@@ -564,7 +572,7 @@ test("a running pane with no record whose CLI could never be told says that, not
   for (const [agent, command] of [["cursor", "cursor"], ["claude", "cd sub && claude"]]) {
     await withRig(presetOf(agent, command), NEW_ROLE, async ({ deps, gap }) => {
       deps.running = async () => true;
-      assert.match(await gap(NEW_ROLE, "p1"), /^Aya cannot give this agent its role when it starts/, command);
+      assert.equal(await gap(NEW_ROLE, "p1"), "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.", command);
     });
   }
 });
@@ -729,7 +737,7 @@ for (const { agent, presetBrief, pane, brief, note } of TEAM_BRIEF_CELLS) {
       assert.deepEqual(preset, saved, "the preset itself is never changed");
       if (!role) return;
       if (note) assert.equal(await gap(), null, "what the pane got is what Aya would give it now");
-      else assert.match((await gap()) ?? "", /^Aya cannot give this agent its role when it starts: \S/);
+      else assert.equal(await gap(), "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
     });
   });
 }

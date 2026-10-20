@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { TeamPanesRequest } from "./control-protocol";
 import { preflightBinary } from "./command-probe";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
-import { launchPending, launchStarting, launchUnsure, NO_LAUNCH_RECORD } from "./launch-mode";
+import { launchPending, launchStarting, NO_LAUNCH_RECORD } from "./launch-mode";
 import { AGENT_KINDS, type AgentKind, type Preset } from "./presets";
 import { assignRole, releasePaneEverywhere, whileTeamNotSaved } from "./team-admin";
 import { oneAtATime } from "./keyed-queue";
@@ -48,6 +48,8 @@ export interface PaneHost {
   launchBlock: (paneId: string) => Promise<string | null>;
   /** What Aya widened to make the pane reach it (launchNoteOf), null when nothing. */
   launchNote: (paneId: string) => Promise<string | null>;
+  /** Structured launch state says whether Aya's reach verdict is still uncertain. */
+  launchUncertain: (paneId: string) => Promise<boolean>;
   paneAlive: (paneId: string) => Promise<boolean>;
   /** Resolves once the window has the panes as tabs of the saved project. */
   openPanes: (projectSlug: string, panes: NewPane[]) => Promise<void>;
@@ -461,7 +463,7 @@ async function introduce(deps: TeamPaneDeps, slug: string, teamName: string, giv
       const notReached = running ? (hold ?? (await deps.introduce(slug, teamName, role))) : null;
       const cantReach = await launchBlockOnceRecorded(deps, pane.id, isNew);
       const note = await deps.launchNote(pane.id);
-      const unsure = launchUnsure(cantReach, note);
+      const unsure = await deps.launchUncertain(pane.id);
       return { role, paneId: pane.id, name: pane.name, preset: isNew ? target.preset.name : null, notReached, cantReach, note, unsure };
     }),
   );

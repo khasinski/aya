@@ -435,7 +435,7 @@ test("listTeams reports what Aya widened for each assigned pane, so the Teams wi
       p2: { command: "codex", cwd: "/x", added: [] },
     };
     const [team] = await list(t.teamHome, t.project, undefined, undefined, async (pane) => launchNoteOf(launches[pane]));
-    assert.match(team.paneNotes.a, /every network host/);
+    assert.match(team.paneNotes.a, /any network host/);
     assert.equal(team.paneNotes.b, null);
     const [plain] = await list(t.teamHome, t.project);
     assert.deepEqual(plain.paneNotes, {});

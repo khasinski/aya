@@ -96,9 +96,10 @@ export function validateRecoveryLaunch(id:string,request:unknown,launch:unknown,
   const l = object(launch, ["command", "cwd"], ["added", "mode"]);
   if (!str(l.command) || !str(l.cwd) || (l.added !== undefined && !strings(l.added))) fail();
   if (l.mode !== undefined) {
-    const m = object(l.mode, ["cli", "mode", "reach", "why", "fix", "autoFix"], ["todo", "note"]);
+    const m = object(l.mode, ["cli", "mode", "reach", "why", "fix", "autoFix"], ["todo", "note", "displayWhy", "displayTodo"]);
     if (!str(m.cli) || !str(m.mode) || !["reaches", "blocked", "unknown"].includes(m.reach as string) || !(m.why === null || str(m.why)) || !strings(m.fix) || typeof m.autoFix !== "boolean" ||
-        (m.todo !== undefined && !str(m.todo)) || (m.note !== undefined && !str(m.note))) fail();
+        (m.todo !== undefined && !str(m.todo)) || (m.note !== undefined && !str(m.note)) ||
+        (m.displayWhy !== undefined && !str(m.displayWhy)) || (m.displayTodo !== undefined && !str(m.displayTodo))) fail();
   }
   if(r.agent!==undefined)checkpointMetadata({generation:"recovery",agent:r.agent,shell:false,lastWaiting:false,composerSeen:false,openedAt:0,lastOutputAt:null});
 }

@@ -170,7 +170,7 @@ test.describe("a team saved with no panes", () => {
     const opened = await ayaInPane(window, seeded.projectDir, seeded.tabIds.left, ["team", "open", "ux-review", "tester=claude", "implementer=this"]);
     expect(opened.stderr).toBe("");
     expect(opened.stdout).toMatch(
-      /^team ux-review: gave 2 roles a pane, 1 new:\n  tester -> new pane "Claude Code - tester" \(id \S+\)(?:\n {4}may not reach Aya: .*)?\n  implementer -> pane "shell 1" \(id tab-left\)(?:\n {4}may not reach Aya: .*)?\nStart it in the Teams window, or ask me to\.\n$/,
+      /^team ux-review: gave 2 roles a pane, 1 new:\n  tester -> new pane "Claude Code - tester" \(id \S+\)(?:\n {4}.*)?\n  implementer -> pane "shell 1" \(id tab-left\)(?:\n {4}.*)?\nStart it in the Teams window, or ask me to\.\n$/,
     );
     const ids = paneIds(opened.stdout);
     expect(readAssignments(seeded.ayaHome)).toEqual({ tester: ids.tester, implementer: "tab-left" });
@@ -257,7 +257,7 @@ test.describe("a running team whose tester has a live pane", () => {
 
     const opened = aya(["team", "open", "--replace", "ux-review", "tester=claude"]);
     expect(opened.stderr).toBe("");
-    expect(opened.stdout).toMatch(/^team ux-review: gave 1 role a pane, 1 new:\n  tester -> new pane "Claude Code - tester" \(id \S+\); told its role(?:\n {4}may not reach Aya: .*)?\n$/);
+    expect(opened.stdout).toMatch(/^team ux-review: gave 1 role a pane, 1 new:\n  tester -> new pane "Claude Code - tester" \(id \S+\); told its role(?:\n {4}.*)?\n$/);
     const { tester } = paneIds(opened.stdout);
     expect(readAssignments(seeded.ayaHome)).toEqual({ tester });
     await expect.poll(() => teamLog(seeded.projectDir)(tester)).toMatch(/\[team ux-review \| from aya \| \d\d:\d\d\] Delivery test: run aya team whoami/);
@@ -310,9 +310,9 @@ test.describe("an open Codex pane in Codex's default sandbox", () => {
     const opened = aya(["team", "open", "ux-review", "implementer=pane:tab-right", "tester=new:codex"]);
     expect(opened.stderr).toBe("");
     expect(opened.stdout).toContain(
-      '  implementer -> pane "Codex" (id tab-right); can\'t reach Aya: Codex sandbox workspace-write blocks the socket; open a new pane for it, or restart this one with -s danger-full-access -a never\n',
+      '  implementer -> pane "Codex" (id tab-right); can\'t reach Aya: Codex\'s current access settings prevent it from sending team messages; Choose a preset with access that allows team messages, or change this pane\'s access settings and choose Restart terminal\n',
     );
-    expect(opened.stdout).toMatch(/\n {4}Aya opened it with -s danger-full-access -a never so git and aya never wait for an approval; Codex then runs its commands without a sandbox/);
+    expect(opened.stdout).toMatch(/\n {4}Aya opened this Codex pane without a sandbox.*access your files and run commands directly/);
     const tester = paneIds(opened.stdout).tester;
     await expect.poll(() => codex(tester), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/WHOAMI team +ux-review\nyou +tester\n/);
     expect(codex(tester)).toMatch(/^ARGS -s danger-full-access -a never --no-daemon\n/);
@@ -320,14 +320,14 @@ test.describe("an open Codex pane in Codex's default sandbox", () => {
     expect(saved.tabs.find((t: { id: string }) => t.id === tester).teamLaunch).toBe(true);
 
     const card = (await openTeams(window)).getByTestId("team-ux-review");
-    await expect(card.getByLabel("implementer status")).toHaveText(/^can't reach Aya: Codex sandbox workspace-write blocks the socket/);
+    await expect(card.getByLabel("implementer status")).toHaveText(/^can't reach Aya: Codex's current access settings prevent it from sending team messages/);
     await expect(card.getByLabel("tester status")).toHaveText("ready");
-    await expect(card.getByLabel("tester launch note")).toContainText("Aya opened it with -s danger-full-access -a never");
+    await expect(card.getByLabel("tester launch note")).toContainText("Aya opened this Codex pane without a sandbox");
     await expect(card.getByLabel("implementer launch note")).toHaveCount(0);
 
     const start = aya(["team", "start", "ux-review"]);
     expect(start.status).toBe(1);
-    expect(start.stderr).toMatch(/^aya: team ux-review was not started, nothing was sent; implementer: can't reach Aya: Codex sandbox workspace-write blocks the socket/);
+    expect(start.stderr).toMatch(/^aya: team ux-review was not started, nothing was sent; implementer: can't reach Aya: Codex's current access settings prevent it from sending team messages/);
     expect(codex("tab-right")).not.toMatch(/Delivery test/);
     expect(codex(tester)).not.toMatch(/Delivery test/);
   });
@@ -339,7 +339,7 @@ const WRAPPED_CODEX = { ...CODEX_PRESET, id: "wrapped", name: "Wrapped Codex", c
 test.describe("a Codex run behind a wrapper", () => {
   test.use(rightTabSeed(HANDOFF_TEAM, [SHELL_PRESET, CODEX_PRESET, WRAPPED_CODEX], WRAPPED_CODEX));
 
-  test("gets a role and its messages: the window notes it may not reach Aya, Start does not refuse it", async ({ window, seeded }) => {
+  test("gets a role and its messages: the window explains uncertain access, Start does not refuse it", async ({ window, seeded }) => {
     test.setTimeout(AGENT_TEST_TIMEOUT_MS);
     await firstTerminalShown(window);
     const aya = cli(seeded.ayaHome);
@@ -347,13 +347,13 @@ test.describe("a Codex run behind a wrapper", () => {
     await expect.poll(() => codex("tab-right"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/^ARGS \n/);
     const open = () => aya(["team", "open", "ux-review", "implementer=pane:tab-right"]).stdout;
     // The host records the launch a moment after the spawn; until then the pane has no verdict.
-    await expect.poll(open, { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/implementer -> pane "Wrapped Codex" \(id tab-right\)\n {4}may not reach Aya: /);
+    await expect.poll(open, { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/implementer -> pane "Wrapped Codex" \(id tab-right\)\n {4}Aya could not identify how this pane connects/);
     const tester = paneIds(aya(["team", "open", "ux-review", "tester=new:codex"]).stdout).tester;
     await expect.poll(() => codex(tester), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/WHOAMI team +ux-review\nyou +tester\n/);
 
     const card = (await openTeams(window)).getByTestId("team-ux-review");
     await expect(card.getByLabel("implementer status")).toHaveText("ready");
-    await expect(card.getByLabel("implementer launch note")).toContainText("may not reach Aya: ");
+    await expect(card.getByLabel("implementer launch note")).toContainText("Aya could not identify how this pane connects");
 
     const start = aya(["team", "start", "ux-review"]);
     expect(start.stderr).toBe("");
@@ -393,13 +393,13 @@ test.describe("a Codex started as cd <dir> && codex", () => {
     await expect.poll(() => codex("tab-right"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/^ARGS --no-daemon\nFAIL connect EPERM/);
     const opened = aya(["team", "open", "ux-review", "implementer=pane:tab-right", "tester=new:cdcodex"]);
     expect(opened.stderr).toBe("");
-    expect(opened.stdout).toContain('  implementer -> pane "Cd Codex" (id tab-right); can\'t reach Aya: Codex sandbox workspace-write blocks the socket;');
-    expect(opened.stdout).not.toMatch(/may not reach Aya|start the agent directly/);
+    expect(opened.stdout).toContain('  implementer -> pane "Cd Codex" (id tab-right); can\'t reach Aya: Codex\'s current access settings prevent it from sending team messages;');
+    expect(opened.stdout).not.toMatch(/launch flags|socket|launch record|preflight/i);
     const tester = paneIds(opened.stdout).tester;
     await expect.poll(() => codex(tester), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/WHOAMI team +ux-review\nyou +tester\n/);
     expect(codex(tester)).toMatch(/^ARGS -s danger-full-access -a never --no-daemon\n/);
     const card = (await openTeams(window)).getByTestId("team-ux-review");
-    await expect(card.getByLabel("implementer status")).toHaveText(/^can't reach Aya: Codex sandbox workspace-write blocks the socket/);
+    await expect(card.getByLabel("implementer status")).toHaveText(/^can't reach Aya: Codex's current access settings prevent it from sending team messages/);
     await expect(card.getByLabel("tester status")).toHaveText("ready");
     await window.screenshot({ path: test.info().outputPath("cd-codex-roles.png") });
   });

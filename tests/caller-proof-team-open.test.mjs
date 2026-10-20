@@ -66,6 +66,7 @@ async function withServer(body) {
     roleLaunch: async () => ({ reach: "reaches", refused: null }),
     launchBlock: async () => null,
     launchNote: async () => null,
+    launchUncertain: async () => false,
     paneAlive: async (pane) => !pane.startsWith("gone"),
     openPanes: async (slug, panes) => {
       opened.push(...panes.map((p) => p.id));

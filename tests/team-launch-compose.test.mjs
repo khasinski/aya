@@ -90,7 +90,7 @@ composeTest("Codex: full access, --no-daemon and the resume subcommand reach the
 composeTest("Codex: a read-only preset is refused, not escalated, and its command is left as it was", async (w) => {
   writeFileSync(join(w.home, ".codex", "config.toml"), 'sandbox_mode = "read-only"\n');
   const got = await compose(w, { command: "codex", agent: "codex" });
-  assert.match(got.launch.refused, /read-only blocks the socket/);
+  assert.match(got.launch.refused, /Codex is read-only, so it cannot do this role's work/);
   assert.deepEqual(got.argv, ["--no-daemon", ...CODEX_NOTE]);
   assert.equal(got.mode.reach, "blocked");
 });
@@ -126,7 +126,7 @@ composeTest("Claude: the sandbox allow-list, the brief and the resume flag all r
   assert.deepEqual(got.argv.slice(2), ["--continue", "--append-system-prompt", "You are the reviewer."]);
   assert.equal(got.mode.reach, "reaches");
   const own = await compose(w, { command: `claude --settings '{"model":"x"}'`, agent: "claude" });
-  assert.match(own.launch.refused, /sandbox is on/);
+  assert.match(own.launch.refused, /current access settings prevent it from sending team messages/);
   assert.equal(own.mode.reach, "blocked");
 });
 
@@ -134,6 +134,6 @@ composeTest("Claude: a plan default mode in the settings is refused for a role's
   mkdirSync(join(w.home, ".claude"));
   writeFileSync(join(w.home, ".claude", "settings.json"), JSON.stringify({ permissions: { defaultMode: "plan" } }));
   const got = await compose(w, { command: "claude", agent: "claude" });
-  assert.match(got.launch.refused, /plan mode/);
+  assert.match(got.launch.refused, /planning mode.*cannot make the changes this role needs/);
   assert.equal(got.mode.reach, "blocked");
 });

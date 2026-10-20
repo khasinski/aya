@@ -145,7 +145,7 @@ test("after Apply: each role's pane, who lost one, and Start left to the user", 
   assert.equal(rolePanesSummary(result, false), "tester: new Codex pane, fixer: shell 2. Start the team when you are ready.");
   assert.equal(rolePanesSummary(result, true), "tester: new Codex pane, fixer: shell 2. The roles marked below were not told their role.");
   assert.equal(rolePanesSummary({ panes: [result.panes[0]], leftWithoutPane: ["writer"] }, true), "tester: new Codex pane. Left without a pane: writer.");
-  const blocked = { role: "reviewer", paneId: "p3", name: "Codex", preset: null, notReached: null, cantReach: "can't reach Aya: Codex sandbox workspace-write blocks the socket" };
+  const blocked = { role: "reviewer", paneId: "p3", name: "Codex", preset: null, notReached: null, cantReach: "can't reach Aya: Codex's current access settings prevent it from sending team messages" };
   assert.equal(
     rolePanesSummary({ panes: [result.panes[0], blocked], leftWithoutPane: [] }, false),
     "tester: new Codex pane, reviewer: Codex. Can't reach Aya: reviewer; its status below says why. Start the team when you are ready.",
@@ -181,14 +181,14 @@ test("a role's status: no pane, ready, or why its pane would not take a message"
   assert.deepEqual(status("gone"), { text: "no pane", tone: "none" });
   assert.deepEqual(status("none"), { text: "no pane", tone: "none" });
   assert.deepEqual(roleStatus({ assignments: { a: "p1" }, paneHolds: {} }, "a", tabs), { text: "ready", tone: "ok" });
-  const why = "can't reach Aya: OpenCode's plan agent is read-only (edits denied), so the role never does its work; open a new pane for it, or restart this one with --agent build";
+  const why = "can't reach Aya: OpenCode's planning mode is read-only, so it cannot make the changes this role needs; choose a preset with access that allows team messages";
   assert.deepEqual(roleStatus({ assignments: { a: "p1" }, paneHolds: { a: why } }, "a", tabs), { text: why, tone: "held" });
 });
 
 test("a role's note: what Aya widened for its pane, only while it has one", async () => {
   const { roleNote } = await import("../dist-test/team-view.js");
   const tabs = [{ id: "p1" }, { id: "p2" }];
-  const note = "Aya opened it with -c sandbox_workspace_write.network_access=true so it reaches Aya";
+  const note = "Aya allowed this Codex pane to connect to any network host, not only Aya";
   const team = { assignments: { a: "p1", b: "p2", gone: "p9" }, paneNotes: { a: note, b: null, gone: note } };
   assert.equal(roleNote(team, "a", tabs), note);
   assert.equal(roleNote(team, "b", tabs), null);

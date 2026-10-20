@@ -1,5 +1,5 @@
-// An unknown verdict is not in `cantReach` (only a measured can't reach is): its "may not reach Aya" is in the
-// pane's `note`, which the Apply banner must read too.
+// An unknown verdict is not in `cantReach` (only a measured can't reach is): it is a structured answer, independent
+// of the user-facing note that the Apply banner displays.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +11,7 @@ const unknown = { command: "env codex", cwd: "/p", mode: { reach: "unknown", why
 const widened = { command: "codex", cwd: "/p", added: ["-c", "sandbox_workspace_write.network_access=true"], mode: { reach: "reaches" } };
 const pane = (role, launch, reached = false) => {
   const note = launchNoteOf(launch, reached);
-  return { role, paneId: role, name: role, preset: null, notReached: null, cantReach: null, note, unsure: launchUnsure(null, note) };
+  return { role, paneId: role, name: role, preset: null, notReached: null, cantReach: null, note, unsure: launchUnsure(launch, reached) };
 };
 
 // [label, panes, banner before Start]

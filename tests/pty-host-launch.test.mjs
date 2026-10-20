@@ -58,14 +58,14 @@ test("a role's Codex pane gets full access and never asks, besides --no-daemon",
   assert.deepEqual([launch.command, launch.cwd], ["codex -s danger-full-access -a never --no-daemon", cwd]);
   assert.deepEqual([launch.mode.reach, launch.added], ["reaches", ["-s", "danger-full-access", "-a", "never"]]);
   assert.equal(launchBlockOf(launch), null);
-  assert.match(launchNoteOf(launch), /^Aya opened it with -s danger-full-access -a never so git and aya never wait for an approval/);
+  assert.match(launchNoteOf(launch), /^Aya opened this Codex pane without a sandbox.*access your files and run commands directly/);
 });
 
 test("a role's Codex pane whose preset picks its approval policy keeps it, gets the network switch, and is noted", async (t) => {
   const { output, launch } = await launched(t, "lm-1b", "codex -a on-request", true);
   assert.match(output, /CODEX-ARGS:-c sandbox_workspace_write.network_access=true --no-daemon -a on-request\s/);
   assert.equal(launchBlockOf(launch), null);
-  assert.match(launchNoteOf(launch), /network_access=true.*every network host.*as the preset sets them.*may stop for approvals/);
+  assert.match(launchNoteOf(launch), /Aya allowed this Codex pane to connect to any network host.*Codex may ask before running team actions/);
 });
 
 test("a normal Codex pane is launched as its preset says", async (t) => {
@@ -121,14 +121,14 @@ test("the verdict is the one at spawn: a config edited later does not flip a run
   const { launch: blocked } = await launched(t, "lm-6", "codex --no-daemon", false);
   assert.equal(blocked.mode.reach, "blocked");
   setConfig('sandbox_mode = "danger-full-access"\n');
-  assert.match(launchBlockOf(blocked), /read-only blocks the socket/, "the edit does not unblock a pane that started read-only");
-  assert.match(launchHoldOf(blocked), /^can't reach Aya: .*read-only blocks the socket/, "a measured can't reach holds");
+  assert.match(launchBlockOf(blocked), /Codex is read-only, so it cannot do this role's work/, "the edit does not unblock a pane that started read-only");
+  assert.match(launchHoldOf(blocked), /^can't reach Aya: Codex is read-only, so it cannot do this role's work/, "a measured can't reach holds");
   assert.equal(launchBlockOf((await launched(t, "lm-7", "codex --no-daemon", false)).launch), null, "a pane started after the edit sees it");
 });
 
 test("a pane the host has no launch verdict for is reported as such, and never held: only a measured can't reach holds", () => {
-  assert.match(launchBlockOf(null), /no record of how this pane was launched/);
-  assert.match(launchBlockOf({ command: "codex --no-daemon", cwd }), /no record of how this pane was launched/);
+  assert.match(launchBlockOf(null), /Aya could not check this pane's team access/);
+  assert.match(launchBlockOf({ command: "codex --no-daemon", cwd }), /Aya could not check this pane's team access/);
   for (const answer of [null, { command: "codex --no-daemon", cwd }, LAUNCH_UNREACHABLE, LAUNCH_STARTING, LAUNCH_UNSUPPORTED]) {
     assert.equal(launchHoldOf(answer), null, JSON.stringify(answer));
   }
@@ -141,7 +141,7 @@ test("a host that cannot be reached is not 'no record'; an old host that lacks t
   };
   const unreachable = await client.launch("x");
   assert.doesNotMatch(launchBlockOf(unreachable) ?? "", /no record/);
-  assert.match(launchBlockOf(unreachable), /could not ask/);
+  assert.match(launchBlockOf(unreachable), /could not check this pane's team access.*Restart terminal to try again/);
   assert.equal(launchNoteOf(unreachable), null);
   client.request = async () => {
     throw new Error(PTY_HOST_UNKNOWN_REQUEST);
@@ -190,7 +190,7 @@ async function untrustedPane(t, ptyId, projectConfig) {
   const { launch, client } = await launched(t, ptyId, "codex --no-daemon", false, dir);
   assert.equal(launch.mode.mode, UNTRUSTED);
   assert.equal(launchHoldOf(launch), null, "unknown is never held");
-  assert.match(launchNoteOf(launch), /^may not reach Aya: .*trust the project in Codex, then restart the pane/);
+  assert.match(launchNoteOf(launch), /^Codex has not trusted this project.*Trust the project in Codex, then choose Restart terminal/);
   return { dir, client };
 }
 
@@ -199,7 +199,7 @@ test("a project trusted after the pane started stays noted until the pane is res
   setConfig(`[projects."${dir}"]\ntrust_level = "trusted"\n`);
   const still = await client.launch("lm-10");
   assert.equal(still.mode.mode, UNTRUSTED);
-  assert.match(launchNoteOf(still), /restart the pane/);
+  assert.match(launchNoteOf(still), /choose Restart terminal/);
   const { launch: restarted } = await launched(t, "lm-10b", "codex --no-daemon", false, dir);
   assert.equal(restarted.mode.reach, "reaches", "a restart records the pane under the config it now runs with");
 });
