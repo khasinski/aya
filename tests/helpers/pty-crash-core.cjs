@@ -51,7 +51,7 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   if(variant!=='exit-gap'){await wait(()=>output.includes('UNREAD_BEFORE_ATTACH'));assert.equal(output.split('UNREAD_BEFORE_ATTACH').length-1,1);}
   assert.ok(!output.includes('OLD_CONSUMED'));
   if(variant!=='exit-gap'){
-   if(variant.startsWith('redraw-')){await wait(async()=>!(await vtSnapshot('pane')).recoveryUnknown);assert.equal(snapshotHold(await vtSnapshot('pane')).hold,null);assert.ok(fs.existsSync(path.join(home,'redraw-fired')));}
+   if(variant.startsWith('redraw-')){await wait(async()=>{try{return !(await vtSnapshot('pane')).recoveryUnknown;}catch(error){if(/not fully applied/.test(String(error)))return false;throw error;}});assert.equal(snapshotHold(await vtSnapshot('pane')).hold,null);assert.ok(fs.existsSync(path.join(home,'redraw-fired')));}
    else {const snapshot=await vtSnapshot('pane');assert.equal(snapshot.recoveryUnknown,true);assert.equal(snapshotHold(snapshot).hold,variant==='shell'?HOLD_SHELL:HOLD_RECOVERY_UNKNOWN);assert.equal(snapshotBusy(snapshot),false);}
    assert.equal(core.getPtyPid('pane'),bootstrap.panes[0].pid);
    assert.deepEqual(await owner.client.list().then(panes=>[panes[0].cols,panes[0].rows]),[bootstrap.panes[0].request.cols,bootstrap.panes[0].request.rows]);

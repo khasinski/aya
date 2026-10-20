@@ -280,6 +280,10 @@ test('manual success restores the normal three-attempt policy only after120s sta
 
 test('timeout after a partial replay preserves the retry notice after the successor socket closes',{timeout:15000},async()=>{
  const {client,status,logs,events}=await setup();const timer=globalThis.setTimeout;let expire;
+ const sendEvents=client.sendToSinks.bind(client);
+ // Model a loaded renderer/event loop where the recovery notice is delivered
+ // after the supervisor times out and closes the successor socket.
+ client.sendToSinks=items=>{const recovered=items.filter(event=>event.type==='recovered'),immediate=items.filter(event=>event.type!=='recovered');if(immediate.length)sendEvents(immediate);if(recovered.length)timer(()=>sendEvents(recovered),1500);};
  try{
   // Capture the supervisor deadline; only the restored callback fires it.
   // The cancellable inert handle preserves cleanup without racing slow startup.
@@ -289,7 +293,7 @@ test('timeout after a partial replay preserves the retry notice after the succes
   const send=client.sendRequest.bind(client);
   client.sendRequest=async(socket,req)=>{if(req.type==='spawn'&&req.req.replayAfter)await sleep(700);return send(socket,req);};
   process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));await wait(()=>!client.crashAttempt&&!client.socket);
-  assert.ok(events.some(e=>e.type==='recovered'),'timeout occurs after the validated inventory was published');
+  await wait(()=>events.some(e=>e.type==='recovered'),'timeout occurs after the validated inventory was published');
   const notice=events.filter(e=>e.type==='disconnected').at(-1);assert.match(notice.reason,/recovery budget/);assert.equal(notice.retryable,true);assert.equal(client.recoveryRetryable,true);assert.equal(client.crashBlocked,true);
  }finally{globalThis.setTimeout=timer;await cleanup(client);}
 });
