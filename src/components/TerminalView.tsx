@@ -880,6 +880,7 @@ function TerminalViewComponent({
         if(event.replayToken){if(event.replayToken!==replayToken||appliedToken)return;appliedToken=true;}
         if(awaitingReplay&&!event.replay)return;
         if(event.reset){term.reset();setHistoryNotice(recoveryNoticeRef.current ?? "History from replay after the update; earlier captured history was no longer retained.");}
+        if (event.replayModeUnknown) setHistoryNotice("The retained output's terminal mode is unknown; its previous screen layout may not be preserved.");
         if(event.replay&&awaitingReplay)awaitingReplay=false;
         // Track whether a full-screen / rich TUI (claude, codex, vim…) is
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:

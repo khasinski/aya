@@ -31,6 +31,7 @@ import {
   openVtPane,
   resizeVtPane,
   vtPaneAltScreen,
+  vtPaneReplayModeState,
   writeVtPane,
 } from "./vt-mirror";
 import type { OwnerPane } from "./pty-owner-client";
@@ -39,6 +40,7 @@ import { validateRecoveryLaunch } from "./pty-core-checkpoint";
 import type { PaneLaunch } from "./launch-mode";
 import type { PaneSize } from "./pane-render";
 import { COMMAND_NOT_FOUND_EXIT_CODE, MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
+import { consumeReplayModes, initialReplayModeTracker, legacyReplayModeTracker, replayModePrefix, validateReplayModeTracker, type ReplayModeTracker, type ReplayModeState } from "./pty-replay-modes";
 import { ptyLog } from "./pty-log";
 
 export type PreparedSpawn =
@@ -87,8 +89,20 @@ interface OutputBuffer {
    *  so an unchanged buffer costs indexOf scans instead of a full join + 4
    *  regex passes + toLowerCase over ~1MB per live PTY per keystroke. */
   searchCache?: { version: number; cleaned: string; lower: string };
+  /** Mode state at the first retained byte, including a split CSI carry. */
+  replayModes: ReplayModeTracker;
+  /** False only for legacy ended checkpoints with no VT state to reconstruct it. */
+  replayModesKnown: boolean;
 }
 const outputBuffers = new Map<string, OutputBuffer>();
+function restoreOutputBuffer(value: PaneCoreCheckpoint["output"], legacyCurrentModes?: ReplayModeState): OutputBuffer {
+  const legacyModes = value.replayModes ? undefined : legacyCurrentModes
+    ? legacyReplayModeTracker(legacyCurrentModes, value.chunks.join("")) : undefined;
+  return { chunks: [...value.chunks], total: value.total, version: value.version, end: value.end,
+    replayModes: value.replayModes ? validateReplayModeTracker(value.replayModes) :
+      legacyModes ?? initialReplayModeTracker(),
+    replayModesKnown: value.replayModes !== undefined || (legacyCurrentModes !== undefined && legacyModes !== null) };
+}
 // Restored processes read immediately. Keep their replay and real exit outcome
 // until the first renderer attaches, even if the child exits during that gap.
 const frozenEndedPanes=new Map<string,EndedCoreCheckpoint>();
@@ -203,9 +217,10 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
     let endedBytes=0;
     for(const [id,pane] of restoredPanes){
       if(pane.exitCode===undefined||ptys.has(id))continue;
-      const output=outputBuffers.get(id)??{chunks:[],total:0,version:0,end:0};
+      const output=outputBuffers.get(id)??{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true};
       const nativeExit=pendingOwnerExits.get(id);
-      const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,...(nativeExit?{ownerExit:{generation:nativeExit.generation,event:nativeExit.event}}:{}),output:structuredClone({chunks:output.chunks,total:output.total,version:output.version,end:output.end})};
+      const outputDto={chunks:output.chunks,total:output.total,version:output.version,end:output.end,...(output.replayModesKnown?{replayModes:structuredClone(output.replayModes)}:{})};
+      const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,...(nativeExit?{ownerExit:{generation:nativeExit.generation,event:nativeExit.event}}:{}),output:outputDto};
       await validateCoreHandoverPart(dto);
       if(!handoverGated||epoch!==handoverEpoch)throw Error("Terminal handover was cancelled");
       endedBytes+=Buffer.byteLength(JSON.stringify(dto));
@@ -232,10 +247,10 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
         if(!handoverGated||epoch!==handoverEpoch)throw new Error("Terminal handover was cancelled");
         const vt: VtCheckpoint = await checkpointVtPane(id);
         if (ptys.get(id) !== child || !spawnRequests.has(id) || !launches.has(id)) throw new Error("The pane changed during handover");
-        const output = outputBuffers.get(id) ?? {chunks: [], total: 0, version: 0, end: 0};
+        const output = outputBuffers.get(id) ?? {chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true};
         const dto: PaneCoreCheckpoint = {
           format: 1, id, adapter, request: spawnRequests.get(id)!, launch: launches.get(id)!, spawnedAt: spawnTimes.get(id)!,
-          output: {chunks: [...output.chunks], total: output.total, version: output.version, end: output.end},
+          output: {chunks: [...output.chunks], total: output.total, version: output.version, end: output.end, replayModes: structuredClone(output.replayModes)},
           oscCarry: oscCarryBuffers.get(id) ?? "", vt,
         };
         const json=JSON.stringify(dto),bytes=Buffer.byteLength(json);
@@ -341,7 +356,7 @@ export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Pr
         pendingOwnerExits.set(pane.id,native);owner.disconnected.delete(pane.id);
       }
     }
-    outputBuffers.set(pane.id,structuredClone(pane.output));holdEndedPane(pane.id,pane.generation,pane.exitCode);return;
+    outputBuffers.set(pane.id,restoreOutputBuffer(pane.output));holdEndedPane(pane.id,pane.generation,pane.exitCode);return;
   }
   if (ptys.has(pane.id) || spawning.size || shuttingDown) throw new Error("PTY restore target is not empty");
   await restoreVtPane(pane.id, pane.vt, (waiting, dialog) => {
@@ -352,7 +367,7 @@ export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Pr
   catch (error) { closeVtPane(pane.id); throw error; }
   ptys.set(pane.id, child); launches.set(pane.id, pane.launch);
   spawnTimes.set(pane.id, pane.spawnedAt); spawnRequests.set(pane.id, pane.request);
-  outputBuffers.set(pane.id, structuredClone(pane.output));
+  outputBuffers.set(pane.id, restoreOutputBuffer(pane.output, vtPaneReplayModeState(pane.id)));
   if (pane.oscCarry) oscCarryBuffers.set(pane.id, pane.oscCarry);
   restoredPanes.set(pane.id, {generation: (pane.vt.metadata as {generation:string}).generation, attached:false});
   installChildObservers(pane.request, child, sink, () => {});
@@ -373,7 +388,7 @@ export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Pr
   try{child=await OwnerPty.attach({pane:actual,process:pane.launch.command,readBytes:0,decoderCarry:""});}
   catch(error){closeVtPane(pane.id);throw error;}
   ptys.set(pane.id,child);launches.set(pane.id,pane.launch);spawnRequests.set(pane.id,pane.request);spawnTimes.set(pane.id,pane.spawnedAt);
-  outputBuffers.set(pane.id,{chunks:[],total:0,version:0,end:0});
+  outputBuffers.set(pane.id,{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true});
   restoredPanes.set(pane.id,{generation:snapshotOf(mirror).generation,attached:false});
   if(!actual.exited){child.resize(Math.max(2,actual.cols-1),actual.rows);child.resize(actual.cols,actual.rows);}
   installChildObservers(pane.request,child,sink,()=>{});
@@ -404,7 +419,7 @@ export interface PtyEventSink {
 function appendToOutputBuffer(ptyId: string, chunk: string): void {
   let buffer = outputBuffers.get(ptyId);
   if (!buffer) {
-    buffer = { chunks: [], total: 0, version: 0, end: 0 };
+    buffer = { chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true };
     outputBuffers.set(ptyId, buffer);
   }
   buffer.chunks.push(chunk);
@@ -413,7 +428,7 @@ function appendToOutputBuffer(ptyId: string, chunk: string): void {
   buffer.end += chunk.length;
   while (buffer.total > OUTPUT_BUFFER_MAX && buffer.chunks.length > 1) {
     const removed = buffer.chunks.shift();
-    if (removed) buffer.total -= removed.length;
+    if (removed) { buffer.total -= removed.length; consumeReplayModes(buffer.replayModes, removed); }
   }
 }
 
@@ -437,6 +452,11 @@ export function getBufferedOutput(ptyId: string): string {
   const buffer = outputBuffers.get(ptyId);
   return buffer ? buffer.chunks.join("") : "";
 }
+/** Full replay begins with the mode state at the first retained byte. */
+export function getBufferedReplayOutput(ptyId: string): string {
+  const buffer = outputBuffers.get(ptyId);
+  return buffer ? (buffer.replayModesKnown ? replayModePrefix(buffer.replayModes) : "") + buffer.chunks.join("") : "";
+}
 
 /** A renderer checkpoint is valid only while every byte since B is retained.
  * Counters use cleaned UTF-16 units, just like renderer writes and replay. */
@@ -449,19 +469,19 @@ export function getBufferedOutputSince(ptyId: string, offset: number): {chunk: s
 }
 function replayOutput(req: SpawnRequest, sink: PtyEventSink): void {
   if (sink.isDestroyed()) return;
-  let chunk = getBufferedOutput(req.ptyId);
+  let chunk = getBufferedReplayOutput(req.ptyId);
   ptyLog.append("spawn-replay", {ptyId:req.ptyId,bytes:Buffer.byteLength(chunk)});
   let reset: boolean | undefined;
   if (req.replayAfter) {
     const restored = restoredPanes.get(req.ptyId);
     if (restored) restored.replayToken=req.replayAfter.token;
     const replay = restored?.generation === req.replayAfter.generation
-      ? getBufferedOutputSince(req.ptyId,req.replayAfter.offset) : {chunk,reset:true};
-    chunk = replay.chunk; reset = replay.reset;
+      ? getBufferedOutputSince(req.ptyId,req.replayAfter.offset) : {chunk:getBufferedOutput(req.ptyId),reset:true};
+    chunk = replay.reset ? getBufferedReplayOutput(req.ptyId) : replay.chunk; reset = replay.reset;
     if (reset) ptyLog.append("handover-history-from-replay", {ptyId:req.ptyId,reason:"checkpoint boundary unavailable"});
   }
   // An empty replay is still the fence after restoring a captured display.
-  if (chunk || req.replayAfter) sink.sendPtyEvent({type:"data",ptyId:req.ptyId,chunk,replay:true,...(req.replayAfter?.token?{replayToken:req.replayAfter.token}:{}),...(reset !== undefined ? {reset} : {})});
+  if (chunk || req.replayAfter) sink.sendPtyEvent({type:"data",ptyId:req.ptyId,chunk,replay:true,...(outputBuffers.get(req.ptyId)?.replayModesKnown===false?{replayModeUnknown:true}:{}),...(req.replayAfter?.token?{replayToken:req.replayAfter.token}:{}),...(reset !== undefined ? {reset} : {})});
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
