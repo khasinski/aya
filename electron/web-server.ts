@@ -41,6 +41,13 @@ const SESSION_COOKIE = "aya_web_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOGIN_BODY_MAX_BYTES = 4096;
 const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
+const WEB_DENIED_CHANNELS = new Set([
+  "prompt-attachments:register-drop",
+  "prompt-attachments:register-paste",
+  "prompt-attachments:drop",
+  "prompt-attachments:clipboard-image",
+  "prompt-attachments:context-menu-image",
+]);
 export const SESSION_TOKEN_BYTES = 32;
 // One year: hashed asset filenames never change content.
 export const IMMUTABLE_MAX_AGE_S = 31_536_000;
@@ -202,7 +209,7 @@ export async function dispatchWebInvoke(
   channel: string,
   args: unknown[],
 ): Promise<unknown> {
-  if (!WEB_ALLOWED_CHANNELS.has(channel)) {
+  if (WEB_DENIED_CHANNELS.has(channel) || !WEB_ALLOWED_CHANNELS.has(channel)) {
     throw new Error("Not available in Aya Web");
   }
   const override = CHANNEL_OVERRIDES[channel];

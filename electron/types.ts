@@ -573,6 +573,10 @@ export interface WebConfigureRequest {
 export interface HandoverCaptureRequest {requestId:string;ptyId:string;maxBytes:number}
 export interface HandoverDisplay {json:string|null;generation:string;offset:number;notice:string|null}
 
+export type PromptAttachmentResult =
+  | { status: "added" }
+  | { status: "copied-not-added"; message: string; copyText: string };
+
 export interface AyaApi {
   /** True when running under `npm run dev` (AYA_DEV=1). False in the packaged
    *  Aya.app. Use to show a "dev" indicator and keep the user's dogfooded

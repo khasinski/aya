@@ -410,6 +410,38 @@ function TerminalViewComponent({
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );
+  const [attachmentNotice, setAttachmentNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [copiedAttachmentPath, setCopiedAttachmentPath] = useState<string | null>(null);
+  useEffect(() => {
+    const onAttachmentResult = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        terminalId: string;
+        kind: "files" | "image";
+        count: number;
+        phase: "started" | "finished";
+        result?: { status: string; message?: string; copyText?: string };
+        error?: string;
+      }>).detail;
+      if (!detail || detail.terminalId !== terminal.id) return;
+      if (detail.phase === "started") {
+        setCopiedAttachmentPath(null);
+        setAttachmentNotice({ text: detail.kind === "image" ? "Saving the clipboard image..." : "Adding file paths...", error: false });
+        return;
+      }
+      if (detail.error) {
+        setAttachmentNotice({ text: detail.error.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""), error: true });
+      } else if (detail.result?.status === "not-image") {
+        setAttachmentNotice(null);
+      } else if (detail.result?.status === "copied-not-added") {
+        setAttachmentNotice({ text: detail.result.message ?? "The path was not added. Nothing was typed.", error: true });
+        setCopiedAttachmentPath(detail.result.copyText ?? null);
+      } else {
+        setAttachmentNotice({ text: detail.kind === "image" ? "Image saved and its path added. Nothing was submitted." : `${detail.count === 1 ? "File path added" : `${detail.count} file paths added`}. Nothing was submitted.`, error: false });
+      }
+    };
+    document.addEventListener("aya:prompt-attachment-result", onAttachmentResult);
+    return () => document.removeEventListener("aya:prompt-attachment-result", onAttachmentResult);
+  }, [terminal.id]);
   const sendInput = useCallback((data: string) => {
     if(handoverInputPausedRef.current)return;
     const showFailure = (detail: string) => xtermRef.current?.write(`\r\n[${detail}]\r\n`);
@@ -1474,6 +1506,13 @@ function TerminalViewComponent({
     xtermRef.current?.focus();
   };
 
+  const copyAttachmentPath = useCallback(async () => {
+    if (!copiedAttachmentPath) return;
+    await window.aya.writeClipboard(copiedAttachmentPath);
+    setCopiedAttachmentPath(null);
+    setAttachmentNotice({ text: "Path copied. Paste it into the pane when you are ready.", error: false });
+  }, [copiedAttachmentPath]);
+
   const selectAllTerminal = () => {
     xtermRef.current?.selectAll();
     setContextMenu(null);
@@ -1570,7 +1609,11 @@ function TerminalViewComponent({
         }
         onWheelCapture={() => setIsScrollbarHidden(false)}
         onContextMenu={openTerminalContextMenu}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+        }}
       >
+        {attachmentNotice && <div data-testid="prompt-attachment-notice" className={`aya-prompt-attachment-notice ${attachmentNotice.error ? "aya-prompt-attachment-notice--error" : ""}`} role={attachmentNotice.error ? "alert" : "status"}>{attachmentNotice.text}{copiedAttachmentPath && <button type="button" onClick={() => void copyAttachmentPath()}>Copy path</button>}</div>}
         {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}{terminal.recoveryRetryable&&<button type="button" data-testid="terminal-recovery-retry" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.retryPtyHostRecovery().catch(error=>setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`));}}>Try again</button>}</div>}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
@@ -1620,6 +1663,7 @@ function TerminalViewComponent({
           </button>
           <button
             data-testid="terminal-context-paste"
+            data-aya-terminal-paste
             className="aya-terminal-context-item"
             type="button"
             disabled={terminal.disconnected}

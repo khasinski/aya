@@ -35,6 +35,11 @@ function registered(text) {
 const invokedByWindow = new Set(
   [...readFileSync(join(ROOT, "electron/preload.ts"), "utf8").matchAll(/ipcRenderer\.(?:invoke|send)\(\s*"([^"]+)"/g)].map((m) => m[1]),
 );
+// Some IPC calls are intentionally kept in the isolated preload gesture helper
+// rather than exposed on window.aya. Scan those calls as first-class invocations.
+const invokedByPreloadGesture = new Set(
+  [...readFileSync(join(ROOT, "electron/prompt-attachment-gestures.ts"), "utf8").matchAll(/deps\.invoke\(\s*"([^"]+)"/g)].map((m) => m[1]),
+);
 const invokedByWeb = new Set([...readFileSync(join(ROOT, "src/web/bridge.ts"), "utf8").matchAll(/\binv\(\s*"([^"]+)"/g)].map((m) => m[1]));
 
 const counts = new Map();
@@ -46,8 +51,8 @@ for (const file of sources(join(ROOT, "electron"))) {
   }
 }
 
-test("every channel the window or Aya Web invokes has a handler", () => {
-  const missing = [...new Set([...invokedByWindow, ...invokedByWeb])].filter((channel) => !counts.has(channel)).sort();
+test("every channel the window, preload gestures or Aya Web invokes has a handler", () => {
+  const missing = [...new Set([...invokedByWindow, ...invokedByPreloadGesture, ...invokedByWeb])].filter((channel) => !counts.has(channel)).sort();
   assert.deepEqual(missing, []);
 });
 
@@ -56,8 +61,8 @@ test("no channel is registered twice", () => {
   assert.deepEqual(twice, []);
 });
 
-test("every registered channel is invoked by the window or Aya Web", () => {
-  const unused = [...counts.keys()].filter((channel) => !invokedByWindow.has(channel) && !invokedByWeb.has(channel)).sort();
+test("every registered channel is invoked by the window, preload gestures or Aya Web", () => {
+  const unused = [...counts.keys()].filter((channel) => !invokedByWindow.has(channel) && !invokedByPreloadGesture.has(channel) && !invokedByWeb.has(channel)).sort();
   assert.deepEqual(unused, []);
 });
 

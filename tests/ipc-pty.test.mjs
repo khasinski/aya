@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 const { registerPtyIpc } = await import("../dist-electron/ipc/pty-ipc.js");
 const { createSpawnGate } = await import("../dist-electron/spawn-gate.js");
 const { PTY_HOST_NOT_CONNECTED } = await import("../dist-electron/constants.js");
+const { paneInputRevision } = await import("../dist-electron/pane-input-queue.js");
 
 function setup(over = {}) {
   const handlers = new Map();
@@ -69,6 +70,22 @@ test("a spawn is prepared, then sent; typing waits for it and is noted before it
     ["typed", "a", "hi\r"],
     ["write", "a", "hi\r"],
   ]);
+});
+
+test("accepted keyboard text and Enter advance the per-pane attachment activity revision", async () => {
+  const id = "attachment-activity-revision";
+  const { call } = setup();
+  const before = paneInputRevision(id);
+  await call("pty:write", id, "draft");
+  assert.equal(paneInputRevision(id), before + 1);
+  await call("pty:write", id, "\r");
+  assert.equal(paneInputRevision(id), before + 2);
+
+  const refused = setup();
+  refused.host.write = async () => false;
+  const refusedBefore = paneInputRevision("attachment-revision-refused");
+  await refused.call("pty:write", "attachment-revision-refused", "not accepted");
+  assert.equal(paneInputRevision("attachment-revision-refused"), refusedBefore + 1, "the activity fence advances when input is queued, even if the host later refuses it");
 });
 
 test("a pane closed while its spawn is prepared is not sent, and its brief is forgotten", async () => {

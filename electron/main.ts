@@ -112,6 +112,7 @@ import { registerRemoteIpc } from "./ipc/remote-ipc";
 import { registerProjectsIpc } from "./ipc/projects-ipc";
 import { createAyaWeb, registerAyaWebIpc } from "./ipc/aya-web-ipc";
 import { registerPtyIpc } from "./ipc/pty-ipc";
+import { registerPromptAttachmentIpc } from "./ipc/prompt-attachments-ipc";
 import { startWebServer } from "./web-server";
 import {
   appleHelperPath,
@@ -566,6 +567,18 @@ function registerIpc(): TeamRunner {
     retryRecovery:()=>ptyHost.retryCrashRecovery(),
     stopOtherHosts: stopOtherHostsFromWindow,
     waiting: outstandingWaiting,
+  });
+  registerPromptAttachmentIpc({
+    ipcMain,
+    clipboard,
+    ayaHome: AYA_HOME,
+    trustedWindow: (event) => {
+      const window = senderWindow(event);
+      return window && event.senderFrame === event.sender.mainFrame ? window : null;
+    },
+    listProjects,
+    holdReason: (ptyId) => ptyHost.holdReason(ptyId),
+    writePane: (ptyId, data) => ptyHost.write(ptyId, data),
   });
 
   registerProjectsIpc({

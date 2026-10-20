@@ -57,6 +57,7 @@ export interface SeedOptions {
     icon: string;
     color: string;
     command: string;
+    agent?: string;
     autoResume?: boolean;
   }>;
   /** Extra environment variables for the Electron process. */
@@ -397,10 +398,33 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     const bin = join(root, "remote-bin");
     mkdirSync(bin, { recursive: true });
     const remoteShell = join(bin, "remote-shell");
-    writeFileSync(remoteShell, `#!/bin/sh\n${RUN_C}`, { mode: 0o755 });
-    // Only the pane's `ssh -tt <target> <script>`; Aya's other ssh calls (preset listing) fail fast.
-    writeFileSync(join(bin, "ssh"), `#!/bin/sh\n[ "$1" = "-tt" ] || exit 255\nSHELL=${shellQuote(remoteShell)} exec /bin/sh -c "$3"\n`, { mode: 0o755 });
+    writeFileSync(remoteShell, `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in -c) shift; exec /bin/sh -c "$1" ;; *) shift ;; esac
+done
+exec /bin/sh -i
+`, { mode: 0o755 });
     const remoteHome = join(root, "remote-home");
+    const remoteRuntime = join(root, "remote-runtime");
+    mkdirSync(remoteHome, { recursive: true, mode: 0o700 });
+    mkdirSync(remoteRuntime, { recursive: true, mode: 0o700 });
+    chmodSync(remoteHome, 0o700);
+    chmodSync(remoteRuntime, 0o700);
+    // The PTY path starts a remote login command; non-interactive upload uses the
+    // same fake host and executes the fixed `sh -c` receiver with piped stdin.
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh
+if [ "$1" = "-tt" ]; then
+  [ "$2" = "me@fakehost" ] || exit 255
+  HOME=${shellQuote(remoteHome)} XDG_RUNTIME_DIR=${shellQuote(remoteRuntime)} SHELL=${shellQuote(remoteShell)} exec /bin/sh -c "$3"
+fi
+while [ "$1" = "-o" ]; do shift 2; done
+[ "$1" = "--" ] || exit 255
+shift
+[ "$1" = "me@fakehost" ] || exit 255
+shift
+[ "$#" = "1" ] || exit 255
+HOME=${shellQuote(remoteHome)} XDG_RUNTIME_DIR=${shellQuote(remoteRuntime)} exec /bin/sh -c "$1"
+`, { mode: 0o755 });
     for (const [name, env, fake] of [
       ["claude", `CLAUDE_CONFIG_DIR=${shellQuote(join(remoteHome, ".claude"))}`, "fake-claude.cjs"],
       ["grok", `GROK_HOME=${shellQuote(join(remoteHome, ".grok"))}`, "fake-grok.cjs"],

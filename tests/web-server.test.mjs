@@ -14,6 +14,7 @@ import {
   WEB_BRIDGE_INVOKE_CHANNELS,
   WEB_OVERRIDE_CHANNELS,
 } from "../dist-electron/web-server.js";
+import { captureIpcHandlers } from "../dist-electron/ipc/web-capture.js";
 
 async function login(base, user = "tester", password = PASSWORD, headers = {}) {
   const res = await fetch(`${base}/api/login`, {
@@ -187,6 +188,44 @@ test("web allowlist exactly tracks bridge invokes plus existing overrides", () =
     ...WEB_OVERRIDE_CHANNELS,
   ])].sort();
   assert.deepEqual([...WEB_ALLOWED_CHANNELS].sort(), expectedAllowed);
+});
+
+test("raw Aya Web invokes cannot register or use prompt-attachment authority", async () => {
+  let invoked = 0;
+  let clipboardReads = 0;
+  const ipcMain = { handle(channel, handler) { this.handlers.set(channel, handler); }, handlers: new Map() };
+  captureIpcHandlers(ipcMain);
+  for (const channel of [
+    "prompt-attachments:register-drop",
+    "prompt-attachments:register-paste",
+    "prompt-attachments:drop",
+    "prompt-attachments:context-menu-image",
+  ]) ipcMain.handle(channel, () => { invoked += 1; });
+  ipcMain.handle("prompt-attachments:clipboard-image", () => { invoked += 1; clipboardReads += 1; });
+
+  const { base, cleanup } = await startTestServer();
+  try {
+    const { cookie } = await login(base);
+    const { ws, next } = await wsOpen(base.replace("http:", "ws:") + "/ws", cookie);
+    try {
+      await next(); // hello
+      for (const [id, channel] of [
+        [10, "prompt-attachments:register-drop"],
+        [11, "prompt-attachments:drop"],
+        [12, "prompt-attachments:register-paste"],
+        [13, "prompt-attachments:clipboard-image"],
+        [14, "prompt-attachments:context-menu-image"],
+      ]) {
+        ws.send(JSON.stringify({ t: "invoke", id, channel, args: ["pane", [{ path: "/private/key" }]] }));
+        const result = await next();
+        assert.equal(result.id, id);
+        assert.equal(result.ok, false);
+        assert.equal(result.error, "Not available in Aya Web");
+      }
+      assert.equal(invoked, 0);
+      assert.equal(clipboardReads, 0);
+    } finally { ws.close(); }
+  } finally { await cleanup(); }
 });
 
 test("session tokens are 32 random bytes; hashed assets cache for a year", () => {

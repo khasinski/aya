@@ -1,6 +1,6 @@
 import { formatPaneState, type PaneStateResult } from "./pane-state";
 import type { BrowserWindow } from "electron";
-import { oneAtATime } from "./keyed-queue";
+import { notePaneInput, paneInputRevision, withPaneInputLock } from "./pane-input-queue";
 import { listenOwnerOnly } from "./owner-socket";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -25,7 +25,7 @@ import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
 import { handleTeamAuthorRequest } from "./team-author";
-import { HOLD_BUSY, HOLD_DRAFT, isDialogHold, isUserOnlyHold } from "./pane-holds";
+import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
 import { oneLine, printable } from "./printable";
 import { handleTeamRequest, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
@@ -315,7 +315,7 @@ function deliverToPane(
   beforeEnter?: () => Promise<void>,
   afterEnter?: () => Promise<void>,
 ): Promise<void> {
-  return withPaneLock(terminalId, async () => {
+  return withPaneInputLock(terminalId, async () => {
     await guard?.();
     // Raw bytes, unlike the snippet drawer's bracketed paste: macOS bash 3.2 has
     // none and would take the markers as command text. "\r" is Enter, not "\n".
@@ -324,6 +324,7 @@ function deliverToPane(
         `pane "${name}" did not accept the text - it may have exited, or be starting up with a full input queue. Nothing was submitted; check the pane before retrying.`,
       );
     }
+    notePaneInput(terminalId);
     if (submit) {
       try {
         await new Promise((resolve) =>
@@ -331,6 +332,7 @@ function deliverToPane(
         );
         await beforeEnter?.();
         if ((await writePane(terminalId, "\r")) === false) throw new TextPastedError(`pane "${name}" exited before the text was submitted`);
+        notePaneInput(terminalId);
       } catch (err) {
         if (err instanceof TextPastedError || err instanceof PaneHeldError) throw err;
         throw new TextPastedError(`pane "${name}" did not take the Enter after the text: ${err instanceof Error ? err.message : err}`);
@@ -341,8 +343,52 @@ function deliverToPane(
   });
 }
 
+/** Adds paths to the user's input without submitting them. It shares pane-send's
+ *  serialization and host writer, and checks the screen again at the write boundary. */
+export async function typeAttachmentPaths(
+  writePane: NonNullable<ControlServerOptions["writePane"]>,
+  paneHold: NonNullable<ControlServerOptions["paneHold"]>,
+  terminalId: string,
+  paneName: string,
+  paths: string,
+  expectedInputRevision?: number,
+): Promise<void> {
+  const guard = async () => {
+    const checkInputRevision = () => {
+      if (expectedInputRevision !== undefined && paneInputRevision(terminalId) !== expectedInputRevision) throw new PaneInputChangedError();
+    };
+    checkInputRevision();
+    await assertAttachmentPaneCanReceiveInput(paneHold, terminalId, paneName);
+    // The hold read is asynchronous. A keyboard request can arrive while it
+    // waits, so recheck at the last point before deliverToPane writes bytes.
+    checkInputRevision();
+  };
+  await deliverToPane(writePane, terminalId, paneName, paths, false, guard);
+}
+
+export async function assertAttachmentPaneCanReceiveInput(
+  paneHold: NonNullable<ControlServerOptions["paneHold"]>,
+  terminalId: string,
+  paneName: string,
+): Promise<void> {
+  const safeName = paneName.replace(/[\x00-\x1f\x7f-\x9f]/g, " ").slice(0, 80) || "this terminal";
+  let hold: string | null;
+  try { hold = await paneHold(terminalId); }
+  catch { throw new PaneHeldError("Aya could not check this pane safely. Nothing was typed."); }
+  if (hold === HOLD_STARTING) throw new PaneHeldError(`Not sent: ${safeName} is still starting. Wait for it to finish opening, then try again. Nothing was typed.`);
+  if (hold === HOLD_NOT_RUNNING) throw new PaneHeldError(`Not sent: ${safeName} is not running. Start it, then try again. Nothing was typed.`);
+  if (isDialogHold(hold)) {
+    throw new PaneHeldError(`Not sent: ${safeName} is waiting for your answer to a question. Answer it in that pane, then try again. Nothing was typed.`);
+  }
+  if (hold && hold !== HOLD_SHELL && hold !== HOLD_BUSY && hold !== HOLD_DRAFT) {
+    throw new PaneHeldError("Aya could not check this pane safely. Nothing was typed.");
+  }
+}
+
 /** One pane-send per terminal at a time: each finishes its text, gap and Enter before the next begins. */
-const withPaneLock = oneAtATime();
+export class PaneInputChangedError extends Error {
+  constructor() { super("The pane received other text while the file was copying."); }
+}
 
 /** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
 const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);

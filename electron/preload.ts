@@ -1,8 +1,9 @@
 // Preload — exposes a typed `window.aya` API to the renderer using
 // contextBridge. The renderer has no direct Node access.
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { createOpenProjectBuffer } from "./open-project-buffer";
+import { installPromptAttachmentGestures } from "./prompt-attachment-gestures";
 import { installWheelZoom } from "./zoom-preload";
 
 import type {
@@ -15,6 +16,22 @@ import type {
 } from "./types";
 
 installWheelZoom();
+
+// Keep OS paths and the clipboard behind the preload event boundary. A page
+// script can manufacture a DOM event, but it cannot make it trusted or invoke
+// the private IPC directly.
+installPromptAttachmentGestures({
+  document,
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+  report: (detail) => {
+    const raw = detail.error;
+    const error = typeof raw === "string" ? raw : raw && typeof raw === "object" && "message" in raw && typeof raw.message === "string" ? raw.message : undefined;
+    document.dispatchEvent(new CustomEvent("aya:prompt-attachment-result", {
+      detail: { ...detail, error },
+    }));
+  },
+});
 
 // Subscribed at load, not when the renderer asks: an open sent before its
 // effect subscribes waits here instead of being lost.

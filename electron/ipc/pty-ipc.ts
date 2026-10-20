@@ -5,7 +5,7 @@
 import type { IpcMain } from "electron";
 import { PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "../constants";
 import { searchHarnessSessions } from "../harness-search";
-import { oneAtATime } from "../keyed-queue";
+import { notePaneInput, withPaneInputLock } from "../pane-input-queue";
 import type { PtyHostClient } from "../pty-host-client";
 import { closePane, type createSpawnGate } from "../spawn-gate";
 import type { SpawnRequest } from "../types";
@@ -53,11 +53,13 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   });
   // One write per pane at a time: the Enter that answers a waiting agent asks the host about the screen first, and
   // the keys typed right after it must not overtake it.
-  const paneWrites = oneAtATime();
   ipcMain.handle("pty:write", (_e, ptyId: unknown, data: unknown) => {
     const id = requireString(ptyId, "pty:write.ptyId");
     const text = requireString(data, "pty:write.data");
-    return paneWrites(id, async () => {
+    // Record the user's input intent before it can wait behind another write;
+    // an attachment upload must not overtake text already queued by the pane.
+    notePaneInput(id);
+    return withPaneInputLock(id, async () => {
       await gate.afterSpawn(id);
       await deps.noteTyping(id, text);
       return host.write(id, text);

@@ -50,7 +50,7 @@ export interface SshRun {
 
 export interface SshRunOptions {
   /** Written to the remote command's stdin, so the remote login shell never parses it. */
-  input?: string;
+  input?: string | Buffer;
   deadlineMs: number;
   maxOutputBytes?: number;
   /** Child-only environment; discovery disables the shell used by SSH Match exec. */
