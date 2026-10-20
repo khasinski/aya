@@ -159,7 +159,7 @@ function sendJson(socket: net.Socket, reply: { ok: boolean; output?: unknown; er
  *  resolve their target the same way and fail loudly on an ambiguous name. */
 async function handlePaneRequest(
   request: Extract<ControlRequest, { type: "pane-read" | "pane-send" }>,
-  options: ControlServerOptions,
+  options: Pick<ControlServerOptions, "listProjects" | "readPane" | "writePane" | "writePaneChecked" | "paneHold" | "paneInputProtection">,
   callerGone?: AbortSignal,
 ): Promise<Record<string, unknown> | void> {
   if (!options.listProjects || !options.writePane || (request.type === "pane-read" && !options.readPane)) {
@@ -204,7 +204,7 @@ async function handlePaneRequest(
 /** Window-originated diff review uses the exact same resolver, per-pane lock,
  *  user-only hold check, PTY write and Enter boundary as `aya pane send`. */
 export function sendPaneTextThroughControl(
-  options: Pick<ControlServerOptions, "listProjects" | "writePane" | "paneHold">,
+  options: Pick<ControlServerOptions, "listProjects" | "writePane" | "writePaneChecked" | "paneHold" | "paneInputProtection">,
   projectSlug: string,
   terminalId: string,
   text: string,

@@ -666,10 +666,17 @@ function registerIpc(): TeamRunner {
     ipcMain,
     ayaHome: AYA_HOME,
     listProjects: () => listProjects(),
+    // The same user-rule hold, input protection and checked write as aya pane send.
     sendToPane: (projectSlug, terminalId, text) => sendPaneTextThroughControl({
       listProjects: () => listProjects(),
       writePane: (id, data) => ptyHost.write(id, data),
-      paneHold: (id) => ptyHost.holdReason(id),
+      writePaneChecked: (id, data, context) => userRuleInput.write("direct", id, data, context, context.cancelled),
+      paneHold: (id) => userRulePanes.holdReason(id),
+      paneInputProtection: async (id, pasted, cancelled) => {
+        if (userRuleInput.configured()) return userRuleInput.protection(id, pasted, cancelled);
+        const hold = await userRulePanes.holdReason(id, pasted);
+        return isUserOnlyHold(hold) ? hold : null;
+      },
     }, projectSlug, terminalId, text),
   });
   registerSystemIpc({
