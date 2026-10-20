@@ -33,6 +33,28 @@ test("user-rule renderer status is revision-fenced and hydrated to a newly attac
   const reloaded=sink();client.attachWebContents(reloaded);await new Promise(resolve=>setTimeout(resolve,0));
   assert.deepEqual(reloaded.events,[{type:"vt-status",ptyId:id,waiting:true,dialog:"User-defined dialog"}]);
 });
+test("applied output invalidates a pending status before its debounced snapshot arrives", async()=>{
+ const id="user-rule-output-before-snapshot";openVtPane(id,80,24,()=>{},"claude");writeVtPane(id,"local approval");const waiting=await vtSnapshot(id);
+ const client=new PtyHostClient("/nonexistent/pty-host.js"),events=sink();client.attachWebContents(events);let resolveClear,clearStarted;
+ const started=new Promise(resolve=>clearStarted=resolve);
+ client.setUserRuleStatusObserver(async(_pane,snapshot)=>{
+  if(snapshot.revision===waiting.revision)return{generation:snapshot.generation,revision:snapshot.revision,waiting:true,dialog:"User account prompt"};
+  if(!resolveClear)return new Promise(resolve=>{resolveClear=resolve;clearStarted();});
+  return{generation:snapshot.generation,revision:snapshot.revision,waiting:true,dialog:"User account prompt"};
+ });
+ const receive=snapshot=>client.onData(JSON.stringify({type:"snapshot",ptyId:id,snapshot})+"\n");
+ try{
+  receive(waiting);await new Promise(resolve=>setTimeout(resolve,60));
+  assert.deepEqual(events.events.filter(event=>event.type==="vt-status"),[{type:"vt-status",ptyId:id,waiting:true,dialog:"User account prompt"}]);
+  writeVtPane(id,"\r\nready");const clearCandidate=await vtSnapshot(id);receive(clearCandidate);await started;
+  writeVtPane(id,"\r\nDo you want to proceed?");const newerPrompt=await vtSnapshot(id);
+  client.onData(JSON.stringify({type:"event",event:{type:"data",ptyId:id,chunk:"\r\nDo you want to proceed?"}})+"\n");
+  resolveClear({generation:clearCandidate.generation,revision:clearCandidate.revision,waiting:false});await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(events.events.filter(event=>event.type==="vt-status"),[{type:"vt-status",ptyId:id,waiting:true,dialog:"User account prompt"}],"stale clear is dropped as soon as host-applied output arrives");
+  receive(newerPrompt);await new Promise(resolve=>setTimeout(resolve,60));
+  assert.deepEqual(events.events.filter(event=>event.type==="vt-status"),[{type:"vt-status",ptyId:id,waiting:true,dialog:"User account prompt"}]);
+ }finally{client.dispose();closeVtPane(id);}
+});
 test("removing the user layer clears its waiting edge before builtin-only status resumes", async () => {
   const id="user-rule-status-clear";openVtPane(id,80,24,()=>{},"claude");writeVtPane(id,"local prompt");const snapshot=await vtSnapshot(id);closeVtPane(id);
   const client=new PtyHostClient("/nonexistent/pty-host.js"),events=sink();client.attachWebContents(events);

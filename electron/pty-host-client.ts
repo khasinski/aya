@@ -1493,6 +1493,14 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
+        if(message.event.type==="data"){
+          // The host has applied this output before publishing it. Main may
+          // not have its debounced snapshot yet, so any evaluation against
+          // the previous revision must stop being publishable immediately.
+          this.latestRuleSnapshots.delete(message.event.ptyId);
+          const timer=this.ruleStatusTimers.get(message.event.ptyId);if(timer)clearTimeout(timer);
+          this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);
+        }
         if(PANE_ENDED_EVENTS.has(message.event.type)){this.authRefusedPanes.delete(message.event.ptyId);this.principalBusyPanes.delete(message.event.ptyId);}
         if(message.event.type==="recovery-screen"){
           this.recoveryScreens.set(message.event.ptyId,message.event);
