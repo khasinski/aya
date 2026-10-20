@@ -69,6 +69,16 @@ test("pane wait handles busy-to-idle, waiting, exit, all, any and timeout", asyn
     s2.update("c", state("stopped", false, true));
     assert.deepEqual(await pending, { met: true, matched: ["Old shell"], pending: [] });
   });
+  await t.test("a failed restart supersedes the prior process exit", async () => {
+    const s2 = subject({ c: state("stopped") });
+    s2.update("c", state("stopped", false, true));
+    assert.equal((await waitForPaneTargets([targets[2]], { until: ["exited"], any: false, timeoutMs: 100, readState: s2.readState, subscribe: s2.subscribe })).met, true);
+    // A new start attempt fails before a replacement process exists.
+    s2.update("c", state("stopped", false, false));
+    const failedRestart = await waitForPaneTargets([targets[2]], { until: ["exited"], any: false, timeoutMs: 5, readState: s2.readState, subscribe: s2.subscribe });
+    assert.equal(failedRestart.met, false);
+    assert.deepEqual(failedRestart.pending, ["Old shell"]);
+  });
   await t.test("--any returns when the first target matches", async () => {
     const s2 = subject({ a: state("busy"), b: state("idle") });
     const pending = waitForPaneTargets(targets.slice(0, 2), {
@@ -175,6 +185,11 @@ test("CLI parses pane wait flags and preserves timeout / bad-target exit codes",
   const exited = await exitedWait;
   assert.equal(exited.code, 0);
   assert.match(exited.stdout, /"Old shell"/);
+
+  publish("pane-3", state("stopped", false, false)); // the next start attempt failed
+  const failedRestart = await cli(socketPath, ["pane", "wait", "pane:pane-3", "--until", "exited", "--timeout", "0"]);
+  assert.equal(failedRestart.code, 1);
+  assert.match(failedRestart.stdout, /Timed out/);
 
   publish("pane-1", state("busy"));
   const timeout = await cli(socketPath, ["pane", "wait", "Reviewer", "--until", "idle,waiting", "--any", "--timeout", "0"]);

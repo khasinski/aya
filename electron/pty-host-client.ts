@@ -290,8 +290,8 @@ export class PtyHostClient {
   private readonly ruleStatusPending=new Map<string,VtSnapshot>();
   private readonly ruleStatusTimers=new Map<string,ReturnType<typeof setTimeout>>();
   private readonly paneWaiters = new Map<string, Set<(state: PaneStateResult) => void>>();
-  // `stopped` also covers panes that never started. Retain only explicit exit
-  // events so a later pane-wait read can distinguish those cases.
+  // `stopped` also covers panes that never started. Retain explicit exits only
+  // until a new start attempt supersedes them.
   private readonly observedPaneExits = new Set<string>();
   // Panes this client spawned and has not seen end: the ones a lost host takes
   // down without a word.
@@ -417,7 +417,7 @@ export class PtyHostClient {
       this.sendToSinks([{type:"disconnected",ptyId:req.ptyId,reason:this.recoveryReason??"The terminal host is recovering. The process was kept; input is disabled.",recoveryBlocked:this.ownsOwnerKey&&!!this.crashSupervisor,retryable:this.recoveryRetryable}]);
       throw Error("The terminal host is disconnected or recovering. This request was not sent.");
     }
-    if(!req.attachIfReused&&!req.attachOnly){this.recoveredStates.delete(req.ptyId);this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);this.uncertainInput.delete(req.ptyId);}
+    if(!req.attachIfReused&&!req.attachOnly){this.recoveredStates.delete(req.ptyId);this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);this.observedPaneExits.delete(req.ptyId);this.uncertainInput.delete(req.ptyId);}
     if(this.endedBootPanes.has(req.ptyId)&&(req.attachIfReused||req.attachOnly)&&!req.replayAfter){
       const exitCode=this.endedBootPanes.get(req.ptyId)!;
       this.authRefusedPanes.delete(req.ptyId);this.principalBusyPanes.delete(req.ptyId);
@@ -1551,7 +1551,10 @@ export class PtyHostClient {
           if (exited) this.observedPaneExits.add(message.event.ptyId);
           this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState(exited ? "has exited" : "is not running", "stopped", exited));
         }
-        if (message.event.type === "spawn-failed") this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState("could not be started", "stopped"));
+        if (message.event.type === "spawn-failed") {
+          this.observedPaneExits.delete(message.event.ptyId);
+          this.notifyPaneWaiters(message.event.ptyId, unavailablePaneState("could not be started", "stopped"));
+        }
         events.push(message.event);
         continue;
       }
