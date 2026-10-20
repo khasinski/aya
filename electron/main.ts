@@ -28,7 +28,7 @@ import { isShellCommand, withCliFirst } from "./pane-command";
 import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
 import { startConfigWatcher } from "./config-watcher";
 import { noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
-import { deliverTeamMessage, paneOutputMarks, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
+import { deliverTeamMessage, paneOutputMarks, sendPaneTextThroughControl, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
 import { confirmOpen, dispatchOpenProject, findDirInArgv, logOpenFailure } from "./open-delivery";
 import { createAyaWindows } from "./windows";
 import { createCliAdoptionStore } from "./cli-adoption";
@@ -104,6 +104,7 @@ import { createWindowProjectState } from "./window-slices";
 import { loadWebConfig, saveWebConfig } from "./web-config";
 import { captureIpcHandlers } from "./ipc/web-capture";
 import { registerEnvIpc } from "./ipc/env-ipc";
+import { registerDiffCommentsIpc } from "./ipc/diff-comments-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
 import { registerSystemIpc } from "./ipc/system-ipc";
 import { registerUsageIpc } from "./ipc/usage-ipc";
@@ -624,6 +625,16 @@ function registerIpc(): TeamRunner {
     clipboard,
     home: () => app.getPath("home"),
     openExternalUrl: (raw) => openExternalUrl(raw, { shell }),
+  });
+  registerDiffCommentsIpc({
+    ipcMain,
+    ayaHome: AYA_HOME,
+    listProjects: () => listProjects(),
+    sendToPane: (projectSlug, terminalId, text) => sendPaneTextThroughControl({
+      listProjects: () => listProjects(),
+      writePane: (id, data) => ptyHost.write(id, data),
+      paneHold: (id) => ptyHost.holdReason(id),
+    }, projectSlug, terminalId, text),
   });
   registerSystemIpc({
     ipcMain,

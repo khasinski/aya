@@ -200,6 +200,12 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     listProjects: async () => d.projects as never,
     listProjectState: async () => d.state as never,
     saveProjectState: noopAsync,
+    listDiffComments: async () => [] as never,
+    addDiffComment: async () => { throw new Error("Saved comments are not available in the preview."); },
+    editDiffComment: async () => { throw new Error("Saved comments are not available in the preview."); },
+    deleteDiffComment: async () => { throw new Error("Saved comments are not available in the preview."); },
+    clearSentDiffComments: async () => { throw new Error("Saved comments are not available in the preview."); },
+    sendDiffComments: async () => { throw new Error("Sending comments is not available in the preview."); },
     listOtherWindows: async () => [] as never,
     adoptProjectInWindow: async () => {
       throw new Error("Multi-window is not available in the emulator");

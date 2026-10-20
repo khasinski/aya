@@ -577,6 +577,22 @@ export type PromptAttachmentResult =
   | { status: "added" }
   | { status: "copied-not-added"; message: string; copyText: string };
 
+/** Main-process mirror of src/types.ts DiffComment, used by the preload API. */
+export interface DiffComment {
+  id: string;
+  file: string;
+  hunk: string;
+  line: string;
+  newLine: number | null;
+  oldLine: number | null;
+  occurrence: number;
+  checkout: string;
+  note: string;
+  createdAt: string;
+  sentAt: string | null;
+  sentTo: string | null;
+}
+
 export interface AyaApi {
   /** True when running under `npm run dev` (AYA_DEV=1). False in the packaged
    *  Aya.app. Use to show a "dev" indicator and keep the user's dogfooded
@@ -740,6 +756,12 @@ export interface AyaApi {
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
+  listDiffComments(projectSlug: string): Promise<DiffComment[]>;
+  addDiffComment(projectSlug: string, comment: DiffComment): Promise<DiffComment[]>;
+  editDiffComment(projectSlug: string, id: string, note: string): Promise<DiffComment[]>;
+  deleteDiffComment(projectSlug: string, id: string): Promise<DiffComment[]>;
+  clearSentDiffComments(projectSlug: string): Promise<DiffComment[]>;
+  sendDiffComments(req: { projectSlug: string; targetId: string; checkout: string; commentIds: string[] }): Promise<DiffComment[]>;
   /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
    *  git's own message (e.g. "a branch named 'x' already exists"). */
   createWorktree(req: {

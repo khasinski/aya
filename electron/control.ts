@@ -154,9 +154,9 @@ function sendJson(socket: net.Socket, reply: { ok: boolean; output?: unknown; er
  *  resolve their target the same way and fail loudly on an ambiguous name. */
 async function handlePaneRequest(
   request: Extract<ControlRequest, { type: "pane-read" | "pane-send" }>,
-  options: ControlServerOptions,
+  options: Pick<ControlServerOptions, "listProjects" | "readPane" | "writePane" | "paneHold">,
 ): Promise<Record<string, unknown> | void> {
-  if (!options.listProjects || !options.readPane || !options.writePane) {
+  if (!options.listProjects || !options.writePane || (request.type === "pane-read" && !options.readPane)) {
     throw new Error("pane control is not available");
   }
   const projects = await options.listProjects();
@@ -169,7 +169,7 @@ async function handlePaneRequest(
   const { terminalId, projectSlug, name } = resolved.match;
 
   if (request.type === "pane-read") {
-    const output = await options.readPane(terminalId);
+    const output = await options.readPane!(terminalId);
     return { terminalId, projectSlug, name, output: tailForPaneRead(output) };
   }
   // Any key, Enter or not, answers a select dialog; an unreadable screen is no reason to refuse.
@@ -188,6 +188,17 @@ async function handlePaneRequest(
   };
   await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true, guard, beforeEnter);
   return { terminalId, projectSlug, name };
+}
+
+/** Window-originated diff review uses the exact same resolver, per-pane lock,
+ *  user-only hold check, PTY write and Enter boundary as `aya pane send`. */
+export function sendPaneTextThroughControl(
+  options: Pick<ControlServerOptions, "listProjects" | "writePane" | "paneHold">,
+  projectSlug: string,
+  terminalId: string,
+  text: string,
+): Promise<Record<string, unknown> | void> {
+  return handlePaneRequest({ type: "pane-send", projectSlug, targetId: terminalId, text, submit: true }, options);
 }
 
 const lastSubmitted = new Map<string, { text: string; at: number }>();

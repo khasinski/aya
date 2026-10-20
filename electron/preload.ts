@@ -160,6 +160,12 @@ const api: AyaApi = {
   getGitChangedFiles: (directory) =>
     ipcRenderer.invoke("env:git-changed-files", directory),
   getGitDiff: (directory) => ipcRenderer.invoke("env:git-diff", directory),
+  listDiffComments: (projectSlug) => ipcRenderer.invoke("diff-comments:list", projectSlug),
+  addDiffComment: (projectSlug, comment) => ipcRenderer.invoke("diff-comments:add", projectSlug, comment),
+  editDiffComment: (projectSlug, id, note) => ipcRenderer.invoke("diff-comments:edit", projectSlug, id, note),
+  deleteDiffComment: (projectSlug, id) => ipcRenderer.invoke("diff-comments:delete", projectSlug, id),
+  clearSentDiffComments: (projectSlug) => ipcRenderer.invoke("diff-comments:clear-sent", projectSlug),
+  sendDiffComments: (req) => ipcRenderer.invoke("diff-comments:send", req),
   getGitRoot: (directory) => ipcRenderer.invoke("env:git-root", directory),
   getGitWorktreeStatus: (directory) =>
     ipcRenderer.invoke("env:git-worktree-status", directory),

@@ -72,6 +72,7 @@ import {
 } from "./storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { uuid } from "./uuid";
+import type { ReviewTarget } from "./diff-review";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import { findLeafByTerminal, normalizeTreeForTabs, projectSplitTree } from "./split-tree";
 import { useAppPreferences, useAppPreferenceActions } from "./hooks/useAppPreferences";
@@ -680,6 +681,14 @@ export function App() {
   const activeProject = activeProjectId
     ? findProject(projects, activeProjectId)
     : null;
+  const reviewTargets = useMemo<ReviewTarget[]>(() => {
+    if (!activeProject || activeProject.remote) return [];
+    return activeProject.tabs.flatMap((tab) => {
+      const terminal = terminals[tab.id];
+      if (!terminal || terminal.projectSlug !== activeProject.slug || terminal.exitCode !== null) return [];
+      return [{ id: terminal.id, projectSlug: activeProject.slug, name: terminal.name }];
+    });
+  }, [activeProject, terminals]);
   const activePresets =
     activeProject?.remote && activeProjectId
       ? (remotePresetsByProject[activeProjectId] ?? presets)
@@ -1193,6 +1202,7 @@ export function App() {
       })()}
       <StatusBar
         project={activeProject}
+        reviewTargets={reviewTargets}
         git={activeGit}
         gitDirectory={activeGitDirectory}
         worktrees={worktrees}
