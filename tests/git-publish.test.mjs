@@ -16,7 +16,7 @@ writeFileSync(join(bin, "gh"), `#!/bin/sh
 printf '%s|%s|%s|%s\n' "$GH_PROMPT_DISABLED" "$GH_NO_UPDATE_NOTIFIER" "$*" "$(test -t 0 && echo tty || echo pipe)" >> "$FAKE_GH_STATE/calls"
 case "$1 $2" in
   "--version ") echo 'gh version test'; exit 0 ;;
-  "auth status") [ -e "$FAKE_GH_STATE/unauth" ] && { echo 'account=private token=secret' >&2; exit 1; }; exit 0 ;;
+  "auth status") [ -e "$FAKE_GH_STATE/unauth" ] && { echo 'You are not logged into any GitHub hosts. account=private token=secret' >&2; exit 1; }; exit 0 ;;
   "repo view")
     if [ -f "$FAKE_GH_STATE/switch-on-repo-view" ]; then git checkout -q alternate; : > "$FAKE_GH_STATE/switch-used"; fi
     echo 'https://github.com/acme/repo'; exit 0 ;;
@@ -81,6 +81,15 @@ test("push remote follows explicit configuration or the only remote; ambiguous r
   git(dir, "remote", "remove", "extra");
   git(dir, "remote", "add", "only", "https://example.invalid/only.git");
   assert.equal((await getPublishStatus(dir)).remote, "only");
+});
+
+test("a remote name beginning with a dash cannot be used for publishing", async () => {
+  const dir = repo("unsafe-remote");
+  git(dir, "config", "remote.--receive-pack=./unexpected.url", "https://example.invalid/repo.git");
+  const status = await getPublishStatus(dir);
+  assert.equal(status.remote, null);
+  assert.match(status.pushDisabledReason, /remote name that starts with '-'/);
+  assert.equal((await pushCurrentBranch(dir)).ok, false);
 });
 
 test("an unfetched remote default branch keeps pull requests disabled", async () => {
@@ -180,6 +189,48 @@ test("gh uses disabled prompts and pipes, hides auth details, and accepts only t
   } finally { setState("unauth", null); }
   setState("create-url", "https://evil.example/acme/repo/pull/7\n");
   assert.match((await createOrFindPullRequest(dir)).error, /did not return a pull request link/);
+});
+
+test("an existing pull request is opened without attempting to create another", async () => {
+  const dir = repo("existing-pr");
+  git(dir, "checkout", "-q", "-b", "feature/existing");
+  git(dir, "remote", "add", "origin", "https://github.com/acme/repo.git");
+  git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  setState("pr", "https://github.com/acme/repo/pull/17\n");
+  ghCalls();
+  try {
+    assert.deepEqual(await createOrFindPullRequest(dir), { ok: true, url: "https://github.com/acme/repo/pull/17" });
+    const calls = ghCalls().map(([, , args]) => args);
+    assert(calls.some((args) => args.startsWith("pr view ")));
+    assert.equal(calls.some((args) => args.startsWith("pr create ")), false);
+  } finally { setState("pr", null); }
+});
+
+test("GitHub sign-in checks distinguish a timeout from a signed-out account", async () => {
+  const dir = repo("auth-status-error");
+  git(dir, "checkout", "-q", "-b", "feature/auth-status");
+  git(dir, "remote", "add", "origin", "https://github.com/acme/repo.git");
+  git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  const gitRunner = async (command, args, cwd, _timeout, env) => execFileSync(command, args, {
+    cwd, encoding: "utf8", env: env ?? process.env, stdio: ["ignore", "pipe", "pipe"],
+  });
+  for (const { failure, expected, forbidden } of [
+    { failure: Object.assign(new Error("request timed out"), { code: "ETIMEDOUT", stderr: "network timeout" }), expected: /did not respond in time/, forbidden: /not signed in/ },
+    { failure: Object.assign(new Error("auth endpoint unavailable"), { code: 1, stderr: "account=private token=secret connection refused" }), expected: /could not check your GitHub sign-in/, forbidden: /private|secret|not signed in/ },
+  ]) {
+    const calls = [];
+    const ghRunner = async (_directory, args) => {
+      calls.push(args);
+      if (args[0] === "--version") return "gh version test";
+      if (args[0] === "auth") throw failure;
+      throw new Error(`Unexpected gh args: ${args.join(" ")}`);
+    };
+    const result = await createOrFindPullRequest(dir, gitRunner, ghRunner);
+    assert.equal(result.ok, false);
+    assert.match(result.error, expected);
+    assert.doesNotMatch(result.error, forbidden);
+    assert.deepEqual(calls.map((args) => args[0]), ["--version", "auth"]);
+  }
 });
 
 test("pull request action refuses if the checkout changes after repository lookup", async () => {

@@ -59,12 +59,16 @@ async function repoState(directory: string, runCommand: Runner): Promise<Publish
       } catch { /* try the next source */ }
     }
   }
-  const remoteError = configured && !remotes.includes(configured)
+  const missingRemoteError = configured && !remotes.includes(configured)
     ? `The configured push remote '${configured}' does not exist.` : undefined;
-  const remote = remoteError ? null : configured
+  const selectedRemote = missingRemoteError ? null : configured
     ? configured
     : remotes.length === 1 ? remotes[0]
     : null;
+  const remoteError = missingRemoteError ?? (selectedRemote?.startsWith("-")
+    ? "A Git remote name that starts with '-' cannot be used for publishing."
+    : undefined);
+  const remote = remoteError ? null : selectedRemote;
 
   let defaultBranch: string | null = null;
   for (const candidate of [...new Set(["origin", ...remotes])].filter((name) => remotes.includes(name))) {
@@ -134,6 +138,17 @@ function isConfirmedMissingPullRequest(error: unknown): boolean {
   return value?.code === 1 && /no pull requests found/i.test(String(value.stderr ?? ""));
 }
 
+function isConfirmedUnauthenticated(error: unknown): boolean {
+  const value = error as { code?: unknown; stderr?: unknown };
+  return value?.code === 1 && /not logged in|not authenticated|authentication token not found/i.test(String(value.stderr ?? ""));
+}
+
+function isTimedOut(error: unknown): boolean {
+  const value = error as { code?: unknown; killed?: boolean; signal?: string; message?: string };
+  return value?.code === "ETIMEDOUT" || value?.killed === true || value?.signal === "SIGTERM"
+    || /timed out|ETIMEDOUT|killed/i.test(String(value?.message ?? ""));
+}
+
 export async function createOrFindPullRequest(directory: string, runCommand: Runner = run, ghCommand: GhRunner = runGh): Promise<PullRequestResult> {
   try {
     const state = await repoState(directory, runCommand);
@@ -142,8 +157,10 @@ export async function createOrFindPullRequest(directory: string, runCommand: Run
     await ghCommand(directory, ["--version"]);
     try {
       await ghCommand(directory, ["auth", "status"]);
-    } catch {
-      return { ok: false, error: "GitHub CLI is not signed in. Run gh auth login, then try again." };
+    } catch (error) {
+      if (isConfirmedUnauthenticated(error)) return { ok: false, error: "GitHub CLI is not signed in. Run gh auth login, then try again." };
+      if (isTimedOut(error)) return { ok: false, error: "GitHub did not respond in time. Try again." };
+      return { ok: false, error: "Aya could not check your GitHub sign-in. Check your connection and try again." };
     }
     const repoUrl = (await ghCommand(directory, ["repo", "view", "--json", "url", "--jq", ".url"])).trim();
     if (await git(runCommand, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {

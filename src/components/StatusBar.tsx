@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
   GitChangedFile,
@@ -118,6 +118,8 @@ function StatusBarImpl({
   const [dirtyFilesLoading, setDirtyFilesLoading] = useState(false);
   const [dirtySelectionDirectory, setDirtySelectionDirectory] = useState<string | null>(null);
   const gitCheckoutRef = useRef<{ directory: string | null; generation: number }>({ directory: gitDirectory, generation: 0 });
+  const isCurrentGitCheckout = useCallback((directory: string, generation: number) =>
+    gitCheckoutRef.current.directory === directory && gitCheckoutRef.current.generation === generation, []);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -207,6 +209,7 @@ function StatusBarImpl({
     setCommitError(null);
     setCommitNotice(null);
     setPublishError(null);
+    setPublishStatus(null);
     setCreatedPullRequest(null);
     setShowDiff(false);
     setDiffText("");
@@ -216,14 +219,17 @@ function StatusBarImpl({
 
   useEffect(() => {
     if (!gitDirectory) { setPublishStatus(null); return; }
-    let current = true;
-    void window.aya.getGitPublishStatus(gitDirectory).then((status) => {
-      if (current) setPublishStatus(status);
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    let active = true;
+    const isCurrent = () => active && isCurrentGitCheckout(directory, generation);
+    void window.aya.getGitPublishStatus(directory).then((status) => {
+      if (isCurrent()) setPublishStatus(status);
     }).catch(() => {
-      if (current) setPublishStatus(null);
+      if (isCurrent()) setPublishStatus(null);
     });
-    return () => { current = false; };
-  }, [gitDirectory]);
+    return () => { active = false; };
+  }, [gitDirectory, isCurrentGitCheckout]);
 
   const addReviewComment = async (anchor: DiffAnchor, note: string) => {
     if (!project || !gitDirectory) return;
@@ -274,20 +280,24 @@ function StatusBarImpl({
     const directory = gitDirectory;
     const generation = gitCheckoutRef.current.generation;
     setShowDirtyFiles((open) => !open);
-    void window.aya.getGitPublishStatus(gitDirectory).then(setPublishStatus).catch(() => setPublishStatus(null));
+    void window.aya.getGitPublishStatus(directory).then((status) => {
+      if (isCurrentGitCheckout(directory, generation)) setPublishStatus(status);
+    }).catch(() => {
+      if (isCurrentGitCheckout(directory, generation)) setPublishStatus(null);
+    });
     setDirtyFilesLoading(true);
     try {
       await window.aya.setActiveGitDirectory(directory);
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       const files = await window.aya.getGitChangedFiles(directory);
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       setDirtyFiles(files);
       setSelectedDirtyPaths(files.map((file) => file.path));
       setDirtySelectionDirectory(directory);
       setCommitError(null);
       setDirtyFilesLoading(false);
     } catch (error) {
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       setCommitError(error instanceof Error ? error.message : "Aya could not load changed files.");
       setDirtyFilesLoading(false);
     }
@@ -305,7 +315,7 @@ function StatusBarImpl({
         paths: selectedDirtyPaths,
         message: commitMessage,
       });
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       if (!result.ok) {
         setCommitError(result.error);
         return;
@@ -313,7 +323,7 @@ function StatusBarImpl({
       setCommitNotice(`Committed ${result.commit.slice(0, 7)}.`);
       setPublishError(null);
       const updatedPublishStatus = await window.aya.getGitPublishStatus(directory);
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       setPublishStatus(updatedPublishStatus);
       if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
       const files = await window.aya.getGitChangedFiles(directory);
@@ -324,7 +334,7 @@ function StatusBarImpl({
       setCommitMessage("");
       await onGitStatusRefresh(directory);
     } catch (err) {
-      if (gitCheckoutRef.current.directory === directory && gitCheckoutRef.current.generation === generation) {
+      if (isCurrentGitCheckout(directory, generation)) {
         setCommitError(err instanceof Error ? err.message : "Aya could not create the commit.");
       }
     } finally {
@@ -334,33 +344,45 @@ function StatusBarImpl({
 
   const pushBranch = async () => {
     if (!gitDirectory || publishing || publishStatus?.pushDisabledReason) return;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    const isCurrent = () => isCurrentGitCheckout(directory, generation);
     setPublishing(true); setPublishError(null); setCommitNotice(null);
     try {
-      const result = await window.aya.pushGitBranch(gitDirectory);
+      const result = await window.aya.pushGitBranch(directory);
+      if (!isCurrent()) return;
       if (!result.ok) { setPublishError(result.error); return; }
+      await onGitStatusRefresh(directory);
+      if (!isCurrent()) return;
+      const status = await window.aya.getGitPublishStatus(directory);
+      if (!isCurrent()) return;
+      setPublishStatus(status);
       setCommitNotice("Pushed.");
-      await onGitStatusRefresh(gitDirectory);
-      setPublishStatus(await window.aya.getGitPublishStatus(gitDirectory));
     } catch (error) {
-      setPublishError(error instanceof Error ? error.message : "Aya could not push this branch.");
+      if (isCurrent()) setPublishError(error instanceof Error ? error.message : "Aya could not push this branch.");
     } finally { setPublishing(false); }
   };
 
   const openPullRequest = async () => {
     if (!gitDirectory || publishing || publishStatus?.pullRequestDisabledReason) return;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    const isCurrent = () => isCurrentGitCheckout(directory, generation);
     setPublishing(true); setPublishError(null); setCommitNotice(null);
     try {
       let url = pullRequestUrl;
       if (!url) {
-        const result = await window.aya.createGitPullRequest(gitDirectory);
+        const result = await window.aya.createGitPullRequest(directory);
+        if (!isCurrent()) return;
         if (!result.ok) { setPublishError(result.error); return; }
         url = result.url;
-        setCreatedPullRequest({ directory: gitDirectory, branch: publishStatus?.branch ?? null, url });
+        setCreatedPullRequest({ directory, branch: publishStatus?.branch ?? null, url });
       }
+      if (!isCurrent()) return;
       await window.aya.openUrl(url);
-      setCommitNotice("Pull request opened.");
+      if (isCurrent()) setCommitNotice("Pull request opened.");
     } catch (error) {
-      setPublishError(error instanceof Error ? error.message : "Aya could not open the pull request.");
+      if (isCurrent()) setPublishError(error instanceof Error ? error.message : "Aya could not open the pull request.");
     } finally { setPublishing(false); }
   };
 

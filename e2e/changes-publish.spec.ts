@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -17,16 +17,35 @@ if [ -f "$state/missing" ]; then echo 'gh: command not found' >&2; exit 127; fi
 case "$1 $2" in
   "--version ") echo 'gh version test'; exit 0 ;;
   "auth status")
-    if [ -f "$state/unauthenticated" ]; then echo 'private account and token details' >&2; exit 1; fi
+    if [ -f "$state/unauthenticated" ]; then echo 'You are not logged into any GitHub hosts. private account and token details' >&2; exit 1; fi
     exit 0 ;;
   "repo view") echo 'https://github.com/aya-e2e/project'; exit 0 ;;
-  "pr view") echo 'no pull requests found for branch' >&2; exit 1 ;;
+  "pr view")
+    if [ -f "$FAKE_GH_STATE/existing-pr" ]; then cat "$FAKE_GH_STATE/existing-pr"; exit 0; fi
+    echo 'no pull requests found for branch' >&2; exit 1 ;;
   "pr create") echo 'https://github.com/aya-e2e/project/pull/42'; exit 0 ;;
 esac
 exit 2
 `);
 chmodSync(fakeGh, 0o755);
-test.use({ seedOptions: { gitRepo: true, launchEnv: { PATH: `${fakeBin}:${process.env.PATH}`, FAKE_GH_STATE: fakeState } } });
+const fakeGit = join(fakeBin, "git");
+const gitDelayEnabled = join(fakeState, "git-delay-enabled");
+const gitDelayStarted = join(fakeState, "git-delay-started");
+const gitDelayRelease = join(fakeState, "git-delay-release");
+const gitDelayDone = join(fakeState, "git-delay-done");
+writeFileSync(fakeGit, `#!/bin/sh
+if [ -f "$FAKE_GIT_DELAY_ENABLED" ] && [ "$(pwd -P)" = "$FAKE_GIT_DELAY_DIR" ] && [ "$1" = "symbolic-ref" ] && [ "$4" = "HEAD" ]; then
+  : > "$FAKE_GIT_DELAY_STARTED"
+  while [ ! -f "$FAKE_GIT_DELAY_RELEASE" ]; do sleep 0.01; done
+fi
+/usr/bin/git "$@"
+status=$?
+if [ "$1" = "symbolic-ref" ] && [ "$4" = "HEAD" ] && [ -n "$FAKE_GIT_DELAY_DONE" ]; then : > "$FAKE_GIT_DELAY_DONE"; fi
+exit "$status"
+`);
+chmodSync(fakeGit, 0o755);
+const launchEnv = { PATH: `${fakeBin}:${process.env.PATH}`, FAKE_GH_STATE: fakeState };
+test.use({ seedOptions: { gitRepo: true, launchEnv } });
 test.afterAll(() => rmSync(fakeRoot, { recursive: true, force: true }));
 
 async function openChanges(window: import("@playwright/test").Page) {
@@ -96,6 +115,49 @@ test("changes panel commits, sets upstream, pushes and opens the pull request wi
   ]);
 });
 
+test("first push from the Changes panel sets the upstream", async ({ window, seeded }) => {
+  const repo = seeded.projectDir;
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+  git("config", "user.name", "Aya E2E");
+  git("config", "user.email", "aya-e2e@example.test");
+  const bare = join(seeded.root, "first-push-origin.git");
+  mkdirSync(bare);
+  execFileSync("git", ["init", "--bare", "-q", bare]);
+  git("remote", "add", "origin", bare);
+  git("push", "-q", "origin", "HEAD:refs/heads/main");
+  git("remote", "set-head", "origin", "main");
+  expect(() => execFileSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd: repo, stdio: "ignore" })).toThrow();
+
+  const popover = await openChanges(window);
+  await popover.getByRole("button", { name: "Push branch" }).click();
+  await expect(popover.getByRole("status")).toHaveText("Pushed.");
+  expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd: repo, encoding: "utf8" }).trim()).toBe("origin/feature/foo");
+});
+
+test("an existing pull request opens without creating a duplicate", async ({ window, seeded }) => {
+  const repo = seeded.projectDir;
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+  const bare = join(seeded.root, "existing-pr-origin.git");
+  mkdirSync(bare);
+  execFileSync("git", ["init", "--bare", "-q", bare]);
+  git("remote", "add", "origin", bare);
+  git("push", "-q", "origin", "HEAD:refs/heads/main");
+  git("remote", "set-head", "origin", "main");
+  git("push", "-q", "--set-upstream", "origin", "HEAD");
+  const prUrl = "https://github.com/aya-e2e/project/pull/19";
+  writeFileSync(join(fakeState, "existing-pr"), `${prUrl}\n`);
+  rmSync(join(fakeState, "calls"), { force: true });
+  try {
+    const popover = await openChanges(window);
+    await popover.getByRole("button", { name: "Create pull request" }).click();
+    await expect(popover.getByRole("status")).toHaveText("Pull request opened.");
+    await expect(popover.getByRole("button", { name: "Open pull request" })).toBeVisible();
+    const calls = readFileSync(join(fakeState, "calls"), "utf8");
+    expect(calls).toContain("pr view feature/foo");
+    expect(calls).not.toContain("pr create");
+  } finally { rmSync(join(fakeState, "existing-pr"), { force: true }); }
+});
+
 test("without a remote, changes panel disables publishing and shows one reason", async ({ window }) => {
   const popover = await openChanges(window);
   const push = popover.getByRole("button", { name: "Push branch" });
@@ -112,7 +174,7 @@ test("changes panel explains when gh is missing", async ({ window, seeded }) => 
   addFakeRemote(seeded.projectDir);
   writeFileSync(join(fakeState, "missing"), "");
   try {
-    const popover = await openChanges(window);
+    let popover = await openChanges(window);
     const push = popover.getByRole("button", { name: "Push branch" });
     const pullRequest = popover.getByRole("button", { name: "Create pull request" });
     await expect(push).toBeEnabled();
@@ -136,4 +198,41 @@ test("changes panel gives safe sign-in guidance without showing gh output", asyn
     await expect(popover.getByText("private account and token details")).toHaveCount(0);
     await popover.screenshot({ path: "/tmp/changes-publish-gh-unauthenticated.png" });
   } finally { rmSync(join(fakeState, "unauthenticated"), { force: true }); }
+});
+
+test.describe("publish status checkout races", () => {
+  test.use({ seedOptions: { gitRepo: true, gitWorktree: true, launchEnv } });
+
+  test("a delayed publish status from the old checkout cannot replace the selected checkout status", async ({ window, app, seeded }) => {
+    const main = seeded.projectDir;
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/aya-e2e/project"], { cwd: main });
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: main });
+    execFileSync("git", ["config", "branch.feature/foo.pushRemote", "missing-remote"], { cwd: main });
+    execFileSync("git", ["config", "branch.wt/bar.pushRemote", "origin"], { cwd: main });
+    await expect(window.locator('[data-testid="checkout-picker"]')).toContainText("feature/foo");
+
+    await app.evaluate((_api, setup) => {
+      process.env.PATH = `${setup.fakeBin}:${process.env.PATH}`;
+      process.env.FAKE_GIT_DELAY_DIR = setup.main;
+      process.env.FAKE_GIT_DELAY_ENABLED = setup.enabled;
+      process.env.FAKE_GIT_DELAY_STARTED = setup.started;
+      process.env.FAKE_GIT_DELAY_RELEASE = setup.release;
+      process.env.FAKE_GIT_DELAY_DONE = setup.done;
+    }, { fakeBin, main: realpathSync(main), enabled: gitDelayEnabled, started: gitDelayStarted, release: gitDelayRelease, done: gitDelayDone });
+    writeFileSync(gitDelayEnabled, "");
+
+    let popover = await openChanges(window);
+    await expect.poll(() => existsSync(gitDelayStarted)).toBe(true);
+    await window.locator('[data-testid="checkout-picker"]').click();
+    await window.locator(".aya-checkout-row", { hasText: "wt-bar" }).click();
+    await expect(window.locator('[data-testid="checkout-picker"]')).toContainText("wt/bar");
+    popover = await openChanges(window);
+    const push = popover.getByRole("button", { name: "Push branch" });
+    await expect(push).toBeEnabled();
+
+    writeFileSync(gitDelayRelease, "");
+    await expect.poll(() => existsSync(gitDelayDone)).toBe(true);
+    await window.waitForTimeout(100);
+    await expect(push).toBeEnabled();
+  });
 });
