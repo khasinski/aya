@@ -127,6 +127,8 @@ function StatusBarImpl({
   // A single checkout is not a choice, so the picker only exists from 2 up.
   const canPickCheckout = worktrees.length > 1;
   const externalStatus = terminal?.externalStatus;
+  const mobileActionsRef = useRef<HTMLDivElement>(null);
+  const [showMobileActions, setShowMobileActions] = useState(false);
   const checkoutRef = useRef<HTMLDivElement>(null);
   const [showCheckouts, setShowCheckouts] = useState(false);
   const dirtyRef = useRef<HTMLDivElement>(null);
@@ -139,6 +141,22 @@ function StatusBarImpl({
   const gitCheckoutRef = useRef<{ directory: string | null; generation: number }>({ directory: gitDirectory, generation: 0 });
   const isCurrentGitCheckout = useCallback((directory: string, generation: number) =>
     gitCheckoutRef.current.directory === directory && gitCheckoutRef.current.generation === generation, []);
+
+  useEffect(() => {
+    if (!showMobileActions) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!mobileActionsRef.current?.contains(event.target as Node)) setShowMobileActions(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowMobileActions(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showMobileActions]);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -718,6 +736,26 @@ function StatusBarImpl({
         </span>
         {attentionCount > 0 ? `${attentionCount} attention` : "activity"}
       </button>
+      <div className="aya-statusbar-popover-host aya-mobile-status-actions" ref={mobileActionsRef}>
+        <button
+          type="button"
+          className="aya-statusbar-item aya-statusbar-button"
+          aria-label="More actions"
+          aria-haspopup="menu"
+          aria-expanded={showMobileActions}
+          onClick={() => setShowMobileActions((open) => !open)}
+        >
+          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>more_horiz</span>
+          More
+        </button>
+        {showMobileActions && (
+          <div className="aya-statusbar-popover aya-mobile-status-actions-menu" role="menu" aria-label="More actions">
+            <button type="button" role="menuitem" disabled={snippetsDisabled} onClick={() => { setShowMobileActions(false); onToggleSnippets(); }}>Saved snippets</button>
+            <button type="button" role="menuitem" disabled={!project} onClick={() => { setShowMobileActions(false); onOpenTeams(); }}>Teams</button>
+            <button type="button" role="menuitem" onClick={() => { setShowMobileActions(false); onOpenAttentionCenter(); }}>Activity</button>
+          </div>
+        )}
+      </div>
       {git?.branch && (
         <div className="aya-statusbar-popover-host" ref={checkoutRef}>
           <BranchChip

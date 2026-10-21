@@ -214,6 +214,33 @@ test(`mobile web layout fits ${viewport.width}x${viewport.height}`, async () => 
       const rect = button.getBoundingClientRect();
       return rect.width >= 44 && rect.height >= 44;
     })).toBe(true);
+    if (viewport.width === 390) {
+      const more = page.getByRole("button", { name: "More actions" });
+      await expect(more).toBeVisible();
+      for (const action of ["Saved snippets", "Teams", "Activity"]) {
+        await more.click();
+        await page.getByRole("menu", { name: "More actions" }).getByRole("menuitem", { name: action }).click();
+        if (action === "Saved snippets") {
+          await expect(page.locator(".aya-snippetbar--open")).toBeVisible();
+          await more.click();
+          await page.getByRole("menu", { name: "More actions" }).getByRole("menuitem", { name: action }).click();
+          await expect(page.locator(".aya-snippetbar--open")).toHaveCount(0);
+        } else {
+          const dialogName = action === "Teams" ? "Teams" : "Attention center";
+          const dialog = page.getByRole("dialog", { name: dialogName });
+          await expect(dialog).toBeVisible();
+          await dialog.getByRole("button", { name: "Close" }).click();
+          await expect(dialog).toBeHidden();
+        }
+      }
+      const addPane = page.getByRole("button", { name: "New terminal" });
+      await expect(addPane).toBeVisible();
+      await addPane.click();
+      const launcher = page.getByRole("menu", { name: "New terminal" });
+      await expect(launcher).toBeVisible();
+      await launcher.getByRole("menuitem", { name: "Shell" }).click();
+      await expect(rows).toHaveCount(3);
+    }
     await rows.nth(1).click();
     await expect(rows.nth(1)).toHaveClass(/aya-sidebar-row--active/);
     await page.locator(".xterm-helper-textarea").first().evaluate((element) => {
@@ -245,13 +272,20 @@ test(`mobile web layout fits ${viewport.width}x${viewport.height}`, async () => 
     })).toBe(true);
     await page.keyboard.press("Escape");
 
-    // A shorter visible viewport models the on-screen keyboard. The app and
-    // terminal must resize to the visual viewport rather than remain under it.
-    await page.setViewportSize({ width: viewport.width, height: 420 });
+    // Model a mobile keyboard: the layout viewport stays the same while the
+    // visual viewport shrinks and pans below browser chrome/the keyboard.
+    await page.evaluate(() => {
+      const visible = window.visualViewport!;
+      Object.defineProperty(visible, "height", { configurable: true, value: 320 });
+      Object.defineProperty(visible, "offsetTop", { configurable: true, value: 32 });
+      visible.dispatchEvent(new Event("resize"));
+      visible.dispatchEvent(new Event("scroll"));
+    });
     await expect.poll(() => page.locator(".aya-app").evaluate((app) => {
       const visible = window.visualViewport;
       return Math.round(app.getBoundingClientRect().height) === Math.round(visible?.height ?? window.innerHeight)
-        && Math.round(app.getBoundingClientRect().top) === Math.round(visible?.offsetTop ?? 0);
+        && Math.round(app.getBoundingClientRect().top) === Math.round(visible?.offsetTop ?? 0)
+        && getComputedStyle(document.documentElement).getPropertyValue("--aya-visual-top").trim() === "32px";
     })).toBe(true);
     await expect.poll(() => page.locator(".aya-pane").first().evaluate((pane) => {
       const visibleBottom = (window.visualViewport?.offsetTop ?? 0) + (window.visualViewport?.height ?? window.innerHeight);
