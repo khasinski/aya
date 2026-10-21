@@ -1411,41 +1411,6 @@ export function SettingsModal({
               : "Requires the GitHub CLI (gh)."}
           </SettingsRow>
           <SettingsRow
-            icon="palette"
-            title={
-              <>
-                Interface style{" "}
-                <span className="aya-settings-experimental">Experimental</span>
-              </>
-            }
-            control={(
-              <div className="aya-settings-segmented" aria-label="Interface style">
-                {([
-                  ["classic", "Classic"],
-                  ["command-rail", "Command Rail"],
-                ] as const).map(([style, label]) => (
-                  <button
-                    key={style}
-                    type="button"
-                    className={`aya-settings-segment ${
-                      chromeStyle === style ? "aya-settings-segment--active" : ""
-                    }`}
-                    onClick={() => onChromeStyleChange(style)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          >
-            Command Rail is a denser look: a rail of project avatars, flat
-            rows with a marker on the selected terminal, and amber or red pane
-            headers when an agent is waiting or failed. Colors follow your
-            theme. Window layout picks the variant: Classic is A (projects as
-            avatars, terminals in a column), Projects left is B (projects
-            down the side, terminals as tabs).
-          </SettingsRow>
-          <SettingsRow
             icon="view_sidebar"
             title={
               <>
@@ -1456,16 +1421,23 @@ export function SettingsModal({
             control={(
               <div className="aya-settings-segmented" aria-label="Window layout">
                 {([
-                  ["classic", "Projects on top"],
-                  ["projects-left", "Projects on left"],
-                ] as const).map(([mode, label]) => (
+                  ["classic", "classic", "Projects on top"],
+                  ["projects-left", "classic", "Projects on left"],
+                  ["classic", "command-rail", "Command Rail"],
+                  ["projects-left", "command-rail", "Command Rail, projects left"],
+                ] as const).map(([mode, style, label]) => (
                   <button
-                    key={mode}
+                    key={label}
                     type="button"
                     className={`aya-settings-segment ${
-                      layoutMode === mode ? "aya-settings-segment--active" : ""
+                      layoutMode === mode && chromeStyle === style
+                        ? "aya-settings-segment--active"
+                        : ""
                     }`}
-                    onClick={() => onLayoutModeChange(mode)}
+                    onClick={() => {
+                      onLayoutModeChange(mode);
+                      onChromeStyleChange(style);
+                    }}
                   >
                     {label}
                   </button>
@@ -1473,9 +1445,13 @@ export function SettingsModal({
               </div>
             )}
           >
-            Classic keeps project tabs on top with the terminal list on the
-            left. "Projects on left" moves projects into a left rail and puts
-            terminal tabs along the top. Split panes are disabled in this layout.
+            "Projects on top" keeps project tabs on top with the terminal list
+            on the left. "Projects on left" moves projects into a left rail and
+            puts terminal tabs along the top; split panes are disabled there.
+            The two Command Rail options are the same two arrangements in a
+            denser look: a rail of project avatars, flat rows with a marker on
+            the selected terminal, and amber or red pane headers when an agent
+            is waiting or failed. Colors follow your theme.
           </SettingsRow>
           <SettingsRow
             icon="manage_search"
