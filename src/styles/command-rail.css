@@ -1,32 +1,11 @@
 /* ============================================================
    "Command Rail" chrome skin - opt-in (Settings > Interface style).
-   Dark only: App.tsx pins data-theme="dark" while data-chrome is set.
+   No palette of its own: every color comes from the active light/dark theme
+   and skin tokens set on :root (useAppTheme), so themes carry over.
    Everything is scoped under [data-chrome="command-rail"], so the classic look
    is untouched. It restyles the chrome through the existing tokens; terminal
    text colors still come from the active terminal theme.
    ============================================================ */
-
-.aya-app[data-chrome="command-rail"] {
-  --bg: #0a0e17;
-  --bg-secondary: #0e1320;
-  --bg-tertiary: #141b2b;
-  --bg-code: #0b101b;
-  --fg-primary: #dde3f0;
-  --fg-secondary: #b3bdd0;
-  --fg-tertiary: #8190aa;
-  --border: #1a2233;
-  --border-strong: #232d42;
-  --accent: #6ea8ff;
-  --accent-hover: #8fbcff;
-  --status-waiting: #ffb454;
-  --status-error: #ff7a80;
-
-  --aya-pane-bg: #0b101b;
-  --aya-pane-header-bg: #0e1320;
-  --aya-pane-header-border: #1a2233;
-  --aya-pane-muted: #7684a0;
-  --aya-pane-subtle: #8190aa;
-}
 
 /* Flat rows with a left marker instead of rounded cards. */
 .aya-app[data-chrome="command-rail"] .aya-sidebar-row {
@@ -65,25 +44,25 @@
 /* A pane that needs you reads at a glance: tinted header, tinted divider. */
 .aya-app[data-chrome="command-rail"]
   .aya-pane:has(.aya-pane-header-activity--waiting) .aya-pane-header {
-  background: #1b1608;
-  border-bottom-color: #3a2d12;
+  background: color-mix(in oklab, var(--status-waiting) 12%, var(--aya-pane-header-bg));
+  border-bottom-color: color-mix(in oklab, var(--status-waiting) 32%, var(--aya-pane-header-border));
 }
 .aya-app[data-chrome="command-rail"]
   .aya-pane:has(.aya-pane-header-activity--error) .aya-pane-header {
-  background: #231014;
-  border-bottom-color: #4a1f24;
+  background: color-mix(in oklab, var(--status-error) 12%, var(--aya-pane-header-bg));
+  border-bottom-color: color-mix(in oklab, var(--status-error) 32%, var(--aya-pane-header-border));
 }
 
 /* Status rail: counts become tinted pills. */
 .aya-app[data-chrome="command-rail"] .aya-status-rail-count--waiting {
-  background: #241c0a;
-  color: #ffd08a;
+  background: color-mix(in oklab, var(--status-waiting) 14%, var(--bg-secondary));
+  color: var(--status-waiting);
   border-radius: 7px;
   padding: 3px 8px;
 }
 .aya-app[data-chrome="command-rail"] .aya-status-rail-count--error {
-  background: #2a1214;
-  color: #ff9aa0;
+  background: color-mix(in oklab, var(--status-error) 14%, var(--bg-secondary));
+  color: var(--status-error);
   border-radius: 7px;
   padding: 3px 8px;
 }
@@ -93,11 +72,10 @@
    terminal column, breadcrumb over the panes, command bar at the bottom.
    ============================================================ */
 
-.aya-app[data-chrome="command-rail"] {
-  grid-template-rows: 1fr 36px;
-}
+.aya-app[data-chrome="command-rail"] { grid-template-rows: 48px 1fr 36px; }
+.aya-app[data-chrome="command-rail"]:has(> .aya-cr) { grid-template-rows: 1fr 36px; }
 .aya-app[data-chrome="command-rail"] > .aya-cr { grid-row: 1; }
-.aya-app[data-chrome="command-rail"] > .aya-statusbar { grid-row: 2; }
+.aya-app[data-chrome="command-rail"]:has(> .aya-cr) > .aya-statusbar { grid-row: 2; }
 
 .aya-cr {
   display: grid;
@@ -113,7 +91,7 @@
   flex-direction: column;
   align-items: center;
   min-height: 0;
-  background: #080b13;
+  background: color-mix(in oklab, var(--bg-secondary) 80%, var(--bg));
   border-right: 1px solid var(--border);
   -webkit-app-region: drag;
 }
@@ -169,11 +147,11 @@
   font-size: 15px;
   font-weight: 700;
 }
-.aya-cr-avatar:hover { background: #1a2338; color: var(--fg-primary); }
+.aya-cr-avatar:hover { background: var(--bg-secondary); color: var(--fg-primary); }
 .aya-cr-avatar--active {
-  background: #15213a;
+  background: color-mix(in oklab, var(--accent) 16%, var(--bg-tertiary));
   border-color: var(--accent);
-  color: #fff;
+  color: var(--fg-primary);
 }
 .aya-cr-avatar--dragging { opacity: 0.4; }
 .aya-cr-avatar--drop-before { box-shadow: 0 -3px 0 var(--accent); }
@@ -186,7 +164,7 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 2px solid #080b13;
+  border: 2px solid color-mix(in oklab, var(--bg-secondary) 80%, var(--bg));
   background: var(--status-active, #4ade80);
 }
 .aya-cr-avatar-dot--waiting { background: var(--status-waiting); }
@@ -331,7 +309,7 @@
 
 /* -- command bar (the status bar, restyled) -- */
 .aya-app[data-chrome="command-rail"] .aya-statusbar {
-  background: #080b13;
+  background: color-mix(in oklab, var(--bg-secondary) 80%, var(--bg));
   border-top: 1px solid var(--border);
   padding: 0 14px;
   gap: 10px;
@@ -356,4 +334,29 @@
   border-radius: 4px;
   background: var(--bg-tertiary);
   color: var(--fg-secondary);
+}
+
+/* -- Variant B (layout "projects-left"): projects down the left, terminal tabs
+   across the top. Same tokens, same flat-row language as variant A. -- */
+.aya-app[data-chrome="command-rail"] .aya-topbar--alt {
+  background: color-mix(in oklab, var(--bg-secondary) 80%, var(--bg));
+  border-bottom: 1px solid var(--border);
+}
+.aya-app[data-chrome="command-rail"] .aya-projectrail {
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+}
+.aya-app[data-chrome="command-rail"] .aya-railtab {
+  border-radius: 0;
+  position: relative;
+}
+.aya-app[data-chrome="command-rail"] .aya-railtab--active {
+  background: color-mix(in oklab, var(--accent) 12%, var(--bg-tertiary));
+}
+.aya-app[data-chrome="command-rail"] .aya-railtab-path--summary,
+.aya-app[data-chrome="command-rail"] .aya-termtab-summary {
+  color: var(--fg-tertiary);
+}
+.aya-app[data-chrome="command-rail"] .aya-termtab.aya-tab--active {
+  background: var(--bg);
 }

@@ -1438,10 +1438,12 @@ export function SettingsModal({
               </div>
             )}
           >
-            Command Rail is a denser slate-blue look: flat rows with a marker
-            on the selected terminal, and amber or red pane headers when an
-            agent is waiting or failed. It is dark only and works with either
-            window layout.
+            Command Rail is a denser look: a rail of project avatars, flat
+            rows with a marker on the selected terminal, and amber or red pane
+            headers when an agent is waiting or failed. Colors follow your
+            theme. Window layout picks the variant: Classic is A (projects as
+            avatars, terminals in a column), Projects left is B (projects
+            down the side, terminals as tabs).
           </SettingsRow>
           <SettingsRow
             icon="view_sidebar"

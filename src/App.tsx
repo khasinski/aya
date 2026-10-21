@@ -1008,14 +1008,7 @@ export function App() {
         window.aya.platform === "darwin" ? "aya-app--macos" : "",
         isFullScreen ? "aya-app--fullscreen" : "",
       ].filter(Boolean).join(" ")}
-      // The command-rail skin is dark only, so it pins the chrome dark.
-      data-theme={
-        chromeStyle === "command-rail"
-          ? "dark"
-          : appThemePreference === "system"
-            ? undefined
-            : appThemePreference
-      }
+      data-theme={appThemePreference === "system" ? undefined : appThemePreference}
       data-chrome={chromeStyle === "classic" ? undefined : chromeStyle}
       data-accent="green"
     >
@@ -1155,7 +1148,9 @@ export function App() {
         );
         const body =
           !didBootstrap ? loadingNode : isEmpty ? emptyStateNode : null;
-        if (commandRail) {
+        // Variant A (classic layout) gets the avatar-rail shell; variant B
+        // (projects-left) keeps its own layout, skinned by the same CSS.
+        if (commandRail && layoutMode !== "projects-left") {
           return (
             <CommandRailLayout
               projects={projects}
