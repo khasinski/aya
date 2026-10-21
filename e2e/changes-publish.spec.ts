@@ -1,15 +1,24 @@
 import { expect, test } from "./fixtures";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
-const fakeBin = mkdtempSync(join(tmpdir(), "aya-gh-publish-"));
+const fakeRoot = mkdtempSync(join(tmpdir(), "aya-gh-publish-"));
+const fakeBin = join(fakeRoot, "bin");
+const fakeState = join(fakeRoot, "state");
+mkdirSync(fakeBin);
+mkdirSync(fakeState);
 const fakeGh = join(fakeBin, "gh");
 writeFileSync(fakeGh, `#!/bin/sh
+state="$FAKE_GH_STATE"
+printf '%s\\n' "$*" >> "$state/calls"
+if [ -f "$state/missing" ]; then echo 'gh: command not found' >&2; exit 127; fi
 case "$1 $2" in
   "--version ") echo 'gh version test'; exit 0 ;;
-  "auth status") exit 0 ;;
+  "auth status")
+    if [ -f "$state/unauthenticated" ]; then echo 'private account and token details' >&2; exit 1; fi
+    exit 0 ;;
   "repo view") echo 'https://github.com/aya-e2e/project'; exit 0 ;;
   "pr view") exit 1 ;;
   "pr create") echo 'https://github.com/aya-e2e/project/pull/42'; exit 0 ;;
@@ -17,10 +26,17 @@ esac
 exit 2
 `);
 chmodSync(fakeGh, 0o755);
-test.use({ seedOptions: { gitRepo: true, launchEnv: { PATH: `${fakeBin}:${process.env.PATH}` } } });
-test.afterAll(() => rmSync(fakeBin, { recursive: true, force: true }));
+test.use({ seedOptions: { gitRepo: true, launchEnv: { PATH: `${fakeBin}:${process.env.PATH}`, FAKE_GH_STATE: fakeState } } });
+test.afterAll(() => rmSync(fakeRoot, { recursive: true, force: true }));
 
-test("changes panel commits, pushes to a local bare remote and opens the gh pull request link", async ({ window, app, seeded }) => {
+async function openChanges(window: import("@playwright/test").Page) {
+  await window.locator(".aya-statusbar-button", { hasText: "dirty" }).click();
+  const popover = window.getByRole("dialog", { name: "Changed files" });
+  await expect(popover).toBeVisible();
+  return popover;
+}
+
+test("changes panel commits, sets upstream, pushes and opens the pull request without creating it twice", async ({ window, app, seeded }) => {
   const repo = seeded.projectDir;
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
   git("config", "user.name", "Aya E2E");
@@ -37,28 +53,61 @@ test("changes panel commits, pushes to a local bare remote and opens the gh pull
     (globalThis as any).__openedUrls = [];
     shell.openExternal = async (url: string) => { (globalThis as any).__openedUrls.push(url); };
   });
-  const dirty = window.locator(".aya-statusbar-button", { hasText: "dirty" });
-  await dirty.click();
-  const popover = window.getByRole("dialog", { name: "Changed files" });
+  const popover = await openChanges(window);
   await expect(popover.locator(".aya-dirty-file-row")).toHaveCount(2);
-  await window.screenshot({ path: "/tmp/changes-publish-before.png" });
+  await popover.screenshot({ path: "/tmp/changes-publish-before.png" });
   await popover.getByRole("textbox", { name: "Commit message" }).fill("Publish selected work");
   await popover.getByRole("button", { name: "Commit selected" }).click();
   await expect(popover.getByRole("status")).toContainText("Committed ");
   expect(await popover.getByRole("status").textContent()).toBe(`Committed ${execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim()}.`);
   await expect(popover.getByText("No changed files.")).toBeVisible();
+  await popover.screenshot({ path: "/tmp/changes-publish-committed.png" });
+
   await popover.getByRole("button", { name: "Push branch" }).click();
-  await expect(popover.getByRole("status")).toHaveText("Branch pushed.");
+  await expect(popover.getByRole("status")).toHaveText("Pushed.");
   expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd: repo, encoding: "utf8" }).trim()).toBe("origin/feature/foo");
+  await popover.screenshot({ path: "/tmp/changes-publish-pushed.png" });
+
   const changesButton = window.locator(".aya-statusbar-popover-host > button").filter({ hasText: "clean" });
   await changesButton.click();
   await expect(popover).toBeHidden();
   await changesButton.click();
   await expect(popover).toBeVisible();
-  await popover.getByRole("button", { name: "Create pull request" }).click();
+  const createButton = popover.getByRole("button", { name: "Create pull request" });
+  await createButton.click();
   await expect(popover.getByRole("status")).toHaveText("Pull request opened.");
+  const openButton = popover.getByRole("button", { name: "Open pull request" });
+  await expect(openButton).toBeVisible();
+  await popover.screenshot({ path: "/tmp/changes-publish-open-pr.png" });
+  const callsBeforeReopen = readFileSync(join(fakeState, "calls"), "utf8");
+  expect(callsBeforeReopen.split("\n").filter((line) => line.startsWith("pr create "))).toHaveLength(1);
+  await openButton.click();
+  await expect(popover.getByRole("status")).toHaveText("Pull request opened.");
+  const callsAfterReopen = readFileSync(join(fakeState, "calls"), "utf8");
+  expect(callsAfterReopen.split("\n").filter((line) => line.startsWith("pr create "))).toHaveLength(1);
   expect(await app.evaluate(() => (globalThis as any).__openedUrls)).toEqual([
     "https://github.com/aya-e2e/project/pull/42",
+    "https://github.com/aya-e2e/project/pull/42",
   ]);
-  await window.screenshot({ path: "/tmp/changes-publish-after.png" });
+});
+
+test("changes panel explains when gh is missing", async ({ window }) => {
+  writeFileSync(join(fakeState, "missing"), "");
+  try {
+    const popover = await openChanges(window);
+    await popover.getByRole("button", { name: "Create pull request" }).click();
+    await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not installed. Install `gh`, then try again.");
+    await popover.screenshot({ path: "/tmp/changes-publish-gh-missing.png" });
+  } finally { rmSync(join(fakeState, "missing"), { force: true }); }
+});
+
+test("changes panel gives safe sign-in guidance without showing gh output", async ({ window }) => {
+  writeFileSync(join(fakeState, "unauthenticated"), "");
+  try {
+    const popover = await openChanges(window);
+    await popover.getByRole("button", { name: "Create pull request" }).click();
+    await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not signed in. Run `gh auth login`, then try again.");
+    await expect(popover.getByText("private account and token details")).toHaveCount(0);
+    await popover.screenshot({ path: "/tmp/changes-publish-gh-unauthenticated.png" });
+  } finally { rmSync(join(fakeState, "unauthenticated"), { force: true }); }
 });
