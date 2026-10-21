@@ -15,8 +15,11 @@ function setup(overrides={}){
 test('ordinary quit reserves before publication then activates once under one parent2s budget',async()=>{
  const f=setup();const first=f.announcement.prepare();assert.equal(first,f.announcement.prepare());assert.equal(await first,true);
  assert.equal(AUTH_QUIT_PUBLICATION_MS,2000);assert.deepEqual(f.calls.map(r=>r.type),['auth-transfer-reserve','auth-transfer-activate']);assert.equal(f.published.length,1);assert.equal(f.published[0].budget.deadline,2000);
- const ticket=f.published[0].ticket;assert.equal(ticket.format,2);assert.equal(ticket.hostPid,issuer.pid);assert.equal(ticket.hostStartIdentity,issuer.startIdentity);assert.equal(ticket.purpose,'ordinary-quit');assert.equal(ticket.deadline,null);assert.deepEqual(f.transfer.redeem(ticket.attempt,ticket.nonce,recipient),Buffer.alloc(32,7));
+ const ticket=f.published[0].ticket;assert.equal(ticket.format,2);assert.equal(ticket.hostPid,issuer.pid);assert.equal(ticket.hostStartIdentity,issuer.startIdentity);assert.equal(ticket.purpose,'ordinary-quit');assert.equal(ticket.deadline,null);assert.equal(ticket.replacedBuild,false);assert.deepEqual(f.transfer.redeem(ticket.attempt,ticket.nonce,recipient),Buffer.alloc(32,7));
  await f.announcement.abort();assert.equal(f.transfer.phase,'claimed','old-main cleanup cannot undo committed recipient');assert.ok(!JSON.stringify(f.logs).includes(ticket.nonce));assert.equal(f.removed[0][2],ticket.nonce);
+});
+test('a hand-installed replacement is recorded on its ordinary-quit ticket',async()=>{
+ const f=setup({replacedBuild:true});assert.equal(await f.announcement.prepare(),true);assert.equal(f.published[0].ticket.purpose,'ordinary-quit');assert.equal(f.published[0].ticket.deadline,null);assert.equal(f.published[0].ticket.replacedBuild,true);
 });
 test('missing existing connection does no peer/RPC/file work and cannot start anything',async()=>{
  const f=setup({connected:()=>false,peer:()=>{throw Error('must not inspect peer');}});assert.equal(await f.announcement.prepare(),false);assert.deepEqual(f.calls,[]);assert.deepEqual(f.published,[]);assert.deepEqual(f.removed,[]);

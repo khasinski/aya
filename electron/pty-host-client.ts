@@ -178,6 +178,8 @@ export class PtyHostClient {
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
   private ordinaryAnnouncement:OrdinaryAuthAnnouncement|null=null;
+  private ordinaryQuitHandoverCompleted=false;
+  private replacedBuildHandoverCompleted=false;
   private receivedAuthTransfer:{ticket:AuthTransferTicket;receipt?:string;retirementOwner?:RecoveryOwnerIdentity}|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
   private unannouncedRefusal=false;
@@ -213,6 +215,9 @@ export class PtyHostClient {
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
   private disposed = false;
+  /** An authenticated ordinary-quit transfer was fully adopted by this main. */
+  get hasCompletedOrdinaryQuitHandover():boolean{return this.ordinaryQuitHandoverCompleted;}
+  get hasCompletedReplacedBuildHandover():boolean{return this.replacedBuildHandoverCompleted;}
   private issuedShutdown=false;
   private ownsOwnerKey=false;
   private ownerContinuityUnavailable=false;
@@ -614,14 +619,14 @@ export class PtyHostClient {
     this.plannedReusedBoot=true;
     for(const id of ids)this.consentedBootSpawns.add(id);
   }
-  announceOrdinaryQuit():Promise<boolean>{
+  announceOrdinaryQuit(replacedBuild=false):Promise<boolean>{
     if(!this.ordinaryAnnouncement){
       const socket=this.socket;
       this.ordinaryAnnouncement=new OrdinaryAuthAnnouncement({home:AYA_HOME,
         connected:()=>!!socket&&socket===this.socket&&!socket.destroyed&&!this.disposed&&!this.replacing&&!this.receivedAuthTransfer&&!!this.hostAuthKey&&!this.crashBlocked,
         peer:()=>{if(!socket)throw new HostAuthError();return handoverPeer(socket);},
         control:request=>{if(!socket||socket!==this.socket||socket.destroyed||this.disposed)throw new HostAuthError();return this.sendRequest(socket,request);},
-        log:(event,fields)=>this.recoveryHooks.log?.(event,fields),
+        log:(event,fields)=>this.recoveryHooks.log?.(event,fields),replacedBuild,
       });
     }
     return this.ordinaryAnnouncement.prepare();
@@ -671,6 +676,7 @@ export class PtyHostClient {
     }
     const completed=await withTimeout(this.sendRequest(socket,{id:0,type:"auth-transfer-complete",attempt:transfer.ticket.attempt,receipt:transfer.receipt}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
     if(completed!==true||this.disposed||this.socket!==socket||socket.destroyed||this.receivedAuthTransfer!==transfer)throw new HostAuthError();
+    if(transfer.ticket.purpose==="ordinary-quit"){this.ordinaryQuitHandoverCompleted=true;if(transfer.ticket.replacedBuild)this.replacedBuildHandoverCompleted=true;}
     this.receivedAuthTransfer=null;
   }
   private refuseMissingAnnouncedHost():Error{

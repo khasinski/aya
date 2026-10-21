@@ -829,11 +829,16 @@ app.whenReady().then(async () => {
     announcedTicket=await findAuthTransferTicket(AYA_HOME);
     if(announcedTicket)await ptyHost.redeemAnnouncedCapability(announcedTicket);
   }catch{diagnosticsLog.append("host-transfer-unavailable",{purpose:"startup"});}
+  // Ticket redemption establishes the pending capability; the first status
+  // request can complete owner continuity, so retain the flag on both sides
+  // of that fallible request below.
+  let keepReplacedBuildHost=ptyHost.hasCompletedReplacedBuildHandover;
   const keepPlannedHost=await plannedUpdate.resume(announcedTicket?.purpose==="planned-update"&&announcedTicket.deadline!==null?{...announcedTicket,deadline:announcedTicket.deadline}:undefined) === "kept";
   let keptCompatibleHosts: number[] = [];
   if(!keepPlannedHost)try {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
     const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
+    keepReplacedBuildHost ||= ptyHost.hasCompletedReplacedBuildHandover;
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       PTY_HOST_SCRIPT,
@@ -854,6 +859,9 @@ app.whenReady().then(async () => {
       );
     }
   } catch {
+    // hostStatus connects and completes announced continuity before returning.
+    // Keep that successful transfer even if the subsequent status probe failed.
+    keepReplacedBuildHost ||= ptyHost.hasCompletedReplacedBuildHandover;
     // best effort - never block startup on reconciliation
   }
 
@@ -865,7 +873,10 @@ app.whenReady().then(async () => {
   // start. The red fallback icon is applied after installApplicationMenu.
   // Unconditionally now: with no socket file, hostHealth() starts no host, and a host still running without its
   // socket (2026-10-13) is exactly the one this must catch before the first pane starts another.
-  if(keepPlannedHost)keepStaleHost();else await handleStaleHost();
+  // Keep a stale host without asking only when the prior main recorded that a
+  // hand-installed build replaced it. An unchanged ordinary quit still follows
+  // the stale-host confirmation path.
+  if(keepPlannedHost||keepReplacedBuildHost)keepStaleHost();else await handleStaleHost();
 
   const savedState = await loadWindowState();
   windows.mainWindow = createWindow(savedState);
@@ -1047,13 +1058,13 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     if(!ordinaryQuitAnnouncementPending){
       ordinaryQuitAnnouncementPending=true;
-      // Another build installed over this one by hand hands the panes over
-      // as an update does; the next start would not adopt this host otherwise.
+      // A hand-installed build is a normal main-process replacement. Transfer
+      // the host capability with the ordinary, non-expiring quit ticket; B3's
+      // planned-update ticket is deliberately limited to its 120-second window.
       const replaced=installedBuild.replaced();
-      const handedOver=replaced?plannedUpdate.prepare().catch(()=>false):Promise.resolve(false);
-      void handedOver.then(ok=>{
+      void ptyHost.announceOrdinaryQuit(replaced).catch(()=>false).then(ok=>{
         if(replaced)diagnosticsLog.append("installed-build-quit",{handover:ok?"prepared":"unavailable"});
-        return ok||ptyHost.announceOrdinaryQuit().catch(()=>false);
+        return ok;
       }).finally(()=>{
         ordinaryQuitAnnounced=true;ordinaryQuitAnnouncementPending=false;app.quit();
       });

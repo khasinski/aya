@@ -20,6 +20,13 @@ test('versioned nonce-only ticket publishes privately and is consumed once, abse
   await assert.rejects(writeAuthTransferTicket(path.join(f.root,'shared.json'),t,budget()));
  }finally{await f.close();}
 });
+test('replacement marker is optional for older tickets and only accepts booleans on ordinary quit',async()=>{
+ const f=await fixture(),old=ticket(),replacement=ticket({replacedBuild:true}),file=f.file(old);try{
+  await writeAuthTransferTicket(file,old,budget());assert.equal((await readAuthTransferTicket(file)).replacedBuild,undefined);
+  await writeAuthTransferTicket(f.file(replacement),replacement,budget());assert.equal((await readAuthTransferTicket(f.file(replacement))).replacedBuild,true);
+  for(const invalid of [ticket({replacedBuild:'yes'}),ticket({purpose:'planned-update',deadline:Date.now()+120000,replacedBuild:true})])await assert.rejects(writeAuthTransferTicket(f.file(invalid),invalid,budget()));
+ }finally{await f.close();}
+});
 test('closed payload, expiry, bounds and private types are refused without FIFO blocking',async()=>{
  const f=await fixture(),t=ticket(),file=f.file(t);try{
   for(const value of [{...t,extra:true},{...t,format:1},{...t,deadline:Date.now()-1},{...t,purpose:'anything'},{...t,purpose:'planned-update'},{...t,deadline:Date.now()+120000},{...t,hostStartIdentity:'unknown'},{...t,nonce:'bad'}]){
