@@ -324,10 +324,12 @@ output is split into frames with at most 256 KiB of raw data. Every v2 write,
 including command replies and replay, is disconnected before it would queue
 more than 2 MiB for a slow reader. The operating system pipe supplies
 backpressure between SSH, the stdio bridge, and the host socket. Remote session
-metadata is capped at the shared 128-pane limit; when full, the oldest exited
-session is discarded to make room, while an all-running set refuses another
-remote spawn. Retained replay therefore uses at most 128 MiB before
-per-session eviction.
+metadata is capped at the shared 128-pane limit. When full, an exited session
+or a confirmed spawn-failure record can be discarded; running and uncertain
+sessions are retained, and a full set of those refuses another remote spawn.
+Each session can allocate up to seventeen 64 KiB blocks, so the worst-case
+replay allocation across 128 retained sessions is about 136 MiB; replay bytes
+per session remain capped at 1 MiB.
 
 Terminal access remains limited to the existing owner-only local socket and
 the explicitly invoked SSH stdio bridge. The host opens no TCP listener; a

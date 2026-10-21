@@ -163,11 +163,14 @@ test("an exit timeout reconciles an already-removed host PTY before reporting st
   const sessions = new RemotePtySessions({
     listProjects: async () => [project],
     listPresets: async () => [preset],
-    spawn: async () => {},
+    spawn: async () => ({ pid: 301, startIdentity: "301:started" }),
     write: async () => true,
     resize: async () => {},
     exit: async () => { running = false; throw new Error("host exit wait timed out"); },
-    isRunning: async () => running,
+    isRunning: async (identity) => {
+      assert.deepEqual(identity, { pid: 301, startIdentity: "301:started" });
+      return running;
+    },
     newId: () => "terminal-exit-timeout",
   });
   const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
@@ -203,11 +206,53 @@ test("an exit timeout with a signalable PTY is reported as uncertain and no long
   assert.match(result.find((message) => message.type === "error")?.message ?? "", /could not confirm.*stopped.*may still be running/i);
   const listed = [];
   await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
-  assert.equal(listed[0].terminals[0].state, "failed");
+  assert.equal(listed[0].terminals[0].state, "uncertain");
   assert.match(listed[0].terminals[0].failureReason, /may still be running/i);
   const writeReply = [];
   await sessions.handle(socket, { type: "pty:write", protocol: 2, id: "write", terminalId: "terminal-exit-uncertain", data: "x" }, (_socket, message) => writeReply.push(message));
   assert.match(writeReply[0].message, /no longer running/i);
+});
+
+test("a missing PTY-host map entry is unknown, and an uncertain live session is never evicted", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  let nextId = 0;
+  let spawnCount = 0;
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => {
+      spawnCount += 1;
+      return spawnCount === 1 ? { pid: 302, startIdentity: "302:started" } : undefined;
+    },
+    write: async () => true,
+    resize: async () => {},
+    exit: async () => { throw new Error("host exit wait timed out after dropping the PTY map entry"); },
+    // getPtyPid() returns null after pty-core removes the child from its map;
+    // that does not prove the OS child has closed or been reaped.
+    isRunning: async (identity) => {
+      assert.deepEqual(identity, { pid: 302, startIdentity: "302:started" });
+      return null;
+    },
+    newId: () => `terminal-${++nextId}`,
+  });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "spawn-uncertain", project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+  const exitReply = [];
+  await sessions.handle(socket, { type: "pty:exit", protocol: 2, id: "exit-uncertain", terminalId: "terminal-1" }, (_socket, message) => exitReply.push(message));
+  assert.equal(exitReply.some((message) => message.type === "pty:exit-result"), false);
+
+  for (let index = 0; index < MAX_PTY_PANES - 1; index += 1) {
+    await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: `spawn-${index}`, project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+  }
+  const refused = [];
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "spawn-over-cap", project: "repo", preset: "shell", cols: 80, rows: 24 }, (_socket, message) => refused.push(message));
+  assert.match(refused.find((message) => message.type === "error")?.message ?? "", /maximum number of remote terminals/i);
+  const listed = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
+  assert.equal(listed[0].terminals.length, MAX_PTY_PANES);
+  assert.equal(listed[0].terminals[0].terminalId, "terminal-1");
+  assert.equal(listed[0].terminals[0].state, "uncertain");
 });
 
 test("a non-reading v2 socket stays under the queue cap for replay and list replies", async () => {

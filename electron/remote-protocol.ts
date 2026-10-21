@@ -44,7 +44,7 @@ export type RemoteTerminalMessage =
   | { type: "pty:written"; protocol: 2; id: string; terminalId: string; accepted: boolean }
   | { type: "pty:resized"; protocol: 2; id: string; terminalId: string }
   | { type: "pty:exited"; protocol: 2; terminalId: string; exitCode: number }
-  | { type: "pty:list-result"; protocol: 2; id: string; terminals: Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed"; offset: number; failureReason?: string }> }
+  | { type: "pty:list-result"; protocol: 2; id: string; terminals: Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed" | "uncertain"; offset: number; failureReason?: string }> }
   | { type: "pty:exit-result"; protocol: 2; id: string; terminalId: string };
 
 function ownKeys(value: Record<string, unknown>, keys: string[]): boolean {

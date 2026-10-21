@@ -187,10 +187,10 @@ export class RemoteTerminalClient extends EventEmitter {
     await this.request("pty:exit", ["pty:exit-result"], { terminalId });
   }
 
-  async list(): Promise<Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed"; offset: number; failureReason?: string }>> {
+  async list(): Promise<Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed" | "uncertain"; offset: number; failureReason?: string }>> {
     const response = await this.request("pty:list", ["pty:list-result"], {});
     if (!Array.isArray(response.terminals)) throw new Error("Remote Aya returned an invalid terminal list.");
-    return response.terminals as Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed"; offset: number; failureReason?: string }>;
+    return response.terminals as Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed" | "uncertain"; offset: number; failureReason?: string }>;
   }
 
   /** Close only the bridge stream. The host does not receive a kill request. */

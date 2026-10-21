@@ -104,6 +104,7 @@ import { MAX_PTY_PANES } from "./pty-pane-limits";
 import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
+import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { createPtyHostHealth, probeSocketPid } from "./pty-host-health";
 import { HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
@@ -642,14 +643,29 @@ function registerIpc(): TeamRunner {
       };
       const sent = await spawnGate.spawn(terminalId, () => prepareSpawn(request), (prepared) => sendSpawn(prepared));
       if (sent !== true) throw new Error("The remote terminal could not be started.");
+      try {
+        const pid = await ptyHost.getPid(terminalId);
+        const startIdentity = typeof pid === "number" ? ownerProcessStartIdentity(pid) : null;
+        return typeof pid === "number" && startIdentity ? { pid, startIdentity } : undefined;
+      } catch {
+        return undefined;
+      }
     },
     onSpawned: onRemoteTerminalSpawned,
     write: (terminalId, data) => ptyHost.write(terminalId, data),
     resize: (terminalId, cols, rows) => ptyHost.resize(terminalId, cols, rows),
     exit: (terminalId) => ptyHost.kill(terminalId),
-    isRunning: async (terminalId) => {
-      const pid = await ptyHost.getPid(terminalId);
-      return typeof pid === "number" ? true : pid === null ? false : null;
+    isRunning: async (identity) => {
+      if (!identity) return null;
+      try {
+        process.kill(identity.pid, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+        return null;
+      }
+      const currentIdentity = ownerProcessStartIdentity(identity.pid);
+      if (!currentIdentity) return null;
+      return currentIdentity === identity.startIdentity;
     },
   });
   ptyHost.attachWebContents(remotePtySessions);

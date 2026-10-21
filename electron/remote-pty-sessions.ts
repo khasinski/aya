@@ -16,13 +16,18 @@ export interface RemoteTerminalSessionDeps {
   listProjects: () => Promise<ProjectConfig[]>;
   listPresets: () => Promise<Preset[]>;
   ensureCapacity?: () => Promise<void>;
-  spawn: (terminalId: string, project: ProjectConfig, preset: Preset, cols: number, rows: number) => Promise<void>;
+  spawn: (terminalId: string, project: ProjectConfig, preset: Preset, cols: number, rows: number) => Promise<RemoteTerminalProcessIdentity | void>;
   onSpawned?: (terminalId: string, project: ProjectConfig, preset: Preset) => Promise<void>;
   write: (terminalId: string, data: string) => Promise<boolean>;
   resize: (terminalId: string, cols: number, rows: number) => Promise<void>;
   exit: (terminalId: string) => Promise<void>;
-  isRunning?: (terminalId: string) => Promise<boolean | null>;
+  isRunning?: (identity: RemoteTerminalProcessIdentity | undefined) => Promise<boolean | null>;
   newId?: () => string;
+}
+
+export interface RemoteTerminalProcessIdentity {
+  pid: number;
+  startIdentity: string;
 }
 
 const REPLAY_BLOCK_BYTES = 64 * 1024;
@@ -31,10 +36,11 @@ interface Session {
   terminalId: string;
   project: string;
   preset: string;
-  state: "running" | "exited" | "failed";
+  state: "running" | "exited" | "failed" | "uncertain";
   exitCode?: number;
   failureReason?: string;
   spawnFailed?: boolean;
+  processIdentity?: RemoteTerminalProcessIdentity;
   totalBytes: number;
   retainedBytes: number;
   chunks: OutputChunk[];
@@ -124,7 +130,8 @@ export class RemotePtySessions implements PtyEventSink {
           const session: Session = { terminalId, project: project.slug, preset: preset.id, state: "running", totalBytes: 0, retainedBytes: 0, chunks: [], clients: new Set() };
           this.sessions.set(terminalId, session);
           try {
-            await this.deps.spawn(terminalId, project, preset, request.cols, request.rows);
+            const processIdentity = await this.deps.spawn(terminalId, project, preset, request.cols, request.rows);
+            if (processIdentity) session.processIdentity = processIdentity;
             if (session.state === "failed") throw new Error(session.failureReason ?? "The remote terminal could not be started.");
             await this.deps.onSpawned?.(terminalId, project, preset);
           } catch (error) {
@@ -172,13 +179,13 @@ export class RemotePtySessions implements PtyEventSink {
         case "pty:exit": {
           const session = this.sessions.get(request.terminalId);
           if (!session) throw new Error("The remote terminal is no longer available.");
-          if (session.state === "running" || (session.state === "failed" && !session.spawnFailed)) {
+          if (session.state === "running" || session.state === "uncertain" || (session.state === "failed" && !session.spawnFailed)) {
             try {
               await this.deps.exit(request.terminalId);
             } catch (error) {
-              const running = await this.deps.isRunning?.(request.terminalId).catch(() => null);
+              const running = await this.deps.isRunning?.(session.processIdentity).catch(() => null);
               if (running !== false) {
-                session.state = "failed";
+                session.state = "uncertain";
                 session.failureReason = "Aya could not confirm that this terminal stopped. It may still be running.";
                 throw new Error(session.failureReason, { cause: error });
               }
@@ -268,7 +275,7 @@ export class RemotePtySessions implements PtyEventSink {
 
   private makeRoom(): void {
     while (this.sessions.size >= MAX_PTY_PANES) {
-      const disposable = [...this.sessions.values()].find((session) => session.state === "exited" || session.state === "failed");
+      const disposable = [...this.sessions.values()].find((session) => session.state === "exited" || (session.state === "failed" && session.spawnFailed));
       if (!disposable) throw new Error("The host already has the maximum number of remote terminals.");
       this.sessions.delete(disposable.terminalId);
     }
