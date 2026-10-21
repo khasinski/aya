@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { makeRepo as makeEmptyRepo } from "./helpers/git.mjs";
@@ -15,6 +15,9 @@ const {
   parseWorktrees,
   listWorktrees,
   createWorktree,
+  createWorktreeBatch,
+  worktreeBranchRemovalInfo,
+  removeWorktreeAndBranch,
   removeWorktree,
   listWorktreeStatus,
   getGitRoot,
@@ -217,6 +220,19 @@ test("createWorktree makes a new checkout on a new branch", async () => {
   assert.equal(added.isMain, false);
 });
 
+test("createWorktree keeps option-like paths and refs out of Git's option parser", async () => {
+  const repo = makeRepo();
+  try {
+    const result = await createWorktree(repo, "--detach", undefined, "main");
+    assert.deepEqual(result, { ok: false, error: "Worktree paths, branches, and starting refs cannot begin with a hyphen." });
+    assert.equal(existsSync(join(repo, "main")), false);
+    assert.equal((await listWorktrees(repo)).length, 1);
+    assert.equal((await createWorktree(repo, tmpWorktreePath("safe"), "-bypass", "main")).ok, false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("creating a branch that already exists FAILS with git's message", async () => {
   const repo = makeRepo();
   await createWorktree(repo, tmpWorktreePath("dup"), "dup");
@@ -286,6 +302,114 @@ test("the surfaced error is git's reason, not its progress chatter", async () =>
   assert.equal(again.ok, false);
   assert.doesNotMatch(again.error, /Preparing worktree/i);
   assert.match(again.error, /already exists/i);
+});
+
+test("batch creation validates the ref, skips taken names, and reports safe branch deletion", async () => {
+  const repo = makeRepo();
+  const sibling = `${repo}.worktrees`;
+  try {
+    execSync("git branch aya/task-1", { cwd: repo });
+    const invalid = await createWorktreeBatch({ directory: repo, slug: "invalid", count: 1, base: "not-a-ref" });
+    assert.deepEqual(invalid, { created: [], errors: ["That starting ref was not found."] });
+    assert.equal(existsSync(sibling), false, "invalid refs do not leave a worktree folder behind");
+    const batch = await createWorktreeBatch({ directory: repo, slug: "Task", count: 2, base: "main" });
+    assert.equal(batch.errors.length, 0);
+    assert.equal(batch.created.length, 2);
+    assert.deepEqual(batch.created.map((item) => item.branch), ["aya/task-2", "aya/task-3"]);
+    assert.deepEqual(batch.created.map((item) => item.path), [
+      join(sibling, "task-2"),
+      join(sibling, "task-3"),
+    ]);
+    const info = await worktreeBranchRemovalInfo(repo, batch.created[0].path, "main");
+    assert.equal(info.canDelete, true);
+    const removed = await removeWorktreeAndBranch(repo, batch.created[0].path, "main", true, "aya/task-2");
+    assert.deepEqual(removed, { ok: true, path: batch.created[0].path, branchDeleted: true });
+    assert.equal(execSync("git branch --list aya/task-2", { cwd: repo }).toString().trim(), "");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(sibling, { recursive: true, force: true });
+  }
+});
+
+test("a worktree batch uses one resolved commit even if its starting branch moves", async () => {
+  const repo = makeRepo();
+  const sibling = `${repo}.worktrees`;
+  try {
+    const firstSha = execSync("git rev-parse HEAD", { cwd: repo }).toString().trim();
+    execSync("git commit -q --allow-empty -m later", { cwd: repo });
+    const laterSha = execSync("git rev-parse HEAD", { cwd: repo }).toString().trim();
+    execSync(`git branch moving ${firstSha}`, { cwd: repo });
+    const hooks = join(repo, ".git", "hooks");
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\ngit -C '${repo}' update-ref refs/heads/moving ${laterSha}\n`, { mode: 0o755 });
+
+    const batch = await createWorktreeBatch({ directory: repo, slug: "pinned", count: 2, base: "moving" });
+    assert.equal(batch.errors.length, 0, batch.errors.join("; "));
+    assert.equal(batch.created.length, 2);
+    for (const checkout of batch.created) {
+      assert.equal(execSync("git rev-parse HEAD", { cwd: checkout.path }).toString().trim(), firstSha);
+    }
+    assert.equal(execSync("git rev-parse moving", { cwd: repo }).toString().trim(), laterSha);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(sibling, { recursive: true, force: true });
+  }
+});
+
+test("branch deletion is unchecked when commits are not on the base or upstream", async () => {
+  const repo = makeRepo();
+  const path = join(`${repo}.worktrees`, "task-1");
+  try {
+    await createWorktree(repo, path, "aya/task-1", "main");
+    writeFileSync(join(path, "new.txt"), "not merged");
+    execSync("git add new.txt && git commit -q -m work", { cwd: path });
+    const info = await worktreeBranchRemovalInfo(repo, path, "main");
+    assert.equal(info.canDelete, false);
+    assert.equal(info.unmerged, 1);
+    assert.match(info.reason, /1 commit that is not pushed or merged into main/);
+    const removed = await removeWorktreeAndBranch(repo, path, "main", true, "aya/task-1");
+    assert.deepEqual(removed, { ok: true, path, branchDeleted: false });
+    assert.match(execSync("git branch --list aya/task-1", { cwd: repo }).toString(), /aya\/task-1/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(`${repo}.worktrees`, { recursive: true, force: true });
+  }
+});
+
+test("remove refuses when a worktree's branch changed after the dialog read it", async () => {
+  const repo = makeRepo();
+  const worktreePath = tmpWorktreePath("branch-changed");
+  try {
+    await createWorktree(repo, worktreePath, "shown-branch", "main");
+    const dialogInfo = await worktreeBranchRemovalInfo(repo, worktreePath, "main");
+    assert.equal(dialogInfo.branch, "shown-branch");
+    execSync("git switch -c replacement-branch", { cwd: worktreePath });
+    const result = await removeWorktreeAndBranch(repo, worktreePath, "main", true, dialogInfo.branch);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /branch changed while the dialog was open/i);
+    assert.ok((await listWorktrees(repo)).some((entry) => entry.path === realpathSync(worktreePath)));
+    assert.match(execSync("git branch --list shown-branch", { cwd: repo }).toString(), /shown-branch/);
+    assert.match(execSync("git branch --list replacement-branch", { cwd: repo }).toString(), /replacement-branch/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("batch creation enforces its hard cap and keeps successes after a later path failure", async () => {
+  const repo = makeRepo();
+  const sibling = `${repo}.worktrees`;
+  try {
+    const tooMany = await createWorktreeBatch({ directory: repo, slug: "large", count: 9, base: "main" });
+    assert.deepEqual(tooMany, { created: [], errors: ["Choose between 1 and 8 worktrees."] });
+    mkdirSync(join(sibling, "partial-2"), { recursive: true });
+    writeFileSync(join(sibling, "partial-2", "keep.txt"), "do not replace");
+    const result = await createWorktreeBatch({ directory: repo, slug: "partial", count: 3, base: "main" });
+    assert.deepEqual(result.created.map((item) => item.branch), ["aya/partial-1"]);
+    assert.equal(result.errors.length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(sibling, { recursive: true, force: true });
+  }
 });
 
 // --- listWorktreeStatus / getGitRoot (integration, real git) -----------------

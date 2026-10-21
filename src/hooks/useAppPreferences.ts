@@ -5,7 +5,6 @@ import {
   LAYOUT_CODEC,
   HARNESS_NAME_CODEC,
   GITHUB_LINK_CODEC,
-  WORKTREES_CODEC,
   HARNESS_SEARCH_CODEC,
   TERMINAL_SOUNDS_CODEC,
   STATUS_RAIL_COLLAPSED_CODEC,
@@ -26,7 +25,6 @@ import {
   TERMINAL_FONT_FAMILY_STORAGE_KEY,
   TERMINAL_SOUNDS_STORAGE_KEY,
   USAGE_HARNESS_NAME_STORAGE_KEY,
-  WORKTREES_STORAGE_KEY,
 } from "../storage-keys";
 import type { GitHubLink } from "../types";
 import { usePersistentPreference } from "./usePersistentPreference";
@@ -51,10 +49,6 @@ export function useAppPreferences() {
   const [layoutMode, setLayoutMode] = usePersistentPreference(
     LAYOUT_MODE_STORAGE_KEY,
     LAYOUT_CODEC,
-  );
-  const [worktreesEnabled, setWorktreesEnabled] = usePersistentPreference(
-    WORKTREES_STORAGE_KEY,
-    WORKTREES_CODEC,
   );
   const [harnessSearchEnabled, setHarnessSearchEnabled] =
     usePersistentPreference(HARNESS_SEARCH_STORAGE_KEY, HARNESS_SEARCH_CODEC);
@@ -88,8 +82,6 @@ export function useAppPreferences() {
     setShowGitHubLink,
     layoutMode,
     setLayoutMode,
-    worktreesEnabled,
-    setWorktreesEnabled,
     harnessSearchEnabled,
     setHarnessSearchEnabled,
     terminalSoundsEnabled,

@@ -6,7 +6,6 @@ import {
   LAYOUT_CODEC,
   HARNESS_NAME_CODEC,
   GITHUB_LINK_CODEC,
-  WORKTREES_CODEC,
   HARNESS_SEARCH_CODEC,
   TERMINAL_SOUNDS_CODEC,
   STATUS_RAIL_COLLAPSED_CODEC,
@@ -52,7 +51,6 @@ test("layout codec preserves both layouts and defaults to classic", () => {
 for (const [name, codec, fallback] of [
   ["harness name", HARNESS_NAME_CODEC, true],
   ["GitHub link", GITHUB_LINK_CODEC, false],
-  ["worktrees", WORKTREES_CODEC, false],
   ["harness search", HARNESS_SEARCH_CODEC, false],
   ["terminal sounds", TERMINAL_SOUNDS_CODEC, true],
   ["status rail collapsed", STATUS_RAIL_COLLAPSED_CODEC, false],

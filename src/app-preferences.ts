@@ -31,7 +31,6 @@ export const LAYOUT_CODEC = enumPreference<LayoutMode>(
 export const HARNESS_NAME_CODEC = boolPreference(true);
 export const GITHUB_LINK_CODEC = boolPreference(false);
 // Experimental: git worktree support (detect + group + launch/create in worktrees).
-export const WORKTREES_CODEC = boolPreference(false);
 // Experimental: Cmd+F "History" mode searching Claude/Codex session
 // transcripts on disk for the tab's cwd.
 export const HARNESS_SEARCH_CODEC = boolPreference(false);

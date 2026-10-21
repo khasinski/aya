@@ -4,7 +4,7 @@
 
 import { exec, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
@@ -189,15 +189,173 @@ export async function createWorktree(
   branch?: string,
   base?: string,
 ): Promise<GitMutationResult> {
+  if ([path, branch, base].some((value) => value?.startsWith("-"))) {
+    return { ok: false, error: "Worktree paths, branches, and starting refs cannot begin with a hyphen." };
+  }
   const args = ["worktree", "add"];
   if (branch) args.push("-b", branch);
-  args.push(path);
+  args.push("--", path);
   if (base) args.push(base);
   try {
     await execFileAsync("git", args, { cwd: directory, ...MUTATION_OPTS });
     return { ok: true, path };
   } catch (err) {
     return { ok: false, error: gitErrorMessage(err) };
+  }
+}
+
+export interface WorktreeBatchRequest {
+  directory: string;
+  slug: string;
+  count: number;
+  base: string;
+}
+
+export interface CreatedWorktree {
+  path: string;
+  branch: string;
+}
+
+export interface WorktreeBatchResult {
+  created: CreatedWorktree[];
+  errors: string[];
+}
+
+/** Create up to eight sibling worktrees from one verified commit-ish. Names
+ *  are deterministic and skipped when already taken; earlier successes are
+ *  retained if a later creation fails. */
+export async function createWorktreeBatch(
+  request: WorktreeBatchRequest,
+): Promise<WorktreeBatchResult> {
+  const { directory, count, base } = request;
+  const slug = request.slug.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+  if (!slug) return { created: [], errors: ["Enter a name using letters or numbers."] };
+  if (!Number.isInteger(count) || count < 1 || count > 8) {
+    return { created: [], errors: ["Choose between 1 and 8 worktrees."] };
+  }
+  if (base.startsWith("-")) return { created: [], errors: ["That starting ref was not found."] };
+  const resolved = await execFileAsync("git", ["rev-parse", "--verify", "--quiet", "--end-of-options", `${base}^{commit}`], { cwd: directory, ...OPTS }).catch(() => null);
+  const resolvedBase = resolved?.stdout.trim() ?? "";
+  if (!/^[0-9a-f]{40,64}$/i.test(resolvedBase)) return { created: [], errors: ["That starting ref was not found."] };
+
+  const repoName = path.basename(path.resolve(directory));
+  const parent = path.dirname(path.resolve(directory));
+  const worktreeRoot = path.join(parent, `${repoName}.worktrees`);
+  try {
+    await mkdir(worktreeRoot, { recursive: true });
+  } catch (err) {
+    return { created: [], errors: [gitErrorMessage(err)] };
+  }
+  const branchesText = await execFileAsync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads"], { cwd: directory, ...OPTS })
+    .then(({ stdout }) => stdout).catch(() => "");
+  const usedBranches = new Set(branchesText.split(/\r?\n/).filter(Boolean));
+  const usedPaths = new Set((await listWorktrees(directory)).map((worktree) => path.resolve(worktree.path)));
+  const created: CreatedWorktree[] = [];
+  const errors: string[] = [];
+  let candidate = 1;
+  while (created.length < count) {
+    const suffix = `${slug}-${candidate++}`;
+    const branch = `aya/${suffix}`;
+    const checkout = path.join(worktreeRoot, suffix);
+    if (usedBranches.has(branch) || usedPaths.has(path.resolve(checkout))) continue;
+    usedBranches.add(branch);
+    usedPaths.add(path.resolve(checkout));
+    const result = await createWorktree(directory, checkout, branch, resolvedBase);
+    if (result.ok) created.push({ path: checkout, branch });
+    else {
+      errors.push(`${branch}: ${result.error}`);
+      // A repeated filesystem/refusal failure is unlikely to improve by
+      // skipping more names; keep successful worktrees and report the rest.
+      break;
+    }
+  }
+  return { created, errors };
+}
+
+export interface WorktreeBranchRemovalInfo {
+  branch: string | null;
+  canDelete: boolean;
+  reason: string | null;
+  unmerged: number | null;
+}
+
+async function branchUnmergedCount(directory: string, branch: string, base: string): Promise<number | null> {
+  const resolvedBase = await execFileAsync("git", ["rev-parse", "--verify", "--quiet", "--end-of-options", `${base}^{commit}`], { cwd: directory, ...OPTS })
+    .then(({ stdout }) => stdout.trim()).catch(() => "");
+  if (!/^[0-9a-f]{40,64}$/i.test(resolvedBase)) return null;
+  const safeRef = await execFileAsync("git", ["check-ref-format", `refs/heads/${branch}`], { cwd: directory, ...OPTS }).then(() => true).catch(() => false);
+  if (!safeRef) return null;
+  const upstream = await execFileAsync("git", ["for-each-ref", "--format=%(upstream:short)", `refs/heads/${branch}`], { cwd: directory, ...OPTS })
+    .then(({ stdout }) => stdout.trim()).catch(() => "");
+  const upstreamCommit = upstream
+    ? await execFileAsync("git", ["rev-parse", "--verify", "--quiet", "--end-of-options", `${upstream}^{commit}`], { cwd: directory, ...OPTS }).then(({ stdout }) => stdout.trim()).catch(() => "")
+    : "";
+  if (upstream && !/^[0-9a-f]{40,64}$/i.test(upstreamCommit)) return null;
+  const exclusions = [resolvedBase, ...(upstreamCommit ? [upstreamCommit] : [])];
+  const raw = await execFileAsync("git", ["rev-list", "--count", `refs/heads/${branch}`, "--not", ...exclusions], { cwd: directory, ...OPTS })
+    .then(({ stdout }) => stdout.trim()).catch(() => "");
+  const count = Number.parseInt(raw, 10);
+  return Number.isFinite(count) ? count : null;
+}
+
+/** A branch is removable only when every commit is reachable from the chosen
+ *  base or its configured upstream. This is advisory UI data; deletion
+ *  repeats the check immediately before `git branch -d`. */
+export async function worktreeBranchRemovalInfo(
+  directory: string,
+  worktreePath: string,
+  base: string,
+): Promise<WorktreeBranchRemovalInfo> {
+  const requestedPath = await realpath(worktreePath).catch(() => path.resolve(worktreePath));
+  const entries = await listWorktrees(directory);
+  let matched: Worktree | undefined;
+  for (const item of entries) {
+    const listedPath = await realpath(item.path).catch(() => path.resolve(item.path));
+    if (listedPath === requestedPath) { matched = item; break; }
+  }
+  const branch = matched?.branch ?? null;
+  if (!branch || matched?.isMain) return { branch, canDelete: false, reason: "This checkout has no branch Aya can remove.", unmerged: null };
+  const count = await branchUnmergedCount(directory, branch, base);
+  if (count === null) return { branch, canDelete: false, reason: "Aya could not check whether the branch has unshared commits.", unmerged: null };
+  return {
+    branch,
+    canDelete: count === 0,
+    reason: count === 0 ? null : `It has ${count} commit${count === 1 ? "" : "s"} that ${count === 1 ? "is" : "are"} not pushed or merged into ${base}.`,
+    unmerged: count,
+  };
+}
+
+export async function removeWorktreeAndBranch(
+  directory: string,
+  worktreePath: string,
+  base: string,
+  deleteBranch: boolean,
+  expectedBranch: string | null,
+): Promise<{ ok: true; path: string; branchDeleted: boolean } | { ok: false; error: string }> {
+  const info = await worktreeBranchRemovalInfo(directory, worktreePath, base);
+  const listed = await listWorktrees(directory);
+  const requestedPath = await realpath(worktreePath).catch(() => path.resolve(worktreePath));
+  let target: Worktree | undefined;
+  for (const item of listed) {
+    const listedPath = await realpath(item.path).catch(() => path.resolve(item.path));
+    if (listedPath === requestedPath) { target = item; break; }
+  }
+  if (!target || target.isMain) return { ok: false, error: "Choose a linked worktree to remove." };
+  if (target.branch !== expectedBranch) return { ok: false, error: "This worktree's branch changed while the dialog was open. Close it and review the current branch before removing it." };
+  const validatedPath = target.path;
+  const removed = await removeWorktree(directory, validatedPath);
+  if (!removed.ok) return removed;
+  if (!deleteBranch || !info.branch || info.branch !== expectedBranch) return { ok: true, path: worktreePath, branchDeleted: false };
+  // Recheck after removing the checkout, immediately before branch deletion.
+  const branch = info.branch;
+  if (!branch) return { ok: true, path: worktreePath, branchDeleted: false };
+  const currentCount = await branchUnmergedCount(directory, branch, base);
+  if (currentCount !== 0) return { ok: true, path: worktreePath, branchDeleted: false };
+  try {
+    await execFileAsync("git", ["branch", "-d", "--", branch], { cwd: directory, ...MUTATION_OPTS });
+    return { ok: true, path: worktreePath, branchDeleted: true };
+  } catch {
+    return { ok: true, path: worktreePath, branchDeleted: false };
   }
 }
 

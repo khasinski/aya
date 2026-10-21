@@ -612,6 +612,17 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.aya-worktree-header-branch {
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  text-transform: none;
+  letter-spacing: 0;
+}
 .aya-worktree-header-tag {
   flex-shrink: 0;
   padding: 1px 5px;

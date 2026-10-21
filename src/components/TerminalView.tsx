@@ -861,6 +861,7 @@ function TerminalViewComponent({
     fitTerminal();
     let releaseDeferred:(()=>void)|null=null;
     let disposed=false,awaitingReplay=typeof window.aya.handoverDisplay==='function';
+    let initialPromptTimer: number | null = null;
     let attachCancelled=false,attachRetiredByRestart=false;
     const unregisterPendingAttach=registerPendingTerminalAttach(terminal.id,()=>{attachCancelled=true;releaseDeferred?.();});
     const attachmentWasCancelled=()=>{
@@ -1167,6 +1168,17 @@ function TerminalViewComponent({
         attachIfReused,
         ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
       });
+      // Worktree batches start the same task in each new agent pane. The PTY
+      // process is already spawned here; a short startup grace lets the
+      // launcher hand control to its interactive agent before the prompt is
+      // entered. This is deliberately one-shot and only exists on the fresh
+      // pane state; restored tabs never replay it.
+      if (terminal.initialPrompt) {
+        initialPromptTimer = window.setTimeout(() => {
+          if (disposed || attachCancelled) return;
+          void window.aya.ptyWrite(terminal.id, `${terminal.initialPrompt}\r`).catch(() => {});
+        }, 1200);
+      }
       })().catch(error=>{
         if(disposed||attachCancelled)return;
         awaitingReplay=false;handleAttachmentFailure(term,error);
@@ -1174,7 +1186,7 @@ function TerminalViewComponent({
     }
 
     return () => {
-      disposed=true;releaseDeferred?.();unregisterCheckpoint();unregisterPendingAttach();
+      disposed=true;if(initialPromptTimer!==null)window.clearTimeout(initialPromptTimer);releaseDeferred?.();unregisterCheckpoint();unregisterPendingAttach();
       if(retireHandoverForRestartRef.current===retireHandoverForRestart)retireHandoverForRestartRef.current=null;
       container.removeEventListener("click", onTerminalLinkClick, true);
       unsubscribe();

@@ -164,6 +164,9 @@ export function createWebAya(transport: WebTransport): AyaApi {
     // Repository mutations stay on the desktop app, where the user can see the
     // result and the confirmation prompt.
     createWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),
+    createWorktreeBatch: async () => ({ created: [], errors: ["Not available in Aya Web"] }),
+    worktreeBranchRemovalInfo: async () => ({ branch: null, canDelete: false, reason: "Not available in Aya Web", unmerged: null }),
+    removeWorktreeAndBranch: async () => ({ ok: false, error: "Not available in Aya Web" }),
     removeWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),
     // Native pickers - a browser session can't drive the host's file dialogs.
     pickDirectory: async () => null,

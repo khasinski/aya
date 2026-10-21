@@ -73,8 +73,8 @@ export function useTerminalActions({
   );
 
   const launchTerminal = useCallback(
-    (preset: Preset, cwd?: string, sshTarget?: string) => {
-      const slug = activeProjectIdRef.current;
+    (preset: Preset, cwd?: string, sshTarget?: string, initialPrompt?: string, targetProjectId?: string) => {
+      const slug = targetProjectId ?? activeProjectIdRef.current;
       if (!slug) return;
       const project = findProject(projectsRef.current, slug);
       if (!project) return;
@@ -93,6 +93,7 @@ export function useTerminalActions({
         status: "running",
         bell: false,
         exitCode: null,
+        ...(initialPrompt ? { initialPrompt } : {}),
         ...(sshTarget ? { sshTarget } : {}),
       };
       setTerminals((prev) => {

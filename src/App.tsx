@@ -167,8 +167,6 @@ export function App() {
     setShowGitHubLink,
     layoutMode,
     setLayoutMode,
-    worktreesEnabled,
-    setWorktreesEnabled,
     harnessSearchEnabled,
     setHarnessSearchEnabled,
     terminalSoundsEnabled,
@@ -241,7 +239,7 @@ export function App() {
     activeGithubLink,
     activeBranch,
     setGithubLinks,
-    createWorktreeForProject,
+    createWorktreesForProject,
     removeWorktreeForProject,
     pinCheckout,
   } = useGitStatus({
@@ -1168,12 +1166,18 @@ export function App() {
                   onClose={closeTerminal}
                   onRename={renameTerminal}
                   onLaunch={launchTerminal}
-                  worktreesEnabled={worktreesEnabled}
                   worktrees={worktrees}
                   projectDir={
                     activeProject ? projectBaseCwd(activeProject) : undefined
                   }
-                  onCreateWorktree={createWorktreeForProject}
+                  projectId={activeProjectId ?? undefined}
+                  projectRemote={Boolean(activeProject?.remote)}
+                  onCreateWorktrees={createWorktreesForProject}
+                  onStartWorktrees={(projectId, preset, checkouts, prompt) => {
+                    for (const checkout of checkouts) {
+                      launchTerminal(preset, checkout.path, undefined, prompt, projectId);
+                    }
+                  }}
                   onRemoveWorktree={removeWorktreeForProject}
                   onResize={setSidebarWidth}
                   onReorder={reorderActiveProjectTerminals}
@@ -1368,8 +1372,6 @@ export function App() {
           onShowGitHubLinkChange={updateShowGitHubLink}
           layoutMode={layoutMode}
           onLayoutModeChange={setLayoutMode}
-          worktreesEnabled={worktreesEnabled}
-          onWorktreesEnabledChange={setWorktreesEnabled}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}
