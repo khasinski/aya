@@ -1,0 +1,221 @@
+import * as net from "node:net";
+import { randomUUID } from "node:crypto";
+import type { PtyEvent, ProjectConfig } from "./types";
+import type { Preset } from "./presets";
+import type { PtyEventSink } from "./pty-host-client";
+import { MAX_PTY_PANES } from "./pty-pane-limits";
+import {
+  parseRemoteTerminalRequest,
+  REMOTE_TERMINAL_PROTOCOL_VERSION,
+  REMOTE_TERMINAL_REPLAY_MAX_BYTES,
+  type RemoteTerminalMessage,
+} from "./remote-protocol";
+
+export const REMOTE_TERMINAL_SOCKET_QUEUE_MAX_BYTES = 2 * 1024 * 1024;
+
+export interface RemoteTerminalSessionDeps {
+  listProjects: () => Promise<ProjectConfig[]>;
+  listPresets: () => Promise<Preset[]>;
+  spawn: (terminalId: string, project: ProjectConfig, preset: Preset, cols: number, rows: number) => Promise<void>;
+  write: (terminalId: string, data: string) => Promise<boolean>;
+  resize: (terminalId: string, cols: number, rows: number) => Promise<void>;
+  exit: (terminalId: string) => Promise<void>;
+  newId?: () => string;
+}
+
+interface OutputChunk { offset: number; bytes: Buffer }
+interface Session {
+  terminalId: string;
+  project: string;
+  preset: string;
+  state: "running" | "exited";
+  exitCode?: number;
+  totalBytes: number;
+  chunks: OutputChunk[];
+  clients: Set<net.Socket>;
+}
+
+export type RemoteTerminalWriter = (socket: net.Socket, message: unknown) => void;
+
+/** Per-main-process remote terminal registry. It owns only stream attachments
+ * and a bounded replay ring; PTY ownership remains in the ordinary terminal
+ * host behind the injected callbacks. */
+export class RemotePtySessions implements PtyEventSink {
+  private readonly sessions = new Map<string, Session>();
+
+  constructor(private readonly deps: RemoteTerminalSessionDeps) {}
+
+  isDestroyed(): boolean { return false; }
+  send(_channel: "pty:event", event: PtyEvent): void { this.onPtyEvent(event); }
+
+  detach(socket: net.Socket): void {
+    for (const session of this.sessions.values()) session.clients.delete(socket);
+  }
+
+  onPtyEvent(event: PtyEvent): void {
+    const session = this.sessions.get(event.ptyId);
+    if (!session) return;
+    if (event.type === "data") {
+      // PtyHostClient replays existing output to every sink when a local
+      // window remounts. It is not new stream data and must not advance the
+      // remote offset a second time.
+      if (event.replay) return;
+      const bytes = Buffer.from(event.chunk, "utf8");
+      if (bytes.length === 0) return;
+      const offset = session.totalBytes;
+      session.totalBytes += bytes.length;
+      session.chunks.push({ offset, bytes });
+      this.trim(session);
+      const message: RemoteTerminalMessage = {
+        type: "pty:output", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION,
+        terminalId: event.ptyId, offset, data: event.chunk,
+      };
+      for (const socket of [...session.clients]) this.write(socket, message);
+      return;
+    }
+    if (event.type === "exit" || event.type === "no-session" || event.type === "spawn-failed") {
+      session.state = "exited";
+      session.exitCode = event.type === "exit" ? event.exitCode : 127;
+      const message: RemoteTerminalMessage = {
+        type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION,
+        terminalId: event.ptyId, exitCode: session.exitCode,
+      };
+      for (const socket of [...session.clients]) this.write(socket, message);
+    }
+  }
+
+  async handle(socket: net.Socket, raw: unknown, writer: RemoteTerminalWriter): Promise<void> {
+    const request = parseRemoteTerminalRequest(raw);
+    if (!request || request.type === "session:open") {
+      writer(socket, { type: "error", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: isRecord(raw) && typeof raw.id === "string" ? raw.id : undefined, code: "bad_request", message: "Remote terminal request is invalid." });
+      return;
+    }
+    const id = request.id;
+    try {
+      switch (request.type) {
+        case "pty:spawn": {
+          const projects = await this.deps.listProjects();
+          const project = projects.find((item) => item.slug === request.project && !item.remote);
+          if (!project) throw new Error("The selected host project is unavailable.");
+          const preset = (await this.deps.listPresets()).find((item) => item.id === request.preset);
+          if (!preset || !preset.command.trim()) throw new Error("The selected terminal preset is unavailable.");
+          this.makeRoom();
+          const terminalId = (this.deps.newId ?? randomUUID)();
+          const session: Session = { terminalId, project: project.slug, preset: preset.id, state: "running", totalBytes: 0, chunks: [], clients: new Set() };
+          this.sessions.set(terminalId, session);
+          try {
+            await this.deps.spawn(terminalId, project, preset, request.cols, request.rows);
+          } catch (error) {
+            session.state = "exited";
+            session.exitCode = 127;
+            throw error;
+          }
+          writer(socket, { type: "pty:spawned", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId, project: project.slug, preset: preset.id });
+          return;
+        }
+        case "pty:attach": {
+          const session = this.sessions.get(request.terminalId);
+          if (!session) throw new Error("The remote terminal is no longer available.");
+          if (request.offset > session.totalBytes) throw new Error("The requested output position is ahead of this terminal.");
+          const oldest = session.chunks[0]?.offset ?? session.totalBytes;
+          const fromOffset = Math.max(request.offset, oldest);
+          session.clients.add(socket);
+          writer(socket, {
+            type: "pty:attached", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id,
+            terminalId: session.terminalId, fromOffset, endOffset: session.totalBytes,
+            truncated: request.offset < oldest,
+          });
+          const replay = this.readFrom(session, fromOffset);
+          if (replay.length) writer(socket, { type: "pty:output", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, offset: fromOffset, data: replay });
+          if (session.state === "exited") writer(socket, { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, exitCode: session.exitCode ?? 0 });
+          return;
+        }
+        case "pty:write": {
+          if (!this.sessions.has(request.terminalId)) throw new Error("The remote terminal is no longer available.");
+          const accepted = await this.deps.write(request.terminalId, request.data);
+          writer(socket, { type: "pty:written", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId, accepted });
+          return;
+        }
+        case "pty:resize": {
+          if (!this.sessions.has(request.terminalId)) throw new Error("The remote terminal is no longer available.");
+          await this.deps.resize(request.terminalId, request.cols, request.rows);
+          writer(socket, { type: "pty:resized", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
+          return;
+        }
+        case "pty:exit": {
+          const session = this.sessions.get(request.terminalId);
+          if (!session) throw new Error("The remote terminal is no longer available.");
+          await this.deps.exit(request.terminalId);
+          if (session.state !== "exited") {
+            session.state = "exited";
+            session.exitCode = 0;
+            const ended: RemoteTerminalMessage = { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: request.terminalId, exitCode: 0 };
+            for (const client of [...session.clients]) this.write(client, ended);
+          }
+          writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
+          return;
+        }
+        case "pty:list": {
+          writer(socket, {
+            type: "pty:list-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id,
+            terminals: [...this.sessions.values()].map(({ terminalId, project, preset, state, totalBytes }) => ({ terminalId, project, preset, state, offset: totalBytes })),
+          });
+          return;
+        }
+      }
+    } catch (error) {
+      writer(socket, { type: "error", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, code: "terminal_failed", message: error instanceof Error ? error.message : "Remote terminal request failed." });
+    }
+  }
+
+  private trim(session: Session): void {
+    let retained = session.chunks.reduce((sum, item) => sum + item.bytes.length, 0);
+    while (retained > REMOTE_TERMINAL_REPLAY_MAX_BYTES && session.chunks.length) {
+      const first = session.chunks[0];
+      const excess = retained - REMOTE_TERMINAL_REPLAY_MAX_BYTES;
+      if (first.bytes.length <= excess) {
+        retained -= first.bytes.length;
+        session.chunks.shift();
+      } else {
+        // Keep a UTF-8 boundary so replay does not begin with a replacement
+        // character when a multi-byte terminal glyph straddles the cap.
+        let cut = excess;
+        while (cut < first.bytes.length && (first.bytes[cut] & 0xc0) === 0x80) cut += 1;
+        const removed = cut;
+        first.bytes = first.bytes.subarray(cut);
+        first.offset += removed;
+        retained -= removed;
+      }
+    }
+  }
+
+  private makeRoom(): void {
+    while (this.sessions.size >= MAX_PTY_PANES) {
+      const oldestExited = [...this.sessions.values()].find((session) => session.state === "exited");
+      if (!oldestExited) throw new Error("The host already has the maximum number of remote terminals.");
+      this.sessions.delete(oldestExited.terminalId);
+    }
+  }
+
+  private readFrom(session: Session, offset: number): string {
+    return Buffer.concat(session.chunks.flatMap((item) => {
+      const end = item.offset + item.bytes.length;
+      if (end <= offset) return [];
+      return [offset > item.offset ? item.bytes.subarray(offset - item.offset) : item.bytes];
+    })).toString("utf8");
+  }
+
+  private write(socket: net.Socket, message: unknown): void {
+    if (socket.destroyed) return;
+    if (socket.writableLength > REMOTE_TERMINAL_SOCKET_QUEUE_MAX_BYTES) {
+      this.detach(socket);
+      socket.destroy();
+      return;
+    }
+    socket.write(`${JSON.stringify(message)}\n`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

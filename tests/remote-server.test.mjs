@@ -144,6 +144,27 @@ test("remote server reports read-only for control commands", async () => {
   }
 });
 
+test("remote server gives a clear error for an unsupported terminal protocol", async () => {
+  const { dir, socket } = mkSocketPath();
+  const stop = startRemoteServerOn(socket, {
+    appVersion: "0.6.0-test",
+    host: { id: "host-1", name: "Host 1", platform: "linux", user: "username" },
+    getSnapshot: async () => ({ projects: [], projectState: { version: 1, order: [], open: [], recent: [] }, presets: [] }),
+    createProject: async (name, directory) => ({ slug: name, name, directory, tabs: [] }),
+  });
+  try {
+    const messages = await readMessages(socket, (client) => {
+      client.write(`${JSON.stringify({ type: "session:open", protocol: 3, id: "open" })}\n`);
+    }, 3);
+    assert.equal(messages[2].type, "error");
+    assert.equal(messages[2].code, "protocol_mismatch");
+    assert.match(messages[2].message, /use version 2/);
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("remote server lists directories for fs:list", async () => {
   const { dir, socket } = mkSocketPath();
   const root = mkdtempSync(join(tmpdir(), "aya-remote-fs-"));

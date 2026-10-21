@@ -28,7 +28,7 @@ import { appendFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
-import { getOrCreateProject, listProjects, listProjectState, saveProjectState } from "./config";
+import { getOrCreateProject, listProjects, listProjectState, saveProjectState, updateProject } from "./config";
 import { bundledAyaCliPath } from "./cli-path";
 import { isShellCommand, withCliFirst } from "./pane-command";
 import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
@@ -69,6 +69,8 @@ import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
+import { RemotePtySessions } from "./remote-pty-sessions";
+import { oneAtATime } from "./keyed-queue";
 import { headCommit, workingTreeState } from "./git";
 import {
   AYA_HOME,
@@ -167,6 +169,7 @@ const builtinRuleSet: ScreenRuleSet = builtinState.available ? builtinState.rule
   sets: { generic: [], claude: [], codex: [], opencode: [], grok: [], antigravity: [] },
 };
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
+let remotePtySessions: RemotePtySessions | null = null;
 const userRulePolicyInstance=crypto.randomBytes(16).toString("hex");
 const hostRuleEpoch=(epoch:number)=>`${userRulePolicyInstance}:${epoch}`;
 const userRuleProvider = new UserRuleProvider(path.join(AYA_HOME, "screen-rules"), builtinRuleSet, {
@@ -602,6 +605,49 @@ function registerIpc(): TeamRunner {
       .catch(() => {});
     return true;
   };
+  const appendRemoteTab = oneAtATime();
+  remotePtySessions = new RemotePtySessions({
+    listProjects: () => listProjects(),
+    listPresets: () => listPresets(),
+    spawn: (terminalId, selectedProject, preset, cols, rows) =>
+      appendRemoteTab(selectedProject.slug, async () => {
+        const project = (await listProjects()).find((item) => item.slug === selectedProject.slug);
+        if (!project || project.remote) throw new Error("The selected host project is unavailable.");
+        const baseName = `Remote ${preset.name}`;
+        const used = new Set(project.tabs.map((tab) => tab.name));
+        let name = baseName;
+        for (let suffix = 2; used.has(name); suffix += 1) name = `${baseName} ${suffix}`;
+        const tab = { id: terminalId, presetId: preset.id, name };
+        const updated = { ...project, tabs: [...project.tabs, tab] };
+        await updateProject(updated);
+        // A remote terminal is a real host-project tab, not an invisible PTY.
+        // Opening the project's directory either focuses its current window
+        // or adds it to the boot window; the project reload then hydrates the
+        // new tab without creating a second process.
+        await openFromOutside(project.directory);
+        for (const win of ayaWindows) {
+          if (!win.isDestroyed()) win.webContents.send("config:changed", { slice: "projects" });
+        }
+        ayaWeb.broadcast("config:changed", { slice: "projects" });
+        const request: SpawnRequest = {
+          ptyId: terminalId,
+          projectSlug: project.slug,
+          presetId: preset.id,
+          agent: presetAgent(preset),
+          ...(preset.configDir ? { agentConfigDir: preset.configDir } : {}),
+          command: preset.command,
+          cwd: project.directory,
+          cols,
+          rows,
+        };
+        const sent = await spawnGate.spawn(terminalId, () => prepareSpawn(request), (prepared) => sendSpawn(prepared));
+        if (sent !== true) throw new Error("The remote terminal could not be started.");
+      }),
+    write: (terminalId, data) => ptyHost.write(terminalId, data),
+    resize: (terminalId, cols, rows) => ptyHost.resize(terminalId, cols, rows),
+    exit: (terminalId) => ptyHost.kill(terminalId),
+  });
+  ptyHost.attachWebContents(remotePtySessions);
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
@@ -1006,6 +1052,7 @@ app.whenReady().then(async () => {
     // for an existing project, so this must return the existing one rather than
     // fail on the "already exists" guard.
     createProject: (name, directory) => getOrCreateProject(name, directory),
+    terminalSessions: remotePtySessions ?? undefined,
   });
   ayaWeb.start();
   installApplicationMenu(applicationMenuDeps);

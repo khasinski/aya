@@ -1,9 +1,10 @@
 # Aya Remote Sessions Spec
 
-Status: draft, exploratory. Phase 1 transport skeleton exists on the
-`remote-stdio-bridge` branch: `aya remote --stdio` bridges to a host-local
-`aya-remote.sock`, and the running Aya app serves a read-only `hello` +
-workspace snapshot.
+Status: host-side terminal-session transport is implemented; remote client UI
+and workspace rendering remain future work. The existing v1 `hello`, snapshot,
+directory, and project commands remain available on the owner-only
+`aya-remote.sock`. A client can opt into terminal protocol v2 on the same
+connection.
 
 ## Goal
 
@@ -296,6 +297,37 @@ Command stream:
 
 WebSocket is the natural transport for terminal output and events. HTTP or RPC
 over the same socket can handle commands.
+
+### Host-Owned Terminal Stream (Protocol v2)
+
+The host serves a long-lived newline-delimited JSON stream over the existing
+owner-only Unix socket. `aya remote --stdio` forwards stdin and stdout between
+that socket and its caller; the client can close the bridge without sending a
+terminal-exit command. V1 hello/snapshot and filesystem/project requests keep
+their existing protocol version and behavior. A client explicitly opens
+terminal protocol v2 before using terminal commands; unsupported versions
+receive a protocol-mismatch response.
+
+V2 supports `pty:spawn`, `pty:attach`, `pty:write`, `pty:resize`, `pty:exit`,
+and `pty:list`. Spawn selects a host project and saved preset; the host creates
+a normal project tab and starts it through its ordinary PTY host. Detaching
+only removes the stream subscription. A terminal ends only when its process
+exits or a client explicitly requests `pty:exit`.
+
+Each terminal retains at most 1 MiB of replay output. The host reports byte
+offsets and whether the requested offset predates retained output; output
+older than the retained window is then unavailable. Frames are newline
+delimited, terminal data is JSON-escaped without stripping ANSI bytes, and
+socket writes are disconnected if a slow reader accumulates more than 2 MiB
+of queued data. The operating system pipe supplies backpressure between SSH,
+the stdio bridge, and the host socket. Remote session metadata is capped at
+the shared 128-pane limit; when full, the oldest exited session is discarded
+to make room, while an all-running set refuses another remote spawn. Retained
+replay therefore uses at most 128 MiB before per-session eviction.
+
+Terminal access remains limited to the existing owner-only local socket and
+the explicitly invoked SSH stdio bridge. The host opens no TCP listener; a
+client cannot connect over the network directly to the terminal service.
 
 ## Terminal Rendering
 
