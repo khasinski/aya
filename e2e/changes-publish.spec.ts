@@ -24,8 +24,18 @@ case "$1 $2" in
     if [ "$4" = "--json" ] && [ -f "$state/check-pr.json" ]; then cat "$state/check-pr.json"; exit 0; fi
     if [ -f "$FAKE_GH_STATE/existing-pr" ]; then cat "$FAKE_GH_STATE/existing-pr"; exit 0; fi
     echo 'no pull requests found for branch' >&2; exit 1 ;;
-  "pr checks") [ -f "$state/checks.json" ] && { cat "$state/checks.json"; exit 0; }; echo '[]'; exit 0 ;;
-  "run view") [ -f "$state/failed-log" ] && { cat "$state/failed-log"; exit 0; }; exit 0 ;;
+  "pr checks")
+    if [ -f "$state/checks-unavailable" ]; then echo 'temporary network failure' >&2; exit 1; fi
+    [ -f "$state/checks.json" ] && { cat "$state/checks.json"; exit 0; }; echo '[]'; exit 0 ;;
+  "run view")
+    if [ "$3" = "11111" ]; then
+      : > "$state/slow-a-started"
+      while [ ! -f "$state/slow-a-release" ]; do sleep 0.01; done
+      echo 'slow first check output'
+      exit 0
+    fi
+    if [ "$3" = "22222" ]; then echo 'fast second check output'; exit 0; fi
+    [ -f "$state/failed-log" ] && { cat "$state/failed-log"; exit 0; }; exit 0 ;;
   "pr create") echo 'https://github.com/aya-e2e/project/pull/42'; exit 0 ;;
 esac
 exit 2
@@ -318,7 +328,7 @@ test.describe("failed pull request checks", () => {
     await expect(checks).toContainText("Linux tests");
     await expect(checks).toContainText("Failed");
     await checks.getByLabel("Send failed checks to").selectOption(seeded.tabIds.right);
-    await checks.getByRole("button", { name: "Send to a pane" }).click();
+    await checks.getByRole("button", { name: "Send Linux tests failure details" }).click();
     const preview = checks.getByRole("textbox", { name: "Exact message to send" });
     const previewText = await preview.inputValue();
     expect(previewText).toContain("Tail of the failed job log (up to 8 KB");
@@ -338,6 +348,123 @@ test.describe("failed pull request checks", () => {
     await popover.screenshot({ path: "/tmp/changes-publish-checks-sent.png" });
     } finally {
       for (const name of ["check-pr.json", "checks.json", "failed-log"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+});
+
+test.describe("PR3 screenshot states", () => {
+  test("captures pending, passing, failing, unavailable, merged, and closed checks", async ({ window, seeded }) => {
+    addFakeRemote(seeded.projectDir);
+    const checkUrl = "https://github.com/aya-e2e/project/actions/runs/12345/job/67890";
+    const row = (bucket: string, state: string) => [{ name: "Linux tests", state, bucket, link: checkUrl }];
+    const setChecks = (bucket: string, state: string) => writeFileSync(join(fakeState, "checks.json"), JSON.stringify(row(bucket, state)));
+    const closeAndReopen = async (popover: import("@playwright/test").Locator) => {
+      const trigger = window.locator(".aya-statusbar-popover-host > button").filter({ hasText: "dirty" });
+      await trigger.click();
+      await expect(popover).toBeHidden();
+      await trigger.click();
+      await expect(popover).toBeVisible();
+    };
+    writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+    setChecks("pending", "queued");
+    try {
+      let popover = await openChanges(window);
+      let checks = window.getByRole("region", { name: "Pull request checks" });
+      await expect(checks).toContainText("Queued");
+      await checks.screenshot({ path: "/tmp/changes-publish-checks-pending.png" });
+
+      setChecks("pending", "in_progress");
+      await closeAndReopen(popover);
+      checks = window.getByRole("region", { name: "Pull request checks" });
+      await expect(checks).toContainText("Running");
+
+      setChecks("pass", "success");
+      await closeAndReopen(popover);
+      checks = window.getByRole("region", { name: "Pull request checks" });
+      await expect(checks).toContainText("Passed");
+      await checks.screenshot({ path: "/tmp/changes-publish-checks-passing.png" });
+
+      setChecks("fail", "failure");
+      await closeAndReopen(popover);
+      checks = window.getByRole("region", { name: "Pull request checks" });
+      await expect(checks).toContainText("Linux tests");
+      await expect(checks).toContainText("Failed");
+      await expect(checks).toContainText("Open");
+      await expect(checks.getByRole("button", { name: "Open Linux tests check" })).toBeVisible();
+      await checks.screenshot({ path: "/tmp/changes-publish-checks-failing.png" });
+
+      writeFileSync(join(fakeState, "checks-unavailable"), "");
+      await closeAndReopen(popover);
+      await expect(popover).toContainText("Aya could not load pull request checks.");
+      await popover.screenshot({ path: "/tmp/changes-publish-checks-unavailable.png" });
+      rmSync(join(fakeState, "checks-unavailable"), { force: true });
+
+      for (const state of ["MERGED", "CLOSED"]) {
+        writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state, isDraft: false }));
+        await closeAndReopen(popover);
+        checks = window.getByRole("region", { name: "Pull request checks" });
+        await expect(checks).toContainText(`This pull request is ${state.toLowerCase()}`);
+        await checks.screenshot({ path: `/tmp/changes-publish-checks-${state.toLowerCase()}.png` });
+      }
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "checks-unavailable"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+});
+
+test.describe("failed checks with no open pane", () => {
+  test.use({ seedOptions: {
+    gitRepo: true,
+    singleTab: { presetId: "ended", name: "Ended pane" },
+    presetList: [{ id: "ended", name: "Ended pane", icon: "$", color: "", command: "exit 0" }],
+    launchEnv,
+  } });
+
+  test("explains why a failed check cannot be sent without an open pane", async ({ window, seeded }) => {
+    addFakeRemote(seeded.projectDir);
+    writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+    writeFileSync(join(fakeState, "checks.json"), JSON.stringify([{
+      name: "Linux tests", state: "failure", bucket: "fail",
+      link: "https://github.com/aya-e2e/project/actions/runs/12345/job/67890",
+    }]));
+    try {
+      const popover = await openChanges(window);
+      await expect.poll(() => window.getByRole("region", { name: "Pull request checks" }).textContent()).toContain("Failed");
+      const checks = window.getByRole("region", { name: "Pull request checks" });
+      await expect(checks).toContainText("Open an agent pane in this project before sending check details.");
+      await expect(checks.getByRole("button", { name: "Send Linux tests failure details" })).toBeDisabled();
+    } finally {
+      for (const name of ["check-pr.json", "checks.json"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+});
+
+test.describe("overlapping failed-check previews", () => {
+  test.use({ seedOptions: { gitRepo: true, rightTab: { presetId: "ci-review-target", name: "CI review target" }, presetList: [recorderPreset], launchEnv } });
+
+  test("a late first preview cannot replace the selected second check", async ({ window, seeded }) => {
+    addFakeRemote(seeded.projectDir);
+    writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+    writeFileSync(join(fakeState, "checks.json"), JSON.stringify([
+      { name: "Linux tests", state: "failure", bucket: "fail", link: "https://github.com/aya-e2e/project/actions/runs/11111/job/1" },
+      { name: "macOS tests", state: "failure", bucket: "fail", link: "https://github.com/aya-e2e/project/actions/runs/22222/job/2" },
+    ]));
+    try {
+      const popover = await openChanges(window);
+      const checks = window.getByRole("region", { name: "Pull request checks" });
+      await expect(checks.getByText("Linux tests")).toBeVisible();
+      await checks.getByRole("button", { name: "Send Linux tests failure details" }).click();
+      await expect.poll(() => existsSync(join(fakeState, "slow-a-started"))).toBe(true);
+      await checks.getByRole("button", { name: "Send macOS tests failure details" }).click();
+      const preview = checks.getByRole("textbox", { name: "Exact message to send" });
+      await expect(preview).toContainText("CI check failed: macOS tests");
+      writeFileSync(join(fakeState, "slow-a-release"), "");
+      await window.waitForTimeout(100);
+      expect(await preview.inputValue()).toContain("CI check failed: macOS tests");
+      expect(await preview.inputValue()).not.toContain("CI check failed: Linux tests");
+    } finally {
+      writeFileSync(join(fakeState, "slow-a-release"), "");
+      for (const name of ["check-pr.json", "checks.json", "slow-a-started", "slow-a-release"]) rmSync(join(fakeState, name), { force: true });
     }
   });
 });

@@ -71,6 +71,16 @@ function checkoutName(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() || path;
 }
 
+function ciCheckLabel(check: PullRequestChecks["checks"][number]): string {
+  if (check.bucket === "pass") return "Passed";
+  if (check.bucket === "fail") return "Failed";
+  if (check.bucket === "pending") {
+    if (/queued|waiting|requested|pending/i.test(check.state)) return "Queued";
+    if (/in.progress|running/i.test(check.state)) return "Running";
+  }
+  return check.state;
+}
+
 function StatusBarImpl({
   project,
   git,
@@ -157,13 +167,16 @@ function StatusBarImpl({
   const [ciChecks, setCiChecks] = useState<PullRequestChecks | null>(null);
   const [ciChecksError, setCiChecksError] = useState<string | null>(null);
   const [ciTargetId, setCiTargetId] = useState<string | null>(null);
+  const ciTargetIdRef = useRef<string | null>(null);
+  ciTargetIdRef.current = ciTargetId;
+  const ciPreviewRequestId = useRef(0);
   const [selectedCiCheckUrl, setSelectedCiCheckUrl] = useState<string | null>(null);
   const [ciPreview, setCiPreview] = useState<CiFailurePreview | null>(null);
   const [ciSending, setCiSending] = useState(false);
   const [ciNotice, setCiNotice] = useState<string | null>(null);
   const pullRequestUrl = createdPullRequest?.directory === gitDirectory && createdPullRequest.branch === publishStatus?.branch
     ? createdPullRequest.url
-    : ciChecks?.pullRequestState === "open" && publishStatus?.branch
+    : (ciChecks?.pullRequestState === "open" || ciChecks?.pullRequestState === "merged" || ciChecks?.pullRequestState === "closed") && publishStatus?.branch
       ? ciChecks.pullRequestUrl
       : null;
   const [showDiff, setShowDiff] = useState(false);
@@ -316,7 +329,10 @@ function StatusBarImpl({
 
   useEffect(() => {
     if (ciTargetId && reviewTargets.some((target) => target.id === ciTargetId)) return;
-    setCiTargetId(reviewTargets[0]?.id ?? null);
+    const targetId = reviewTargets[0]?.id ?? null;
+    ciTargetIdRef.current = targetId;
+    ciPreviewRequestId.current += 1;
+    setCiTargetId(targetId);
     setCiPreview(null);
   }, [reviewTargets, ciTargetId]);
 
@@ -477,6 +493,7 @@ function StatusBarImpl({
 
   const previewCiCheck = async (checkUrl: string) => {
     if (!project || !gitDirectory || !ciTargetId) return;
+    const requestId = ++ciPreviewRequestId.current;
     const directory = gitDirectory;
     const generation = gitCheckoutRef.current.generation;
     const projectSlug = project.slug;
@@ -488,10 +505,10 @@ function StatusBarImpl({
     setCiChecksError(null);
     try {
       const preview = await window.aya.previewCiFailure({ projectSlug, directory, targetId, checkUrl });
-      if (!isCurrent()) return;
+      if (!isCurrent() || requestId !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId) return;
       setCiPreview(preview);
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || requestId !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId) return;
       setCiChecksError(error instanceof Error ? error.message : "Aya could not prepare this check for sending.");
     }
   };
@@ -513,6 +530,7 @@ function StatusBarImpl({
       setCiPreview(null);
     } catch (error) {
       if (!isCurrent()) return;
+      setCiPreview(null);
       setCiChecksError(error instanceof Error ? error.message : "Aya could not send the check details.");
     } finally { setCiSending(false); }
   };
@@ -878,17 +896,26 @@ function StatusBarImpl({
                           <div className="aya-ci-check-list">
                             {ciChecks.checks.map((check, index) => (
                               <div className="aya-ci-check" key={`${check.url ?? check.name}-${index}`}>
-                                <span className={`aya-ci-check-state aya-ci-check-state--${check.bucket}`}>{check.bucket === "pass" ? "Passed" : check.bucket === "fail" ? "Failed" : check.bucket === "pending" ? "Running" : check.state}</span>
+                                <span className={`aya-ci-check-state aya-ci-check-state--${check.bucket}`}>{ciCheckLabel(check)}</span>
                                 <span className="aya-ci-check-name">{check.name}</span>
-                                {check.url && <button type="button" className="aya-statusbar-popover-action" onClick={() => void window.aya.openUrl(check.url!)}>Open</button>}
-                                {check.bucket === "fail" && check.url && <button type="button" className="aya-statusbar-popover-action" disabled={!ciTargetId || reviewTargets.length === 0} onClick={() => void previewCiCheck(check.url!)}>{selectedCiCheckUrl === check.url && ciPreview ? "Preview" : "Send to a pane"}</button>}
+                                {check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Open ${check.name} check`} onClick={() => void window.aya.openUrl(check.url!)}>Open</button>}
+                                {check.bucket === "fail" && check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Send ${check.name} failure details`} disabled={!ciTargetId || reviewTargets.length === 0} onClick={() => void previewCiCheck(check.url!)}>{selectedCiCheckUrl === check.url && ciPreview ? "Preview" : "Send to a pane"}</button>}
                               </div>
                             ))}
                           </div>
                         ) : <div className="aya-dirty-publish-hint">{ciChecksError ? "" : ciChecks?.pullRequestState === "none" ? "No pull request for this branch yet." : "Waiting for checks..."}</div>}
-                        {ciChecks?.checks.some((check) => check.bucket === "fail" && check.url) && (
+                        {ciChecks?.checks.some((check) => check.bucket === "fail" && check.url) && reviewTargets.length === 0 && (
+                          <div className="aya-dirty-publish-hint">Open an agent pane in this project before sending check details.</div>
+                        )}
+                        {ciChecks?.checks.some((check) => check.bucket === "fail" && check.url) && reviewTargets.length > 0 && (
                           <label className="aya-ci-target-label" htmlFor="aya-ci-target">Send failed checks to
-                            <select id="aya-ci-target" value={ciTargetId ?? ""} onChange={(event) => { setCiTargetId(event.currentTarget.value || null); setCiPreview(null); }}>
+                            <select id="aya-ci-target" value={ciTargetId ?? ""} onChange={(event) => {
+                              const targetId = event.currentTarget.value || null;
+                              ciTargetIdRef.current = targetId;
+                              ciPreviewRequestId.current += 1;
+                              setCiTargetId(targetId);
+                              setCiPreview(null);
+                            }}>
                               {reviewTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
                             </select>
                           </label>

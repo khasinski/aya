@@ -1,8 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const { MAX_CI_LOG_TAIL_BYTES, boundedCiLogTail, getPullRequestChecks, buildCiFailurePrompt,
-  createCiFailurePreview, sendCiFailurePreview } = await import("../dist-electron/ci-checks.js");
+  MAX_STORED_CI_PREVIEWS, createCiFailurePreview, sendCiFailurePreview } = await import("../dist-electron/ci-checks.js");
+const { GH_MAX_OUTPUT_BYTES, runGh } = await import("../dist-electron/git-publish.js");
 
 const directory = "/tmp/aya-ci-checks-test";
 const prUrl = "https://github.com/acme/repo/pull/17";
@@ -60,7 +64,7 @@ test("accepts gh's pending-check exit while preserving its JSON rows", async () 
 });
 
 test("failure preview includes a sanitized bounded log tail and only accepts repository job URLs", async () => {
-  const log = `\u001b[31mred failure\u001b[0m\n\u001bPsecret terminal payload\u001b\\\n\u009b31mC1 color\u009b0m\nAWS_SECRET=private-value\nBearer abcdefghijklmnopqrstuvwxyz0123456789\n${"x".repeat(9_000)}TAIL-END`;
+  const log = `\u001b[31mred failure\u001b[0m\n\u001bPsecret terminal payload\u001b\\\n\u001b]0;ESC OSC secret\u001b\\\n\u009dC1 OSC secret\u001b\\\n\u0090C1 DCS secret\u001b\\\nAWS_SECRET=private-value\nBearer abcdefghijklmnopqrstuvwxyz0123456789\n${"x".repeat(9_000)}report\u202etxt\nTAIL-END`;
   const { calls, gh } = githubFixture({ log });
   const preview = await buildCiFailurePrompt(directory, "feature/ci", checkUrl, gh);
   assert.equal(preview.check.name, "Linux / electron");
@@ -70,6 +74,10 @@ test("failure preview includes a sanitized bounded log tail and only accepts rep
   assert(!preview.prompt.includes("private-value"));
   assert(!preview.prompt.includes("abcdefghijklmnopqrstuvwxyz0123456789"));
   assert(!preview.prompt.includes("secret terminal payload"));
+  assert(!preview.prompt.includes("OSC secret"));
+  assert(!preview.prompt.includes("DCS secret"));
+  assert(preview.prompt.includes("report\\u202etxt"));
+  assert(!preview.prompt.includes("report\u202etxt"));
   assert(!preview.prompt.includes("C1 color"));
   assert(!preview.prompt.includes("\u001b"));
   assert(Buffer.byteLength(preview.prompt.slice(preview.prompt.indexOf("Tail of the failed job log")), "utf8") <= MAX_CI_LOG_TAIL_BYTES + 100);
@@ -78,6 +86,27 @@ test("failure preview includes a sanitized bounded log tail and only accepts rep
 
   const evil = githubFixture({ checks: [{ ...checkRows[0], link: "https://evil.example/actions/runs/123456/job/789012" }] });
   await assert.rejects(buildCiFailurePrompt(directory, "feature/ci", checkUrl, evil.gh), /no longer failing/);
+});
+
+test("check names make bidi controls visible", async () => {
+  const { gh } = githubFixture({ checks: [{ ...checkRows[0], name: "report\u202etxt" }] });
+  const result = await getPullRequestChecks(directory, "feature/ci", gh);
+  assert.equal(result.checks[0].name, "report\\u202etxt");
+});
+
+test("runGh captures logs over 1 MiB before bounding the prompt tail", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aya-gh-large-log-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const fakeGh = join(bin, "gh");
+  writeFileSync(fakeGh, `#!/usr/bin/env node\nprocess.stdout.write("x".repeat(1_500_000) + "LAST-LINE");\n`);
+  chmodSync(fakeGh, 0o755);
+  try {
+    const result = await runGh(root, ["run", "view"], 10_000, undefined, { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` });
+    assert.equal(GH_MAX_OUTPUT_BYTES, 64 * 1024 * 1024);
+    assert(result.length > 1_000_000);
+    assert.equal(boundedCiLogTail(result).slice(-9), "LAST-LINE");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("preview is refetched and sends one bracketed paste through the shared Enter path", async () => {
@@ -108,4 +137,54 @@ test("a changed log requires a new preview and is never sent", async () => {
   let sends = 0;
   await assert.rejects(sendCiFailurePreview({ token: preview.token, projectSlug: "project", targetId: "pane-1" }, async () => { sends += 1; }, gh), /log changed/);
   assert.equal(sends, 0);
+});
+
+test("concurrent sends cannot use the same single-use preview token", async () => {
+  const { gh } = githubFixture();
+  const preview = await createCiFailurePreview({
+    directory, branch: "feature/ci", checkUrl, projectSlug: "project", targetId: "pane-1",
+  }, gh);
+  let sends = 0;
+  const input = { token: preview.token, projectSlug: "project", targetId: "pane-1" };
+  const sender = async () => { sends += 1; };
+  const results = await Promise.allSettled([
+    sendCiFailurePreview(input, sender, gh),
+    sendCiFailurePreview(input, sender, gh),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.equal(sends, 1);
+});
+
+test("preview storage evicts the oldest unexpired preview at its fixed cap", async () => {
+  const { gh } = githubFixture();
+  const created = [];
+  for (let index = 0; index <= MAX_STORED_CI_PREVIEWS; index += 1) {
+    created.push(await createCiFailurePreview({
+      directory, branch: "feature/ci", checkUrl, projectSlug: "project", targetId: `pane-${index}`,
+    }, gh));
+  }
+  const sender = async () => {};
+  await assert.rejects(sendCiFailurePreview({ token: created[0].token, projectSlug: "project", targetId: "pane-0" }, sender, gh), /preview expired/);
+  await sendCiFailurePreview({ token: created.at(-1).token, projectSlug: "project", targetId: `pane-${MAX_STORED_CI_PREVIEWS}` }, sender, gh);
+});
+
+test("expired previews are rejected and pruned before new previews are stored", async () => {
+  const originalNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    const { gh } = githubFixture();
+    const make = (targetId) => createCiFailurePreview({
+      directory, branch: "feature/ci", checkUrl, projectSlug: "project", targetId,
+    }, gh);
+    const expired = await make("old-pane");
+    now += 5 * 60_000 + 1;
+    const current = await make("new-pane");
+    const sender = async () => {};
+    await assert.rejects(sendCiFailurePreview({ token: expired.token, projectSlug: "project", targetId: "old-pane" }, sender, gh), /preview expired/);
+    await sendCiFailurePreview({ token: current.token, projectSlug: "project", targetId: "new-pane" }, sender, gh);
+  } finally {
+    Date.now = originalNow;
+  }
 });

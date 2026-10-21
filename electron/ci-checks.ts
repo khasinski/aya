@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { reviewPtyPayload } from "./diff-comments-prompt";
 import { runGh } from "./git-publish";
+import { printable } from "./printable";
 
 export const MAX_CI_LOG_TAIL_BYTES = 8 * 1024;
+export const MAX_STORED_CI_PREVIEWS = 128;
 const GH_TIMEOUT_MS = 20_000;
 const GH_POLL_TIMEOUT_MS = 12_000;
 
@@ -43,7 +45,7 @@ function safeUrl(value: unknown, origin: string): string | null {
 
 function safeName(value: unknown): string {
   if (typeof value !== "string") return "Unnamed check";
-  return value.replace(/[\x00-\x1f\x7f-\x9f]/g, " ").trim().slice(0, 240) || "Unnamed check";
+  return printable(value.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")).trim().slice(0, 240) || "Unnamed check";
 }
 
 export async function getPullRequestChecks(directory: string, branch: string, gh: Gh = runGh): Promise<PullRequestChecks> {
@@ -104,17 +106,18 @@ function friendlyGhError(error: unknown): Error {
 }
 
 function cleanLog(raw: string): string {
-  return raw
-    .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\](?:[^\x07]|\x1b(?!\\))*(?:\x07|\x1b\\)|[PX^_][\s\S]*?\x1b\\|[@-_])/g, "")
+  const cleaned = raw
+    .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\](?:(?!\x07|\x1b\\)[\s\S])*(?:\x07|\x1b\\)|[PX^_](?:(?!\x1b\\)[\s\S])*\x1b\\|[@-_])/g, "")
     .replace(/\x9b[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\x9d[\s\S]*?(?:\x07|\x9c)/g, "")
-    .replace(/[\x90\x9e\x9f][\s\S]*?\x9c/g, "")
+    .replace(/\x9d(?:(?!\x07|\x9c|\x1b\\)[\s\S])*(?:\x07|\x9c|\x1b\\)/g, "")
+    .replace(/[\x90\x98\x9e\x9f](?:(?!\x9c|\x1b\\)[\s\S])*(?:\x9c|\x1b\\)/g, "")
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .filter((line) => !/^\s*(?:[A-Z_][A-Z0-9_]*=|export\s+[A-Z_][A-Z0-9_]*=)/.test(line))
     .join("\n")
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|Bearer\s+[A-Za-z0-9._~+/-]{16,})\b/g, "[redacted]")
     .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, " ");
+  return printable(cleaned);
 }
 
 export function boundedCiLogTail(raw: string, maxBytes = MAX_CI_LOG_TAIL_BYTES): string {
@@ -157,10 +160,27 @@ interface StoredPreview {
 }
 const previews = new Map<string, StoredPreview>();
 
+function prunePreviews(now = Date.now()): void {
+  for (const [token, preview] of previews) {
+    if (preview.expiresAt <= now) previews.delete(token);
+  }
+}
+
+function makePreviewRoom(now = Date.now()): void {
+  prunePreviews(now);
+  while (previews.size >= MAX_STORED_CI_PREVIEWS) {
+    const oldest = previews.keys().next().value as string | undefined;
+    if (!oldest) break;
+    previews.delete(oldest);
+  }
+}
+
 export async function createCiFailurePreview(input: Omit<StoredPreview, "promptHash" | "expiresAt">, gh: Gh = runGh): Promise<CiFailurePreview> {
   const result = await buildCiFailurePrompt(input.directory, input.branch, input.checkUrl, gh);
   const token = randomBytes(24).toString("hex");
-  previews.set(token, { ...input, promptHash: createHash("sha256").update(result.prompt).digest("hex"), expiresAt: Date.now() + 5 * 60_000 });
+  const now = Date.now();
+  makePreviewRoom(now);
+  previews.set(token, { ...input, promptHash: createHash("sha256").update(result.prompt).digest("hex"), expiresAt: now + 5 * 60_000 });
   return { token, checkName: result.check.name, checkUrl: result.check.url!, prompt: result.prompt };
 }
 
@@ -170,13 +190,14 @@ export async function sendCiFailurePreview(input: { token: string; projectSlug: 
     previews.delete(input.token);
     throw new Error("That preview expired. Refresh the check and review it again.");
   }
+  // Consume synchronously before any asynchronous refetch so two simultaneous
+  // IPC sends cannot both use the same preview token.
+  previews.delete(input.token);
   const latest = await buildCiFailurePrompt(saved.directory, saved.branch, saved.checkUrl, gh);
   const digest = createHash("sha256").update(latest.prompt).digest("hex");
   if (digest !== saved.promptHash) {
-    previews.delete(input.token);
     throw new Error("The failed job log changed. Review the updated preview before sending.");
   }
-  previews.delete(input.token);
   // Match diff comments exactly: one bracketed paste followed by the shared
   // control path's Enter, with no nested paste wrapper.
   await send(saved.projectSlug, saved.targetId, reviewPtyPayload(latest.prompt));
