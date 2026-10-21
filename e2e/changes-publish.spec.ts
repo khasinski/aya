@@ -340,7 +340,22 @@ test("without a remote, changes panel disables publishing and shows one reason",
   expect(await push.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.45");
   expect(await pullRequest.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.45");
   await expect(popover.getByText("Add a Git remote before pushing or opening a pull request.")).toHaveCount(1);
+  await expect(popover.getByRole("region", { name: "Pull request checks" })).toHaveCount(0);
+  await expect(popover.getByText("Aya could not load pull request checks.", { exact: true })).toHaveCount(0);
   await popover.screenshot({ path: "/tmp/changes-publish-no-remote.png" });
+});
+
+test("changes panel hides checks when this branch has no pull request", async ({ window, seeded }) => {
+  addFakeRemote(seeded.projectDir);
+  rmSync(join(fakeState, "existing-pr"), { force: true });
+  rmSync(join(fakeState, "check-pr.json"), { force: true });
+  rmSync(join(fakeState, "calls"), { force: true });
+  const popover = await openChanges(window);
+  await expect.poll(() => existsSync(join(fakeState, "calls"))
+    ? readFileSync(join(fakeState, "calls"), "utf8").includes("pr view feature/foo")
+    : false).toBe(true);
+  await expect(popover.getByRole("region", { name: "Pull request checks" })).toHaveCount(0);
+  await expect(popover.getByText("Aya could not load pull request checks.", { exact: true })).toHaveCount(0);
 });
 
 test("changes panel explains when gh is missing", async ({ window, seeded }) => {
@@ -352,6 +367,7 @@ test("changes panel explains when gh is missing", async ({ window, seeded }) => 
     const pullRequest = popover.getByRole("button", { name: "Create pull request" });
     await expect(push).toBeEnabled();
     await expect(pullRequest).toBeEnabled();
+    await expect(popover.getByRole("region", { name: "Pull request checks" })).toHaveCount(0);
     expect(await push.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
     await popover.getByRole("button", { name: "Create pull request" }).click();
     await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not installed. Install gh, then try again.");

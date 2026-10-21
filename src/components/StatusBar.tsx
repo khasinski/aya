@@ -301,8 +301,9 @@ function StatusBarImpl({
   }, [gitDirectory, cancelPublishStatusRequest, cancelCiActionRequest]);
 
   useEffect(() => {
-    if (!showDirtyFiles || !gitDirectory || !localGitProjectSlug || !publishStatus?.branch) {
+    if (!showDirtyFiles || !gitDirectory || !localGitProjectSlug || !publishStatus?.branch || !publishStatus.remote) {
       setCiChecks(null);
+      setCiChecksError(null);
       return;
     }
     const directory = gitDirectory;
@@ -369,7 +370,7 @@ function StatusBarImpl({
       if (ciRetryRef.current === retryNow) ciRetryRef.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [showDirtyFiles, gitDirectory, localGitProjectSlug, publishStatus?.branch, isCurrentGitCheckout, cancelCiActionRequest]);
+  }, [showDirtyFiles, gitDirectory, localGitProjectSlug, publishStatus?.branch, publishStatus?.remote, isCurrentGitCheckout, cancelCiActionRequest]);
 
   useEffect(() => {
     if (ciTargetId && reviewTargets.some((target) => target.id === ciTargetId)) return;
@@ -953,7 +954,7 @@ function StatusBarImpl({
                     {publishStatus?.pullRequestDisabledReason && publishStatus.pullRequestDisabledReason !== publishStatus.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
                     {publishError && <div className="aya-dirty-commit-error" role="alert">{publishError}</div>}
                     {ciNotice && <div className="aya-dirty-publish-notice" role="status">{ciNotice}</div>}
-                    {(pullRequestUrl || (ciChecksError && ciChecksError !== publishError) || ciActionError) && (
+                    {pullRequestUrl && (
                       <section className="aya-ci-checks" aria-label="Pull request checks">
                         <div className="aya-ci-checks-heading">
                           <span>Pull request checks</span>
