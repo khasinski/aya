@@ -1,8 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
   GitChangedFile,
   GitHubLink,
+  GitPublishStatus,
   ProjectConfig,
   TerminalState,
   WorktreeStatus,
@@ -112,14 +113,48 @@ function StatusBarImpl({
   const [showCheckouts, setShowCheckouts] = useState(false);
   const dirtyRef = useRef<HTMLDivElement>(null);
   const [showDirtyFiles, setShowDirtyFiles] = useState(false);
+  const showDirtyFilesRef = useRef(false);
   const [dirtyFiles, setDirtyFiles] = useState<GitChangedFile[]>([]);
   const [selectedDirtyPaths, setSelectedDirtyPaths] = useState<string[]>([]);
   const [dirtyFilesLoading, setDirtyFilesLoading] = useState(false);
   const [dirtySelectionDirectory, setDirtySelectionDirectory] = useState<string | null>(null);
   const gitCheckoutRef = useRef<{ directory: string | null; generation: number }>({ directory: gitDirectory, generation: 0 });
+  const isCurrentGitCheckout = useCallback((directory: string, generation: number) =>
+    gitCheckoutRef.current.directory === directory && gitCheckoutRef.current.generation === generation, []);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
+  const [commitNotice, setCommitNotice] = useState<string | null>(null);
+  const [publishStatus, setPublishStatus] = useState<GitPublishStatus | null>(null);
+  const publishStatusRequest = useRef<{ requestId: string; directory: string; generation: number } | null>(null);
+  const cancelPublishStatusRequest = useCallback(() => {
+    const request = publishStatusRequest.current;
+    if (!request) return;
+    publishStatusRequest.current = null;
+    void window.aya.cancelGitPublishStatus(request.requestId).catch(() => {});
+  }, []);
+  const refreshPublishStatus = useCallback(async (directory: string, generation: number): Promise<GitPublishStatus | null> => {
+    cancelPublishStatusRequest();
+    const request = { requestId: uuid(), directory, generation };
+    publishStatusRequest.current = request;
+    try {
+      const status = await window.aya.getGitPublishStatus(directory, request.requestId);
+      if (publishStatusRequest.current?.requestId !== request.requestId || !isCurrentGitCheckout(directory, generation)) return null;
+      setPublishStatus(status);
+      return status;
+    } catch {
+      if (publishStatusRequest.current?.requestId === request.requestId && isCurrentGitCheckout(directory, generation)) setPublishStatus(null);
+      return null;
+    } finally {
+      if (publishStatusRequest.current?.requestId === request.requestId) publishStatusRequest.current = null;
+    }
+  }, [cancelPublishStatusRequest, isCurrentGitCheckout]);
+  const [createdPullRequest, setCreatedPullRequest] = useState<{ directory: string; branch: string | null; url: string } | null>(null);
+  const pullRequestUrl = createdPullRequest?.directory === gitDirectory && createdPullRequest.branch === publishStatus?.branch
+    ? createdPullRequest.url
+    : null;
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
   const [diffText, setDiffText] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
@@ -154,11 +189,12 @@ function StatusBarImpl({
     const onPointerDown = (event: PointerEvent) => {
       if (!dirtyRef.current?.contains(event.target as Node)) {
         setShowDirtyFiles(false);
+        cancelPublishStatusRequest();
       }
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [showDirtyFiles]);
+  }, [showDirtyFiles, cancelPublishStatusRequest]);
 
   useEffect(() => {
     if (!showCheckouts) return;
@@ -187,6 +223,9 @@ function StatusBarImpl({
   useLayoutEffect(() => {
     gitCheckoutRef.current = { directory: gitDirectory, generation: gitCheckoutRef.current.generation + 1 };
   }, [gitDirectory]);
+  useLayoutEffect(() => {
+    showDirtyFilesRef.current = showDirtyFiles;
+  }, [showDirtyFiles]);
 
   useEffect(() => {
     setShowDirtyFiles(false);
@@ -196,11 +235,17 @@ function StatusBarImpl({
     setDirtySelectionDirectory(null);
     setCommitMessage("");
     setCommitError(null);
+    setCommitNotice(null);
+    setPublishError(null);
+    setPublishStatus(null);
+    setCreatedPullRequest(null);
     setShowDiff(false);
     setDiffText("");
     setDiffQuery("");
     setScrollToPath(null);
   }, [gitDirectory]);
+
+  useEffect(() => () => cancelPublishStatusRequest(), [gitDirectory, cancelPublishStatusRequest]);
 
   const addReviewComment = async (anchor: DiffAnchor, note: string) => {
     if (!project || !gitDirectory) return;
@@ -250,20 +295,23 @@ function StatusBarImpl({
     if (!gitDirectory) return;
     const directory = gitDirectory;
     const generation = gitCheckoutRef.current.generation;
-    setShowDirtyFiles((open) => !open);
+    const opening = !showDirtyFiles;
+    setShowDirtyFiles(opening);
+    if (opening) void refreshPublishStatus(directory, generation);
+    else cancelPublishStatusRequest();
     setDirtyFilesLoading(true);
     try {
       await window.aya.setActiveGitDirectory(directory);
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       const files = await window.aya.getGitChangedFiles(directory);
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       setDirtyFiles(files);
       setSelectedDirtyPaths(files.map((file) => file.path));
       setDirtySelectionDirectory(directory);
       setCommitError(null);
       setDirtyFilesLoading(false);
     } catch (error) {
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       setCommitError(error instanceof Error ? error.message : "Aya could not load changed files.");
       setDirtyFilesLoading(false);
     }
@@ -281,10 +329,16 @@ function StatusBarImpl({
         paths: selectedDirtyPaths,
         message: commitMessage,
       });
-      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!isCurrentGitCheckout(directory, generation)) return;
       if (!result.ok) {
         setCommitError(result.error);
         return;
+      }
+      setCommitNotice(`Committed ${result.commit.slice(0, 7)}.`);
+      setPublishError(null);
+      if (showDirtyFilesRef.current) {
+        const updatedPublishStatus = await refreshPublishStatus(directory, generation);
+        if (!updatedPublishStatus || !isCurrentGitCheckout(directory, generation)) return;
       }
       if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
       const files = await window.aya.getGitChangedFiles(directory);
@@ -295,12 +349,57 @@ function StatusBarImpl({
       setCommitMessage("");
       await onGitStatusRefresh(directory);
     } catch (err) {
-      if (gitCheckoutRef.current.directory === directory && gitCheckoutRef.current.generation === generation) {
+      if (isCurrentGitCheckout(directory, generation)) {
         setCommitError(err instanceof Error ? err.message : "Aya could not create the commit.");
       }
     } finally {
       setCommitting(false);
     }
+  };
+
+  const pushBranch = async () => {
+    if (!gitDirectory || publishing || publishStatus?.pushDisabledReason) return;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    const isCurrent = () => isCurrentGitCheckout(directory, generation);
+    setPublishing(true); setPublishError(null); setCommitNotice(null);
+    try {
+      const result = await window.aya.pushGitBranch(directory);
+      if (!isCurrent()) return;
+      if (!result.ok) { setPublishError(result.error); return; }
+      await onGitStatusRefresh(directory);
+      if (!isCurrent()) return;
+      if (showDirtyFilesRef.current) {
+        const status = await refreshPublishStatus(directory, generation);
+        if (!status || !isCurrent()) return;
+      }
+      setCommitNotice("Pushed.");
+    } catch (error) {
+      if (isCurrent()) setPublishError(error instanceof Error ? error.message : "Aya could not push this branch.");
+    } finally { setPublishing(false); }
+  };
+
+  const openPullRequest = async () => {
+    if (!gitDirectory || publishing || publishStatus?.pullRequestDisabledReason) return;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    const isCurrent = () => isCurrentGitCheckout(directory, generation);
+    setPublishing(true); setPublishError(null); setCommitNotice(null);
+    try {
+      let url = pullRequestUrl;
+      if (!url) {
+        const result = await window.aya.createGitPullRequest(directory);
+        if (!isCurrent()) return;
+        if (!result.ok) { setPublishError(result.error); return; }
+        url = result.url;
+        setCreatedPullRequest({ directory, branch: publishStatus?.branch ?? null, url });
+      }
+      if (!isCurrent()) return;
+      await window.aya.openUrl(url);
+      if (isCurrent()) setCommitNotice("Pull request opened.");
+    } catch (error) {
+      if (isCurrent()) setPublishError(error instanceof Error ? error.message : "Aya could not open the pull request.");
+    } finally { setPublishing(false); }
   };
 
   const loadDiff = () => {
@@ -508,20 +607,21 @@ function StatusBarImpl({
           {githubLink.kind === "pr" ? "PR" : "branch on GitHub"}
         </button>
       )}
-      {git && git.dirty > 0 ? (
+      {git ? (
         <div className="aya-statusbar-popover-host" ref={dirtyRef}>
           <button
-            className="aya-statusbar-item aya-statusbar-button aya-statusbar-item--warn"
+            className={`aya-statusbar-item aya-statusbar-button ${git.dirty > 0 ? "aya-statusbar-item--warn" : ""}`}
             type="button"
-            title="Show changed files"
+            title={git.dirty > 0 ? "Show changed files" : "Show changes and publishing actions"}
+            style={git.dirty === 0 ? { color: "var(--status-active)" } : undefined}
             // Inline dropdown — keep terminal focus (same as the top-bar ones).
             onMouseDown={(e) => e.preventDefault()}
             onClick={toggleDirtyFiles}
           >
             <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
-              edit_note
+              {git.dirty > 0 ? "edit_note" : "check_circle"}
             </span>
-            {git.dirty} dirty
+            {git.dirty > 0 ? `${git.dirty} dirty` : "clean"}
           </button>
           {showDirtyFiles && (
             <div
@@ -583,11 +683,9 @@ function StatusBarImpl({
                 />
               ) : dirtyFilesLoading ? (
                 <div className="aya-statusbar-popover-empty">Loading...</div>
-              ) : dirtyFiles.length === 0 ? (
-                <div className="aya-statusbar-popover-empty">No changed files.</div>
               ) : (
                 <>
-                  <div className="aya-dirty-file-list">
+                  {dirtyFiles.length === 0 ? <div className="aya-statusbar-popover-empty">No changed files.</div> : <div className="aya-dirty-file-list">
                     <label className="aya-dirty-file-select-all">
                       <input
                         type="checkbox"
@@ -621,7 +719,7 @@ function StatusBarImpl({
                         </button>
                       </div>
                     ))}
-                  </div>
+                  </div>}
                   <div className="aya-dirty-commit">
                     <label htmlFor="aya-dirty-commit-message">Commit message</label>
                     <input
@@ -632,6 +730,7 @@ function StatusBarImpl({
                       placeholder="Commit message"
                     />
                     {commitError && <div className="aya-dirty-commit-error" role="alert">{commitError}</div>}
+                    {commitNotice && <div className="aya-dirty-publish-notice" role="status">{commitNotice}</div>}
                     <button
                       className="aya-statusbar-popover-action aya-dirty-commit-button"
                       type="button"
@@ -640,22 +739,23 @@ function StatusBarImpl({
                     >
                       {committing ? "Committing..." : "Commit selected"}
                     </button>
+                    <div className="aya-dirty-publish-actions">
+                      <button type="button" className="aya-statusbar-popover-action" disabled={publishing || !publishStatus || Boolean(publishStatus.pushDisabledReason)} title={publishStatus?.pushDisabledReason || undefined} onClick={() => void pushBranch()}>
+                        {publishing ? "Working..." : "Push branch"}
+                      </button>
+                      <button type="button" className="aya-statusbar-popover-action" disabled={publishing || !publishStatus || Boolean(publishStatus.pullRequestDisabledReason)} title={publishStatus?.pullRequestDisabledReason || undefined} onClick={() => void openPullRequest()}>
+                        {pullRequestUrl ? "Open pull request" : "Create pull request"}
+                      </button>
+                    </div>
+                    {publishStatus?.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pushDisabledReason}</div>}
+                    {publishStatus?.pullRequestDisabledReason && publishStatus.pullRequestDisabledReason !== publishStatus.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
+                    {publishError && <div className="aya-dirty-commit-error" role="alert">{publishError}</div>}
                   </div>
                 </>
               )}
             </div>
           )}
         </div>
-      ) : git?.branch ? (
-        <span
-          className="aya-statusbar-item"
-          style={{ color: "var(--status-active)" }}
-        >
-          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
-            check_circle
-          </span>
-          clean
-        </span>
       ) : null}
     </footer>
   );

@@ -580,7 +580,7 @@ HOME=${shellQuote(remoteHome)} XDG_RUNTIME_DIR=${shellQuote(remoteRuntime)} exec
 
 export const insideRoot = (path: string, root: string): boolean => path.startsWith(`${root}/`);
 
-const DROPPED_FROM_APP_ENV = ["ELECTRON_RUN_AS_NODE", "AYA_DEV", "AYA_SOCKET", "AYA_TERMINAL_ID", "AYA_PROJECT_SLUG", "AYA_PRESET_ID"];
+const DROPPED_FROM_APP_ENV = ["ELECTRON_RUN_AS_NODE", "AYA_DEV", "AYA_SOCKET", "AYA_TERMINAL_ID", "AYA_PROJECT_SLUG", "AYA_PRESET_ID", "AYA_E2E_RUN", "AYA_E2E_OPEN_EXTERNAL_LOG", "AYA_E2E_GIT_PUBLISH_STATUS_LOG"];
 
 /** The env for the app (or its pty host): the runner's env with every config dir
  *  pointing into the seeded root, so no launch reads or writes the account's. */
@@ -605,5 +605,11 @@ export function appEnv(
     env.AYA_E2E_PTY_SHUTDOWN = "1";
     if (!base.CI) env.AYA_E2E_HEADLESS = "1";
   }
-  return Object.assign(env, seeded.launchEnv);
+  Object.assign(env, seeded.launchEnv);
+  if (e2eFlags) {
+    env.AYA_E2E_RUN = "1";
+    env.AYA_E2E_OPEN_EXTERNAL_LOG = join(seeded.root, "e2e-open-external.log");
+    env.AYA_E2E_GIT_PUBLISH_STATUS_LOG = join(seeded.root, "e2e-git-publish-status.log");
+  }
+  return env;
 }

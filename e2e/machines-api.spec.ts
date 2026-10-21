@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
@@ -137,13 +137,13 @@ test("saved token preview stays local and masked, updates on same-URL replacemen
   } finally { api.closeAllConnections(); await new Promise<void>((r) => api.close(() => r())); }
 });
 
-test("LAN transport failure offers macOS Local Network settings once, without changing permissions", async ({ app, window }) => {
-  await app.evaluate(({ ipcMain, shell }) => {
-    const state = globalThis as typeof globalThis & { repairApiUp?: boolean; repairApiError?: string; repairSettingsUrls?: string[] };
+test("LAN transport failure offers macOS Local Network settings once, without changing permissions", async ({ app, window, seeded }) => {
+  const externalOpenLog = join(seeded.root, "e2e-open-external.log");
+  writeFileSync(externalOpenLog, "");
+  await app.evaluate(({ ipcMain }) => {
+    const state = globalThis as typeof globalThis & { repairApiUp?: boolean; repairApiError?: string };
     state.repairApiUp = false;
     state.repairApiError = "API host unreachable";
-    state.repairSettingsUrls = [];
-    shell.openExternal = async (url: string) => { state.repairSettingsUrls!.push(url); };
     ipcMain.removeHandler("machines:status");
     ipcMain.handle("machines:status", () => ({ version: 1, machines: [{
       id: "darwine", reach: { ssh: "darwine" }, ollama: { port: 11434 }, api: { baseUrl: "http://192.168.0.203:8080/v1" },
@@ -161,7 +161,7 @@ test("LAN transport failure offers macOS Local Network settings once, without ch
   const settings = popover.getByRole("button", { name: "Privacy & Security settings" });
   if (await window.evaluate(() => window.aya.platform) === "darwin") {
     await settings.click();
-    expect(await app.evaluate(() => (globalThis as typeof globalThis & { repairSettingsUrls?: string[] }).repairSettingsUrls)).toEqual(["x-apple.systempreferences:com.apple.preference.security"]);
+    expect(readFileSync(externalOpenLog, "utf8").trim().split("\n")).toEqual(["x-apple.systempreferences:com.apple.preference.security"]);
     await expect(popover).toContainText("Privacy & Security → Local Network");
   } else await expect(settings).toHaveCount(0);
   await app.evaluate(() => { (globalThis as typeof globalThis & { repairApiError?: string }).repairApiError = "API authentication failed"; });

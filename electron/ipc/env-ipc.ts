@@ -4,6 +4,7 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { appendFileSync } from "node:fs";
 import type { BrowserWindow, Clipboard, Dialog, IpcMain, IpcMainInvokeEvent, OpenDialogOptions, Shell } from "electron";
 import { expandPath } from "../config";
 import {
@@ -20,6 +21,7 @@ import {
   worktreeBranchRemovalInfo,
 } from "../git";
 import { getGitHubLink, isGitHubCliAvailable } from "../github";
+import { createOrFindPullRequest, getPublishStatus, hasPendingGitStatusChildren, pushCurrentBranch, waitForGitStatusChildren } from "../git-publish";
 import { optionalTrimmed, requireRecord, requireString } from "../validation";
 
 /** At most this many directory suggestions per completion request. */
@@ -38,6 +40,10 @@ export interface EnvIpcDeps {
   openExternalUrl: (url: string) => Promise<void>;
   /** Test seam; production uses the real checked git implementation. */
   commitGitFiles?: typeof commitGitFiles;
+  /** Abort subprocesses owned by IPC work when Aya begins quitting. */
+  onBeforeQuit?: (teardown: () => Promise<void>, hasPendingChildren: () => boolean) => void;
+  /** Test seam for pending publish-status requests. */
+  getPublishStatus?: typeof getPublishStatus;
 }
 
 /** Directory names under the typed prefix, as the prefix spells them, each ending in a slash; hidden ones only
@@ -74,6 +80,16 @@ export async function completeDirectoryPath(rawPrefix: string): Promise<string[]
 export function registerEnvIpc(deps: EnvIpcDeps): void {
   const { ipcMain, senderWindow, dialog, shell, clipboard } = deps;
   const activeGitDirectories = new WeakMap<object, string>();
+  const publishStatusBySender = new WeakMap<object, Map<string, AbortController>>();
+  const pendingPublishStatus = new Set<AbortController>();
+  let shuttingDown = false;
+  const abortPendingPublishStatus = async () => {
+    shuttingDown = true;
+    for (const controller of pendingPublishStatus) controller.abort(new Error("Aya is quitting."));
+    await waitForGitStatusChildren();
+  };
+  deps.onBeforeQuit?.(abortPendingPublishStatus, hasPendingGitStatusChildren);
+  const publishStatus = deps.getPublishStatus ?? getPublishStatus;
   const pickPath = async (e: IpcMainInvokeEvent, options: OpenDialogOptions): Promise<string | null> => {
     const win = senderWindow(e);
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
@@ -174,6 +190,40 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
   });
   ipcMain.handle("env:github-cli-available", async () =>
     isGitHubCliAvailable(),
+  );
+  ipcMain.handle("env:git-publish-status", async (event, raw: unknown) => {
+    if (shuttingDown) throw new Error("Aya is quitting.");
+    const request = requireRecord(raw, "env:git-publish-status");
+    const directory = requireString(request.directory, "env:git-publish-status.directory");
+    const requestId = requireString(request.requestId, "env:git-publish-status.requestId");
+    if (requestId.length > 128) throw new Error("env:git-publish-status.requestId is too long");
+    if (process.env.AYA_E2E_RUN === "1") {
+      const logPath = process.env.AYA_E2E_GIT_PUBLISH_STATUS_LOG;
+      if (!logPath) throw new Error("E2E Git status recording is not configured.");
+      appendFileSync(logPath, `${JSON.stringify(directory)}\n`, { encoding: "utf8", mode: 0o600 });
+    }
+    let byId = publishStatusBySender.get(event.sender);
+    if (!byId) { byId = new Map(); publishStatusBySender.set(event.sender, byId); }
+    byId.get(requestId)?.abort(new Error("Git status request was replaced."));
+    const controller = new AbortController();
+    byId.set(requestId, controller);
+    pendingPublishStatus.add(controller);
+    try {
+      return await publishStatus(directory, { signal: controller.signal });
+    } finally {
+      pendingPublishStatus.delete(controller);
+      if (byId.get(requestId) === controller) byId.delete(requestId);
+    }
+  });
+  ipcMain.handle("env:git-publish-status-cancel", (event, raw: unknown) => {
+    const requestId = requireString(raw, "env:git-publish-status-cancel.requestId");
+    publishStatusBySender.get(event.sender)?.get(requestId)?.abort(new Error("Git status request was cancelled."));
+  });
+  ipcMain.handle("env:git-push", async (_e, directory: unknown) =>
+    pushCurrentBranch(requireString(directory, "env:git-push.directory")),
+  );
+  ipcMain.handle("env:git-pull-request", async (_e, directory: unknown) =>
+    createOrFindPullRequest(requireString(directory, "env:git-pull-request.directory")),
   );
   ipcMain.handle("env:pick-dir", async (e) =>
     pickPath(e, {

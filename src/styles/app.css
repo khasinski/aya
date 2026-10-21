@@ -1029,6 +1029,10 @@ body {
   padding: 3px 7px;
   border: 1px solid var(--border);
 }
+.aya-statusbar-popover-action:disabled {
+  opacity: .45;
+  cursor: default;
+}
 .aya-statusbar-popover-back {
   padding: 0;
   color: var(--fg-secondary);
@@ -1041,6 +1045,7 @@ body {
 .aya-statusbar-popover-empty {
   padding: 14px 12px;
   color: var(--fg-tertiary);
+  font: 11px var(--font-sans);
 }
 .aya-prompt-attachment-notice {
   position: absolute; top: 4px; left: 50%; z-index: 4; max-width: min(80%, 640px);
@@ -1130,6 +1135,9 @@ body {
 .aya-dirty-commit-error { color: var(--status-error); overflow-wrap: anywhere; }
 .aya-dirty-commit-button { justify-self: end; }
 .aya-dirty-commit-button:disabled { opacity: .45; cursor: default; }
+.aya-dirty-publish-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.aya-dirty-publish-notice { color: var(--status-active); overflow-wrap: anywhere; }
+.aya-dirty-publish-hint { color: var(--fg-tertiary); }
 .aya-diff-panel {
   display: flex;
   flex-direction: column;

@@ -24,7 +24,7 @@ import {
 import { autoUpdater } from "electron-updater";
 import { installApplicationMenu, setStaleMenuIcon } from "./app-menu";
 import { showAyaAboutPanel } from "./about-panel";
-import { statSync } from "node:fs";
+import { appendFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
@@ -110,6 +110,7 @@ import { createWindowProjectState } from "./window-slices";
 import { loadWebConfig, saveWebConfig } from "./web-config";
 import { captureIpcHandlers } from "./ipc/web-capture";
 import { registerEnvIpc } from "./ipc/env-ipc";
+import { registerGitStatusQuitGuard } from "./git-status-quit";
 import { registerDiffCommentsIpc } from "./ipc/diff-comments-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
 import { registerSystemIpc } from "./ipc/system-ipc";
@@ -286,6 +287,22 @@ const teamPaneHost: PaneHost = {
 // can interfere with the fresh session, so first paint never pays for it.
 const LEGACY_SWEEP_DELAY_MS = 5_000;
 const windowProjects = createWindowProjectState({ listProjectState, saveProjectState, quitting: () => appQuitting });
+// E2E can record external URLs rather than opening the user's browser or OS settings.
+// This is deliberately an environment hook in main: Electron's native `shell`
+// export is not reliably replaceable from an app.evaluate test stub.
+const externalShell = {
+  openExternal: async (url: string): Promise<void> => {
+    if (process.env.AYA_E2E_RUN === "1") {
+      const logPath = process.env.AYA_E2E_OPEN_EXTERNAL_LOG;
+      if (!logPath) throw new Error("E2E external URL recording is not configured.");
+      appendFileSync(logPath, `${url}\n`, { encoding: "utf8", mode: 0o600 });
+      return;
+    }
+    await shell.openExternal(url);
+  },
+  openPath: (filePath: string): Promise<string> => shell.openPath(filePath),
+};
+
 const windows = createAyaWindows({
   BrowserWindow,
   ptyHost,
@@ -301,7 +318,7 @@ const windows = createAyaWindows({
   loadWindowState,
   trackWindowState,
   startConfigWatcher,
-  openExternalUrl: (raw) => openExternalUrl(raw, { shell }),
+  openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
   claimBootWindow: windowProjects.claimBootWindow,
   releaseWindowSlices: windowProjects.releaseWindowSlices,
   quitting: () => appQuitting,
@@ -510,7 +527,7 @@ const updates = createUpdates({
   eachAyaWindow,
   diagnosticsLog: { append: (event, fields) => diagnosticsLog.append(event, fields) },
   dialog,
-  shell,
+  shell: externalShell,
   notifications: {
     isSupported: () => Notification.isSupported(),
     create: (options) => new Notification(options),
@@ -552,7 +569,7 @@ function registerIpc(): TeamRunner {
   };
   const teamRunner = registerTeamIpc({
     ipcMain,
-    onBeforeQuit: (teardown) => app.once("before-quit", teardown),
+    onBeforeQuit: (teardown) => app.on("before-quit", teardown),
     team: teamDeps,
     paneHost: teamPaneHost,
     intelligenceChat,
@@ -659,10 +676,15 @@ function registerIpc(): TeamRunner {
     ipcMain,
     senderWindow,
     dialog,
-    shell,
+    shell: externalShell,
     clipboard,
     home: () => app.getPath("home"),
-    openExternalUrl: (raw) => openExternalUrl(raw, { shell }),
+    openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
+    onBeforeQuit: (teardown, hasPendingChildren) => registerGitStatusQuitGuard(app, {
+      teardown,
+      hasPendingChildren,
+      onError: (error) => console.warn("[aya] could not fully stop Git status checks before quit:", error),
+    }),
   });
   registerDiffCommentsIpc({
     ipcMain,
@@ -689,7 +711,7 @@ function registerIpc(): TeamRunner {
       isSupported: () => Notification.isSupported(),
       create: (options) => new Notification(options),
     },
-    shell,
+    shell: externalShell,
     systemPreferences,
     dock: app.dock,
     cliStatus,
