@@ -20,7 +20,7 @@ case "$1 $2" in
     if [ -f "$state/unauthenticated" ]; then echo 'private account and token details' >&2; exit 1; fi
     exit 0 ;;
   "repo view") echo 'https://github.com/aya-e2e/project'; exit 0 ;;
-  "pr view") exit 1 ;;
+  "pr view") echo 'no pull requests found for branch' >&2; exit 1 ;;
   "pr create") echo 'https://github.com/aya-e2e/project/pull/42'; exit 0 ;;
 esac
 exit 2
@@ -98,8 +98,12 @@ test("changes panel commits, sets upstream, pushes and opens the pull request wi
 
 test("without a remote, changes panel disables publishing and shows one reason", async ({ window }) => {
   const popover = await openChanges(window);
-  await expect(popover.getByRole("button", { name: "Push branch" })).toBeDisabled();
-  await expect(popover.getByRole("button", { name: "Create pull request" })).toBeDisabled();
+  const push = popover.getByRole("button", { name: "Push branch" });
+  const pullRequest = popover.getByRole("button", { name: "Create pull request" });
+  await expect(push).toBeDisabled();
+  await expect(pullRequest).toBeDisabled();
+  expect(await push.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.45");
+  expect(await pullRequest.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.45");
   await expect(popover.getByText("Add a Git remote before pushing or opening a pull request.")).toHaveCount(1);
   await popover.screenshot({ path: "/tmp/changes-publish-no-remote.png" });
 });
@@ -109,8 +113,11 @@ test("changes panel explains when gh is missing", async ({ window, seeded }) => 
   writeFileSync(join(fakeState, "missing"), "");
   try {
     const popover = await openChanges(window);
-    await expect(popover.getByRole("button", { name: "Push branch" })).toBeEnabled();
-    await expect(popover.getByRole("button", { name: "Create pull request" })).toBeEnabled();
+    const push = popover.getByRole("button", { name: "Push branch" });
+    const pullRequest = popover.getByRole("button", { name: "Create pull request" });
+    await expect(push).toBeEnabled();
+    await expect(pullRequest).toBeEnabled();
+    expect(await push.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
     await popover.getByRole("button", { name: "Create pull request" }).click();
     await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not installed. Install gh, then try again.");
     await popover.screenshot({ path: "/tmp/changes-publish-gh-missing.png" });

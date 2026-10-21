@@ -20,6 +20,7 @@ export type PublishResult = { ok: true } | { ok: false; error: string };
 export type PullRequestResult = { ok: true; url: string } | { ok: false; error: string };
 
 type Runner = (command: string, args: string[], cwd: string, timeout: number, env?: NodeJS.ProcessEnv) => Promise<string>;
+type GhRunner = (directory: string, args: string[], timeout?: number) => Promise<string>;
 
 const run: Runner = async (command, args, cwd, timeout, env = process.env) => {
   const { stdout } = await execFileAsync(command, args, {
@@ -128,29 +129,35 @@ function safePullRequestUrl(candidate: string, repoUrl: string): string | null {
   } catch { return null; }
 }
 
-export async function createOrFindPullRequest(directory: string): Promise<PullRequestResult> {
+function isConfirmedMissingPullRequest(error: unknown): boolean {
+  const value = error as { code?: unknown; stderr?: unknown };
+  return value?.code === 1 && /no pull requests found/i.test(String(value.stderr ?? ""));
+}
+
+export async function createOrFindPullRequest(directory: string, runCommand: Runner = run, ghCommand: GhRunner = runGh): Promise<PullRequestResult> {
   try {
-    const state = await repoState(directory, run);
+    const state = await repoState(directory, runCommand);
     if (state.pullRequestDisabledReason) return { ok: false, error: state.pullRequestDisabledReason };
     if (!state.branch) return { ok: false, error: "Create a branch before opening a pull request." };
-    await runGh(directory, ["--version"]);
+    await ghCommand(directory, ["--version"]);
     try {
-      await runGh(directory, ["auth", "status"]);
+      await ghCommand(directory, ["auth", "status"]);
     } catch {
       return { ok: false, error: "GitHub CLI is not signed in. Run gh auth login, then try again." };
     }
-    const repoUrl = (await runGh(directory, ["repo", "view", "--json", "url", "--jq", ".url"])).trim();
-    if (await git(run, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {
+    const repoUrl = (await ghCommand(directory, ["repo", "view", "--json", "url", "--jq", ".url"])).trim();
+    if (await git(runCommand, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {
       return { ok: false, error: "The current branch changed before the pull request could be opened. Refresh and try again." };
     }
     let output: string;
     try {
-      output = await runGh(directory, ["pr", "view", state.branch, "--json", "url", "--jq", ".url"]);
-    } catch {
-      if (await git(run, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {
+      output = await ghCommand(directory, ["pr", "view", state.branch, "--json", "url", "--jq", ".url"]);
+    } catch (error) {
+      if (!isConfirmedMissingPullRequest(error)) throw error;
+      if (await git(runCommand, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {
         return { ok: false, error: "The current branch changed before the pull request could be opened. Refresh and try again." };
       }
-      output = await runGh(directory, ["pr", "create", "--fill", "--head", state.branch]);
+      output = await ghCommand(directory, ["pr", "create", "--fill", "--head", state.branch]);
     }
     const url = safePullRequestUrl(output, repoUrl);
     return url ? { ok: true, url } : { ok: false, error: "GitHub did not return a pull request link for this repository." };
