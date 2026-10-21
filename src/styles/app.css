@@ -1138,6 +1138,19 @@ body {
 .aya-dirty-publish-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .aya-dirty-publish-notice { color: var(--status-active); overflow-wrap: anywhere; }
 .aya-dirty-publish-hint { color: var(--fg-tertiary); }
+.aya-ci-checks { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+.aya-ci-checks-heading, .aya-ci-check { display: flex; align-items: center; gap: 7px; }
+.aya-ci-checks-heading { justify-content: space-between; font-weight: 600; }
+.aya-ci-check-list { display: grid; gap: 5px; max-height: 180px; overflow: auto; }
+.aya-ci-check-name { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.aya-ci-check-state { color: var(--fg-tertiary); }
+.aya-ci-check-state--fail { color: var(--status-error); }
+.aya-ci-check-state--pass { color: var(--status-active); }
+.aya-ci-target-label, .aya-ci-preview { display: grid; gap: 6px; }
+.aya-ci-target-label { color: var(--fg-tertiary); }
+.aya-ci-target-label select, .aya-ci-preview textarea { width: 100%; min-width: 0; }
+.aya-ci-preview textarea { resize: vertical; font: inherit; font-family: var(--font-mono); font-size: 11px; }
+.aya-ci-preview button { justify-self: end; }
 .aya-diff-panel {
   display: flex;
   flex-direction: column;

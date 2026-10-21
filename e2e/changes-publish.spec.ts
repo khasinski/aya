@@ -21,8 +21,11 @@ case "$1 $2" in
     exit 0 ;;
   "repo view") echo 'https://github.com/aya-e2e/project'; exit 0 ;;
   "pr view")
+    if [ "$4" = "--json" ] && [ -f "$state/check-pr.json" ]; then cat "$state/check-pr.json"; exit 0; fi
     if [ -f "$FAKE_GH_STATE/existing-pr" ]; then cat "$FAKE_GH_STATE/existing-pr"; exit 0; fi
     echo 'no pull requests found for branch' >&2; exit 1 ;;
+  "pr checks") [ -f "$state/checks.json" ] && { cat "$state/checks.json"; exit 0; }; echo '[]'; exit 0 ;;
+  "run view") [ -f "$state/failed-log" ] && { cat "$state/failed-log"; exit 0; }; exit 0 ;;
   "pr create") echo 'https://github.com/aya-e2e/project/pull/42'; exit 0 ;;
 esac
 exit 2
@@ -90,6 +93,12 @@ async function expectPidGone(pid: number) {
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
   }, { timeout: 2_000 }).toBe(false);
 }
+
+const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+const recorderPreset = {
+  id: "ci-review-target", name: "CI review target", icon: "R", color: "", agent: "claude",
+  command: `${quote(process.execPath)} ${quote(join(__dirname, "helpers", "diff-review-pane.cjs"))} record "$AYA_HOME/ci-review-$AYA_TERMINAL_ID.log"`,
+};
 
 test("changes panel commits, sets upstream, pushes and opens the pull request without creating it twice", async ({ window, app, seeded }) => {
   const externalOpenLog = join(seeded.root, "e2e-open-external.log");
@@ -284,6 +293,53 @@ test("changes panel gives safe sign-in guidance without showing gh output", asyn
     await expect(popover.getByText("private account and token details")).toHaveCount(0);
     await popover.screenshot({ path: "/tmp/changes-publish-gh-unauthenticated.png" });
   } finally { rmSync(join(fakeState, "unauthenticated"), { force: true }); }
+});
+
+test.describe("failed pull request checks", () => {
+  test.use({ seedOptions: { gitRepo: true, rightTab: { presetId: "ci-review-target", name: "CI review target" }, presetList: [recorderPreset], launchEnv } });
+
+  test("previews the failed job tail and sends it to the selected pane", async ({ window, seeded }) => {
+    addFakeRemote(seeded.projectDir);
+    writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({
+      url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false,
+    }));
+    writeFileSync(join(fakeState, "checks.json"), JSON.stringify([{
+      name: "Linux tests", state: "failure", bucket: "fail",
+      link: "https://github.com/aya-e2e/project/actions/runs/12345/job/67890",
+    }]));
+    writeFileSync(join(fakeState, "failed-log"), "AssertionError: expected result\nAWS_SECRET=never-send-this\n\u001b[31mfailed near test 42\u001b[0m\n");
+    try {
+    const log = join(seeded.ayaHome, `ci-review-${seeded.tabIds.right}.log`);
+    await expect.poll(() => existsSync(`${log}.ready`)).toBe(true);
+
+    const popover = await openChanges(window);
+    const checks = window.getByRole("region", { name: "Pull request checks" });
+    await expect(checks).toBeVisible();
+    await expect(checks).toContainText("Linux tests");
+    await expect(checks).toContainText("Failed");
+    await checks.getByLabel("Send failed checks to").selectOption(seeded.tabIds.right);
+    await checks.getByRole("button", { name: "Send to a pane" }).click();
+    const preview = checks.getByRole("textbox", { name: "Exact message to send" });
+    const previewText = await preview.inputValue();
+    expect(previewText).toContain("Tail of the failed job log (up to 8 KB");
+    expect(previewText).toContain("AssertionError: expected result");
+    expect(previewText).toContain("failed near test 42");
+    expect(previewText).not.toContain("AWS_SECRET");
+    expect(previewText).not.toContain("never-send-this");
+    await checks.screenshot({ path: "/tmp/changes-publish-checks-preview.png" });
+    await checks.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(window.getByRole("status")).toHaveText("Sent to CI review target.");
+    await expect.poll(() => existsSync(log) ? readFileSync(log, "utf8") : "").toContain("failed near test 42");
+    const received = readFileSync(log, "utf8");
+    expect(received.split("\x1b[200~")).toHaveLength(2);
+    expect(received.split("\x1b[201~")).toHaveLength(2);
+    expect(received.endsWith("\r")).toBe(true);
+    expect(received).not.toContain("AWS_SECRET=never-send-this");
+    await popover.screenshot({ path: "/tmp/changes-publish-checks-sent.png" });
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "failed-log"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
 });
 
 test.describe("publish status checkout races", () => {
