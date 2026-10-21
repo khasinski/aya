@@ -7,6 +7,7 @@ export const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
 export const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
 export const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
 export const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
+export const CHROME_STYLE_STORAGE_KEY = "aya:chrome-style";
 export const WORKTREES_STORAGE_KEY = "aya:worktrees";
 export const HARNESS_SEARCH_STORAGE_KEY = "aya:harness-search";
 export const TERMINAL_SOUNDS_STORAGE_KEY = "aya:terminal-sounds";

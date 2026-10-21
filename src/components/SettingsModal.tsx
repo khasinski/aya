@@ -9,6 +9,7 @@ import {
   type CliStatus,
   type DiagnosticsReport,
   type HarnessDef,
+  type ChromeStyle,
   type LayoutMode,
   type MicPermissionStatus,
   type OllamaStatus,
@@ -54,6 +55,8 @@ interface Props {
   onShowGitHubLinkChange: (show: boolean) => void;
   layoutMode: LayoutMode;
   onLayoutModeChange: (mode: LayoutMode) => void;
+  chromeStyle: ChromeStyle;
+  onChromeStyleChange: (style: ChromeStyle) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   terminalSoundsEnabled: boolean;
@@ -295,6 +298,8 @@ export function SettingsModal({
   onShowGitHubLinkChange,
   layoutMode,
   onLayoutModeChange,
+  chromeStyle,
+  onChromeStyleChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
   terminalSoundsEnabled,
@@ -1404,6 +1409,39 @@ export function SettingsModal({
             {ghAvailable === false
               ? "Requires the GitHub CLI (gh), which isn't installed."
               : "Requires the GitHub CLI (gh)."}
+          </SettingsRow>
+          <SettingsRow
+            icon="palette"
+            title={
+              <>
+                Interface style{" "}
+                <span className="aya-settings-experimental">Experimental</span>
+              </>
+            }
+            control={(
+              <div className="aya-settings-segmented" aria-label="Interface style">
+                {([
+                  ["classic", "Classic"],
+                  ["command-rail", "Command Rail"],
+                ] as const).map(([style, label]) => (
+                  <button
+                    key={style}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      chromeStyle === style ? "aya-settings-segment--active" : ""
+                    }`}
+                    onClick={() => onChromeStyleChange(style)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Command Rail is a denser slate-blue look: flat rows with a marker
+            on the selected terminal, and amber or red pane headers when an
+            agent is waiting or failed. It is dark only and works with either
+            window layout.
           </SettingsRow>
           <SettingsRow
             icon="view_sidebar"

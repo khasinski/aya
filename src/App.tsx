@@ -168,6 +168,8 @@ export function App() {
     setShowGitHubLink,
     layoutMode,
     setLayoutMode,
+    chromeStyle,
+    setChromeStyle,
     harnessSearchEnabled,
     setHarnessSearchEnabled,
     terminalSoundsEnabled,
@@ -1000,9 +1002,15 @@ export function App() {
         window.aya.platform === "darwin" ? "aya-app--macos" : "",
         isFullScreen ? "aya-app--fullscreen" : "",
       ].filter(Boolean).join(" ")}
+      // The command-rail skin is dark only, so it pins the chrome dark.
       data-theme={
-        appThemePreference === "system" ? undefined : appThemePreference
+        chromeStyle === "command-rail"
+          ? "dark"
+          : appThemePreference === "system"
+            ? undefined
+            : appThemePreference
       }
+      data-chrome={chromeStyle === "classic" ? undefined : chromeStyle}
       data-accent="green"
     >
       {(() => {
@@ -1377,6 +1385,8 @@ export function App() {
           onShowGitHubLinkChange={updateShowGitHubLink}
           layoutMode={layoutMode}
           onLayoutModeChange={setLayoutMode}
+          chromeStyle={chromeStyle}
+          onChromeStyleChange={setChromeStyle}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}
