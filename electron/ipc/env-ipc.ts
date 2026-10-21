@@ -9,6 +9,7 @@ import { expandPath } from "../config";
 import {
   createWorktree,
   createWorktreeBatch,
+  commitGitFiles,
   getGitChangedFiles,
   getGitDiff,
   getGitInfo,
@@ -35,6 +36,8 @@ export interface EnvIpcDeps {
   home: () => string;
   /** Opens an http(s) or file: URL; rejects anything else. */
   openExternalUrl: (url: string) => Promise<void>;
+  /** Test seam; production uses the real checked git implementation. */
+  commitGitFiles?: typeof commitGitFiles;
 }
 
 /** Directory names under the typed prefix, as the prefix spells them, each ending in a slash; hidden ones only
@@ -70,6 +73,7 @@ export async function completeDirectoryPath(rawPrefix: string): Promise<string[]
 
 export function registerEnvIpc(deps: EnvIpcDeps): void {
   const { ipcMain, senderWindow, dialog, shell, clipboard } = deps;
+  const activeGitDirectories = new WeakMap<object, string>();
   const pickPath = async (e: IpcMainInvokeEvent, options: OpenDialogOptions): Promise<string | null> => {
     const win = senderWindow(e);
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
@@ -88,9 +92,29 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
   ipcMain.handle("env:git", async (_e, directory: unknown) =>
     getGitInfo(requireString(directory, "env:git.directory")),
   );
+  ipcMain.handle("env:set-active-git-directory", async (event, raw: unknown) => {
+    const win = senderWindow(event);
+    if (!win) throw new Error("This window is no longer available.");
+    if (raw === null) { activeGitDirectories.delete(event.sender); return; }
+    activeGitDirectories.set(event.sender, requireString(raw, "env:set-active-git-directory.directory"));
+  });
   ipcMain.handle("env:git-changed-files", async (_e, directory: unknown) =>
     getGitChangedFiles(requireString(directory, "env:git-changed-files.directory")),
   );
+  ipcMain.handle("env:git-commit-files", async (event, req: unknown) => {
+    const r = requireRecord(req, "env:git-commit-files");
+    const directory = requireString(r.directory, "env:git-commit-files.directory");
+    const win = senderWindow(event);
+    if (!win || activeGitDirectories.get(event.sender) !== directory) throw new Error("The checkout changed. Refresh the changed files and try again.");
+    if (!Array.isArray(r.paths) || r.paths.some((item) => typeof item !== "string")) {
+      throw new Error("env:git-commit-files.paths must be a list of file paths");
+    }
+    return (deps.commitGitFiles ?? commitGitFiles)(
+      directory,
+      r.paths as string[],
+      requireString(r.message, "env:git-commit-files.message"),
+    );
+  });
   ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
     getGitDiff(requireString(directory, "env:git-diff.directory")),
   );

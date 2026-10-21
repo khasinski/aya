@@ -365,6 +365,10 @@ export interface GitChangedFile {
   path: string;
 }
 
+export type GitCommitResult =
+  | { ok: true; commit: string }
+  | { ok: false; error: string };
+
 /** A git worktree of a repository (from `git worktree list --porcelain`). */
 export interface Worktree {
   /** Absolute path to the worktree checkout. */
@@ -918,6 +922,8 @@ export interface AyaApi {
   completePath(pathPrefix: string): Promise<string[]>;
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
+  setActiveGitDirectory(directory: string | null): Promise<void>;
+  commitGitFiles(req: { directory: string; paths: string[]; message: string }): Promise<GitCommitResult>;
   getGitDiff(directory: string): Promise<string>;
   listDiffComments(projectSlug: string): Promise<DiffComment[]>;
   addDiffComment(projectSlug: string, comment: DiffComment): Promise<DiffComment[]>;

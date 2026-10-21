@@ -161,6 +161,10 @@ const MUTATION_OPTS = {
   windowsHide: true,
   env: GIT_ENV,
 } as const;
+const LITERAL_PATH_MUTATION_OPTS = {
+  ...MUTATION_OPTS,
+  env: { ...GIT_ENV, GIT_LITERAL_PATHSPECS: "1" },
+} as const;
 
 /** git's own message, trimmed to something a dialog can show.
  *
@@ -470,7 +474,12 @@ export async function workingTreeState(directory: string): Promise<string | null
 export interface GitChangedFile {
   status: string;
   path: string;
+  originalPath?: string;
 }
+
+export type GitCommitResult =
+  | { ok: true; commit: string }
+  | { ok: false; error: string };
 
 export function parseGitPorcelain(status: string): GitChangedFile[] {
   return status
@@ -484,14 +493,83 @@ export function parseGitPorcelain(status: string): GitChangedFile[] {
 
 export async function getGitChangedFiles(directory: string): Promise<GitChangedFile[]> {
   try {
-    const { stdout } = await execAsync(`${READ_ONLY_GIT} status --porcelain`, {
-      cwd: directory,
-      ...OPTS,
-    });
-    return parseGitPorcelain(stdout);
+    return await getGitChangedFilesOrThrow(directory);
   } catch {
     return [];
   }
+}
+
+async function getGitChangedFilesOrThrow(directory: string): Promise<GitChangedFile[]> {
+  const { stdout } = await execFileAsync("git", [NO_LOCKS, "status", "--porcelain=v1", "-z"], {
+    cwd: directory,
+    ...OPTS,
+  });
+  const entries = stdout.split("\0");
+  const files: GitChangedFile[] = [];
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    if (entry.length < 4) continue;
+    const status = entry.slice(0, 2).trim() || "??";
+    const file: GitChangedFile = { status, path: entry.slice(3) };
+    // In -z porcelain output a rename/copy is followed by its source path.
+    if (/[RC]/.test(status) && entries[i + 1]) file.originalPath = entries[++i];
+    files.push(file);
+  }
+  return files;
+}
+
+/** Commit only the selected working-tree paths. `git commit --only` prevents
+ *  unrelated staged work from entering the commit; selected paths are staged
+ *  first so untracked files and deletions are included. Every path is checked
+ *  against the current porcelain list and passed after `--` to execFile. */
+export async function commitGitFiles(
+  directory: string,
+  selectedPaths: string[],
+  message: string,
+): Promise<GitCommitResult> {
+  const paths = [...new Set(selectedPaths)];
+  if (paths.length === 0) return { ok: false, error: "Select at least one changed file." };
+  if (message.trim().length === 0) return { ok: false, error: "Enter a commit message." };
+  let changed: GitChangedFile[];
+  try {
+    changed = await getGitChangedFilesOrThrow(directory);
+  } catch (err) {
+    return { ok: false, error: gitErrorMessage(err) };
+  }
+  const changedByPath = new Map(changed.map((file) => [file.path, file]));
+  if (paths.some((file) => !changedByPath.has(file))) {
+    return { ok: false, error: "The changed files have updated. Refresh the list and try again." };
+  }
+  const commitPaths = [...new Set(paths.flatMap((file) => {
+    const original = changedByPath.get(file)?.originalPath;
+    return original ? [file, original] : [file];
+  }))];
+  const untracked = paths.filter((file) => changedByPath.get(file)?.status === "??");
+  try {
+    // `git commit --only` already handles tracked modifications and deletions.
+    // Stage only untracked paths first: staging a deletion removes its path
+    // from the index, after which Git no longer accepts it as a commit pathspec.
+    if (untracked.length > 0) {
+      await execFileAsync("git", ["add", "--", ...untracked], { cwd: directory, ...LITERAL_PATH_MUTATION_OPTS });
+    }
+    await execFileAsync("git", ["commit", "--only", "-m", message, "--", ...commitPaths], { cwd: directory, ...LITERAL_PATH_MUTATION_OPTS });
+  } catch (err) {
+    let error = gitErrorMessage(err);
+    if (untracked.length > 0) {
+      try {
+        await execFileAsync("git", ["reset", "-q", "--", ...untracked], { cwd: directory, ...LITERAL_PATH_MUTATION_OPTS });
+      } catch {
+        try {
+          await execFileAsync("git", ["rm", "--cached", "--ignore-unmatch", "--", ...untracked], { cwd: directory, ...LITERAL_PATH_MUTATION_OPTS });
+        } catch (cleanupErr) {
+          error += ` (could not restore the index: ${gitErrorMessage(cleanupErr)})`;
+        }
+      }
+    }
+    return { ok: false, error };
+  }
+  const { stdout } = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], { cwd: directory, ...OPTS });
+  return { ok: true, commit: stdout.trim() };
 }
 
 function quotePathForDiff(path: string): string {

@@ -1060,21 +1060,41 @@ body {
 }
 .aya-dirty-file-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 16px 28px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
   width: 100%;
-  border: none;
+  font: inherit;
+  text-align: left;
+}
+.aya-dirty-file-row input,
+.aya-dirty-file-select-all input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.aya-dirty-file-select-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 7px;
+  color: var(--fg-tertiary);
+  font: 11px var(--font-sans);
+}
+.aya-dirty-file-path-button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
   background: none;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.aya-dirty-file-row:hover {
-  background: var(--bg-tertiary);
+.aya-dirty-file-path-button:hover .aya-dirty-file-path {
+  color: var(--fg-primary);
+  text-decoration: underline;
 }
-.aya-dirty-file-row:focus-visible {
+.aya-dirty-file-path-button:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
@@ -1089,6 +1109,27 @@ body {
   white-space: nowrap;
   color: var(--fg-secondary);
 }
+.aya-dirty-commit {
+  display: grid;
+  gap: 6px;
+  padding: 9px 12px 11px;
+  border-top: 1px solid var(--border);
+  font: 11px var(--font-sans);
+}
+.aya-dirty-commit > label { color: var(--fg-tertiary); }
+.aya-dirty-commit > input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--fg-primary);
+  font: 12px var(--font-sans);
+}
+.aya-dirty-commit-error { color: var(--status-error); overflow-wrap: anywhere; }
+.aya-dirty-commit-button { justify-self: end; }
+.aya-dirty-commit-button:disabled { opacity: .45; cursor: default; }
 .aya-diff-panel {
   display: flex;
   flex-direction: column;

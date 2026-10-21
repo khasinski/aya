@@ -44,6 +44,7 @@
     "src/project-reload.ts",
     "src/project-badges.ts",
     "src/preset-ids.ts",
+    "src/printable.ts",
     "src/ptyEventBus.ts",
     "src/pty-event-reducer.ts",
     "src/terminal-actions.ts",

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
   GitChangedFile,
@@ -19,6 +19,7 @@ import {
 import type { SettingsTab } from "../settings-tabs";
 import { MachinesStatus } from "./MachinesStatus";
 import { uuid } from "../uuid";
+import { printable } from "../printable";
 
 // Material Symbols small icon size (px) used for status-bar glyphs
 const ICON_SIZE_SM_PX = 13;
@@ -46,6 +47,7 @@ interface Props {
   showGitHubLink: boolean;
   terminal: TerminalState | null;
   attentionCount: number;
+  onGitStatusRefresh: (directory: string) => Promise<void>;
   snippetsOpen: boolean;
   snippetsDisabled: boolean;
   /** Agent panes of the active project a diff review can go to, the default
@@ -77,6 +79,7 @@ function StatusBarImpl({
   showGitHubLink,
   terminal,
   attentionCount,
+  onGitStatusRefresh,
   snippetsOpen,
   snippetsDisabled,
   reviewTargets,
@@ -110,7 +113,13 @@ function StatusBarImpl({
   const dirtyRef = useRef<HTMLDivElement>(null);
   const [showDirtyFiles, setShowDirtyFiles] = useState(false);
   const [dirtyFiles, setDirtyFiles] = useState<GitChangedFile[]>([]);
+  const [selectedDirtyPaths, setSelectedDirtyPaths] = useState<string[]>([]);
   const [dirtyFilesLoading, setDirtyFilesLoading] = useState(false);
+  const [dirtySelectionDirectory, setDirtySelectionDirectory] = useState<string | null>(null);
+  const gitCheckoutRef = useRef<{ directory: string | null; generation: number }>({ directory: gitDirectory, generation: 0 });
+  const [commitMessage, setCommitMessage] = useState("");
+  const [commitError, setCommitError] = useState<string | null>(null);
+  const [committing, setCommitting] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [diffText, setDiffText] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
@@ -172,8 +181,21 @@ function StatusBarImpl({
   // bound to another worktree must not leave the previous worktree's file list
   // and diff on screen.
   useEffect(() => {
+    void window.aya.setActiveGitDirectory(gitDirectory);
+  }, [gitDirectory]);
+
+  useLayoutEffect(() => {
+    gitCheckoutRef.current = { directory: gitDirectory, generation: gitCheckoutRef.current.generation + 1 };
+  }, [gitDirectory]);
+
+  useEffect(() => {
     setShowDirtyFiles(false);
     setDirtyFiles([]);
+    setDirtyFilesLoading(false);
+    setSelectedDirtyPaths([]);
+    setDirtySelectionDirectory(null);
+    setCommitMessage("");
+    setCommitError(null);
     setShowDiff(false);
     setDiffText("");
     setDiffQuery("");
@@ -224,14 +246,61 @@ function StatusBarImpl({
     }
   };
 
-  const toggleDirtyFiles = () => {
+  const toggleDirtyFiles = async () => {
     if (!gitDirectory) return;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
     setShowDirtyFiles((open) => !open);
     setDirtyFilesLoading(true);
-    void window.aya.getGitChangedFiles(gitDirectory).then((files) => {
+    try {
+      await window.aya.setActiveGitDirectory(directory);
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      const files = await window.aya.getGitChangedFiles(directory);
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
       setDirtyFiles(files);
+      setSelectedDirtyPaths(files.map((file) => file.path));
+      setDirtySelectionDirectory(directory);
+      setCommitError(null);
       setDirtyFilesLoading(false);
-    });
+    } catch (error) {
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      setCommitError(error instanceof Error ? error.message : "Aya could not load changed files.");
+      setDirtyFilesLoading(false);
+    }
+  };
+
+  const commitSelectedFiles = async () => {
+    if (!gitDirectory || dirtySelectionDirectory !== gitDirectory || committing || selectedDirtyPaths.length === 0 || !commitMessage.trim()) return;
+    const directory = dirtySelectionDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    setCommitting(true);
+    setCommitError(null);
+    try {
+      const result = await window.aya.commitGitFiles({
+        directory,
+        paths: selectedDirtyPaths,
+        message: commitMessage,
+      });
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      if (!result.ok) {
+        setCommitError(result.error);
+        return;
+      }
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      const files = await window.aya.getGitChangedFiles(directory);
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      setDirtyFiles(files);
+      setSelectedDirtyPaths([]);
+      setDirtySelectionDirectory(directory);
+      setCommitMessage("");
+      await onGitStatusRefresh(directory);
+    } catch (err) {
+      if (gitCheckoutRef.current.directory === directory && gitCheckoutRef.current.generation === generation) {
+        setCommitError(err instanceof Error ? err.message : "Aya could not create the commit.");
+      }
+    } finally {
+      setCommitting(false);
+    }
   };
 
   const loadDiff = () => {
@@ -517,20 +586,62 @@ function StatusBarImpl({
               ) : dirtyFiles.length === 0 ? (
                 <div className="aya-statusbar-popover-empty">No changed files.</div>
               ) : (
-                <div className="aya-dirty-file-list">
-                  {dirtyFiles.map((file) => (
+                <>
+                  <div className="aya-dirty-file-list">
+                    <label className="aya-dirty-file-select-all">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all changed files"
+                        checked={selectedDirtyPaths.length === dirtyFiles.length}
+                        onChange={(event) => setSelectedDirtyPaths(event.currentTarget.checked ? dirtyFiles.map((file) => file.path) : [])}
+                      />
+                      <span>Select all</span>
+                    </label>
+                    {dirtyFiles.map((file) => (
+                      <div className="aya-dirty-file-row" key={`${file.status}-${file.path}`}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${printable(file.path)}`}
+                          checked={selectedDirtyPaths.includes(file.path)}
+                          onChange={(event) => {
+                            const checked = event.currentTarget.checked;
+                            setSelectedDirtyPaths((current) => checked
+                              ? [...new Set([...current, file.path])]
+                              : current.filter((selected) => selected !== file.path));
+                          }}
+                        />
+                        <span className="aya-dirty-file-status">{file.status}</span>
+                        <button
+                          className="aya-dirty-file-path-button"
+                          type="button"
+                          title={`Show ${printable(file.path)} in diff`}
+                          onClick={() => openDiffAtFile(file.path)}
+                        >
+                          <span className="aya-dirty-file-path">{printable(file.path)}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="aya-dirty-commit">
+                    <label htmlFor="aya-dirty-commit-message">Commit message</label>
+                    <input
+                      id="aya-dirty-commit-message"
+                      value={commitMessage}
+                      onChange={(event) => setCommitMessage(event.currentTarget.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void commitSelectedFiles(); } }}
+                      placeholder="Commit message"
+                    />
+                    {commitError && <div className="aya-dirty-commit-error" role="alert">{commitError}</div>}
                     <button
-                      className="aya-dirty-file-row"
+                      className="aya-statusbar-popover-action aya-dirty-commit-button"
                       type="button"
-                      key={`${file.status}-${file.path}`}
-                      title={`Show ${file.path} in diff`}
-                      onClick={() => openDiffAtFile(file.path)}
+                      disabled={committing || dirtySelectionDirectory !== gitDirectory || selectedDirtyPaths.length === 0 || !commitMessage.trim()}
+                      onClick={() => void commitSelectedFiles()}
                     >
-                      <span className="aya-dirty-file-status">{file.status}</span>
-                      <span className="aya-dirty-file-path">{file.path}</span>
+                      {committing ? "Committing..." : "Commit selected"}
                     </button>
-                  ))}
-                </div>
+                  </div>
+                </>
               )}
             </div>
           )}

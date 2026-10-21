@@ -159,6 +159,8 @@ const api: AyaApi = {
   getGitInfo: (directory) => ipcRenderer.invoke("env:git", directory),
   getGitChangedFiles: (directory) =>
     ipcRenderer.invoke("env:git-changed-files", directory),
+  setActiveGitDirectory: (directory) => ipcRenderer.invoke("env:set-active-git-directory", directory),
+  commitGitFiles: (req) => ipcRenderer.invoke("env:git-commit-files", req),
   getGitDiff: (directory) => ipcRenderer.invoke("env:git-diff", directory),
   listDiffComments: (projectSlug) => ipcRenderer.invoke("diff-comments:list", projectSlug),
   addDiffComment: (projectSlug, comment) => ipcRenderer.invoke("diff-comments:add", projectSlug, comment),
