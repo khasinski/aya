@@ -36,7 +36,7 @@ export function registerCiChecksIpc(deps: CiChecksIpcDeps): void {
         pullRequestUrl: null,
         pullRequestState: "unknown",
         checks: [],
-        error: "Aya could not load pull request checks. Try again.",
+        error: "Aya could not load pull request checks.",
       };
     }
     if (!status.branch || status.detached) {
@@ -48,7 +48,7 @@ export function registerCiChecksIpc(deps: CiChecksIpcDeps): void {
         pullRequestUrl: null,
         pullRequestState: "unknown",
         checks: [],
-        error: error instanceof Error ? error.message : "Aya could not load pull request checks. Try again.",
+        error: error instanceof Error ? error.message : "Aya could not load pull request checks.",
       };
     }
   });

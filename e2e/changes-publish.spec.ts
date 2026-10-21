@@ -350,7 +350,26 @@ test.describe("failed pull request checks", () => {
     expect(previewText).not.toContain("AWS_SECRET");
     expect(previewText).not.toContain("never-send-this");
     await expect(checks).toContainText("Will send to CI review target");
-    await popover.screenshot({ path: "/tmp/changes-publish-checks-preview.png" });
+    await window.setViewportSize({ width: 1100, height: 720 });
+    await expect(checks.locator("#aya-ci-target")).toBeInViewport();
+    await expect(preview).toBeInViewport();
+    await expect(checks.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
+    await window.setViewportSize({ width: 1100, height: 600 });
+    const compactScrollState = await popover.locator(".aya-statusbar-popover-content").evaluate((element) => ({ height: element.clientHeight, total: element.scrollHeight }));
+    expect(compactScrollState.total).toBeGreaterThan(compactScrollState.height);
+    await checks.locator("#aya-ci-target").scrollIntoViewIfNeeded();
+    await expect(checks.locator("#aya-ci-target")).toBeInViewport();
+    await preview.scrollIntoViewIfNeeded();
+    await expect(preview).toBeInViewport();
+    await checks.getByRole("button", { name: "Send", exact: true }).scrollIntoViewIfNeeded();
+    await expect(checks.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
+    await window.setViewportSize({ width: 1100, height: 1100 });
+    await expect(preview).toBeInViewport();
+    await expect(checks.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
+    await expect(checks.locator("#aya-ci-target")).toBeInViewport();
+    const panelBox = await popover.boundingBox();
+    if (!panelBox) throw new Error("Changes panel is not visible for the preview screenshot");
+    await window.screenshot({ path: "/tmp/changes-publish-checks-preview.png", clip: panelBox });
     const sendHold = `${log}.hold`;
     writeFileSync(sendHold, "");
     await checks.getByRole("button", { name: "Send", exact: true }).click();
@@ -368,6 +387,32 @@ test.describe("failed pull request checks", () => {
     expect(received.endsWith("\r")).toBe(true);
     expect(received).not.toContain("AWS_SECRET=never-send-this");
     await popover.screenshot({ path: "/tmp/changes-publish-checks-sent.png" });
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "failed-log"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+
+  test("a failed send clears its Sending status and asks for a fresh preview", async ({ window, seeded }) => {
+    addFakeRemote(seeded.projectDir);
+    writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+    writeFileSync(join(fakeState, "checks.json"), JSON.stringify([{
+      name: "Linux tests", state: "failure", bucket: "fail",
+      link: "https://github.com/aya-e2e/project/actions/runs/12345/job/67890",
+    }]));
+    const log = join(seeded.ayaHome, `ci-review-${seeded.tabIds.right}.log`);
+    writeFileSync(join(fakeState, "failed-log"), "initial log contents\n");
+    try {
+      await expect.poll(() => existsSync(`${log}.ready`)).toBe(true);
+      const popover = await openChanges(window);
+      const checks = window.getByRole("region", { name: "Pull request checks" });
+      await checks.getByLabel("Send failed checks to").selectOption(seeded.tabIds.right);
+      await checks.getByRole("button", { name: "Preview Linux tests failure details" }).click();
+      await expect(checks.getByRole("textbox", { name: "Exact message to send" })).toBeVisible();
+      writeFileSync(join(fakeState, "failed-log"), "changed after preview\n");
+      await checks.getByRole("button", { name: "Send", exact: true }).click();
+      await expect(checks.getByRole("alert")).toHaveText("The failed job log changed. Review the updated preview before sending.");
+      await expect(popover.locator(".aya-dirty-publish-notice")).toHaveCount(0);
+      await expect(checks.getByRole("button", { name: "Retry" })).toHaveCount(0);
     } finally {
       for (const name of ["check-pr.json", "checks.json", "failed-log"]) rmSync(join(fakeState, name), { force: true });
     }
@@ -416,9 +461,10 @@ test.describe("PR3 screenshot states", () => {
       await popover.screenshot({ path: "/tmp/changes-publish-checks-failing.png" });
 
       writeFileSync(join(fakeState, "checks-unavailable"), "");
-      await expect(popover).toContainText("Aya could not load pull request checks.", { timeout: 15_000 });
+      await expect(popover.getByText("Aya could not load pull request checks.", { exact: true })).toBeVisible({ timeout: 15_000 });
       await expect(popover.getByRole("button", { name: "Retry" })).toBeVisible();
       await expect(popover.getByRole("button", { name: "Open pull request" })).toBeVisible();
+      await checks.getByText("Aya could not load pull request checks.", { exact: true }).scrollIntoViewIfNeeded();
       await popover.screenshot({ path: "/tmp/changes-publish-checks-unavailable.png" });
       rmSync(join(fakeState, "checks-unavailable"), { force: true });
       await popover.getByRole("button", { name: "Retry" }).click();

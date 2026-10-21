@@ -18,7 +18,7 @@ test("a failed local status lookup becomes a safe result instead of an IPC excep
     pullRequestUrl: null,
     pullRequestState: "unknown",
     checks: [],
-    error: "Aya could not load pull request checks. Try again.",
+    error: "Aya could not load pull request checks.",
   });
 });
 

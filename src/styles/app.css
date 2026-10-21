@@ -988,7 +988,7 @@ body {
   bottom: 24px;
   z-index: 30;
   width: min(420px, calc(100vw - 24px));
-  max-height: min(360px, calc(100vh - 80px));
+  max-height: min(680px, calc(100vh - 80px));
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -996,6 +996,8 @@ body {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
   color: var(--fg-secondary);
 }
+.aya-statusbar-popover--changes { display: flex; flex-direction: column; }
+.aya-statusbar-popover--changes .aya-statusbar-popover-content { min-height: 0; max-height: min(630px, calc(100vh - 140px)); flex: 0 1 auto; overflow-y: auto; }
 .aya-statusbar-popover--diff {
   width: min(860px, calc(100vw - 24px));
   max-height: min(680px, calc(100vh - 80px));

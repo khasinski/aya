@@ -99,10 +99,10 @@ export async function getPullRequestChecks(directory: string, branch: string, gh
 function friendlyGhError(error: unknown): Error {
   const value = error as { code?: unknown; killed?: unknown; signal?: unknown; message?: unknown };
   if (value?.code === "ETIMEDOUT" || value?.killed || value?.signal === "SIGTERM" || /timed out|ETIMEDOUT/i.test(String(value?.message ?? ""))) {
-    return new Error("GitHub did not respond in time. Try again.");
+    return new Error("GitHub did not respond in time.");
   }
   if (/ENOENT|not found/i.test(String(value?.message ?? ""))) return new Error("GitHub CLI is not installed. Install gh, then try again.");
-  return new Error("Aya could not load pull request checks. Try again.");
+  return new Error("Aya could not load pull request checks.");
 }
 
 function cleanLog(raw: string): string {

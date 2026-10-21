@@ -81,6 +81,12 @@ function ciCheckLabel(check: PullRequestChecks["checks"][number]): string {
   return check.state;
 }
 
+function ciActionErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const message = error.message.replace(/^Error invoking remote method '[^']+':\s*Error:\s*/, "").trim();
+  return message || fallback;
+}
+
 function StatusBarImpl({
   project,
   git,
@@ -166,6 +172,7 @@ function StatusBarImpl({
   const [publishError, setPublishError] = useState<string | null>(null);
   const [ciChecks, setCiChecks] = useState<PullRequestChecks | null>(null);
   const [ciChecksError, setCiChecksError] = useState<string | null>(null);
+  const [ciActionError, setCiActionError] = useState<string | null>(null);
   const ciRetryRef = useRef<(() => void) | null>(null);
   const [ciTargetId, setCiTargetId] = useState<string | null>(null);
   const ciTargetIdRef = useRef<string | null>(null);
@@ -267,6 +274,7 @@ function StatusBarImpl({
     setCreatedPullRequest(null);
     setCiChecks(null);
     setCiChecksError(null);
+    setCiActionError(null);
     setSelectedCiCheckUrl(null);
     setCiPreview(null);
     setCiNotice(null);
@@ -517,13 +525,14 @@ function StatusBarImpl({
     setCiPreview(null);
     setCiNotice(null);
     setCiChecksError(null);
+    setCiActionError(null);
     try {
       const preview = await window.aya.previewCiFailure({ projectSlug, directory, targetId, checkUrl });
       if (!isCurrent() || requestId !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId) return;
       setCiPreview(preview);
     } catch (error) {
       if (!isCurrent() || requestId !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId) return;
-      setCiChecksError(error instanceof Error ? error.message : "Aya could not prepare this check for sending.");
+      setCiActionError(ciActionErrorMessage(error, "Aya could not prepare this check for sending."));
     }
   };
 
@@ -536,6 +545,7 @@ function StatusBarImpl({
     const isCurrent = () => directory !== null && isCurrentGitCheckout(directory, generation);
     setCiSending(true);
     setCiChecksError(null);
+    setCiActionError(null);
     setCiNotice("Sending...");
     try {
       await window.aya.sendCiFailure({ projectSlug, targetId, token: ciPreview.token });
@@ -544,8 +554,9 @@ function StatusBarImpl({
       setCiPreview(null);
     } catch (error) {
       if (!isCurrent()) return;
+      setCiNotice(null);
       setCiPreview(null);
-      setCiChecksError(error instanceof Error ? error.message : "Aya could not send the check details.");
+      setCiActionError(ciActionErrorMessage(error, "Aya could not send the check details."));
     } finally { setCiSending(false); }
   };
 
@@ -772,7 +783,7 @@ function StatusBarImpl({
           </button>
           {showDirtyFiles && (
             <div
-              className={`aya-statusbar-popover ${showDiff ? "aya-statusbar-popover--diff" : ""}`}
+              className={`aya-statusbar-popover aya-statusbar-popover--changes ${showDiff ? "aya-statusbar-popover--diff" : ""}`}
               role="dialog"
               aria-label={showDiff ? "Git diff" : "Changed files"}
             >
@@ -807,6 +818,7 @@ function StatusBarImpl({
                   </>
                 )}
               </div>
+              <div className="aya-statusbar-popover-content">
               {showDiff ? (
                 <DiffPanel
                   diff={diffText}
@@ -897,13 +909,15 @@ function StatusBarImpl({
                     {publishStatus?.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pushDisabledReason}</div>}
                     {publishStatus?.pullRequestDisabledReason && publishStatus.pullRequestDisabledReason !== publishStatus.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
                     {publishError && <div className="aya-dirty-commit-error" role="alert">{publishError}</div>}
-                    {ciChecksError && ciChecksError !== publishError && <div className="aya-ci-checks-error" role="alert"><span>{ciChecksError}</span><button type="button" className="aya-statusbar-popover-action" onClick={() => ciRetryRef.current?.()}>Retry</button></div>}
                     {ciNotice && <div className="aya-dirty-publish-notice" role="status">{ciNotice}</div>}
-                    {pullRequestUrl && (
+                    {(pullRequestUrl || (ciChecksError && ciChecksError !== publishError) || ciActionError) && (
                       <section className="aya-ci-checks" aria-label="Pull request checks">
                         <div className="aya-ci-checks-heading">
                           <span>Pull request checks</span>
                         </div>
+                        {ciChecksError && ciChecksError !== publishError && <div className="aya-ci-checks-error" role="alert"><span>{ciChecksError}</span><button type="button" className="aya-statusbar-popover-action" onClick={() => ciRetryRef.current?.()}>Retry</button></div>}
+                        {ciActionError && <div className="aya-ci-checks-error" role="alert">{ciActionError}</div>}
+                        {pullRequestUrl && <>
                         {ciChecks?.pullRequestState === "merged" || ciChecks?.pullRequestState === "closed" ? (
                           <div className="aya-dirty-publish-hint">This pull request is {ciChecks.pullRequestState}; check updates have stopped.</div>
                         ) : ciChecks?.checks.length ? (
@@ -942,11 +956,13 @@ function StatusBarImpl({
                             <button type="button" className="aya-statusbar-popover-action" disabled={ciSending || !ciTargetId} onClick={() => void sendCiCheck()}>{ciSending ? "Sending..." : "Send"}</button>
                           </div>
                         )}
+                        </>}
                       </section>
                     )}
                   </div>
                 </>
               )}
+              </div>
             </div>
           )}
         </div>
