@@ -73,10 +73,7 @@ test("changes panel commits, sets upstream, pushes and opens the pull request wi
   git("remote", "set-head", "origin", "main");
   git("push", "-q", "--set-upstream", "origin", "HEAD");
 
-  await app.evaluate(({ shell }) => {
-    (globalThis as any).__openedUrls = [];
-    shell.openExternal = async (url: string) => { (globalThis as any).__openedUrls.push(url); };
-  });
+  writeFileSync(externalOpenLog, "");
   const popover = await openChanges(window);
   await expect(popover.locator(".aya-dirty-file-row")).toHaveCount(2);
   await popover.screenshot({ path: "/tmp/changes-publish-before.png" });
@@ -92,6 +89,7 @@ test("changes panel commits, sets upstream, pushes and opens the pull request wi
   expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd: repo, encoding: "utf8" }).trim()).toBe("origin/feature/foo");
   await popover.screenshot({ path: "/tmp/changes-publish-pushed.png" });
 
+  const externalOpenLog = join(seeded.root, "e2e-open-external.log");
   const changesButton = window.locator(".aya-statusbar-popover-host > button").filter({ hasText: "clean" });
   await changesButton.click();
   await expect(popover).toBeHidden();
@@ -109,7 +107,7 @@ test("changes panel commits, sets upstream, pushes and opens the pull request wi
   await expect(popover.getByRole("status")).toHaveText("Pull request opened.");
   const callsAfterReopen = readFileSync(join(fakeState, "calls"), "utf8");
   expect(callsAfterReopen.split("\n").filter((line) => line.startsWith("pr create "))).toHaveLength(1);
-  expect(await app.evaluate(() => (globalThis as any).__openedUrls)).toEqual([
+  expect(readFileSync(externalOpenLog, "utf8").trim().split("\n")).toEqual([
     "https://github.com/aya-e2e/project/pull/42",
     "https://github.com/aya-e2e/project/pull/42",
   ]);
