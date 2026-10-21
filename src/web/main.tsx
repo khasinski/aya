@@ -219,6 +219,7 @@ function WebBoot({ authenticated }: { authenticated: boolean }) {
 
 void (async () => {
   document.title = "Aya Web";
+document.documentElement.dataset.ayaWeb = "true";
   let authenticated = false;
   try {
     authenticated = (await fetch("/api/me")).ok;

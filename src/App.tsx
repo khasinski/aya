@@ -40,6 +40,7 @@ import { ProjectsLeftLayout } from "./components/ProjectsLeftLayout";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
+import { WebWaitingBanners } from "./components/WebWaitingBanners";
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
@@ -1029,6 +1030,13 @@ export function App() {
       }
       data-accent="green"
     >
+      <WebWaitingBanners
+        projects={projects}
+        terminals={terminals}
+        activeProjectId={activeProjectId}
+        activeTerminalId={activeTabId}
+        onSelectTerminal={focusTerminal}
+      />
       {(() => {
         const loadingNode = <LoadingState />;
         const emptyStateNode = (

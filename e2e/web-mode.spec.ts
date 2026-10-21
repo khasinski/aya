@@ -37,7 +37,11 @@ const REPO_ROOT = join(__dirname, "..");
 /** Unique per run: the anti-facade anchor. Only the bridge can put it on screen. */
 const PROJECT_NAME = `aya-web-probe-${randomUUID().slice(0, 8)}`;
 
-type ServerHandle = { port: number; close: () => Promise<void> };
+type ServerHandle = {
+  port: number;
+  broadcast: (channel: string, payload: unknown) => void;
+  close: () => Promise<void>;
+};
 
 // A project that no longer exists and an empty recent list: the page's save drops the one and fills the other, so the
 // file shows a save happened.
@@ -49,7 +53,13 @@ const STATE: ProjectCollectionState = {
   activeProject: "web-probe",
 };
 
-async function startServedApp(options: { tabs?: WorkingTab[] } = {}): Promise<{ base: string; stateFile: string; invocations: Array<{ channel: string; args: unknown[] }>; stop: () => Promise<void> }> {
+async function startServedApp(options: { tabs?: WorkingTab[] } = {}): Promise<{
+  base: string;
+  stateFile: string;
+  invocations: Array<{ channel: string; args: unknown[] }>;
+  broadcast: (channel: string, payload: unknown) => void;
+  stop: () => Promise<void>;
+}> {
   // The web server answers projects:state and projects:save-state from the projects-state.json of the AYA_HOME this
   // process loaded paths.ts with, not from the stubs below: playwright.config.ts gives the runner a throwaway one.
   const { PROJECTS_STATE_FILE } = await import("../dist-electron/paths.js");
@@ -135,6 +145,7 @@ async function startServedApp(options: { tabs?: WorkingTab[] } = {}): Promise<{ 
     base: `http://127.0.0.1:${handle.port}`,
     stateFile: PROJECTS_STATE_FILE,
     invocations,
+    broadcast: (channel, payload) => handle.broadcast(channel, payload),
     stop: async () => {
       await handle.close();
       rmSync(projectDir, { recursive: true, force: true });
@@ -175,6 +186,162 @@ test("a browser logs in, the bridge connects, and bridge-only data reaches the s
         return { order: saved.order, open: saved.open, recent: saved.recent };
       })
       .toEqual({ order: ["web-probe"], open: ["web-probe"], recent: ["web-probe"] });
+  } finally {
+    await browser?.close();
+    await stop();
+  }
+});
+
+test("waiting panes show a selectable banner and update the web tab title", async () => {
+  const { base, broadcast, stop } = await startServedApp({
+    tabs: [
+      { id: "web-first", presetId: "shell", name: "First pane" },
+      { id: "web-waiting", presetId: "shell", name: "Review pane" },
+    ],
+  });
+  let browser: Browser | undefined;
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.addInitScript(() => {
+      type NotificationProbe = Window & {
+        __permissionRequests?: number;
+        __notificationConstructions?: number;
+        __notificationPermission?: NotificationPermission;
+        __showWaitingNotificationCalls?: number;
+      };
+      const probe = window as NotificationProbe;
+      const NativeNotification = window.Notification;
+      if (!NativeNotification) return;
+      const fakeNotification = new Proxy(NativeNotification, {
+        construct: () => {
+          probe.__notificationConstructions = (probe.__notificationConstructions ?? 0) + 1;
+          return { close: () => {}, onclick: null } as unknown as Notification;
+        },
+        get: (target, property) => {
+          if (property === "permission") return probe.__notificationPermission ?? "default";
+          if (property === "requestPermission") {
+            return () => {
+              probe.__permissionRequests = (probe.__permissionRequests ?? 0) + 1;
+              return Promise.resolve("default");
+            };
+          }
+          return Reflect.get(target, property, target);
+        },
+      });
+      Object.defineProperty(window, "Notification", { configurable: true, value: fakeNotification });
+    });
+    await page.goto(base);
+    const login = await page.request.post(`${base}/api/login`, {
+      data: { user: USER, password: PASSWORD },
+    });
+    expect(login.ok()).toBeTruthy();
+    await page.reload();
+    await expect(page.getByTestId("sidebar-terminal")).toHaveCount(2, { timeout: 20_000 });
+    await expect(page.locator("[data-testid='sidebar-terminal'].aya-sidebar-row--active")).toHaveAttribute(
+      "data-terminal-id",
+      "web-first",
+    );
+    await expect(page).toHaveTitle("Aya");
+    expect(await page.evaluate(() => (window as Window & { __permissionRequests?: number }).__permissionRequests ?? 0)).toBe(0);
+
+    // The browser adapter is called directly to pin the secure-context and
+    // existing-grant checks, without opening a native permission prompt.
+    await page.evaluate(() => window.aya.showWaitingNotification({
+      projectSlug: "web-probe",
+      terminalId: "web-waiting",
+      body: "Review pane in Aya Web probe",
+    }));
+    expect(await page.evaluate(() => (window as Window & { __notificationConstructions?: number }).__notificationConstructions ?? 0)).toBe(0);
+    await page.evaluate(() => {
+      (window as Window & { __notificationPermission?: NotificationPermission }).__notificationPermission = "granted";
+      Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+    });
+    await page.evaluate(() => window.aya.showWaitingNotification({
+      projectSlug: "web-probe",
+      terminalId: "web-waiting",
+      body: "Review pane in Aya Web probe",
+    }));
+    expect(await page.evaluate(() => (window as Window & { __notificationConstructions?: number }).__notificationConstructions ?? 0)).toBe(0);
+    await page.evaluate(() => Object.defineProperty(window, "isSecureContext", { configurable: true, value: true }));
+    await page.evaluate(() => window.aya.showWaitingNotification({
+      projectSlug: "web-probe",
+      terminalId: "web-waiting",
+      body: "Review pane in Aya Web probe",
+    }));
+    expect(await page.evaluate(() => (window as Window & { __notificationConstructions?: number }).__notificationConstructions ?? 0)).toBe(1);
+    expect(await page.evaluate(() => (window as Window & { __permissionRequests?: number }).__permissionRequests ?? 0)).toBe(0);
+    await page.evaluate(() => {
+      (window as Window & { __notificationPermission?: NotificationPermission }).__notificationPermission = "default";
+      Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
+      const target = window.aya;
+      const original = target.showWaitingNotification.bind(target);
+      const probe = window as Window & { __showWaitingNotificationCalls?: number };
+      Object.defineProperty(target, "showWaitingNotification", {
+        configurable: true,
+        value: async (request: Parameters<typeof target.showWaitingNotification>[0]) => {
+          probe.__showWaitingNotificationCalls = (probe.__showWaitingNotificationCalls ?? 0) + 1;
+          return original(request);
+        },
+      });
+    });
+    await page.evaluate(() => {
+      (window as Window & { __showWaitingNotificationCalls?: number }).__showWaitingNotificationCalls = 0;
+    });
+
+    const wait = {
+      terminalId: "web-waiting",
+      projectSlug: "web-probe",
+      level: "waiting",
+      text: "Approve access?",
+      updatedAt: Date.now(),
+    };
+    broadcast("control:status", wait);
+    broadcast("control:status", {
+      terminalId: "web-first",
+      projectSlug: "web-probe",
+      level: "waiting",
+      text: "First pane needs attention",
+      updatedAt: Date.now(),
+    });
+    const banner = page.getByRole("button", { name: /Review pane is waiting in .* View pane/ });
+    await expect(banner).toBeVisible();
+    await expect(page).toHaveTitle("(2) Aya");
+    await expect.poll(() => page.evaluate(() => (window as Window & { __showWaitingNotificationCalls?: number }).__showWaitingNotificationCalls ?? 0)).toBe(2);
+    expect(await page.evaluate(() => (window as Window & { __notificationConstructions?: number }).__notificationConstructions ?? 0)).toBe(1);
+    expect(await page.evaluate(() => (window as Window & { __permissionRequests?: number }).__permissionRequests ?? 0)).toBe(0);
+    broadcast("control:status", { ...wait, text: "Approve access? again", updatedAt: wait.updatedAt + 1 });
+    await expect(page.locator("body")).toContainText("Approve access? again");
+    await expect(page.locator(".aya-web-waiting-banner")).toHaveCount(1);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expect(banner).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const bannerBounds = await banner.boundingBox();
+    const paneStripBounds = await page.locator(".aya-sidebar").boundingBox();
+    expect(bannerBounds && bannerBounds.height >= 44).toBeTruthy();
+    expect(bannerBounds && paneStripBounds && bannerBounds.y >= paneStripBounds.y + paneStripBounds.height).toBeTruthy();
+    await page.screenshot({
+      path: "/tmp/aya-web-notifications-390x844.png",
+      fullPage: false,
+      style: ".aya-statusbar { visibility: hidden !important; }",
+    });
+
+    await banner.click();
+    await expect(page.locator("[data-testid='sidebar-terminal'].aya-sidebar-row--active")).toHaveAttribute(
+      "data-terminal-id",
+      "web-waiting",
+    );
+    await expect(page.getByRole("button", { name: /First pane is waiting in .* View pane/ })).toBeVisible();
+    await expect(page).toHaveTitle("(1) Aya");
+    expect(await page.evaluate(() => (window as Window & { __permissionRequests?: number }).__permissionRequests ?? 0)).toBe(0);
+    broadcast("control:status", {
+      terminalId: "web-first",
+      projectSlug: "web-probe",
+      level: "clear",
+      updatedAt: Date.now() + 2,
+    });
+    await expect(page.locator(".aya-web-waiting-banner")).toHaveCount(0);
+    await expect(page).toHaveTitle("Aya");
   } finally {
     await browser?.close();
     await stop();
