@@ -85,4 +85,5 @@ test("changes panel makes bidi controls in filenames visible", async ({ window, 
   const safeName = window.getByText("report\\u202etxt", { exact: true });
   await expect(safeName).toHaveCount(1);
   await expect(window.locator(".aya-dirty-file-path-button").filter({ has: safeName })).toHaveAttribute("title", "Show report\\u202etxt in diff");
+  await expect(window.getByRole("checkbox", { name: "Select report\\u202etxt" })).toBeVisible();
 });

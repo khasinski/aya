@@ -601,7 +601,7 @@ function StatusBarImpl({
                       <div className="aya-dirty-file-row" key={`${file.status}-${file.path}`}>
                         <input
                           type="checkbox"
-                          aria-label={`Select ${file.path}`}
+                          aria-label={`Select ${printable(file.path)}`}
                           checked={selectedDirtyPaths.includes(file.path)}
                           onChange={(event) => {
                             const checked = event.currentTarget.checked;
