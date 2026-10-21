@@ -15,6 +15,7 @@ interface Deps {
  cancelFile?:typeof cancelAuthTransferTicket;
  now?:()=>number;
  budgetMs?:number;
+ replacedBuild?:boolean;
 }
 export class OrdinaryAuthAnnouncement {
  private preparation:Promise<boolean>|null=null;
@@ -31,10 +32,11 @@ export class OrdinaryAuthAnnouncement {
    await withinAuthTransferBudget(budget,async check=>{
     const peer=this.deps.peer();check();
     const nonce=randomBytes(32).toString("hex"),deadline=null;
+    const replacedBuild=this.deps.replacedBuild??false;
     const value=await this.deps.control({id:0,type:"auth-transfer-reserve",purpose:"ordinary-quit",nonce,deadline});check();
     const result=value as Record<string,unknown>|null;
     if(!result||typeof result!=="object"||Object.keys(result).sort().join(",")!=="attempt,deadline,hostPid,hostStartIdentity,purpose"||typeof result.attempt!=="string"||!/^[a-f0-9]{64}$/.test(result.attempt)||result.purpose!=="ordinary-quit"||result.deadline!==deadline||result.hostPid!==peer.pid||result.hostStartIdentity!==peer.startIdentity)throw Error("Invalid terminal transfer reservation");
-    this.ticket={format:2,attempt:result.attempt,purpose:"ordinary-quit",deadline,nonce,hostPid:peer.pid,hostStartIdentity:peer.startIdentity};
+    this.ticket={format:2,attempt:result.attempt,purpose:"ordinary-quit",deadline,replacedBuild,nonce,hostPid:peer.pid,hostStartIdentity:peer.startIdentity};
     await (this.deps.publish??writeAuthTransferTicket)(authTransferTicketPath(this.deps.home,this.ticket.attempt),this.ticket,budget);check();
     if(!this.deps.connected())throw Error("Terminal connection changed before announcement");
     const activated=await this.deps.control({id:0,type:"auth-transfer-activate",attempt:this.ticket.attempt});check();
