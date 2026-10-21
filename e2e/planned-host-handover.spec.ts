@@ -198,6 +198,22 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
 });
 
 
+test('a build installed by hand over a running Aya hands its panes over at an ordinary quit',async({seeded})=>{
+ test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);
+ await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'MANUAL_INSTALL_ROUTE\\n'; sleep 1000\r"));
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('MANUAL_INSTALL_ROUTE\r\n');
+ const before=identities(seeded.ayaHome),owner=inventory(seeded.ayaHome).pid;
+ // The new build lands while the old one runs, as a copy into /Applications does.
+ appendFileSync(hostScript,'\n// manual install planned handover test\n');
+ const proc=first.app.process(),exited=new Promise<void>(resolve=>proc.once('exit',()=>resolve()));
+ apps.splice(apps.indexOf(first.app),1);await first.app.evaluate(({app})=>app.quit());await exited;
+ expect(readFileSync(join(seeded.ayaHome,'diagnostics.log'),'utf8')).toContain('"ev":"installed-build-quit","handover":"prepared"');
+ const second=await launch(seeded);
+ await expect(visiblePane(second.window,'shell 1').locator('.xterm-rows')).toContainText('MANUAL_INSTALL_ROUTE');
+ expect(identities(seeded.ayaHome)).toEqual(before);expect(inventory(seeded.ayaHome).pid).toBe(owner);
+ expect(hostPidsForHome(seeded.ayaHome)).toHaveLength(1);
+ expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
+});
 test('two replacements retain an unmounted ended pane until its real view applies replay',async({seeded})=>{
  test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);
  const projectFile=join(seeded.ayaHome,'projects/e2e-proj.json'),project=JSON.parse(readFileSync(projectFile,'utf8'));
