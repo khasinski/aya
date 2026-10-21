@@ -41,6 +41,15 @@ function processAlive(pid) {
   catch (error) { return error?.code !== "ESRCH"; }
 }
 
+async function waitForAsync(predicate, timeoutMs, stepMs = 25) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+  throw new Error(`waitForAsync timed out after ${timeoutMs}ms`);
+}
+
 test("remote bridges can die abruptly and reattach with the exact output gap", { timeout: 120_000 }, async (t) => {
   const host = new PtyHostClient(hostScript);
   const localEvents = [];
@@ -49,7 +58,10 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
   let nextTerminalId = 0;
   const sessions = new RemotePtySessions({
     listProjects: async () => [project],
-    listPresets: async () => [{ id: "test", name: "Test", icon: "$", color: "", command }],
+    listPresets: async () => [
+      { id: "test", name: "Test", icon: "$", color: "", command },
+      { id: "missing", name: "Missing command", icon: "$", color: "", command: "/aya-test-command-does-not-exist" },
+    ],
     ensureCapacity: async () => {
       const status = await host.hostStatus();
       if (status.ptyCount >= MAX_PTY_PANES) throw new Error(`Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then try again.`);
@@ -118,6 +130,19 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     const resumeAt = offset;
     const originalPid = await host.getPid(terminalId);
     assert.ok(originalPid > 1);
+    if (kind === "bridge") {
+      await waitFor(() => received.map((event) => event.data).join("").includes("REMOTE-OUTPUT-79"), 10_000);
+      assert.equal(await first.client.write(terminalId, "REMOTE-INPUT-PROBE\n"), true);
+      await waitFor(() => received.map((event) => event.data).join("").includes("REMOTE-INPUT-PROBE"), 5_000);
+      const initialSize = await host.getSize(terminalId);
+      assert.equal(initialSize?.cols, 80);
+      assert.equal(initialSize?.rows, 24);
+      await first.client.resize(terminalId, 101, 33);
+      await waitForAsync(async () => {
+        const size = await host.getSize(terminalId);
+        return size?.cols === 101 && size?.rows === 33;
+      }, 5_000);
+    }
 
     let childBridgePid;
     if (kind === "ssh-parent") {
@@ -141,8 +166,13 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
 
     const second = makeClient();
     const replayed = [];
-    second.client.on("output", (event) => { if (event.terminalId === terminalId) replayed.push(event); });
+    if (kind !== "ssh-parent") second.client.on("output", (event) => { if (event.terminalId === terminalId) replayed.push(event); });
     const attached = await second.client.attach(terminalId, resumeAt);
+    if (kind === "ssh-parent") {
+      // Register after awaiting attach: coalesced attach+replay output must not
+      // be lost before the caller can install its listener.
+      second.client.on("output", (event) => { if (event.terminalId === terminalId) replayed.push(event); });
+    }
     assert.equal(attached.truncated, false);
     assert.equal(attached.fromOffset, resumeAt);
     const expected = hostBytes.subarray(resumeAt, attached.endOffset);
@@ -151,11 +181,25 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     assert.deepEqual(replayBuffer, expected, `${kind} bridge gap should replay byte-for-byte`);
     assert.equal(await host.getPid(terminalId), originalPid);
     assert.equal((await second.client.list()).find((item) => item.terminalId === terminalId)?.state, "running");
+    const exitNotice = new Promise((resolve) => second.client.once("exit", resolve));
     await second.client.exit(terminalId);
+    const ended = await exitNotice;
+    assert.equal(ended.terminalId, terminalId);
+    assert.equal((await second.client.list()).find((item) => item.terminalId === terminalId)?.state, "exited");
+    await waitForAsync(async () => (await host.getPid(terminalId)) === null, 5_000);
+    assert.equal(await host.getPid(terminalId), null);
   };
 
   await exerciseAbruptDisconnect("bridge");
   await exerciseAbruptDisconnect("ssh-parent");
+
+  const failedSpawnClient = makeClient();
+  const projectDirectory = project.directory;
+  project.directory = join(root, "directory-that-does-not-exist");
+  await assert.rejects(failedSpawnClient.client.spawnTerminal(project.slug, "test", 80, 24), /directory does not exist/i);
+  project.directory = projectDirectory;
+  assert.equal(sessionsPersisted.size, 2);
+  assert.equal((await failedSpawnClient.client.list()).find((item) => item.state === "failed")?.failureReason?.length > 0, true);
 
   // Fill the real local PTY host to its shared limit, then verify the remote
   // request is refused before the persistence/spawn callback can add a tab.

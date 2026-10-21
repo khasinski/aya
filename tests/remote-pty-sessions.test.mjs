@@ -70,6 +70,8 @@ test("a host spawn refusal stays a failure with its reason, not a synthetic proc
     listPresets: async () => [preset],
     spawn: async (terminalId) => {
       sessions.onPtyEvent({ type: "spawn-failed", ptyId: terminalId, reason: "pane-limit-reached", detail: "Aya can run at most 128 terminals at once." });
+      sessions.onPtyEvent({ type: "data", ptyId: terminalId, chunk: "spawn failure banner" });
+      sessions.onPtyEvent({ type: "exit", ptyId: terminalId, exitCode: 127 });
     },
     onSpawned: async () => { persisted += 1; },
     write: async () => true,
@@ -88,6 +90,38 @@ test("a host spawn refusal stays a failure with its reason, not a synthetic proc
   await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
   assert.equal(listed[0].terminals[0].state, "failed");
   assert.equal(listed[0].terminals[0].failureReason, "Aya can run at most 128 terminals at once.");
+});
+
+test("failed remote spawn records are evicted before a valid spawn is refused", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  let next = 0;
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async (terminalId) => {
+      if (terminalId !== "terminal-valid") {
+        sessions.onPtyEvent({ type: "spawn-failed", ptyId: terminalId, reason: "spawn-prepare-failed", detail: "Preset could not be started." });
+        sessions.onPtyEvent({ type: "exit", ptyId: terminalId, exitCode: 127 });
+      }
+    },
+    write: async () => true,
+    resize: async () => {},
+    exit: async () => {},
+    newId: () => ++next === MAX_PTY_PANES + 1 ? "terminal-valid" : `failed-${next}`,
+  });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  for (let index = 0; index < MAX_PTY_PANES; index += 1) {
+    await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: `failed-${index}`, project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+  }
+  const result = [];
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "last", project: "repo", preset: "shell", cols: 80, rows: 24 }, (_socket, message) => result.push(message));
+  assert.equal(result.some((message) => message.type === "pty:spawned" && message.terminalId === "terminal-valid"), true);
+  const listed = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
+  assert.equal(listed[0].terminals.length, MAX_PTY_PANES);
+  assert.equal(listed[0].terminals.some((item) => item.terminalId === "failed-1"), false);
+  assert.equal(listed[0].terminals.some((item) => item.terminalId === "terminal-valid"), true);
 });
 
 test("a non-reading v2 socket stays under the queue cap for replay and list replies", async () => {

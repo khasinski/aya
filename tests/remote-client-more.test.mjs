@@ -5,14 +5,49 @@
 // either runs the real bridge against a local socket this file serves, or prints canned output.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import * as net from "node:net";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { writeExecutable } from "./helpers/executable.mjs";
+
+const { RemoteTerminalClient } = await import("../dist-electron/remote-client.js");
 
 const root = mkdtempSync(join(tmpdir(), "aya-rc-more-"));
 test.after(() => rmSync(root, { recursive: true, force: true }));
+
+test("attach replay is delivered after the caller's await continuation", async () => {
+  class FakeBridge extends EventEmitter {
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    exitCode = null;
+    signalCode = null;
+    kill() {}
+  }
+  const bridge = new FakeBridge();
+  const client = new RemoteTerminalClient(bridge);
+  bridge.stdin.on("data", (chunk) => {
+    const request = JSON.parse(String(chunk).trim());
+    if (request.type === "session:open") {
+      bridge.stdout.write(`${JSON.stringify({ type: "session:ready", protocol: 2, id: request.id })}\n`);
+    } else if (request.type === "pty:attach") {
+      const attached = { type: "pty:attached", protocol: 2, id: request.id, terminalId: request.terminalId, fromOffset: 12, endOffset: 17, truncated: false };
+      const replay = { type: "pty:output", protocol: 2, terminalId: request.terminalId, offset: 12, data: "hello" };
+      bridge.stdout.write(`${JSON.stringify(attached)}\n${JSON.stringify(replay)}\n`);
+    }
+  });
+  bridge.stdout.write(`${JSON.stringify({ type: "hello", protocol: 1 })}\n${JSON.stringify({ type: "snapshot", protocol: 1 })}\n`);
+  const attached = await client.attach("terminal", 12);
+  assert.equal(attached.endOffset, 17);
+  const replay = [];
+  client.on("output", (event) => replay.push(event));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(replay, [{ terminalId: "terminal", offset: 12, data: "hello" }]);
+  bridge.exitCode = 0;
+  await client.detach();
+});
 
 // Per target, `<root>/<target>.mode` says what this ssh does:
 //   bridge:<socket>  run the remote command (the node bridge) here, against <socket>

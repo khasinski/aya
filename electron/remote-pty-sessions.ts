@@ -72,6 +72,10 @@ export class RemotePtySessions implements PtyEventSink {
       return;
     }
     if (event.type === "exit") {
+      // pty-core reports a failed spawn before its banner and synthetic exit.
+      // Keep that classification through the whole event sequence so the
+      // original failure is returned to the caller that has not attached yet.
+      if (session.state === "failed") return;
       session.state = "exited";
       session.exitCode = event.exitCode;
       const message: RemoteTerminalMessage = {
@@ -210,9 +214,9 @@ export class RemotePtySessions implements PtyEventSink {
 
   private makeRoom(): void {
     while (this.sessions.size >= MAX_PTY_PANES) {
-      const oldestExited = [...this.sessions.values()].find((session) => session.state === "exited");
-      if (!oldestExited) throw new Error("The host already has the maximum number of remote terminals.");
-      this.sessions.delete(oldestExited.terminalId);
+      const disposable = [...this.sessions.values()].find((session) => session.state === "exited" || session.state === "failed");
+      if (!disposable) throw new Error("The host already has the maximum number of remote terminals.");
+      this.sessions.delete(disposable.terminalId);
     }
   }
 

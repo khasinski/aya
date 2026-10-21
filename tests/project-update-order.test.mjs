@@ -62,3 +62,33 @@ test("updateProject: a save that fails does not stop the ones after it", async (
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("updateProjectFromLatest merges an additive tab after a concurrent saved project change", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "aya-update-project-latest-"));
+  try {
+    await run(
+      process.execPath,
+      [
+        "-e",
+        `
+          const { createProject, listProjects, updateProject, updateProjectFromLatest } = require("./dist-electron/config.js");
+          (async () => {
+            await createProject("p", "/tmp/p");
+            const stale = (await listProjects())[0];
+            const local = { id: "local", presetId: "shell", name: "Local" };
+            const remote = { id: "remote", presetId: "shell", name: "Remote" };
+            const localSave = updateProject({ ...stale, name: "Renamed locally", tabs: [local] });
+            const remoteSave = updateProjectFromLatest("p", (current) => ({ ...current, tabs: [...current.tabs, remote] }));
+            await Promise.all([localSave, remoteSave]);
+          })().catch((err) => { console.error(err); process.exit(1); });
+        `,
+      ],
+      { cwd: process.cwd(), env: { ...process.env, AYA_HOME: dir } },
+    );
+    const saved = JSON.parse(await readFile(path.join(dir, "projects", "p.json"), "utf8"));
+    assert.equal(saved.name, "Renamed locally");
+    assert.deepEqual(saved.tabs.map((tab) => tab.id), ["local", "remote"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

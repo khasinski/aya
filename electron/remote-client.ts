@@ -51,6 +51,9 @@ export class RemoteTerminalClient extends EventEmitter {
   private readyReject!: (error: Error) => void;
   private nextId = 1;
   private buffer = "";
+  private deferOutputEvents = false;
+  private deferredOutputEvents: Array<{ terminalId: string; offset: number; data: string }> = [];
+  private outputFlushScheduled = false;
   private snapshotReceived = false;
   private opened = false;
   private closed = false;
@@ -126,7 +129,9 @@ export class RemoteTerminalClient extends EventEmitter {
     }
     if (value.type === "pty:output") {
       if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && Number.isSafeInteger(value.offset) && typeof value.data === "string") {
-        this.emit("output", { terminalId: value.terminalId, offset: value.offset, data: value.data });
+        const output = { terminalId: value.terminalId, offset: value.offset as number, data: value.data };
+        if (this.deferOutputEvents) this.deferredOutputEvents.push(output);
+        else this.emit("output", output);
       }
       return;
     }
@@ -145,6 +150,7 @@ export class RemoteTerminalClient extends EventEmitter {
       const pending = this.pending.get(id)!;
       if (pending.expected.includes(String(value.type))) {
         this.pending.delete(id);
+        if (value.type === "pty:attached") this.deferOutputForAwaitContinuation();
         pending.resolve(value);
       }
     }
@@ -203,6 +209,19 @@ export class RemoteTerminalClient extends EventEmitter {
   }
 
   private id(): string { return `remote-${this.nextId++}`; }
+
+  private deferOutputForAwaitContinuation(): void {
+    this.deferOutputEvents = true;
+    if (this.outputFlushScheduled) return;
+    this.outputFlushScheduled = true;
+    // The attached response and replay may be in the same stdout data event.
+    // Let the attach() promise continuation register its output listener first.
+    setImmediate(() => {
+      this.outputFlushScheduled = false;
+      this.deferOutputEvents = false;
+      for (const event of this.deferredOutputEvents.splice(0)) this.emit("output", event);
+    });
+  }
 
   private send(value: unknown): void {
     if (!this.bridge.stdin || this.bridge.stdin.destroyed) { this.fail(new Error("Remote terminal bridge is closed.")); return; }

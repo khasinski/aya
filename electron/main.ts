@@ -28,7 +28,7 @@ import { appendFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
-import { getOrCreateProject, listProjects, listProjectState, saveProjectState, updateProject } from "./config";
+import { getOrCreateProject, listProjects, listProjectState, saveProjectState, updateProjectFromLatest } from "./config";
 import { bundledAyaCliPath } from "./cli-path";
 import { isShellCommand, withCliFirst } from "./pane-command";
 import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
@@ -635,16 +635,16 @@ function registerIpc(): TeamRunner {
     },
     onSpawned: (terminalId, selectedProject, preset) =>
       appendRemoteTab(selectedProject.slug, async () => {
-        let project = (await listProjects()).find((item) => item.slug === selectedProject.slug);
-        if (!project || project.remote) throw new Error("The selected host project is unavailable.");
         let tabAdded = false;
         try {
-          const baseName = `Remote ${preset.name}`;
-          const used = new Set(project.tabs.map((tab) => tab.name));
-          let name = baseName;
-          for (let suffix = 2; used.has(name); suffix += 1) name = `${baseName} ${suffix}`;
-          const tab = { id: terminalId, presetId: preset.id, name };
-          await updateProject({ ...project, tabs: [...project.tabs, tab] });
+          const project = await updateProjectFromLatest(selectedProject.slug, (current) => {
+            if (current.remote) throw new Error("The selected host project is unavailable.");
+            const baseName = `Remote ${preset.name}`;
+            const used = new Set(current.tabs.map((tab) => tab.name));
+            let name = baseName;
+            for (let suffix = 2; used.has(name); suffix += 1) name = `${baseName} ${suffix}`;
+            return { ...current, tabs: [...current.tabs, { id: terminalId, presetId: preset.id, name }] };
+          });
           tabAdded = true;
           // Opening the project focuses its current window or adds it to the
           // boot window; hydration attaches to the PTY already running above.
@@ -656,10 +656,10 @@ function registerIpc(): TeamRunner {
         } catch (error) {
           if (tabAdded) {
             try {
-              const latest = (await listProjects()).find((item) => item.slug === selectedProject.slug);
-              if (latest && !latest.remote && latest.tabs.some((tab) => tab.id === terminalId)) {
-                await updateProject({ ...latest, tabs: latest.tabs.filter((tab) => tab.id !== terminalId) });
-              }
+              await updateProjectFromLatest(selectedProject.slug, (current) => {
+                if (current.remote) throw new Error("The selected host project is unavailable.");
+                return { ...current, tabs: current.tabs.filter((tab) => tab.id !== terminalId) };
+              });
             } catch { /* Preserve the original failure; the terminal is still explicitly stopped below. */ }
           }
           await ptyHost.kill(terminalId).catch(() => {});
