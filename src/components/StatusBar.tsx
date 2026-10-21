@@ -166,6 +166,7 @@ function StatusBarImpl({
   const [publishError, setPublishError] = useState<string | null>(null);
   const [ciChecks, setCiChecks] = useState<PullRequestChecks | null>(null);
   const [ciChecksError, setCiChecksError] = useState<string | null>(null);
+  const ciRetryRef = useRef<(() => void) | null>(null);
   const [ciTargetId, setCiTargetId] = useState<string | null>(null);
   const ciTargetIdRef = useRef<string | null>(null);
   ciTargetIdRef.current = ciTargetId;
@@ -288,19 +289,20 @@ function StatusBarImpl({
     let active = true;
     const isCurrent = () => active && isCurrentGitCheckout(directory, generation);
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let refreshInFlight = false;
     let delayIndex = 0;
     const delays = [5_000, 10_000, 20_000, 30_000];
     const refresh = async () => {
-      if (!active) return;
+      if (!active || refreshInFlight) return;
       if (document.visibilityState === "hidden") {
         timer = setTimeout(refresh, 30_000);
         return;
       }
+      refreshInFlight = true;
       try {
         const result = await window.aya.getPullRequestChecks({ projectSlug, directory });
         if (!isCurrent()) return;
         if (result.error) {
-          setCiChecks(null);
           setCiChecksError(result.error);
         } else {
           setCiChecks(result);
@@ -310,11 +312,22 @@ function StatusBarImpl({
       } catch (error) {
         if (!isCurrent()) return;
         setCiChecksError(error instanceof Error ? error.message : "Aya could not load pull request checks.");
+      } finally {
+        refreshInFlight = false;
       }
       const delay = delays[Math.min(delayIndex, delays.length - 1)];
       delayIndex += 1;
       timer = setTimeout(refresh, delay);
     };
+    const retryNow = () => {
+      if (!active) return;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      delayIndex = 0;
+      setCiChecksError(null);
+      void refresh();
+    };
+    ciRetryRef.current = retryNow;
     void refresh();
     const onVisibility = () => {
       if (document.visibilityState === "visible" && !timer) void refresh();
@@ -323,6 +336,7 @@ function StatusBarImpl({
     return () => {
       active = false;
       if (timer) clearTimeout(timer);
+      if (ciRetryRef.current === retryNow) ciRetryRef.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [showDirtyFiles, gitDirectory, localGitProjectSlug, publishStatus?.branch, isCurrentGitCheckout]);
@@ -522,7 +536,7 @@ function StatusBarImpl({
     const isCurrent = () => directory !== null && isCurrentGitCheckout(directory, generation);
     setCiSending(true);
     setCiChecksError(null);
-    setCiNotice(null);
+    setCiNotice("Sending...");
     try {
       await window.aya.sendCiFailure({ projectSlug, targetId, token: ciPreview.token });
       if (!isCurrent()) return;
@@ -883,7 +897,7 @@ function StatusBarImpl({
                     {publishStatus?.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pushDisabledReason}</div>}
                     {publishStatus?.pullRequestDisabledReason && publishStatus.pullRequestDisabledReason !== publishStatus.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
                     {publishError && <div className="aya-dirty-commit-error" role="alert">{publishError}</div>}
-                    {ciChecksError && ciChecksError !== publishError && <div className="aya-dirty-commit-error" role="alert">{ciChecksError}</div>}
+                    {ciChecksError && ciChecksError !== publishError && <div className="aya-ci-checks-error" role="alert"><span>{ciChecksError}</span><button type="button" className="aya-statusbar-popover-action" onClick={() => ciRetryRef.current?.()}>Retry</button></div>}
                     {ciNotice && <div className="aya-dirty-publish-notice" role="status">{ciNotice}</div>}
                     {pullRequestUrl && (
                       <section className="aya-ci-checks" aria-label="Pull request checks">
@@ -898,8 +912,8 @@ function StatusBarImpl({
                               <div className="aya-ci-check" key={`${check.url ?? check.name}-${index}`}>
                                 <span className={`aya-ci-check-state aya-ci-check-state--${check.bucket}`}>{ciCheckLabel(check)}</span>
                                 <span className="aya-ci-check-name">{check.name}</span>
-                                {check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Open ${check.name} check`} onClick={() => void window.aya.openUrl(check.url!)}>Open</button>}
-                                {check.bucket === "fail" && check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Send ${check.name} failure details`} disabled={!ciTargetId || reviewTargets.length === 0} onClick={() => void previewCiCheck(check.url!)}>{selectedCiCheckUrl === check.url && ciPreview ? "Preview" : "Send to a pane"}</button>}
+                                {check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Open ${check.name} log`} onClick={() => void window.aya.openUrl(check.url!)}>Open log</button>}
+                                {check.bucket === "fail" && check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Preview ${check.name} failure details`} disabled={!ciTargetId || reviewTargets.length === 0} onClick={() => void previewCiCheck(check.url!)}>Preview message</button>}
                               </div>
                             ))}
                           </div>
@@ -922,7 +936,7 @@ function StatusBarImpl({
                         )}
                         {selectedCiCheckUrl && ciPreview && (
                           <div className="aya-ci-preview">
-                            <div className="aya-dirty-publish-hint">Sending to {reviewTargets.find((target) => target.id === ciTargetId)?.name ?? "selected pane"}</div>
+                            <div className="aya-dirty-publish-hint">Will send to {reviewTargets.find((target) => target.id === ciTargetId)?.name ?? "selected pane"}</div>
                             <label htmlFor="aya-ci-prompt-preview">Exact message to send</label>
                             <textarea id="aya-ci-prompt-preview" readOnly value={ciPreview.prompt} rows={8} />
                             <button type="button" className="aya-statusbar-popover-action" disabled={ciSending || !ciTargetId} onClick={() => void sendCiCheck()}>{ciSending ? "Sending..." : "Send"}</button>

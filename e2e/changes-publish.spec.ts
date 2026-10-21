@@ -26,6 +26,10 @@ case "$1 $2" in
     echo 'no pull requests found for branch' >&2; exit 1 ;;
   "pr checks")
     if [ -f "$state/checks-unavailable" ]; then echo 'temporary network failure' >&2; exit 1; fi
+    if [ -f "$state/checks-slow" ]; then
+      : > "$state/checks-slow-started"
+      while [ ! -f "$state/checks-slow-release" ]; do sleep 0.01; done
+    fi
     [ -f "$state/checks.json" ] && { cat "$state/checks.json"; exit 0; }; echo '[]'; exit 0 ;;
   "run view")
     if [ "$3" = "11111" ]; then
@@ -328,7 +332,16 @@ test.describe("failed pull request checks", () => {
     await expect(checks).toContainText("Linux tests");
     await expect(checks).toContainText("Failed");
     await checks.getByLabel("Send failed checks to").selectOption(seeded.tabIds.right);
-    await checks.getByRole("button", { name: "Send Linux tests failure details" }).click();
+    const pickerStyle = await checks.locator("#aya-ci-target").evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, border: style.borderColor, radius: style.borderRadius, font: style.fontFamily, size: style.fontSize };
+    });
+    const panelInputStyle = await popover.locator(".aya-dirty-commit > input").evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, border: style.borderColor, radius: style.borderRadius, font: style.fontFamily, size: style.fontSize };
+    });
+    expect(pickerStyle).toEqual(panelInputStyle);
+    await checks.getByRole("button", { name: "Preview Linux tests failure details" }).click();
     const preview = checks.getByRole("textbox", { name: "Exact message to send" });
     const previewText = await preview.inputValue();
     expect(previewText).toContain("Tail of the failed job log (up to 8 KB");
@@ -336,8 +349,17 @@ test.describe("failed pull request checks", () => {
     expect(previewText).toContain("failed near test 42");
     expect(previewText).not.toContain("AWS_SECRET");
     expect(previewText).not.toContain("never-send-this");
-    await checks.screenshot({ path: "/tmp/changes-publish-checks-preview.png" });
+    await expect(checks).toContainText("Will send to CI review target");
+    await popover.screenshot({ path: "/tmp/changes-publish-checks-preview.png" });
+    const sendHold = `${log}.hold`;
+    writeFileSync(sendHold, "");
     await checks.getByRole("button", { name: "Send", exact: true }).click();
+    try {
+      await expect(window.getByRole("status")).toHaveText("Sending...");
+      await popover.screenshot({ path: "/tmp/changes-publish-checks-sending.png" });
+    } finally {
+      rmSync(sendHold, { force: true });
+    }
     await expect(window.getByRole("status")).toHaveText("Sent to CI review target.");
     await expect.poll(() => existsSync(log) ? readFileSync(log, "utf8") : "").toContain("failed near test 42");
     const received = readFileSync(log, "utf8");
@@ -371,7 +393,7 @@ test.describe("PR3 screenshot states", () => {
       let popover = await openChanges(window);
       let checks = window.getByRole("region", { name: "Pull request checks" });
       await expect(checks).toContainText("Queued");
-      await checks.screenshot({ path: "/tmp/changes-publish-checks-pending.png" });
+      await popover.screenshot({ path: "/tmp/changes-publish-checks-pending.png" });
 
       setChecks("pending", "in_progress");
       await closeAndReopen(popover);
@@ -382,34 +404,67 @@ test.describe("PR3 screenshot states", () => {
       await closeAndReopen(popover);
       checks = window.getByRole("region", { name: "Pull request checks" });
       await expect(checks).toContainText("Passed");
-      await checks.screenshot({ path: "/tmp/changes-publish-checks-passing.png" });
+      await popover.screenshot({ path: "/tmp/changes-publish-checks-passing.png" });
 
       setChecks("fail", "failure");
       await closeAndReopen(popover);
       checks = window.getByRole("region", { name: "Pull request checks" });
       await expect(checks).toContainText("Linux tests");
       await expect(checks).toContainText("Failed");
-      await expect(checks).toContainText("Open");
-      await expect(checks.getByRole("button", { name: "Open Linux tests check" })).toBeVisible();
-      await checks.screenshot({ path: "/tmp/changes-publish-checks-failing.png" });
+      await expect(checks).toContainText("Open log");
+      await expect(checks.getByRole("button", { name: "Open Linux tests log" })).toBeVisible();
+      await popover.screenshot({ path: "/tmp/changes-publish-checks-failing.png" });
 
       writeFileSync(join(fakeState, "checks-unavailable"), "");
-      await closeAndReopen(popover);
-      await expect(popover).toContainText("Aya could not load pull request checks.");
+      await expect(popover).toContainText("Aya could not load pull request checks.", { timeout: 15_000 });
+      await expect(popover.getByRole("button", { name: "Retry" })).toBeVisible();
+      await expect(popover.getByRole("button", { name: "Open pull request" })).toBeVisible();
       await popover.screenshot({ path: "/tmp/changes-publish-checks-unavailable.png" });
       rmSync(join(fakeState, "checks-unavailable"), { force: true });
+      await popover.getByRole("button", { name: "Retry" }).click();
+      await expect(popover.getByRole("alert")).toHaveCount(0);
 
       for (const state of ["MERGED", "CLOSED"]) {
         writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state, isDraft: false }));
         await closeAndReopen(popover);
         checks = window.getByRole("region", { name: "Pull request checks" });
         await expect(checks).toContainText(`This pull request is ${state.toLowerCase()}`);
-        await checks.screenshot({ path: `/tmp/changes-publish-checks-${state.toLowerCase()}.png` });
+        await popover.screenshot({ path: `/tmp/changes-publish-checks-${state.toLowerCase()}.png` });
       }
     } finally {
       for (const name of ["check-pr.json", "checks.json", "checks-unavailable"]) rmSync(join(fakeState, name), { force: true });
     }
   });
+});
+
+test("visibility changes do not overlap a pending checks refresh", async ({ window, seeded }) => {
+  addFakeRemote(seeded.projectDir);
+  writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+  writeFileSync(join(fakeState, "checks.json"), JSON.stringify([{ name: "Linux tests", state: "queued", bucket: "pending" }]));
+  writeFileSync(join(fakeState, "checks-slow"), "");
+  rmSync(join(fakeState, "calls"), { force: true });
+  const checksCalls = () => existsSync(join(fakeState, "calls"))
+    ? readFileSync(join(fakeState, "calls"), "utf8").split("\n").filter((line) => line.startsWith("pr checks ")).length
+    : 0;
+  try {
+    const popover = await openChanges(window);
+    await expect.poll(() => existsSync(join(fakeState, "checks-slow-started"))).toBe(true);
+    expect(checksCalls()).toBe(1);
+    await window.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect.poll(checksCalls).toBe(1);
+    writeFileSync(join(fakeState, "checks-slow-release"), "");
+    await expect(popover.getByText("Queued")).toBeVisible();
+    expect(checksCalls()).toBe(1);
+  } finally {
+    for (const name of ["check-pr.json", "checks.json", "checks-slow", "checks-slow-started", "checks-slow-release"]) {
+      rmSync(join(fakeState, name), { force: true });
+    }
+  }
 });
 
 test.describe("failed checks with no open pane", () => {
@@ -432,7 +487,7 @@ test.describe("failed checks with no open pane", () => {
       await expect.poll(() => window.getByRole("region", { name: "Pull request checks" }).textContent()).toContain("Failed");
       const checks = window.getByRole("region", { name: "Pull request checks" });
       await expect(checks).toContainText("Open an agent pane in this project before sending check details.");
-      await expect(checks.getByRole("button", { name: "Send Linux tests failure details" })).toBeDisabled();
+      await expect(checks.getByRole("button", { name: "Preview Linux tests failure details" })).toBeDisabled();
     } finally {
       for (const name of ["check-pr.json", "checks.json"]) rmSync(join(fakeState, name), { force: true });
     }
@@ -453,9 +508,9 @@ test.describe("overlapping failed-check previews", () => {
       const popover = await openChanges(window);
       const checks = window.getByRole("region", { name: "Pull request checks" });
       await expect(checks.getByText("Linux tests")).toBeVisible();
-      await checks.getByRole("button", { name: "Send Linux tests failure details" }).click();
+      await checks.getByRole("button", { name: "Preview Linux tests failure details" }).click();
       await expect.poll(() => existsSync(join(fakeState, "slow-a-started"))).toBe(true);
-      await checks.getByRole("button", { name: "Send macOS tests failure details" }).click();
+      await checks.getByRole("button", { name: "Preview macOS tests failure details" }).click();
       const preview = checks.getByRole("textbox", { name: "Exact message to send" });
       await expect(preview).toContainText("CI check failed: macOS tests");
       writeFileSync(join(fakeState, "slow-a-release"), "");
