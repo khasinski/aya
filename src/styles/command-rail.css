@@ -343,7 +343,8 @@
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--fg-tertiary);
-  max-width: 360px;
+  max-width: 420px;
+  flex: 0 1 auto;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

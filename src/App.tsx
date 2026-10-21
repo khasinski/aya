@@ -1297,7 +1297,7 @@ export function App() {
               title="Search (Cmd/Ctrl+K or Shift Shift)"
             >
               <kbd>{window.aya.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd>
-              Jump to a terminal, search output, run a command
+              Jump to a terminal, search, run a command
             </button>
           ) : undefined
         }
