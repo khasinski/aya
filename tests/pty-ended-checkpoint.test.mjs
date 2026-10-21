@@ -8,6 +8,7 @@ fs.mkdirSync('test-results',{recursive:true});const home=fs.mkdtempSync(path.res
 const require=createRequire(import.meta.url),schema=require('../dist-electron/pty-core-checkpoint'),core=require('../dist-electron/pty-core'),bootstrap=require('../dist-electron/pty-handover-bootstrap');
 const store=require('../dist-electron/pty-checkpoint-store'),{encodeCheckpointPayload}=require('../dist-electron/pty-checkpoint-payload');
 const {PTY_HANDOVER_CORE_DIRECTORY}=require('../dist-electron/pty-host-paths');
+const {MAX_PTY_PANES}=require('../dist-electron/pty-pane-limits');
 const {OwnerPty}=require('../dist-electron/pty-owner-adapter'),{shutdownOwnerRuntime}=require('../dist-electron/pty-owner-runtime');
 const {openVtPane,checkpointVtPane,closeVtPane}=require('../dist-electron/vt-mirror');
 const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client');
@@ -60,9 +61,9 @@ test('explicitly discarding an ended restoration does not arm a kill marker agai
  const req={ptyId:dto.id,command:'probe',cwd:home,cols:80,rows:24};
  await assert.rejects(core.spawnPty(req,sink,{prepare:async()=>{throw Error('fresh restart reached preparation');}}),/fresh restart reached preparation/);
 });
-test('ended records share the25-record and aggregate raw budgets before yielding or allocating VT',async()=>{
- const atLimit=await store.writeCheckpoint(path.join(home,'at-limit'),Array.from({length:25},(_,i)=>({id:String(i),generation:'g',data:encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})))})));let count=0;for await(const part of store.readCheckpoint(path.join(home,'at-limit'),atLimit)){void part;count++;}assert.equal(count,25);await store.acknowledgeCheckpoint(path.join(home,'at-limit'),atLimit);
- await assert.rejects(store.writeCheckpoint(path.join(home,'too-many'),Array.from({length:26},(_,i)=>({id:String(i),generation:'g',data:encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})))}))),/pane part/);
+test('ended records share the configured pane and aggregate raw budgets before yielding or allocating VT',async()=>{
+ const atLimit=await store.writeCheckpoint(path.join(home,'at-limit'),Array.from({length:MAX_PTY_PANES},(_,i)=>({id:String(i),generation:'g',data:encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})))})));let count=0;for await(const part of store.readCheckpoint(path.join(home,'at-limit'),atLimit)){void part;count++;}assert.equal(count,MAX_PTY_PANES);await store.acknowledgeCheckpoint(path.join(home,'at-limit'),atLimit);
+ await assert.rejects(store.writeCheckpoint(path.join(home,'too-many'),Array.from({length:MAX_PTY_PANES+1},(_,i)=>({id:String(i),generation:'g',data:encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})))}))),/pane part/);
  const read=store.readCheckpoint;let yields=0;
  store.readCheckpoint=async function*(){for(let i=0;i<3;i++){const data=encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})));data.writeUInt32BE(64*1024*1024,8);yield{id:String(i),generation:'retained-generation',data};}};
  try{await assert.rejects(async()=>{for await(const part of bootstrap.readCoreHandover({})){void part;yields++;}},/aggregate decoded-byte limit/);assert.equal(yields,0);}finally{store.readCheckpoint=read;}

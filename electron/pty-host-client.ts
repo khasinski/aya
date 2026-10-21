@@ -40,6 +40,7 @@ import {handoverState,handoverCommitResult} from "./pty-handover-state";
 import {ownerArtifactPaths,ownerProcessStartIdentity} from "./pty-owner-client";
 import {PtyCrashRecovery,CRASH_RECOVERY_POLICY,type CrashRecoveryPolicy,type RecoveryAttemptResult} from "./pty-crash-recovery";
 import {parseRecoveryBootstrap,type RecoveryBootstrap,type RecoveryPane} from "./pty-recovery-bootstrap";
+import {MAX_PTY_PANES} from "./pty-pane-limits";
 import {readProcInfo} from "./pty-host-registry";
 import {ownerRecordIsLive,ownerReaderIsLive,readOwnerRecord} from "./pty-owner-registry";
 import type {RecoveryOwnerIdentity} from "./pty-owner-runtime";
@@ -1679,7 +1680,7 @@ export class PtyHostClient {
         const request={...launch.request};delete request.attachOnly;delete request.attachIfReused;delete request.replayAfter;
         panes.push({...launch,id:pane.id,generation:pane.generation,pid:pane.pid,startIdentity:pane.startIdentity,request});
       }
-      const observed=[...this.observedExits].slice(0,25).map(([id,p])=>({id,generation:p.generation,event:p.event}));
+      const observed=[...this.observedExits].slice(0,MAX_PTY_PANES).map(([id,p])=>({id,generation:p.generation,event:p.event}));
       const bootstrap=parseRecoveryBootstrap(Buffer.from(JSON.stringify({format:1,kind:"crash",owner:expected,panes,observed})));
       if(this.disposed||signal.aborted)return "blocked";
       if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null){
@@ -1691,7 +1692,7 @@ export class PtyHostClient {
       if(signal.aborted||this.disposed)throw Error("Crash recovery cancelled");
       const socket=this.socket;if(!socket)throw Error("Crash recovery did not connect");
       const version=await withTimeout(this.sendRequest(socket,{id:0,type:"version"}),2000) as {pid:number;owner?:PtyOwnerStatus;recovery?:Array<{id:string;generation:string;exitCode?:number}>};
-      if(version.pid!==child.pid||version.owner?.pid!==expected.pid||version.owner.instanceId!==expected.instanceId||version.owner.startTime!==expected.startTime||version.owner.hash!==expected.binaryHash||version.owner.incompatible||!Array.isArray(version.recovery)||version.recovery.length>25)throw Error("Crash recovery identity mismatch");
+      if(version.pid!==child.pid||version.owner?.pid!==expected.pid||version.owner.instanceId!==expected.instanceId||version.owner.startTime!==expected.startTime||version.owner.hash!==expected.binaryHash||version.owner.incompatible||!Array.isArray(version.recovery)||version.recovery.length>MAX_PTY_PANES)throw Error("Crash recovery identity mismatch");
       const ids=new Set<string>();
       for(const p of version.recovery){
         if(!p||!panes.some(x=>x.id===p.id)||ids.has(p.id)||typeof p.generation!=="string"||!p.generation.length||p.generation.length>128||Object.keys(p).some(key=>!["id","generation","exitCode"].includes(key))||(p.exitCode!==undefined&&(!Number.isInteger(p.exitCode)||p.exitCode<0||p.exitCode>255)))throw Error("Crash recovery pane manifest refused");

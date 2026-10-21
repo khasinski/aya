@@ -6,6 +6,7 @@ import {fork} from 'node:child_process';
 import {isolateHome} from './helpers/isolate-home.mjs';
 fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/crash-core-'));isolateHome(root);
 const {parseRecoveryBootstrap}=await import('../dist-electron/pty-recovery-bootstrap.js');
+const {MAX_PTY_PANES}=await import('../dist-electron/pty-pane-limits.js');
 const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(f){const end=Date.now()+7000;while(!f()){if(Date.now()>end)throw Error('crash fixture timeout');await sleep(2);}}
@@ -31,7 +32,12 @@ test('recovery bootstrap is closed, bounded and rejects duplicate generations/ID
  const request={ptyId:'p',command:'shell',cwd:'/',cols:80,rows:24};
  const value={format:1,kind:'crash',owner:{pid:123,startTime:'T',instanceId:'a'.repeat(32),binaryHash:'b'.repeat(64)},panes:[{id:'p',pid:124,generation:1,startIdentity:'1:2',request,launch:{command:'shell',cwd:'/'},spawnedAt:1}]};
  assert.deepEqual(parseRecoveryBootstrap(Buffer.from(JSON.stringify(value))),value);
- for(const mutate of [v=>{v.credential='secret';},v=>{v.owner.pid=1;},v=>{v.panes[0].generation=0;},v=>{v.panes[0].request.ptyId='other';},v=>{v.panes.push(v.panes[0]);},v=>{v.panes=Array(26).fill(v.panes[0]);},v=>{v.panes[0].startIdentity='unknown';},v=>{v.panes[0].request.env={TOKEN:'secret'};}]){
+ const panes=Array.from({length:MAX_PTY_PANES},(_,i)=>({id:`pane-${i}`,pid:124+i,generation:1,startIdentity:`${124+i}:2`,request:{...request,ptyId:`pane-${i}`},launch:{command:'shell',cwd:'/'},spawnedAt:1}));
+ const atLimit={...value,panes,observed:Array.from({length:MAX_PTY_PANES},(_,i)=>({id:`exit-${i}`,generation:1,event:1}))};
+ assert.equal(parseRecoveryBootstrap(Buffer.from(JSON.stringify(atLimit))).panes.length,MAX_PTY_PANES);
+ assert.throws(()=>parseRecoveryBootstrap(Buffer.from(JSON.stringify({...atLimit,panes:[...panes,panes[0]]}))),/Invalid recovery bootstrap/);
+ assert.throws(()=>parseRecoveryBootstrap(Buffer.from(JSON.stringify({...atLimit,observed:[...atLimit.observed,{id:'exit-extra',generation:1,event:1}]}))),/Invalid observed recovery exits/);
+ for(const mutate of [v=>{v.credential='secret';},v=>{v.owner.pid=1;},v=>{v.panes[0].generation=0;},v=>{v.panes[0].request.ptyId='other';},v=>{v.panes.push(v.panes[0]);},v=>{v.panes=Array(MAX_PTY_PANES+1).fill(v.panes[0]);},v=>{v.panes[0].startIdentity='unknown';},v=>{v.panes[0].request.env={TOKEN:'secret'};}]){
   const bad=structuredClone(value);mutate(bad);assert.throws(()=>parseRecoveryBootstrap(Buffer.from(JSON.stringify(bad))));
  }
  assert.throws(()=>parseRecoveryBootstrap(Buffer.alloc(1024*1024+1)),/length limit/);

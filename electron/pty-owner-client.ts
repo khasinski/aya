@@ -1,6 +1,7 @@
 // Typed transport for the stable native PTY owner.
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { MAX_PTY_PANES } from "./pty-pane-limits";
 
 export const OWNER_PROTOCOL = 2;
 export const OWNER_MAX_FRAME = 256 * 1024;
@@ -255,7 +256,7 @@ export class PtyOwnerClient {
   }
   async list(): Promise<OwnerPane[]> {
     const reply = await this.request(ownerMessages.list), d = new Decoder(reply.data), count = d.u32();
-    if (count > 25) throw new Error("Invalid pane count");
+    if (count > MAX_PTY_PANES) throw new Error("Invalid pane count");
     const panes = Array.from({ length: count }, () => d.pane()); d.done(); return panes;
   }
   async resize(pane: OwnerPane, cols: number, rows: number): Promise<void> { await this.request(ownerMessages.resize, this.panePayload(pane).u32(cols).u32(rows).bytes()); }

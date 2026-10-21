@@ -1,10 +1,11 @@
 // The private xterm binding may only consume this closed, allocation-bounded DTO.
 // This validator deliberately refuses unknown fields instead of installing them
 // on xterm objects. An unsupported state takes the confirmed restart path.
+import { MAX_PTY_PANES } from "./pty-pane-limits";
 export const MAX_VT_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 export const MAX_VT_TAIL_BYTES = 256 * 1024;
 export const MAX_CHECKPOINT_BYTES = 128 * 1024 * 1024;
-export const MAX_CHECKPOINT_PANES = 25;
+export const MAX_CHECKPOINT_PANES = MAX_PTY_PANES;
 const MAX_JSON_NODES = 2_000_000;
 const MAX_JSON_DEPTH = 24;
 

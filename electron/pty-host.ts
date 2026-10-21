@@ -45,6 +45,7 @@ import {
 import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireRecoveryOwner, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential, ownerRuntimeIsAbsent } from "./pty-owner-runtime";
 import { HandoverWindow, handoverPeer } from "./pty-handover-window";
 import {readRecoveryBootstrap,MAX_RECOVERY_BOOTSTRAP_BYTES} from "./pty-recovery-bootstrap";
+import {MAX_PTY_PANES} from "./pty-pane-limits";
 import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
 import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
 import { HostHandover } from "./pty-host-handover";
@@ -298,7 +299,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     await hostHandover.acknowledgeReuse(peer);handoverWindow.acknowledgeReuse(peer);plannedCoreAttempt=null;plannedTransferAnnouncement=null;return null;
   }
   if (request.type === "handover-detach") {
-    if (!Array.isArray(request.consented) || request.consented.length > 25 || request.consented.some(id => typeof id !== "string" || id.length > 128)) throw new Error("Invalid consented pane identities");
+    if (!Array.isArray(request.consented) || request.consented.length > MAX_PTY_PANES || request.consented.some(id => typeof id !== "string" || id.length > 128)) throw new Error("Invalid consented pane identities");
     return hostHandover.detach(handoverPeer(socket),request.consented);
   }
   if (request.type === "spawn") {

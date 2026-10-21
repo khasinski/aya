@@ -19,14 +19,17 @@ assert.equal(builds[0].buildId, builds[1].buildId);
 assert.equal(builds[0].ownerHash, builds[1].ownerHash, "owner executable must reproduce byte for byte");
 assert.equal(builds[0].bridgeHash, builds[1].bridgeHash, "bridge must reproduce byte for byte");
 const samples = [];
-for (const paneCount of [1, 25]) for (let repeat = 0; repeat < 3; repeat++) {
+// 1 and 25 stay comparable with earlier runs; one pass at the built limit checks the refusal.
+const maxPanes = builds[0].maxPanes;
+assert.ok(Number.isInteger(maxPanes) && maxPanes > 25, "the owner build records its pane limit");
+for (const [paneCount, repeats] of [[1, 3], [25, 3], [maxPanes, 1]]) for (let repeat = 0; repeat < repeats; repeat++) {
   const owner = await startOwner();
   try {
     const c = await owner.connect(), baselineFds = fdCount(owner.owner.pid), baselineClientFds = fdCount(process.pid), panes = [];
     assert.equal(c.buildId, builds[0].buildId, "measure the current native build, not stale artifacts");
     for (let i = 0; i < paneCount; i++) panes.push(await c.spawn({ id: `pane-${i}`, command: "/bin/sh", argv: ["sh", "-c", "read line"],
       cwd: owner.home, cols: 80, rows: 24, env: { PATH: "/usr/bin:/bin", HOME: owner.home } }));
-    if (paneCount === 25) await assert.rejects(c.spawn({ id: "over-limit", command: "/bin/sleep", argv: ["sleep", "30"],
+    if (paneCount === maxPanes) await assert.rejects(c.spawn({ id: "over-limit", command: "/bin/sleep", argv: ["sleep", "30"],
       cwd: owner.home, cols: 80, rows: 24, env: { PATH: "/usr/bin:/bin" } }), /Pane limit reached/);
     const activeFds = fdCount(owner.owner.pid);
     assert.equal(activeFds, baselineFds + paneCount);
@@ -47,6 +50,6 @@ for (const paneCount of [1, 25]) for (let repeat = 0; repeat < 3; repeat++) {
   } finally { await owner.close(); }
 }
 const result = { platform: process.platform, arch: process.arch, node: process.versions.node, builds, samples,
-  limits: "Native owner RSS only; quiet live shells; three ~2s idle samples per size; unsigned local identity; no 25-pane throughput claim." };
+  limits: "Native owner RSS only; quiet live shells; three ~2s idle samples at 1 and 25 panes, one at the limit; unsigned local identity; no 25-pane throughput claim." };
 fs.writeFileSync(path.resolve(`test-results/owner-measurements-${process.platform}-${process.arch}.json`), JSON.stringify(result, null, 2) + "\n");
 console.log(JSON.stringify(result, null, 2));

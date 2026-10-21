@@ -5,6 +5,7 @@ import {validateRecoveryLaunch} from "./pty-core-checkpoint";
 import type {RecoveryOwnerIdentity} from "./pty-owner-runtime";
 import type {SpawnRequest} from "./types";
 import type {PaneLaunch} from "./launch-mode";
+import {MAX_PTY_PANES} from "./pty-pane-limits";
 export interface RecoveryPane {
   id:string;generation:number;pid:number;startIdentity:string;
   request:SpawnRequest;launch:PaneLaunch;spawnedAt:number;
@@ -21,8 +22,8 @@ export function parseRecoveryBootstrap(bytes:Buffer):RecoveryBootstrap {
   !closed(v.owner,['pid','startTime','instanceId','binaryHash'])||!Number.isSafeInteger(v.owner.pid)||(v.owner.pid as number)<2||(v.owner.pid as number)>0x7fffffff||
   typeof v.owner.startTime!=='string'||!v.owner.startTime.length||v.owner.startTime.length>128||
   typeof v.owner.instanceId!=='string'||!/^[a-f0-9]{32}$/.test(v.owner.instanceId)||
-  typeof v.owner.binaryHash!=='string'||!/^[a-f0-9]{64}$/.test(v.owner.binaryHash)||!Array.isArray(v.panes)||v.panes.length>25)throw Error("Invalid recovery bootstrap");
- if(v.observed!==undefined&&(!Array.isArray(v.observed)||v.observed.length>25||new Set(v.observed.map(p=>p.id)).size!==v.observed.length||!v.observed.every(p=>closed(p,['id','generation','event'])&&typeof p.id==='string'&&p.id.length>0&&p.id.length<=128&&Number.isInteger(p.generation)&&(p.generation as number)>0&&(p.generation as number)<=0xffffffff&&Number.isInteger(p.event)&&(p.event as number)>0&&(p.event as number)<=0xffffffff)))throw Error("Invalid observed recovery exits");
+  typeof v.owner.binaryHash!=='string'||!/^[a-f0-9]{64}$/.test(v.owner.binaryHash)||!Array.isArray(v.panes)||v.panes.length>MAX_PTY_PANES)throw Error("Invalid recovery bootstrap");
+ if(v.observed!==undefined&&(!Array.isArray(v.observed)||v.observed.length>MAX_PTY_PANES||new Set(v.observed.map(p=>p.id)).size!==v.observed.length||!v.observed.every(p=>closed(p,['id','generation','event'])&&typeof p.id==='string'&&p.id.length>0&&p.id.length<=128&&Number.isInteger(p.generation)&&(p.generation as number)>0&&(p.generation as number)<=0xffffffff&&Number.isInteger(p.event)&&(p.event as number)>0&&(p.event as number)<=0xffffffff)))throw Error("Invalid observed recovery exits");
  const ids=new Set<string>();
  for(const p of v.panes){
   if(!closed(p,['id','generation','pid','startIdentity','request','launch','spawnedAt'])||typeof p.id!=='string'||ids.has(p.id)||

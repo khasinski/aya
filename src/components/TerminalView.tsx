@@ -193,6 +193,7 @@ function recoveryTitle(
   reason: NonNullable<TerminalState["spawnFailure"]>["reason"],
 ): string {
   if (reason === "command-not-found") return "Command not found";
+  if (reason === "pane-limit-reached") return "Aya's terminal limit has been reached";
   if (reason === "preset-empty-command") return "Preset command is empty";
   if (reason === "cwd-missing") return "Project folder is missing";
   if (reason === "cwd-not-directory") return "Project path is not a folder";
@@ -1586,6 +1587,7 @@ function TerminalViewComponent({
         <div className="aya-pane-recovery">
           <div className="aya-pane-recovery-text">
             <strong>{recoveryTitle(terminal.spawnFailure.reason)}</strong>
+            {terminal.spawnFailure.reason === "pane-limit-reached" && <p>{terminal.spawnFailure.detail}</p>}
           </div>
           <div className="aya-pane-recovery-actions">
             {terminal.spawnFailure.reason.startsWith("cwd-") && (
