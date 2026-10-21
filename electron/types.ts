@@ -775,6 +775,7 @@ export interface AyaApi {
   completePath(pathPrefix: string): Promise<string[]>;
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
+  setActiveGitDirectory(directory: string | null): Promise<void>;
   commitGitFiles(req: { directory: string; paths: string[]; message: string }): Promise<GitCommitResult>;
   getGitDiff(directory: string): Promise<string>;
   listDiffComments(projectSlug: string): Promise<DiffComment[]>;

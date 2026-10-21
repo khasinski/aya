@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
   GitChangedFile,
@@ -19,6 +19,7 @@ import {
 import type { SettingsTab } from "../settings-tabs";
 import { MachinesStatus } from "./MachinesStatus";
 import { uuid } from "../uuid";
+import { printable } from "../printable";
 
 // Material Symbols small icon size (px) used for status-bar glyphs
 const ICON_SIZE_SM_PX = 13;
@@ -114,6 +115,8 @@ function StatusBarImpl({
   const [dirtyFiles, setDirtyFiles] = useState<GitChangedFile[]>([]);
   const [selectedDirtyPaths, setSelectedDirtyPaths] = useState<string[]>([]);
   const [dirtyFilesLoading, setDirtyFilesLoading] = useState(false);
+  const [dirtySelectionDirectory, setDirtySelectionDirectory] = useState<string | null>(null);
+  const gitCheckoutRef = useRef<{ directory: string | null; generation: number }>({ directory: gitDirectory, generation: 0 });
   const [commitMessage, setCommitMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -178,9 +181,19 @@ function StatusBarImpl({
   // bound to another worktree must not leave the previous worktree's file list
   // and diff on screen.
   useEffect(() => {
+    void window.aya.setActiveGitDirectory(gitDirectory);
+  }, [gitDirectory]);
+
+  useLayoutEffect(() => {
+    gitCheckoutRef.current = { directory: gitDirectory, generation: gitCheckoutRef.current.generation + 1 };
+  }, [gitDirectory]);
+
+  useEffect(() => {
     setShowDirtyFiles(false);
     setDirtyFiles([]);
+    setDirtyFilesLoading(false);
     setSelectedDirtyPaths([]);
+    setDirtySelectionDirectory(null);
     setCommitMessage("");
     setCommitError(null);
     setShowDiff(false);
@@ -233,39 +246,58 @@ function StatusBarImpl({
     }
   };
 
-  const toggleDirtyFiles = () => {
+  const toggleDirtyFiles = async () => {
     if (!gitDirectory) return;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
     setShowDirtyFiles((open) => !open);
     setDirtyFilesLoading(true);
-    void window.aya.getGitChangedFiles(gitDirectory).then((files) => {
+    try {
+      await window.aya.setActiveGitDirectory(directory);
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      const files = await window.aya.getGitChangedFiles(directory);
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
       setDirtyFiles(files);
       setSelectedDirtyPaths(files.map((file) => file.path));
+      setDirtySelectionDirectory(directory);
       setCommitError(null);
       setDirtyFilesLoading(false);
-    });
+    } catch (error) {
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      setCommitError(error instanceof Error ? error.message : "Aya could not load changed files.");
+      setDirtyFilesLoading(false);
+    }
   };
 
   const commitSelectedFiles = async () => {
-    if (!gitDirectory || committing || selectedDirtyPaths.length === 0 || !commitMessage.trim()) return;
+    if (!gitDirectory || dirtySelectionDirectory !== gitDirectory || committing || selectedDirtyPaths.length === 0 || !commitMessage.trim()) return;
+    const directory = dirtySelectionDirectory;
+    const generation = gitCheckoutRef.current.generation;
     setCommitting(true);
     setCommitError(null);
     try {
       const result = await window.aya.commitGitFiles({
-        directory: gitDirectory,
+        directory,
         paths: selectedDirtyPaths,
         message: commitMessage,
       });
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
       if (!result.ok) {
         setCommitError(result.error);
         return;
       }
-      const files = await window.aya.getGitChangedFiles(gitDirectory);
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
+      const files = await window.aya.getGitChangedFiles(directory);
+      if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
       setDirtyFiles(files);
       setSelectedDirtyPaths([]);
+      setDirtySelectionDirectory(directory);
       setCommitMessage("");
-      await onGitStatusRefresh(gitDirectory);
+      await onGitStatusRefresh(directory);
     } catch (err) {
-      setCommitError(err instanceof Error ? err.message : "Aya could not create the commit.");
+      if (gitCheckoutRef.current.directory === directory && gitCheckoutRef.current.generation === generation) {
+        setCommitError(err instanceof Error ? err.message : "Aya could not create the commit.");
+      }
     } finally {
       setCommitting(false);
     }
@@ -582,10 +614,10 @@ function StatusBarImpl({
                         <button
                           className="aya-dirty-file-path-button"
                           type="button"
-                          title={`Show ${file.path} in diff`}
+                          title={`Show ${printable(file.path)} in diff`}
                           onClick={() => openDiffAtFile(file.path)}
                         >
-                          <span className="aya-dirty-file-path">{file.path}</span>
+                          <span className="aya-dirty-file-path">{printable(file.path)}</span>
                         </button>
                       </div>
                     ))}
@@ -603,7 +635,7 @@ function StatusBarImpl({
                     <button
                       className="aya-statusbar-popover-action aya-dirty-commit-button"
                       type="button"
-                      disabled={committing || selectedDirtyPaths.length === 0 || !commitMessage.trim()}
+                      disabled={committing || dirtySelectionDirectory !== gitDirectory || selectedDirtyPaths.length === 0 || !commitMessage.trim()}
                       onClick={() => void commitSelectedFiles()}
                     >
                       {committing ? "Committing..." : "Commit selected"}

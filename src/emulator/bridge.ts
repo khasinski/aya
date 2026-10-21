@@ -296,6 +296,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       return (info ?? { branch: null, dirty: 0 }) as never;
     },
     getGitChangedFiles: async () => [] as never,
+    setActiveGitDirectory: async () => undefined as never,
     getGitDiff: async () => null as never,
     commitGitFiles: async () => ({ ok: false, error: "Committing from the Changes panel is not available here." }),
     // A scenario's directory is already its own checkout root, and it has no

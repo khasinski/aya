@@ -57,3 +57,32 @@ test("changes panel commits only selected files and keeps state when Git refuses
   await expect(popover.getByRole("textbox", { name: "Commit message" })).toHaveValue("");
   await window.screenshot({ path: "/tmp/changes-commit-after-success.png" });
 });
+
+test("changes panel reports a selection that went stale after it loaded", async ({ window, seeded }) => {
+  const repo = seeded.projectDir;
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+  git("config", "user.name", "Aya E2E");
+  git("config", "user.email", "aya-e2e@example.test");
+  writeFileSync(join(repo, "stale.txt"), "selected before refresh\n");
+  const dirty = window.locator(".aya-statusbar-button", { hasText: "dirty" });
+  await dirty.click();
+  const popover = window.getByRole("dialog", { name: "Changed files" });
+  await expect(popover.getByRole("checkbox", { name: "Select stale.txt" })).toBeChecked();
+  git("add", "--", "stale.txt");
+  git("commit", "-qm", "external change after the list loaded");
+  await popover.getByRole("textbox", { name: "Commit message" }).fill("Try stale selection");
+  await popover.getByRole("button", { name: "Commit selected" }).click();
+  await expect(popover.getByRole("alert")).toContainText("changed files have updated");
+  await expect(popover.getByRole("textbox", { name: "Commit message" })).toHaveValue("Try stale selection");
+});
+
+test("changes panel makes bidi controls in filenames visible", async ({ window, seeded }) => {
+  const repo = seeded.projectDir;
+  const confusingName = "report\u202Etxt";
+  writeFileSync(join(repo, confusingName), "content\n");
+  const dirty = window.locator(".aya-statusbar-button", { hasText: "dirty" });
+  await dirty.click();
+  const safeName = window.getByText("report\\u202etxt", { exact: true });
+  await expect(safeName).toHaveCount(1);
+  await expect(window.locator(".aya-dirty-file-path-button").filter({ has: safeName })).toHaveAttribute("title", "Show report\\u202etxt in diff");
+});

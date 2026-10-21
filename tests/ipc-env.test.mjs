@@ -15,6 +15,7 @@ function setup(over = {}) {
   const calls = { dialog: [], openPath: [], urls: [] };
   let clip = "";
   const window = { id: 7 };
+  const webContents = { id: 8 };
   registerEnvIpc({
     ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
     senderWindow: (e) => (e?.fromWindow ? window : null),
@@ -30,7 +31,7 @@ function setup(over = {}) {
     openExternalUrl: async (url) => void calls.urls.push(url),
     ...over,
   });
-  const call = (channel, ...args) => handlers.get(channel)(...args);
+  const call = (channel, event = {}, ...args) => handlers.get(channel)({ sender: webContents, ...event }, ...args);
   return { handlers, call, calls, window };
 }
 
@@ -62,13 +63,34 @@ test("registers exactly the env:* channels", () => {
     "env:open-url",
     "env:pick-dir",
     "env:pick-sound",
+    "env:set-active-git-directory",
   ]);
 });
 
 test("git commit IPC validates a list of paths and a message", async () => {
   const { call } = setup();
-  await assert.rejects(call("env:git-commit-files", {}, { directory: "/tmp", paths: ["a", 4], message: "m" }), /paths must be a list/);
-  assert.deepEqual(await call("env:git-commit-files", {}, { directory: "/tmp", paths: ["a"], message: "" }), { ok: false, error: "Enter a commit message." });
+  await call("env:set-active-git-directory", { fromWindow: true }, "/tmp");
+  await assert.rejects(call("env:git-commit-files", { fromWindow: true }, { directory: "/tmp", paths: ["a", 4], message: "m" }), /paths must be a list/);
+  assert.deepEqual(await call("env:git-commit-files", { fromWindow: true }, { directory: "/tmp", paths: ["a"], message: "" }), { ok: false, error: "Enter a commit message." });
+});
+
+test("git commit IPC rejects a request from a checkout other than the window's active selection", async () => {
+  const { call } = setup();
+  await call("env:set-active-git-directory", { fromWindow: true }, "/tmp/project-b");
+  await assert.rejects(call("env:git-commit-files", { fromWindow: true }, {
+    directory: "/tmp/project-a", paths: ["file.txt"], message: "Wrong checkout",
+  }), /checkout changed/i);
+});
+
+test("git commit IPC forwards a valid request for the active checkout", async () => {
+  const forwarded = [];
+  const { call } = setup({ commitGitFiles: async (...args) => (forwarded.push(args), { ok: true, commit: "abc1234" }) });
+  await call("env:set-active-git-directory", { fromWindow: true }, "/tmp/project");
+  const result = await call("env:git-commit-files", { fromWindow: true }, {
+    directory: "/tmp/project", paths: ["chosen.txt"], message: "Chosen only",
+  });
+  assert.deepEqual(result, { ok: true, commit: "abc1234" });
+  assert.deepEqual(forwarded, [["/tmp/project", ["chosen.txt"], "Chosen only"]]);
 });
 
 test("the directory picker opens on the asking window, or alone without one, from home", async () => {
