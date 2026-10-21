@@ -318,12 +318,14 @@ Each terminal retains at most 1 MiB of replay output. The host reports byte
 offsets and whether the requested offset predates retained output; output
 older than the retained window is then unavailable. Frames are newline
 delimited, terminal data is JSON-escaped without stripping ANSI bytes, and
-socket writes are disconnected if a slow reader accumulates more than 2 MiB
-of queued data. The operating system pipe supplies backpressure between SSH,
-the stdio bridge, and the host socket. Remote session metadata is capped at
-the shared 128-pane limit; when full, the oldest exited session is discarded
-to make room, while an all-running set refuses another remote spawn. Retained
-replay therefore uses at most 128 MiB before per-session eviction.
+output is split into frames with at most 256 KiB of raw data. Every v2 write,
+including command replies and replay, is disconnected before it would queue
+more than 2 MiB for a slow reader. The operating system pipe supplies
+backpressure between SSH, the stdio bridge, and the host socket. Remote session
+metadata is capped at the shared 128-pane limit; when full, the oldest exited
+session is discarded to make room, while an all-running set refuses another
+remote spawn. Retained replay therefore uses at most 128 MiB before
+per-session eviction.
 
 Terminal access remains limited to the existing owner-only local socket and
 the explicitly invoked SSH stdio bridge. The host opens no TCP listener; a

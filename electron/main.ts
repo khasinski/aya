@@ -100,6 +100,7 @@ import { refreshStatusCodexHookScript } from "./status-hook-codex";
 import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
 import { paneReadText } from "./pane-render";
 import { PtyHostClient, waitForExit } from "./pty-host-client";
+import { MAX_PTY_PANES } from "./pty-pane-limits";
 import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
@@ -609,39 +610,61 @@ function registerIpc(): TeamRunner {
   remotePtySessions = new RemotePtySessions({
     listProjects: () => listProjects(),
     listPresets: () => listPresets(),
-    spawn: (terminalId, selectedProject, preset, cols, rows) =>
+    ensureCapacity: async () => {
+      const status = await ptyHost.hostStatus();
+      if (status.ptyCount >= MAX_PTY_PANES) {
+        throw new Error(`Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then try again.`);
+      }
+    },
+    spawn: async (terminalId, selectedProject, preset, cols, rows) => {
+      const project = (await listProjects()).find((item) => item.slug === selectedProject.slug);
+      if (!project || project.remote) throw new Error("The selected host project is unavailable.");
+      const request: SpawnRequest = {
+        ptyId: terminalId,
+        projectSlug: project.slug,
+        presetId: preset.id,
+        agent: presetAgent(preset),
+        ...(preset.configDir ? { agentConfigDir: preset.configDir } : {}),
+        command: preset.command,
+        cwd: project.directory,
+        cols,
+        rows,
+      };
+      const sent = await spawnGate.spawn(terminalId, () => prepareSpawn(request), (prepared) => sendSpawn(prepared));
+      if (sent !== true) throw new Error("The remote terminal could not be started.");
+    },
+    onSpawned: (terminalId, selectedProject, preset) =>
       appendRemoteTab(selectedProject.slug, async () => {
-        const project = (await listProjects()).find((item) => item.slug === selectedProject.slug);
+        let project = (await listProjects()).find((item) => item.slug === selectedProject.slug);
         if (!project || project.remote) throw new Error("The selected host project is unavailable.");
-        const baseName = `Remote ${preset.name}`;
-        const used = new Set(project.tabs.map((tab) => tab.name));
-        let name = baseName;
-        for (let suffix = 2; used.has(name); suffix += 1) name = `${baseName} ${suffix}`;
-        const tab = { id: terminalId, presetId: preset.id, name };
-        const updated = { ...project, tabs: [...project.tabs, tab] };
-        await updateProject(updated);
-        // A remote terminal is a real host-project tab, not an invisible PTY.
-        // Opening the project's directory either focuses its current window
-        // or adds it to the boot window; the project reload then hydrates the
-        // new tab without creating a second process.
-        await openFromOutside(project.directory);
-        for (const win of ayaWindows) {
-          if (!win.isDestroyed()) win.webContents.send("config:changed", { slice: "projects" });
+        let tabAdded = false;
+        try {
+          const baseName = `Remote ${preset.name}`;
+          const used = new Set(project.tabs.map((tab) => tab.name));
+          let name = baseName;
+          for (let suffix = 2; used.has(name); suffix += 1) name = `${baseName} ${suffix}`;
+          const tab = { id: terminalId, presetId: preset.id, name };
+          await updateProject({ ...project, tabs: [...project.tabs, tab] });
+          tabAdded = true;
+          // Opening the project focuses its current window or adds it to the
+          // boot window; hydration attaches to the PTY already running above.
+          await openFromOutside(project.directory);
+          for (const win of ayaWindows) {
+            if (!win.isDestroyed()) win.webContents.send("config:changed", { slice: "projects" });
+          }
+          ayaWeb.broadcast("config:changed", { slice: "projects" });
+        } catch (error) {
+          if (tabAdded) {
+            try {
+              const latest = (await listProjects()).find((item) => item.slug === selectedProject.slug);
+              if (latest && !latest.remote && latest.tabs.some((tab) => tab.id === terminalId)) {
+                await updateProject({ ...latest, tabs: latest.tabs.filter((tab) => tab.id !== terminalId) });
+              }
+            } catch { /* Preserve the original failure; the terminal is still explicitly stopped below. */ }
+          }
+          await ptyHost.kill(terminalId).catch(() => {});
+          throw error;
         }
-        ayaWeb.broadcast("config:changed", { slice: "projects" });
-        const request: SpawnRequest = {
-          ptyId: terminalId,
-          projectSlug: project.slug,
-          presetId: preset.id,
-          agent: presetAgent(preset),
-          ...(preset.configDir ? { agentConfigDir: preset.configDir } : {}),
-          command: preset.command,
-          cwd: project.directory,
-          cols,
-          rows,
-        };
-        const sent = await spawnGate.spawn(terminalId, () => prepareSpawn(request), (prepared) => sendSpawn(prepared));
-        if (sent !== true) throw new Error("The remote terminal could not be started.");
       }),
     write: (terminalId, data) => ptyHost.write(terminalId, data),
     resize: (terminalId, cols, rows) => ptyHost.resize(terminalId, cols, rows),

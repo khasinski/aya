@@ -134,6 +134,12 @@ export class RemoteTerminalClient extends EventEmitter {
       if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && Number.isInteger(value.exitCode)) this.emit("exit", { terminalId: value.terminalId, exitCode: value.exitCode });
       return;
     }
+    if (value.type === "pty:spawn-failed") {
+      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && typeof value.message === "string") {
+        this.emit("spawn-failed", { terminalId: value.terminalId, reason: typeof value.reason === "string" ? value.reason : undefined, message: value.message });
+      }
+      return;
+    }
     const id = typeof value.id === "string" ? value.id : "";
     if (id && this.pending.has(id)) {
       const pending = this.pending.get(id)!;
@@ -170,10 +176,10 @@ export class RemoteTerminalClient extends EventEmitter {
     await this.request("pty:exit", ["pty:exit-result"], { terminalId });
   }
 
-  async list(): Promise<Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited"; offset: number }>> {
+  async list(): Promise<Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed"; offset: number; failureReason?: string }>> {
     const response = await this.request("pty:list", ["pty:list-result"], {});
     if (!Array.isArray(response.terminals)) throw new Error("Remote Aya returned an invalid terminal list.");
-    return response.terminals as Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited"; offset: number }>;
+    return response.terminals as Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed"; offset: number; failureReason?: string }>;
   }
 
   /** Close only the bridge stream. The host does not receive a kill request. */

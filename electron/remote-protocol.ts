@@ -40,10 +40,11 @@ export type RemoteTerminalMessage =
   | { type: "pty:spawned"; protocol: 2; id: string; terminalId: string; project: string; preset: string }
   | { type: "pty:attached"; protocol: 2; id: string; terminalId: string; fromOffset: number; endOffset: number; truncated: boolean }
   | { type: "pty:output"; protocol: 2; terminalId: string; offset: number; data: string }
+  | { type: "pty:spawn-failed"; protocol: 2; terminalId: string; reason?: string; message: string }
   | { type: "pty:written"; protocol: 2; id: string; terminalId: string; accepted: boolean }
   | { type: "pty:resized"; protocol: 2; id: string; terminalId: string }
   | { type: "pty:exited"; protocol: 2; terminalId: string; exitCode: number }
-  | { type: "pty:list-result"; protocol: 2; id: string; terminals: Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited"; offset: number }> }
+  | { type: "pty:list-result"; protocol: 2; id: string; terminals: Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed"; offset: number; failureReason?: string }> }
   | { type: "pty:exit-result"; protocol: 2; id: string; terminalId: string };
 
 function ownKeys(value: Record<string, unknown>, keys: string[]): boolean {

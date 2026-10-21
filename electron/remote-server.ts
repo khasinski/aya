@@ -11,11 +11,13 @@ import {
   remoteError,
   remoteHello,
   remoteSnapshot,
+  parseRemoteTerminalRequest,
   REMOTE_TERMINAL_PROTOCOL_VERSION,
   type RemoteHostInfo,
   type RemoteSnapshot,
 } from "./remote-protocol";
 import type { RemotePtySessions } from "./remote-pty-sessions";
+import { writeRemoteTerminalFrame } from "./remote-terminal-stream";
 
 export interface RemoteServerOptions {
   appVersion: string;
@@ -34,7 +36,7 @@ function sendJson(socket: net.Socket, value: unknown): void {
 // Terminal output includes ANSI control sequences by design. JSON.stringify
 // safely frames those bytes; applying printable here would corrupt PTY data.
 function sendTerminalJson(socket: net.Socket, value: unknown): void {
-  if (!socket.destroyed) socket.write(`${JSON.stringify(value)}\n`);
+  writeRemoteTerminalFrame(socket, value);
 }
 
 function defaultHostInfo(): RemoteHostInfo {
@@ -90,30 +92,31 @@ async function handleCommand(
   const id = optionalString(raw.id);
   const type = optionalString(raw.type);
   if (type === "session:open") {
-    const requested = raw.protocol;
-    if (!Number.isSafeInteger(requested) || requested !== REMOTE_TERMINAL_PROTOCOL_VERSION) {
-      sendJson(socket, remoteError("protocol_mismatch", `Remote terminal protocol ${String(requested)} is not supported; use version ${REMOTE_TERMINAL_PROTOCOL_VERSION}.`, id));
+    const request = parseRemoteTerminalRequest(raw);
+    if (!request || request.type !== "session:open") {
+      sendTerminalJson(socket, remoteError("bad_request", "Remote terminal session request is invalid."));
       return;
     }
-    if (!id || Object.keys(raw).length !== 3 || !Object.hasOwn(raw, "id")) {
-      sendJson(socket, remoteError("bad_request", "Remote terminal session request is invalid.", id));
+    const requested = request.protocol;
+    if (!Number.isSafeInteger(requested) || requested !== REMOTE_TERMINAL_PROTOCOL_VERSION) {
+      sendTerminalJson(socket, remoteError("protocol_mismatch", `Remote terminal protocol ${String(requested)} is not supported; use version ${REMOTE_TERMINAL_PROTOCOL_VERSION}.`, id));
       return;
     }
     if (!options.terminalSessions) {
-      sendJson(socket, remoteError("terminal_unavailable", "Remote terminals are not available on this Aya.", id));
+      sendTerminalJson(socket, remoteError("terminal_unavailable", "Remote terminals are not available on this Aya.", id));
       return;
     }
     terminalSession.protocol = REMOTE_TERMINAL_PROTOCOL_VERSION;
-    sendTerminalJson(socket, { type: "session:ready", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id });
+    sendTerminalJson(socket, { type: "session:ready", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: request.id });
     return;
   }
   if (typeof type === "string" && type.startsWith("pty:") && (terminalSession.protocol !== null || raw.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION)) {
     if (terminalSession.protocol !== REMOTE_TERMINAL_PROTOCOL_VERSION) {
-      sendJson(socket, remoteError("protocol_required", "Open a supported remote terminal session before using terminal commands.", id));
+      sendTerminalJson(socket, remoteError("protocol_required", "Open a supported remote terminal session before using terminal commands.", id));
       return;
     }
     if (raw.protocol !== REMOTE_TERMINAL_PROTOCOL_VERSION) {
-      sendJson(socket, remoteError("protocol_mismatch", `Remote terminal protocol ${String(raw.protocol)} is not supported; use version ${REMOTE_TERMINAL_PROTOCOL_VERSION}.`, id));
+      sendTerminalJson(socket, remoteError("protocol_mismatch", `Remote terminal protocol ${String(raw.protocol)} is not supported; use version ${REMOTE_TERMINAL_PROTOCOL_VERSION}.`, id));
       return;
     }
     await options.terminalSessions!.handle(socket, raw, sendTerminalJson);

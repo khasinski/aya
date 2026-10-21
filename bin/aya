@@ -615,7 +615,7 @@ client.on("error", (err) => {
 });
 NODE
 )
-  node -e "$bridge_script" "$socket"
+  exec node -e "$bridge_script" "$socket"
 }
 
 check_open_wait_seconds() {
