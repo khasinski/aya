@@ -39,6 +39,10 @@ case "$1 $2" in
       exit 0
     fi
     if [ "$3" = "22222" ]; then echo 'fast second check output'; exit 0; fi
+    if [ "$3" = "33333" ] && [ -f "$state/send-slow" ]; then
+      : > "$state/send-slow-started"
+      while [ ! -f "$state/send-slow-release" ]; do sleep 0.01; done
+    fi
     [ -f "$state/failed-log" ] && { cat "$state/failed-log"; exit 0; }; exit 0 ;;
   "pr create") echo 'https://github.com/aya-e2e/project/pull/42'; exit 0 ;;
 esac
@@ -394,6 +398,8 @@ test.describe("failed pull request checks", () => {
 
   test("a failed send clears its Sending status and asks for a fresh preview", async ({ window, seeded }) => {
     addFakeRemote(seeded.projectDir);
+    execFileSync("git", ["config", "user.name", "Aya E2E"], { cwd: seeded.projectDir });
+    execFileSync("git", ["config", "user.email", "aya-e2e@example.test"], { cwd: seeded.projectDir });
     writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
     writeFileSync(join(fakeState, "checks.json"), JSON.stringify([{
       name: "Linux tests", state: "failure", bucket: "fail",
@@ -404,17 +410,55 @@ test.describe("failed pull request checks", () => {
     try {
       await expect.poll(() => existsSync(`${log}.ready`)).toBe(true);
       const popover = await openChanges(window);
+      await popover.getByRole("textbox", { name: "Commit message" }).fill("Commit before CI review");
+      await popover.getByRole("button", { name: "Commit selected" }).click();
+      await expect(popover.getByRole("status")).toContainText("Committed ");
       const checks = window.getByRole("region", { name: "Pull request checks" });
       await checks.getByLabel("Send failed checks to").selectOption(seeded.tabIds.right);
       await checks.getByRole("button", { name: "Preview Linux tests failure details" }).click();
       await expect(checks.getByRole("textbox", { name: "Exact message to send" })).toBeVisible();
+      await expect(popover.locator(".aya-dirty-publish-notice")).toHaveCount(0);
       writeFileSync(join(fakeState, "failed-log"), "changed after preview\n");
       await checks.getByRole("button", { name: "Send", exact: true }).click();
       await expect(checks.getByRole("alert")).toHaveText("The failed job log changed. Review the updated preview before sending.");
       await expect(popover.locator(".aya-dirty-publish-notice")).toHaveCount(0);
+      await expect(checks.getByRole("textbox", { name: "Exact message to send" })).toHaveCount(0);
+      await expect(checks.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
       await expect(checks.getByRole("button", { name: "Retry" })).toHaveCount(0);
     } finally {
-      for (const name of ["check-pr.json", "checks.json", "failed-log"]) rmSync(join(fakeState, name), { force: true });
+      for (const name of ["check-pr.json", "checks.json", "failed-log", "send-slow", "send-slow-release"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+
+  test("while sending one check, another target and preview cannot replace it", async ({ window, seeded }) => {
+    addFakeRemote(seeded.projectDir);
+    writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+    writeFileSync(join(fakeState, "checks.json"), JSON.stringify([
+      { name: "Linux tests", state: "failure", bucket: "fail", link: "https://github.com/aya-e2e/project/actions/runs/33333/job/67890" },
+      { name: "macOS tests", state: "failure", bucket: "fail", link: "https://github.com/aya-e2e/project/actions/runs/22222/job/67890" },
+    ]));
+    writeFileSync(join(fakeState, "failed-log"), "same log contents\n");
+    const log = join(seeded.ayaHome, `ci-review-${seeded.tabIds.right}.log`);
+    try {
+      await expect.poll(() => existsSync(`${log}.ready`)).toBe(true);
+      const popover = await openChanges(window);
+      const checks = window.getByRole("region", { name: "Pull request checks" });
+      const targetPicker = checks.getByLabel("Send failed checks to");
+      await targetPicker.selectOption(seeded.tabIds.right);
+      await checks.getByRole("button", { name: "Preview Linux tests failure details" }).click();
+      await expect(checks.getByRole("textbox", { name: "Exact message to send" })).toBeVisible();
+      writeFileSync(join(fakeState, "send-slow"), "");
+      await checks.getByRole("button", { name: "Send", exact: true }).click();
+      await expect.poll(() => existsSync(join(fakeState, "send-slow-started"))).toBe(true);
+      await expect(popover.getByRole("status")).toHaveText("Sending...");
+      await expect(targetPicker).toBeDisabled();
+      await expect(checks.getByRole("button", { name: "Preview macOS tests failure details" })).toBeDisabled();
+      writeFileSync(join(fakeState, "send-slow-release"), "");
+      await expect(popover.getByRole("status")).toHaveText("Sent to CI review target.");
+      await expect(checks.getByRole("textbox", { name: "Exact message to send" })).toHaveCount(0);
+    } finally {
+      writeFileSync(join(fakeState, "send-slow-release"), "");
+      for (const name of ["check-pr.json", "checks.json", "failed-log", "send-slow", "send-slow-started", "send-slow-release"]) rmSync(join(fakeState, name), { force: true });
     }
   });
 });

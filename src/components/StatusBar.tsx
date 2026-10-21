@@ -522,6 +522,7 @@ function StatusBarImpl({
     const targetId = ciTargetId;
     const isCurrent = () => isCurrentGitCheckout(directory, generation);
     setSelectedCiCheckUrl(checkUrl);
+    setCommitNotice(null);
     setCiPreview(null);
     setCiNotice(null);
     setCiChecksError(null);
@@ -542,20 +543,22 @@ function StatusBarImpl({
     const generation = gitCheckoutRef.current.generation;
     const projectSlug = project.slug;
     const targetId = ciTargetId;
+    const previewToken = ciPreview.token;
     const isCurrent = () => directory !== null && isCurrentGitCheckout(directory, generation);
+    setCommitNotice(null);
     setCiSending(true);
     setCiChecksError(null);
     setCiActionError(null);
     setCiNotice("Sending...");
     try {
-      await window.aya.sendCiFailure({ projectSlug, targetId, token: ciPreview.token });
+      await window.aya.sendCiFailure({ projectSlug, targetId, token: previewToken });
       if (!isCurrent()) return;
       setCiNotice(`Sent to ${reviewTargets.find((target) => target.id === targetId)?.name ?? "pane"}.`);
-      setCiPreview(null);
+      setCiPreview((current) => current?.token === previewToken ? null : current);
     } catch (error) {
       if (!isCurrent()) return;
       setCiNotice(null);
-      setCiPreview(null);
+      setCiPreview((current) => current?.token === previewToken ? null : current);
       setCiActionError(ciActionErrorMessage(error, "Aya could not send the check details."));
     } finally { setCiSending(false); }
   };
@@ -927,7 +930,7 @@ function StatusBarImpl({
                                 <span className={`aya-ci-check-state aya-ci-check-state--${check.bucket}`}>{ciCheckLabel(check)}</span>
                                 <span className="aya-ci-check-name">{check.name}</span>
                                 {check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Open ${check.name} log`} onClick={() => void window.aya.openUrl(check.url!)}>Open log</button>}
-                                {check.bucket === "fail" && check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Preview ${check.name} failure details`} disabled={!ciTargetId || reviewTargets.length === 0} onClick={() => void previewCiCheck(check.url!)}>Preview message</button>}
+                                {check.bucket === "fail" && check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Preview ${check.name} failure details`} disabled={ciSending || !ciTargetId || reviewTargets.length === 0} onClick={() => void previewCiCheck(check.url!)}>Preview message</button>}
                               </div>
                             ))}
                           </div>
@@ -937,7 +940,7 @@ function StatusBarImpl({
                         )}
                         {ciChecks?.checks.some((check) => check.bucket === "fail" && check.url) && reviewTargets.length > 0 && (
                           <label className="aya-ci-target-label" htmlFor="aya-ci-target">Send failed checks to
-                            <select id="aya-ci-target" value={ciTargetId ?? ""} onChange={(event) => {
+                            <select id="aya-ci-target" value={ciTargetId ?? ""} disabled={ciSending} onChange={(event) => {
                               const targetId = event.currentTarget.value || null;
                               ciTargetIdRef.current = targetId;
                               ciPreviewRequestId.current += 1;
