@@ -336,27 +336,129 @@
   color: var(--fg-secondary);
 }
 
-/* -- Variant B (layout "projects-left"): projects down the left, terminal tabs
-   across the top. Same tokens, same flat-row language as variant A. -- */
-.aya-app[data-chrome="command-rail"] .aya-topbar--alt {
-  background: color-mix(in oklab, var(--bg-secondary) 80%, var(--bg));
-  border-bottom: 1px solid var(--border);
-}
-.aya-app[data-chrome="command-rail"] .aya-projectrail {
+/* -- Variant B (layout "projects-left"): project column on the left, terminal
+   tabs across the top of the stage. Same tokens as variant A. -- */
+.aya-cr--b > .aya-projectrail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: auto !important;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
 }
-.aya-app[data-chrome="command-rail"] .aya-railtab {
-  border-radius: 0;
-  position: relative;
+.aya-cr-b-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
-.aya-app[data-chrome="command-rail"] .aya-railtab--active {
+.aya-cr-b-main > :not(.aya-topbar) { flex: 1 1 0; min-height: 0; }
+.aya-cr--b .aya-topbar--alt {
+  height: 52px;
+  flex: 0 0 auto;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.aya-cr--b .aya-projectrail-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 52px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border-bottom: 0;
+  -webkit-app-region: drag;
+}
+.aya-cr--b .aya-projectrail-header .aya-mac-window-controls {
+  padding: 0;
+  border-right: 0;
+}
+.aya-cr-b-label { padding: 0; flex: 1 1 auto; }
+.aya-cr--b .aya-projectrail-list { flex: 1 1 auto; min-height: 0; padding: 4px 0; }
+.aya-cr--b .aya-railtab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-radius: 0;
+  border-left: 0;
+  padding: 10px 14px;
+  margin: 0;
+}
+.aya-cr--b .aya-railtab--active {
   background: color-mix(in oklab, var(--accent) 12%, var(--bg-tertiary));
 }
-.aya-app[data-chrome="command-rail"] .aya-railtab-path--summary,
-.aya-app[data-chrome="command-rail"] .aya-termtab-summary {
+.aya-cr--b .aya-railtab--active::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--accent);
+}
+.aya-cr-b-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-strong);
+  color: var(--fg-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+.aya-cr--b .aya-railtab--active .aya-cr-b-avatar {
+  border-color: var(--accent);
+  color: var(--fg-primary);
+}
+.aya-cr--b .aya-railtab-name { font-size: 13px; font-weight: 700; }
+.aya-cr--b .aya-railtab-path--summary,
+.aya-cr--b .aya-railtab-path {
+  font-style: normal;
+  font-size: 12px;
   color: var(--fg-tertiary);
 }
-.aya-app[data-chrome="command-rail"] .aya-termtab.aya-tab--active {
+.aya-cr--b .aya-railtab-close { opacity: 0; }
+.aya-cr--b .aya-railtab:hover .aya-railtab-close { opacity: 1; }
+.aya-cr-b-worktrees { padding: 2px 0 8px; }
+.aya-cr-b-worktree {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 4px 54px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+}
+.aya-cr-b-worktree-icon { color: var(--fg-tertiary); }
+.aya-cr-b-worktree-name { font-family: var(--font-mono, monospace); }
+.aya-cr-b-worktree-branch {
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--fg-tertiary);
+}
+.aya-cr-b-worktree-count { margin-left: auto; color: var(--fg-tertiary); }
+.aya-cr--b .aya-projectrail-new {
+  flex: 0 0 auto;
+  margin: 4px 8px 8px;
+  border: 0;
+  background: transparent;
+  justify-content: flex-start;
+  color: var(--fg-secondary);
+}
+.aya-cr--b .aya-projectrail-new:hover { background: var(--bg-tertiary); }
+.aya-cr--b .aya-termtab {
+  flex: 1 1 0;
+  max-width: 280px;
+  min-width: 0;
+  padding: 0 14px;
+}
+.aya-cr--b .aya-termtab.aya-tab--active {
   background: var(--bg);
 }
+.aya-cr--b .aya-termtab.aya-tab--active::after {
+  top: 0; bottom: auto;
+  background: var(--accent);
+}
+.aya-cr--b .aya-termtab-summary { color: var(--fg-tertiary); }

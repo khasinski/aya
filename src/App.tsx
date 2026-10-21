@@ -1221,6 +1221,8 @@ export function App() {
               codexUsageAccounts={codexUsageAccounts}
               grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
+              commandRail={commandRail}
+              worktrees={worktrees}
               terminals={projectTerminals}
               activeTerminalId={activeTabId}
               presets={activePresets}

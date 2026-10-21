@@ -3,7 +3,7 @@ import {
   MENU_VIEWPORT_EDGE_PX,
   MENU_ANCHOR_GAP_PX,
 } from "../ui-constants";
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR, GROK_BRAND_COLOR } from "../colors";
 import {
   getPreset,
@@ -13,6 +13,7 @@ import {
   type TeamSummary,
   type TerminalState,
   type UsageAccount,
+  type Worktree,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { useDragReorder } from "../hooks/useDragReorder";
@@ -21,6 +22,7 @@ import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { paneRoles, unreadTotal } from "../team-view";
 import { TeamRoleChip, TeamRoleMenuItems, TeamUnread } from "./TeamRole";
+import { CommandRailUsage } from "./CommandRailLayout";
 
 // Project rail width bounds (px) for the drag-resize handle.
 const RAIL_MIN_WIDTH_PX = 160;
@@ -90,6 +92,12 @@ interface Props {
   grokUsage?: GrokUsage | null;
   showUsageHarnessName: boolean;
 
+  /** Command Rail variant B: avatars, worktree rows, usage bars, the window
+   *  controls moved into the project column. */
+  commandRail?: boolean;
+  /** Active project's worktrees (Command Rail worktree rows). */
+  worktrees?: Worktree[];
+
   // The shared terminal-panes / empty / loading body.
   body: ReactNode;
 }
@@ -149,6 +157,8 @@ function ProjectsLeftLayoutImpl({
   codexUsageAccounts = [],
   grokUsage = null,
   showUsageHarnessName,
+  commandRail = false,
+  worktrees = [],
   body,
 }: Props) {
   const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || [];
@@ -369,16 +379,15 @@ function ProjectsLeftLayoutImpl({
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [showRecent]);
 
-  return (
-    <>
+  const topbarNode = (
       <header className="aya-topbar aya-topbar--alt">
-        <MacWindowControls
+        {!commandRail && <MacWindowControls
           platform={platform}
           isFullScreen={isFullScreen}
           onClose={onCloseWindow}
           onMinimize={onMinimizeWindow}
           onToggleFullScreen={onToggleFullScreenWindow}
-        />
+        />}
         <div className="aya-tabs aya-termtabs" ref={tabsRef}>
           {terminals.map((t) => {
             const isActive = t.id === activeTerminalId;
@@ -527,7 +536,7 @@ function ProjectsLeftLayoutImpl({
           </div>
         </div>
         <div className="aya-topbar-right">
-          {usageAccounts.length > 0 && (
+          {!commandRail && usageAccounts.length > 0 && (
             <UsageChip
               accounts={usageAccounts}
               label="Claude"
@@ -535,7 +544,7 @@ function ProjectsLeftLayoutImpl({
               showHarnessName={showUsageHarnessName}
             />
           )}
-          {codexUsageAccounts.length > 0 && (
+          {!commandRail && codexUsageAccounts.length > 0 && (
             <UsageChip
               accounts={codexUsageAccounts}
               label="Codex"
@@ -543,7 +552,7 @@ function ProjectsLeftLayoutImpl({
               showHarnessName={showUsageHarnessName}
             />
           )}
-          {grokUsage && (
+          {!commandRail && grokUsage && (
             <GrokUsageChip
               usage={grokUsage}
               label="Grok"
@@ -580,12 +589,23 @@ function ProjectsLeftLayoutImpl({
           />
         </div>
       </header>
-      <div
-        className="aya-main aya-main--alt"
-        style={{ gridTemplateColumns: `${railWidth}px 1fr` }}
-      >
+  );
+
+  const railNode = (
         <aside className="aya-projectrail" style={{ width: railWidth }}>
           <div className="aya-projectrail-header">
+            {commandRail && (
+              <MacWindowControls
+                platform={platform}
+                isFullScreen={isFullScreen}
+                onClose={onCloseWindow}
+                onMinimize={onMinimizeWindow}
+                onToggleFullScreen={onToggleFullScreenWindow}
+              />
+            )}
+            {commandRail ? (
+              <span className="aya-cr-section-label aya-cr-b-label">Projects</span>
+            ) : (
             <div className="aya-brand">
               <span
                 className="aya-brand-dot"
@@ -593,6 +613,7 @@ function ProjectsLeftLayoutImpl({
               />
               <span>{isDev ? "Aya Dev" : "Aya"}</span>
             </div>
+            )}
             <div className="aya-recent-projects" ref={recentRef}>
               <button
                 className="aya-iconbtn"
@@ -659,8 +680,8 @@ function ProjectsLeftLayoutImpl({
                 : "";
               const teamUnread = unreadTotal(teamsByProject[p.slug] ?? []);
               return (
+                <Fragment key={p.slug}>
                 <div
-                  key={p.slug}
                   data-testid="railtab"
                   className={`aya-railtab ${isActive ? "aya-railtab--active" : ""} ${
                     isDragging ? "aya-railtab--dragging" : ""
@@ -684,6 +705,11 @@ function ProjectsLeftLayoutImpl({
                       : `${p.name} - ${displayPath}${projectSummary ? ` · ${projectSummary}` : ""} · double-click to rename · drag to reorder`
                   }
                 >
+                  {commandRail && (
+                    <span className="aya-cr-b-avatar">
+                      {(p.name.trim().charAt(0) || "?").toUpperCase()}
+                    </span>
+                  )}
                   <div className="aya-railtab-main">
                     {isRenaming ? (
                       <input
@@ -746,6 +772,29 @@ function ProjectsLeftLayoutImpl({
                     ×
                   </span>
                 </div>
+                {commandRail && isActive && worktrees.length > 1 && (
+                  <div className="aya-cr-b-worktrees">
+                    {worktrees.map((w) => {
+                      const known = new Set(worktrees.map((x) => x.path));
+                      const count = terminals.filter(
+                        (t) => t.cwd === w.path || (w.isMain && !known.has(t.cwd)),
+                      ).length;
+                      return (
+                        <div key={w.path} className="aya-cr-b-worktree" title={w.path}>
+                          <span className="aya-cr-b-worktree-icon">⑂</span>
+                          <span className="aya-cr-b-worktree-name">
+                            {w.path.split("/").filter(Boolean).pop() ?? w.path}
+                          </span>
+                          {w.branch && !w.isMain && (
+                            <span className="aya-cr-b-worktree-branch">{w.branch}</span>
+                          )}
+                          <span className="aya-cr-b-worktree-count">{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                </Fragment>
               );
             })}
           </div>
@@ -757,8 +806,11 @@ function ProjectsLeftLayoutImpl({
             aria-disabled={blockChrome}
           >
             <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
-            New project
+            {commandRail ? "Open project" : "New project"}
           </button>
+          {commandRail && (
+            <CommandRailUsage claude={usageAccounts} codex={codexUsageAccounts} />
+          )}
           <div
             className="aya-projectrail-resize"
             onMouseDown={() => {
@@ -767,8 +819,10 @@ function ProjectsLeftLayoutImpl({
             }}
           />
         </aside>
-        {body}
-      </div>
+  );
+
+  const menusNode = (
+    <>
       {projectMenu && onMoveProjectToWindow && (
         <div
           className="aya-context-menu"
@@ -847,6 +901,34 @@ function ProjectsLeftLayoutImpl({
           </button>
         </div>
       )}
+    </>
+  );
+
+  if (commandRail) {
+    return (
+      <>
+        <div className="aya-cr aya-cr--b" style={{ gridTemplateColumns: `${railWidth}px 1fr` }}>
+          {railNode}
+          <div className="aya-cr-b-main">
+            {topbarNode}
+            {body}
+          </div>
+        </div>
+        {menusNode}
+      </>
+    );
+  }
+  return (
+    <>
+      {topbarNode}
+      <div
+        className="aya-main aya-main--alt"
+        style={{ gridTemplateColumns: `${railWidth}px 1fr` }}
+      >
+        {railNode}
+        {body}
+      </div>
+      {menusNode}
     </>
   );
 }
