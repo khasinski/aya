@@ -153,8 +153,10 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 
 import {PlannedUpdate} from "./pty-planned-update";
 import {HandoverDisplays} from "./pty-handover-display";
+import {InstalledBuild,installedBuildFile} from "./installed-build";
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
+const installedBuild = new InstalledBuild(installedBuildFile(PTY_HOST_SCRIPT));
 const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
 builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
 const builtinState = builtinScreenRules.get();
@@ -1045,7 +1047,14 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     if(!ordinaryQuitAnnouncementPending){
       ordinaryQuitAnnouncementPending=true;
-      void ptyHost.announceOrdinaryQuit().catch(()=>false).finally(()=>{
+      // Another build installed over this one by hand hands the panes over
+      // as an update does; the next start would not adopt this host otherwise.
+      const replaced=installedBuild.replaced();
+      const handedOver=replaced?plannedUpdate.prepare().catch(()=>false):Promise.resolve(false);
+      void handedOver.then(ok=>{
+        if(replaced)diagnosticsLog.append("installed-build-quit",{handover:ok?"prepared":"unavailable"});
+        return ok||ptyHost.announceOrdinaryQuit().catch(()=>false);
+      }).finally(()=>{
         ordinaryQuitAnnounced=true;ordinaryQuitAnnouncementPending=false;app.quit();
       });
     }
