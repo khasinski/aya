@@ -15,6 +15,7 @@ import {
 import {
   findProject,
   findProjectSlugForSession,
+  mergeGitInfo,
   samePollPayload,
   sameProjectBadges,
   sameSessionRecords,
@@ -1218,6 +1219,10 @@ export function App() {
         showGitHubLink={showGitHubLink}
         terminal={activeTerminal}
         attentionCount={attentionCount}
+        onGitStatusRefresh={async (directory) => {
+          const info = await window.aya.getGitInfo(directory);
+          setGit((current) => mergeGitInfo(current, directory, info));
+        }}
         snippetsOpen={snippetsOpenForActiveTerminal}
         snippetsDisabled={!activeTerminal}
         onToggleSnippets={toggleSnippetsDrawer}

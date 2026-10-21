@@ -9,6 +9,7 @@ import { expandPath } from "../config";
 import {
   createWorktree,
   createWorktreeBatch,
+  commitGitFiles,
   getGitChangedFiles,
   getGitDiff,
   getGitInfo,
@@ -91,6 +92,17 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
   ipcMain.handle("env:git-changed-files", async (_e, directory: unknown) =>
     getGitChangedFiles(requireString(directory, "env:git-changed-files.directory")),
   );
+  ipcMain.handle("env:git-commit-files", async (_e, req: unknown) => {
+    const r = requireRecord(req, "env:git-commit-files");
+    if (!Array.isArray(r.paths) || r.paths.some((item) => typeof item !== "string")) {
+      throw new Error("env:git-commit-files.paths must be a list of file paths");
+    }
+    return commitGitFiles(
+      requireString(r.directory, "env:git-commit-files.directory"),
+      r.paths as string[],
+      requireString(r.message, "env:git-commit-files.message"),
+    );
+  });
   ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
     getGitDiff(requireString(directory, "env:git-diff.directory")),
   );

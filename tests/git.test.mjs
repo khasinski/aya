@@ -8,8 +8,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, execSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { makeRepo } from "./helpers/git.mjs";
@@ -21,6 +21,7 @@ const {
   getGitInfo,
   getGitChangedFiles,
   getGitDiff,
+  commitGitFiles,
 } = await import("../dist-electron/git.js");
 
 function commit(root, file, content, message = "init") {
@@ -151,6 +152,64 @@ test("getGitChangedFiles: non-repo returns [] (no throw)", async () => {
   const root = mkdtempSync(join(tmpdir(), "aya-git-norepo-"));
   try {
     assert.deepEqual(await getGitChangedFiles(root), []);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("getGitChangedFiles preserves spaces and reports deleted files", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    commit(root, "a.txt", "hi\n");
+    writeFileSync(join(root, "file with spaces.txt"), "new\n");
+    unlinkSync(join(root, "a.txt"));
+    const files = await getGitChangedFiles(root);
+    assert.deepEqual(files.map((file) => file.path).sort(), ["a.txt", "file with spaces.txt"]);
+    assert.equal(files.find((file) => file.path === "a.txt").status, "D");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("commitGitFiles commits only selected modified, deleted and untracked paths", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  const git = (...args) => execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "ignore"] });
+  try {
+    for (const name of ["selected.txt", "staged.txt", "removed.txt"]) writeFileSync(join(root, name), `${name}\n`);
+    git("add", "--", "selected.txt", "staged.txt", "removed.txt");
+    git("-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "initial");
+    writeFileSync(join(root, "selected.txt"), "selected update\n");
+    writeFileSync(join(root, "staged.txt"), "keep staged\n");
+    git("add", "--", "staged.txt");
+    unlinkSync(join(root, "removed.txt"));
+    writeFileSync(join(root, "new file.txt"), "new content\n");
+    writeFileSync(join(root, "--option-like.txt"), "safe path\n");
+
+    const result = await commitGitFiles(root, ["selected.txt", "removed.txt", "new file.txt", "--option-like.txt"], "Selected files only");
+    assert.equal(result.ok, true);
+    assert.match(result.commit, /^[0-9a-f]{40}$/);
+    const names = git("show", "--pretty=", "--name-only", "HEAD").toString().trim().split("\n").sort();
+    assert.deepEqual(names, ["--option-like.txt", "new file.txt", "removed.txt", "selected.txt"]);
+    assert.match(git("status", "--porcelain").toString(), /^M  staged\.txt$/m);
+    assert.equal(git("show", "HEAD:--option-like.txt").toString(), "safe path\n");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("commitGitFiles returns git hook errors and leaves the selected change available", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  const git = (...args) => execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "ignore"] });
+  try {
+    commit(root, "a.txt", "before\n");
+    writeFileSync(join(root, "a.txt"), "after\n");
+    const hook = join(root, ".git", "hooks", "pre-commit");
+    writeFileSync(hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n");
+    chmodSync(hook, 0o755);
+    const result = await commitGitFiles(root, ["a.txt"], "keep this message");
+    assert.deepEqual(result, { ok: false, error: "hook says no" });
+    assert.match(git("status", "--porcelain").toString(), /a\.txt/);
+    assert.equal(git("rev-list", "--count", "HEAD").toString().trim(), "1");
   } finally {
     cleanup(root);
   }

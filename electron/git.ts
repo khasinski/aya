@@ -472,6 +472,10 @@ export interface GitChangedFile {
   path: string;
 }
 
+export type GitCommitResult =
+  | { ok: true; commit: string }
+  | { ok: false; error: string };
+
 export function parseGitPorcelain(status: string): GitChangedFile[] {
   return status
     .split("\n")
@@ -484,13 +488,56 @@ export function parseGitPorcelain(status: string): GitChangedFile[] {
 
 export async function getGitChangedFiles(directory: string): Promise<GitChangedFile[]> {
   try {
-    const { stdout } = await execAsync(`${READ_ONLY_GIT} status --porcelain`, {
+    const { stdout } = await execFileAsync("git", [NO_LOCKS, "status", "--porcelain=v1", "-z"], {
       cwd: directory,
       ...OPTS,
     });
-    return parseGitPorcelain(stdout);
+    const entries = stdout.split("\0");
+    const files: GitChangedFile[] = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (entry.length < 4) continue;
+      const status = entry.slice(0, 2).trim() || "??";
+      files.push({ status, path: entry.slice(3) });
+      // In -z porcelain output a rename/copy is followed by its source path.
+      if (/[RC]/.test(status)) i += 1;
+    }
+    return files;
   } catch {
     return [];
+  }
+}
+
+/** Commit only the selected working-tree paths. `git commit --only` prevents
+ *  unrelated staged work from entering the commit; selected paths are staged
+ *  first so untracked files and deletions are included. Every path is checked
+ *  against the current porcelain list and passed after `--` to execFile. */
+export async function commitGitFiles(
+  directory: string,
+  selectedPaths: string[],
+  message: string,
+): Promise<GitCommitResult> {
+  const paths = [...new Set(selectedPaths)];
+  if (paths.length === 0) return { ok: false, error: "Select at least one changed file." };
+  if (message.trim().length === 0) return { ok: false, error: "Enter a commit message." };
+  const changed = await getGitChangedFiles(directory);
+  const changedByPath = new Map(changed.map((file) => [file.path, file]));
+  if (paths.some((file) => !changedByPath.has(file))) {
+    return { ok: false, error: "The changed files have updated. Refresh the list and try again." };
+  }
+  try {
+    // `git commit --only` already handles tracked modifications and deletions.
+    // Stage only untracked paths first: staging a deletion removes its path
+    // from the index, after which Git no longer accepts it as a commit pathspec.
+    const untracked = paths.filter((file) => changedByPath.get(file)?.status === "??");
+    if (untracked.length > 0) {
+      await execFileAsync("git", ["add", "--", ...untracked], { cwd: directory, ...MUTATION_OPTS });
+    }
+    await execFileAsync("git", ["commit", "--only", "-m", message, "--", ...paths], { cwd: directory, ...MUTATION_OPTS });
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], { cwd: directory, ...OPTS });
+    return { ok: true, commit: stdout.trim() };
+  } catch (err) {
+    return { ok: false, error: gitErrorMessage(err) };
   }
 }
 

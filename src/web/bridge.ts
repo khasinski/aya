@@ -157,6 +157,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getGitInfo: inv("env:git"),
     getGitChangedFiles: inv("env:git-changed-files"),
     getGitDiff: inv("env:git-diff"),
+    commitGitFiles: async () => ({ ok: false, error: "Committing from the Changes panel is not available in Aya Web." }),
     getGitRoot: inv("env:git-root"),
     getGitWorktreeStatus: inv("env:git-worktree-status"),
     getGitHubLink: inv("env:github-link"),

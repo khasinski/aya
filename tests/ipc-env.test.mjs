@@ -46,6 +46,7 @@ test("registers exactly the env:* channels", () => {
     "env:expand",
     "env:git",
     "env:git-changed-files",
+    "env:git-commit-files",
     "env:git-diff",
     "env:git-root",
     "env:git-worktree-add",
@@ -62,6 +63,12 @@ test("registers exactly the env:* channels", () => {
     "env:pick-dir",
     "env:pick-sound",
   ]);
+});
+
+test("git commit IPC validates a list of paths and a message", async () => {
+  const { call } = setup();
+  await assert.rejects(call("env:git-commit-files", {}, { directory: "/tmp", paths: ["a", 4], message: "m" }), /paths must be a list/);
+  assert.deepEqual(await call("env:git-commit-files", {}, { directory: "/tmp", paths: ["a"], message: "" }), { ok: false, error: "Enter a commit message." });
 });
 
 test("the directory picker opens on the asking window, or alone without one, from home", async () => {

@@ -46,6 +46,7 @@ interface Props {
   showGitHubLink: boolean;
   terminal: TerminalState | null;
   attentionCount: number;
+  onGitStatusRefresh: (directory: string) => Promise<void>;
   snippetsOpen: boolean;
   snippetsDisabled: boolean;
   /** Agent panes of the active project a diff review can go to, the default
@@ -77,6 +78,7 @@ function StatusBarImpl({
   showGitHubLink,
   terminal,
   attentionCount,
+  onGitStatusRefresh,
   snippetsOpen,
   snippetsDisabled,
   reviewTargets,
@@ -110,7 +112,11 @@ function StatusBarImpl({
   const dirtyRef = useRef<HTMLDivElement>(null);
   const [showDirtyFiles, setShowDirtyFiles] = useState(false);
   const [dirtyFiles, setDirtyFiles] = useState<GitChangedFile[]>([]);
+  const [selectedDirtyPaths, setSelectedDirtyPaths] = useState<string[]>([]);
   const [dirtyFilesLoading, setDirtyFilesLoading] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [commitError, setCommitError] = useState<string | null>(null);
+  const [committing, setCommitting] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [diffText, setDiffText] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
@@ -174,6 +180,9 @@ function StatusBarImpl({
   useEffect(() => {
     setShowDirtyFiles(false);
     setDirtyFiles([]);
+    setSelectedDirtyPaths([]);
+    setCommitMessage("");
+    setCommitError(null);
     setShowDiff(false);
     setDiffText("");
     setDiffQuery("");
@@ -230,8 +239,36 @@ function StatusBarImpl({
     setDirtyFilesLoading(true);
     void window.aya.getGitChangedFiles(gitDirectory).then((files) => {
       setDirtyFiles(files);
+      setSelectedDirtyPaths(files.map((file) => file.path));
+      setCommitError(null);
       setDirtyFilesLoading(false);
     });
+  };
+
+  const commitSelectedFiles = async () => {
+    if (!gitDirectory || committing || selectedDirtyPaths.length === 0 || !commitMessage.trim()) return;
+    setCommitting(true);
+    setCommitError(null);
+    try {
+      const result = await window.aya.commitGitFiles({
+        directory: gitDirectory,
+        paths: selectedDirtyPaths,
+        message: commitMessage,
+      });
+      if (!result.ok) {
+        setCommitError(result.error);
+        return;
+      }
+      const files = await window.aya.getGitChangedFiles(gitDirectory);
+      setDirtyFiles(files);
+      setSelectedDirtyPaths([]);
+      setCommitMessage("");
+      await onGitStatusRefresh(gitDirectory);
+    } catch (err) {
+      setCommitError(err instanceof Error ? err.message : "Aya could not create the commit.");
+    } finally {
+      setCommitting(false);
+    }
   };
 
   const loadDiff = () => {
@@ -517,20 +554,62 @@ function StatusBarImpl({
               ) : dirtyFiles.length === 0 ? (
                 <div className="aya-statusbar-popover-empty">No changed files.</div>
               ) : (
-                <div className="aya-dirty-file-list">
-                  {dirtyFiles.map((file) => (
+                <>
+                  <div className="aya-dirty-file-list">
+                    <label className="aya-dirty-file-select-all">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all changed files"
+                        checked={selectedDirtyPaths.length === dirtyFiles.length}
+                        onChange={(event) => setSelectedDirtyPaths(event.currentTarget.checked ? dirtyFiles.map((file) => file.path) : [])}
+                      />
+                      <span>Select all</span>
+                    </label>
+                    {dirtyFiles.map((file) => (
+                      <div className="aya-dirty-file-row" key={`${file.status}-${file.path}`}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${file.path}`}
+                          checked={selectedDirtyPaths.includes(file.path)}
+                          onChange={(event) => {
+                            const checked = event.currentTarget.checked;
+                            setSelectedDirtyPaths((current) => checked
+                              ? [...new Set([...current, file.path])]
+                              : current.filter((selected) => selected !== file.path));
+                          }}
+                        />
+                        <span className="aya-dirty-file-status">{file.status}</span>
+                        <button
+                          className="aya-dirty-file-path-button"
+                          type="button"
+                          title={`Show ${file.path} in diff`}
+                          onClick={() => openDiffAtFile(file.path)}
+                        >
+                          <span className="aya-dirty-file-path">{file.path}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="aya-dirty-commit">
+                    <label htmlFor="aya-dirty-commit-message">Commit message</label>
+                    <input
+                      id="aya-dirty-commit-message"
+                      value={commitMessage}
+                      onChange={(event) => setCommitMessage(event.currentTarget.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void commitSelectedFiles(); } }}
+                      placeholder="Commit message"
+                    />
+                    {commitError && <div className="aya-dirty-commit-error" role="alert">{commitError}</div>}
                     <button
-                      className="aya-dirty-file-row"
+                      className="aya-statusbar-popover-action aya-dirty-commit-button"
                       type="button"
-                      key={`${file.status}-${file.path}`}
-                      title={`Show ${file.path} in diff`}
-                      onClick={() => openDiffAtFile(file.path)}
+                      disabled={committing || selectedDirtyPaths.length === 0 || !commitMessage.trim()}
+                      onClick={() => void commitSelectedFiles()}
                     >
-                      <span className="aya-dirty-file-status">{file.status}</span>
-                      <span className="aya-dirty-file-path">{file.path}</span>
+                      {committing ? "Committing..." : "Commit selected"}
                     </button>
-                  ))}
-                </div>
+                  </div>
+                </>
               )}
             </div>
           )}
