@@ -39,6 +39,19 @@ test("loads PR checks with bounded gh calls and same-repository HTTPS links", as
   assert(calls.every((call) => call.timeout > 0 && call.timeout <= 20_000));
 });
 
+test("passes one cancellation signal to every gh call in a checks refresh", async () => {
+  const controller = new AbortController();
+  const signals = [];
+  const { gh: base } = githubFixture();
+  const gh = async (cwd, args, timeout, signal) => {
+    signals.push(signal);
+    return base(cwd, args, timeout);
+  };
+  await getPullRequestChecks(directory, "feature/ci", gh, controller.signal);
+  assert.equal(signals.length, 3);
+  assert(signals.every((signal) => signal === controller.signal));
+});
+
 test("stops check polling data for merged and closed pull requests", async () => {
   for (const state of ["MERGED", "CLOSED"]) {
     const { calls, gh } = githubFixture({ state });

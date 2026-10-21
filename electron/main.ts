@@ -707,6 +707,7 @@ function registerIpc(): TeamRunner {
   registerCiChecksIpc({
     ipcMain,
     listProjects: () => listProjects(),
+    onBeforeQuit: (teardown) => app.on("before-quit", teardown),
     // Keep CI failures on the same hold-aware, checked submit path as diff comments.
     sendToPane: (projectSlug, terminalId, text) => sendPaneTextThroughControl({
       listProjects: () => listProjects(),

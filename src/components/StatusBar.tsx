@@ -298,6 +298,7 @@ function StatusBarImpl({
     const isCurrent = () => active && isCurrentGitCheckout(directory, generation);
     let timer: ReturnType<typeof setTimeout> | null = null;
     let refreshInFlight = false;
+    let activeRequestId: string | null = null;
     let delayIndex = 0;
     const delays = [5_000, 10_000, 20_000, 30_000];
     const refresh = async () => {
@@ -307,8 +308,10 @@ function StatusBarImpl({
         return;
       }
       refreshInFlight = true;
+      const requestId = uuid();
+      activeRequestId = requestId;
       try {
-        const result = await window.aya.getPullRequestChecks({ projectSlug, directory });
+        const result = await window.aya.getPullRequestChecks({ projectSlug, directory, requestId });
         if (!isCurrent()) return;
         if (result.error) {
           setCiChecksError(result.error);
@@ -322,6 +325,7 @@ function StatusBarImpl({
         setCiChecksError(error instanceof Error ? error.message : "Aya could not load pull request checks.");
       } finally {
         refreshInFlight = false;
+        if (activeRequestId === requestId) activeRequestId = null;
       }
       const delay = delays[Math.min(delayIndex, delays.length - 1)];
       delayIndex += 1;
@@ -344,6 +348,7 @@ function StatusBarImpl({
     return () => {
       active = false;
       if (timer) clearTimeout(timer);
+      if (activeRequestId) void window.aya.cancelPullRequestChecks(activeRequestId).catch(() => {});
       if (ciRetryRef.current === retryNow) ciRetryRef.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
     };

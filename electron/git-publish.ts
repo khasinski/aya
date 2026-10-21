@@ -16,7 +16,7 @@ interface TrackedStatusChild {
 const activeStatusChildren = new Set<TrackedStatusChild>();
 
 /** Synchronous snapshot used by before-quit; child registration happens in spawn(). */
-export function hasPendingGitStatusChildren(): boolean {
+export function hasPendingPublishChildren(): boolean {
   return activeStatusChildren.size > 0;
 }
 
@@ -132,8 +132,8 @@ const run: Runner = (command, args, cwd, timeout, env = process.env, signal, max
   });
 });
 
-export async function runGh(directory: string, args: string[], timeout = GH_TIMEOUT_MS, execute: Runner = run, env: NodeJS.ProcessEnv = GH_ENV): Promise<string> {
-  return execute("gh", args, directory, timeout, { ...GH_ENV, ...env }, undefined, GH_MAX_OUTPUT_BYTES);
+export async function runGh(directory: string, args: string[], timeout = GH_TIMEOUT_MS, execute: Runner = run, env: NodeJS.ProcessEnv = GH_ENV, signal?: AbortSignal): Promise<string> {
+  return execute("gh", args, directory, timeout, { ...GH_ENV, ...env }, signal, GH_MAX_OUTPUT_BYTES);
 }
 
 function errorText(error: unknown): string {

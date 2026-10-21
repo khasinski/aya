@@ -962,7 +962,8 @@ export interface AyaApi {
   cancelGitPublishStatus(requestId: string): Promise<void>;
   pushGitBranch(directory: string): Promise<GitPublishResult>;
   createGitPullRequest(directory: string): Promise<GitPullRequestResult>;
-  getPullRequestChecks(req: { projectSlug: string; directory: string }): Promise<PullRequestChecks>;
+  getPullRequestChecks(req: { projectSlug: string; directory: string; requestId: string }): Promise<PullRequestChecks>;
+  cancelPullRequestChecks(requestId: string): Promise<void>;
   previewCiFailure(req: { projectSlug: string; directory: string; targetId: string; checkUrl: string }): Promise<CiFailurePreview>;
   sendCiFailure(req: { projectSlug: string; targetId: string; token: string }): Promise<void>;
   getGitDiff(directory: string): Promise<string>;

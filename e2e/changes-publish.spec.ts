@@ -26,6 +26,10 @@ case "$1 $2" in
     echo 'no pull requests found for branch' >&2; exit 1 ;;
   "pr checks")
     if [ -f "$state/checks-unavailable" ]; then echo 'temporary network failure' >&2; exit 1; fi
+    if [ -f "$state/checks-hold" ]; then
+      : > "$state/checks-started"
+      exec node -e 'require("node:fs").writeFileSync(process.env.FAKE_GH_CHECKS_PID, String(process.pid)); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'
+    fi
     if [ -f "$state/checks-slow" ]; then
       : > "$state/checks-slow-started"
       while [ ! -f "$state/checks-slow-release" ]; do sleep 0.01; done
@@ -57,6 +61,9 @@ const gitDelayDone = join(fakeState, "git-delay-done");
 const publishStatusHold = join(fakeState, "publish-status-hold");
 const publishStatusStarted = join(fakeState, "publish-status-started");
 const publishStatusPid = join(fakeState, "publish-status-pid");
+const checksHold = join(fakeState, "checks-hold");
+const checksStarted = join(fakeState, "checks-started");
+const checksPid = join(fakeState, "checks-pid");
 writeFileSync(fakeGit, `#!/bin/sh
 if [ -f "$FAKE_GIT_DELAY_ENABLED" ] && [ "$(pwd -P)" = "$FAKE_GIT_DELAY_DIR" ] && [ "$1" = "symbolic-ref" ] && [ "$4" = "HEAD" ]; then
   : > "$FAKE_GIT_DELAY_STARTED"
@@ -78,6 +85,7 @@ const launchEnv = {
   FAKE_GIT_PUBLISH_STATUS_HOLD: publishStatusHold,
   FAKE_GIT_PUBLISH_STATUS_STARTED: publishStatusStarted,
   FAKE_GIT_PUBLISH_STATUS_PID: publishStatusPid,
+  FAKE_GH_CHECKS_PID: checksPid,
 };
 test.use({ seedOptions: { gitRepo: true, launchEnv } });
 test.afterAll(() => rmSync(fakeRoot, { recursive: true, force: true }));
@@ -225,6 +233,50 @@ test("quitting Aya while publish status is held aborts the Git child and exits",
     rmSync(publishStatusHold, { force: true });
     rmSync(publishStatusStarted, { force: true });
     rmSync(publishStatusPid, { force: true });
+  }
+});
+
+test("closing Changes aborts its pending pull request checks child", async ({ window, app, seeded }) => {
+  await installFakeGit(app);
+  addFakeRemote(seeded.projectDir);
+  writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+  rmSync(checksStarted, { force: true });
+  rmSync(checksPid, { force: true });
+  writeFileSync(checksHold, "");
+  try {
+    const popover = await openChanges(window);
+    await expect.poll(() => existsSync(checksStarted)).toBe(true);
+    await expect.poll(() => existsSync(checksPid)).toBe(true);
+    const pid = Number(readFileSync(checksPid, "utf8"));
+    await window.locator(".aya-statusbar-button").filter({ hasText: "dirty" }).click();
+    await expect(popover).toBeHidden();
+    await expectPidGone(pid);
+  } finally {
+    for (const name of ["check-pr.json", "checks-hold", "checks-started", "checks-pid"]) rmSync(join(fakeState, name), { force: true });
+  }
+});
+
+test("quitting Aya while pull request checks are held aborts the gh child and exits", async ({ window, app, seeded }) => {
+  await installFakeGit(app);
+  addFakeRemote(seeded.projectDir);
+  writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+  rmSync(checksStarted, { force: true });
+  rmSync(checksPid, { force: true });
+  writeFileSync(checksHold, "");
+  try {
+    await openChanges(window);
+    await expect.poll(() => existsSync(checksStarted)).toBe(true);
+    await expect.poll(() => existsSync(checksPid)).toBe(true);
+    const pid = Number(readFileSync(checksPid, "utf8"));
+    const exited = new Promise<void>((resolve) => app.process().once("exit", () => resolve()));
+    await app.evaluate(({ app: electronApp }) => electronApp.quit());
+    await Promise.race([
+      exited,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("Aya did not quit with pull request checks held")), 5_000)),
+    ]);
+    await expectPidGone(pid);
+  } finally {
+    for (const name of ["check-pr.json", "checks-hold", "checks-started", "checks-pid"]) rmSync(join(fakeState, name), { force: true });
   }
 });
 
@@ -501,7 +553,12 @@ test.describe("PR3 screenshot states", () => {
       await expect(checks).toContainText("Linux tests");
       await expect(checks).toContainText("Failed");
       await expect(checks).toContainText("Open log");
-      await expect(checks.getByRole("button", { name: "Open Linux tests log" })).toBeVisible();
+      const openLog = checks.getByRole("button", { name: "Open Linux tests log" });
+      await expect(openLog).toBeVisible();
+      const externalOpenLog = join(seeded.root, "e2e-open-external.log");
+      writeFileSync(externalOpenLog, "");
+      await openLog.click();
+      await expect.poll(() => readFileSync(externalOpenLog, "utf8").trim()).toBe(checkUrl);
       await popover.screenshot({ path: "/tmp/changes-publish-checks-failing.png" });
 
       writeFileSync(join(fakeState, "checks-unavailable"), "");

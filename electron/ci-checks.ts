@@ -28,7 +28,10 @@ export interface CiFailurePreview {
   prompt: string;
 }
 
-type Gh = (directory: string, args: string[], timeout?: number) => Promise<string>;
+type Gh = (directory: string, args: string[], timeout?: number, signal?: AbortSignal) => Promise<string>;
+
+const runGhWithSignal: Gh = (directory, args, timeout, signal) =>
+  runGh(directory, args, timeout, undefined, undefined, signal);
 
 function parseJson<T>(raw: string, label: string): T {
   try { return JSON.parse(raw) as T; }
@@ -48,10 +51,10 @@ function safeName(value: unknown): string {
   return printable(value.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")).trim().slice(0, 240) || "Unnamed check";
 }
 
-export async function getPullRequestChecks(directory: string, branch: string, gh: Gh = runGh): Promise<PullRequestChecks> {
+export async function getPullRequestChecks(directory: string, branch: string, gh: Gh = runGhWithSignal, signal?: AbortSignal): Promise<PullRequestChecks> {
   let repoUrl: string;
   try {
-    repoUrl = (await gh(directory, ["repo", "view", "--json", "url", "--jq", ".url"], GH_POLL_TIMEOUT_MS)).trim();
+    repoUrl = (await gh(directory, ["repo", "view", "--json", "url", "--jq", ".url"], GH_POLL_TIMEOUT_MS, signal)).trim();
   } catch (error) {
     throw friendlyGhError(error);
   }
@@ -64,7 +67,7 @@ export async function getPullRequestChecks(directory: string, branch: string, gh
 
   let pr: { url?: unknown; state?: unknown; isDraft?: unknown };
   try {
-    pr = parseJson(await gh(directory, ["pr", "view", branch, "--json", "url,state,isDraft"], GH_POLL_TIMEOUT_MS), "pull request status");
+    pr = parseJson(await gh(directory, ["pr", "view", branch, "--json", "url,state,isDraft"], GH_POLL_TIMEOUT_MS, signal), "pull request status");
   } catch (error) {
     const raw = error as { code?: unknown; stderr?: unknown };
     if (raw?.code === 1 && /no pull requests found/i.test(String(raw.stderr ?? ""))) {
@@ -79,7 +82,7 @@ export async function getPullRequestChecks(directory: string, branch: string, gh
   if (state === "CLOSED") return { pullRequestUrl, pullRequestState: "closed", checks: [] };
   let rows: unknown;
   try {
-    rows = parseJson(await gh(directory, ["pr", "checks", branch, "--json", "name,state,bucket,link"], GH_POLL_TIMEOUT_MS), "check status");
+    rows = parseJson(await gh(directory, ["pr", "checks", branch, "--json", "name,state,bucket,link"], GH_POLL_TIMEOUT_MS, signal), "check status");
   } catch (error) {
     // gh exits 8 when checks are still pending, while returning valid JSON.
     const raw = error as { code?: unknown; stdout?: unknown };
@@ -135,7 +138,7 @@ function jobFromUrl(url: string | null): { runId: string; jobId: string } | null
   return match ? { runId: match[1], jobId: match[2] } : null;
 }
 
-export async function buildCiFailurePrompt(directory: string, branch: string, checkUrl: string, gh: Gh = runGh): Promise<{ check: PullRequestCheck; prompt: string }> {
+export async function buildCiFailurePrompt(directory: string, branch: string, checkUrl: string, gh: Gh = runGhWithSignal): Promise<{ check: PullRequestCheck; prompt: string }> {
   const state = await getPullRequestChecks(directory, branch, gh);
   const check = state.checks.find((item) => item.url === checkUrl && item.bucket === "fail");
   if (!check) throw new Error("That check is no longer failing. Refresh the list and try again.");
@@ -175,7 +178,7 @@ function makePreviewRoom(now = Date.now()): void {
   }
 }
 
-export async function createCiFailurePreview(input: Omit<StoredPreview, "promptHash" | "expiresAt">, gh: Gh = runGh): Promise<CiFailurePreview> {
+export async function createCiFailurePreview(input: Omit<StoredPreview, "promptHash" | "expiresAt">, gh: Gh = runGhWithSignal): Promise<CiFailurePreview> {
   const result = await buildCiFailurePrompt(input.directory, input.branch, input.checkUrl, gh);
   const token = randomBytes(24).toString("hex");
   const now = Date.now();
@@ -184,7 +187,7 @@ export async function createCiFailurePreview(input: Omit<StoredPreview, "promptH
   return { token, checkName: result.check.name, checkUrl: result.check.url!, prompt: result.prompt };
 }
 
-export async function sendCiFailurePreview(input: { token: string; projectSlug: string; targetId: string }, send: (projectSlug: string, targetId: string, text: string) => Promise<unknown>, gh: Gh = runGh): Promise<void> {
+export async function sendCiFailurePreview(input: { token: string; projectSlug: string; targetId: string }, send: (projectSlug: string, targetId: string, text: string) => Promise<unknown>, gh: Gh = runGhWithSignal): Promise<void> {
   const saved = previews.get(input.token);
   if (!saved || saved.expiresAt <= Date.now() || saved.projectSlug !== input.projectSlug || saved.targetId !== input.targetId) {
     previews.delete(input.token);

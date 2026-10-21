@@ -13,7 +13,7 @@ test("a failed local status lookup becomes a safe result instead of an IPC excep
   registerCiChecksIpc({ ipcMain, listProjects: async () => [{ slug: "project", directory: "/tmp/project", tabs: [], remote: null }], sendToPane: async () => {} });
   const list = map.get("git-checks:list");
   assert.equal(typeof list, "function");
-  const result = await list({}, { projectSlug: "project", directory: "/definitely/not/an/aya/checkout" });
+  const result = await list({ sender: {} }, { projectSlug: "project", directory: "/definitely/not/an/aya/checkout", requestId: "request-1" });
   assert.deepEqual(result, {
     pullRequestUrl: null,
     pullRequestState: "unknown",
