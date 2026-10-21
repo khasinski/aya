@@ -830,10 +830,12 @@ app.whenReady().then(async () => {
     if(announcedTicket)await ptyHost.redeemAnnouncedCapability(announcedTicket);
   }catch{diagnosticsLog.append("host-transfer-unavailable",{purpose:"startup"});}
   const keepPlannedHost=await plannedUpdate.resume(announcedTicket?.purpose==="planned-update"&&announcedTicket.deadline!==null?{...announcedTicket,deadline:announcedTicket.deadline}:undefined) === "kept";
+  let keepOrdinaryTransferredHost=false;
   let keptCompatibleHosts: number[] = [];
   if(!keepPlannedHost)try {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
     const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
+    keepOrdinaryTransferredHost=ptyHost.hasCompletedOrdinaryQuitHandover;
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       PTY_HOST_SCRIPT,
@@ -865,7 +867,11 @@ app.whenReady().then(async () => {
   // start. The red fallback icon is applied after installApplicationMenu.
   // Unconditionally now: with no socket file, hostHealth() starts no host, and a host still running without its
   // socket (2026-10-13) is exactly the one this must catch before the first pane starts another.
-  if(keepPlannedHost)keepStaleHost();else await handleStaleHost();
+  // A completed ordinary-quit ticket is an explicit handover of the surviving
+  // host, including after a hand-installed main build changed its content hash.
+  // Keep the host (and its visible stale indicator) instead of asking to stop
+  // panes the previous main just handed over.
+  if(keepPlannedHost||keepOrdinaryTransferredHost)keepStaleHost();else await handleStaleHost();
 
   const savedState = await loadWindowState();
   windows.mainWindow = createWindow(savedState);
@@ -1047,13 +1053,13 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     if(!ordinaryQuitAnnouncementPending){
       ordinaryQuitAnnouncementPending=true;
-      // Another build installed over this one by hand hands the panes over
-      // as an update does; the next start would not adopt this host otherwise.
+      // A hand-installed build is a normal main-process replacement. Transfer
+      // the host capability with the ordinary, non-expiring quit ticket; B3's
+      // planned-update ticket is deliberately limited to its 120-second window.
       const replaced=installedBuild.replaced();
-      const handedOver=replaced?plannedUpdate.prepare().catch(()=>false):Promise.resolve(false);
-      void handedOver.then(ok=>{
+      void ptyHost.announceOrdinaryQuit().catch(()=>false).then(ok=>{
         if(replaced)diagnosticsLog.append("installed-build-quit",{handover:ok?"prepared":"unavailable"});
-        return ok||ptyHost.announceOrdinaryQuit().catch(()=>false);
+        return ok;
       }).finally(()=>{
         ordinaryQuitAnnounced=true;ordinaryQuitAnnouncementPending=false;app.quit();
       });

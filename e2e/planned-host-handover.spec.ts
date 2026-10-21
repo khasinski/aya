@@ -8,7 +8,7 @@ const root=join(__dirname,'..'),hostScript=join(root,'dist-electron/pty-host.js'
 const rulesScript=join(root,'dist-electron/agent-screen-rules.js'),rulesBuilt=readFileSync(rulesScript),packageFile=join(root,'package.json'),packageBuilt=readFileSync(packageFile);
 const apps:ElectronApplication[]=[];
 test.afterEach(async()=>{writeFileSync(hostScript,built);writeFileSync(rulesScript,rulesBuilt);writeFileSync(packageFile,packageBuilt);for(const app of apps.splice(0))await closeAndWait(app);});
-async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false){
+async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false,dateOffsetMs=0,failOrdinaryAnnouncement=false){
  const wrapper=join(seeded.root,'handover-main.js');
  // Wrapper code is constant; disposable paths/options are data, never JS source.
  writeFileSync(wrapper,`const electron=require('electron'),path=require('node:path'),root=process.env.AYA_TEST_APP_ROOT;
@@ -17,7 +17,7 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
  MainClient.prototype.request=function(...args){globalThis.handoverMainClient??=this;return mainRequest.apply(this,args);};
  const trackHandle=electron.ipcMain.handle.bind(electron.ipcMain);
  electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);return handler(event,...args);});
- electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');return{response:Number(process.env.AYA_TEST_HANDOVER_CHOICE),checkboxChecked:false};};
+ electron.dialog.showMessageBox=async(...args)=>{const fs=require('node:fs'),options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');fs.writeFileSync(process.env.AYA_TEST_QUESTIONS_FILE,JSON.stringify(globalThis.handoverQuestions));return{response:Number(process.env.AYA_TEST_HANDOVER_CHOICE),checkboxChecked:false};};
  if(process.env.AYA_TEST_PLAIN_HOST==='1'){
   const cp=require('node:child_process'),spawn=cp.spawn,hostScript=path.join(root,'dist-electron/pty-host.js');
   cp.spawn=(file,args,options)=>spawn(file===process.execPath&&args?.[0]===hostScript?process.env.AYA_TEST_PLAIN_NODE:file,args,options);
@@ -33,11 +33,18 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
   const updater=require(path.join(root,'node_modules/electron-updater')).autoUpdater;updater.checkForUpdates=async()=>null;
   updater.quitAndInstall=()=>{globalThis.handoverOrder.push('installer');globalThis.installerHandedOff=true;};globalThis.testUpdater=updater;
  }
+ if(process.env.AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT==='1'){
+  const {PtyHostClient}=require(path.join(root,'dist-electron/pty-host-client.js'));
+  PtyHostClient.prototype.announceOrdinaryQuit=async function(){require('node:fs').writeFileSync(process.env.AYA_TEST_ORDINARY_RESULT,'failed');return false;};
+ }
+ const offset=Number(process.env.AYA_TEST_DATE_OFFSET_MS||0);
+ if(offset){const now=Date.now;Date.now=()=>now()+offset;}
  require(path.join(root,'dist-electron/main.js'));
  `);
  const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
   AYA_TEST_HANDOVER_CHOICE:String(choice),AYA_TEST_PLAIN_HOST:plainHost?'1':'0',AYA_TEST_PLAIN_NODE:process.execPath,AYA_TEST_PLAIN_RUNTIME:JSON.stringify({node:process.versions.node,electron:null}),
   AYA_TEST_BLOCK_DISPLAY:blockDisplay?'1':'0',AYA_TEST_DISPLAY_RELEASE:join(seeded.root,'release-display'),AYA_TEST_REAL_UPDATE:realUpdate?'1':'0',
+  AYA_TEST_DATE_OFFSET_MS:String(dateOffsetMs),AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT:failOrdinaryAnnouncement?'1':'0',AYA_TEST_QUESTIONS_FILE:join(seeded.root,'handover-questions.json'),AYA_TEST_ORDINARY_RESULT:join(seeded.root,'ordinary-result'),
  }})});apps.push(app);
  return {app,window:await app.firstWindow()};
 }
@@ -198,7 +205,7 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
 });
 
 
-test('a build installed by hand over a running Aya hands its panes over at an ordinary quit',async({seeded})=>{
+test('a build installed by hand hands panes over after the planned-update window has elapsed',async({seeded})=>{
  test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);
  await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'MANUAL_INSTALL_ROUTE\\n'; sleep 1000\r"));
  await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('MANUAL_INSTALL_ROUTE\r\n');
@@ -208,11 +215,24 @@ test('a build installed by hand over a running Aya hands its panes over at an or
  const proc=first.app.process(),exited=new Promise<void>(resolve=>proc.once('exit',()=>resolve()));
  apps.splice(apps.indexOf(first.app),1);await first.app.evaluate(({app})=>app.quit());await exited;
  expect(readFileSync(join(seeded.ayaHome,'diagnostics.log'),'utf8')).toContain('"ev":"installed-build-quit","handover":"prepared"');
- const second=await launch(seeded);
+ const ticketName=readdirSync(seeded.ayaHome).find(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));expect(ticketName).toBeTruthy();
+ expect(JSON.parse(readFileSync(join(seeded.ayaHome,ticketName!),'utf8'))).toMatchObject({format:2,purpose:'ordinary-quit',deadline:null});
+ const second=await launch(seeded,1,false,false,false,121000);
  await expect(visiblePane(second.window,'shell 1').locator('.xterm-rows')).toContainText('MANUAL_INSTALL_ROUTE');
  expect(identities(seeded.ayaHome)).toEqual(before);expect(inventory(seeded.ayaHome).pid).toBe(owner);
  expect(hostPidsForHome(seeded.ayaHome)).toHaveLength(1);
  expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
+});
+test('a failed manual-install announcement does not ask the user to stop panes',async({seeded})=>{
+ test.setTimeout(30000);const first=await launch(seeded,1,false,false,false,0,true);await waitForShellReady(first.window);
+ await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'KEPT_AFTER_ANNOUNCEMENT_FAILURE\\n'\r"));
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('KEPT_AFTER_ANNOUNCEMENT_FAILURE');
+ const before=identities(seeded.ayaHome);
+ appendFileSync(hostScript,'\n// failed ordinary handover announcement test\n');
+ const exited=new Promise<void>(resolve=>first.app.process().once('exit',()=>resolve()));apps.splice(apps.indexOf(first.app),1);await first.app.evaluate(({app})=>app.quit());await exited;
+ expect(readFileSync(join(seeded.root,'ordinary-result'),'utf8')).toBe('failed');
+ expect(existsSync(join(seeded.root,'handover-questions.json'))?JSON.parse(readFileSync(join(seeded.root,'handover-questions.json'),'utf8')):[]).toEqual([]);
+ expect(identities(seeded.ayaHome)).toEqual(before);
 });
 test('two replacements retain an unmounted ended pane until its real view applies replay',async({seeded})=>{
  test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);

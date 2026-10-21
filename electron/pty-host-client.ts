@@ -178,6 +178,7 @@ export class PtyHostClient {
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
   private ordinaryAnnouncement:OrdinaryAuthAnnouncement|null=null;
+  private ordinaryQuitHandoverCompleted=false;
   private receivedAuthTransfer:{ticket:AuthTransferTicket;receipt?:string;retirementOwner?:RecoveryOwnerIdentity}|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
   private unannouncedRefusal=false;
@@ -213,6 +214,8 @@ export class PtyHostClient {
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
   private disposed = false;
+  /** An authenticated ordinary-quit transfer was fully adopted by this main. */
+  get hasCompletedOrdinaryQuitHandover():boolean{return this.ordinaryQuitHandoverCompleted;}
   private issuedShutdown=false;
   private ownsOwnerKey=false;
   private ownerContinuityUnavailable=false;
@@ -671,6 +674,7 @@ export class PtyHostClient {
     }
     const completed=await withTimeout(this.sendRequest(socket,{id:0,type:"auth-transfer-complete",attempt:transfer.ticket.attempt,receipt:transfer.receipt}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
     if(completed!==true||this.disposed||this.socket!==socket||socket.destroyed||this.receivedAuthTransfer!==transfer)throw new HostAuthError();
+    if(transfer.ticket.purpose==="ordinary-quit")this.ordinaryQuitHandoverCompleted=true;
     this.receivedAuthTransfer=null;
   }
   private refuseMissingAnnouncedHost():Error{
