@@ -238,6 +238,8 @@ test("waiting panes show a selectable banner and update the web tab title", asyn
     expect(login.ok()).toBeTruthy();
     await page.reload();
     await expect(page.getByTestId("sidebar-terminal")).toHaveCount(2, { timeout: 20_000 });
+    await expect(page.locator(".aya-terminal-restoring")).toHaveCount(2);
+    await expect(page.locator(".aya-terminal-restoring")).toHaveCount(0, { timeout: 5_000 });
     await expect(page.locator("[data-testid='sidebar-terminal'].aya-sidebar-row--active")).toHaveAttribute(
       "data-terminal-id",
       "web-first",
@@ -323,7 +325,6 @@ test("waiting panes show a selectable banner and update the web tab title", asyn
     await page.screenshot({
       path: "/tmp/aya-web-notifications-390x844.png",
       fullPage: false,
-      style: ".aya-statusbar { visibility: hidden !important; }",
     });
 
     await banner.click();
