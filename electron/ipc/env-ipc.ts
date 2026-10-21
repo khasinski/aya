@@ -21,7 +21,7 @@ import {
   worktreeBranchRemovalInfo,
 } from "../git";
 import { getGitHubLink, isGitHubCliAvailable } from "../github";
-import { createOrFindPullRequest, getPublishStatus, pushCurrentBranch } from "../git-publish";
+import { createOrFindPullRequest, getPublishStatus, pushCurrentBranch, waitForGitStatusChildren } from "../git-publish";
 import { optionalTrimmed, requireRecord, requireString } from "../validation";
 
 /** At most this many directory suggestions per completion request. */
@@ -41,7 +41,7 @@ export interface EnvIpcDeps {
   /** Test seam; production uses the real checked git implementation. */
   commitGitFiles?: typeof commitGitFiles;
   /** Abort subprocesses owned by IPC work when Aya begins quitting. */
-  onBeforeQuit?: (teardown: () => void) => void;
+  onBeforeQuit?: (teardown: () => Promise<void>) => void;
   /** Test seam for pending publish-status requests. */
   getPublishStatus?: typeof getPublishStatus;
 }
@@ -82,9 +82,11 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
   const activeGitDirectories = new WeakMap<object, string>();
   const publishStatusBySender = new WeakMap<object, Map<string, AbortController>>();
   const pendingPublishStatus = new Set<AbortController>();
-  const abortPendingPublishStatus = () => {
+  let shuttingDown = false;
+  const abortPendingPublishStatus = async () => {
+    shuttingDown = true;
     for (const controller of pendingPublishStatus) controller.abort(new Error("Aya is quitting."));
-    pendingPublishStatus.clear();
+    await waitForGitStatusChildren();
   };
   deps.onBeforeQuit?.(abortPendingPublishStatus);
   const publishStatus = deps.getPublishStatus ?? getPublishStatus;
@@ -190,6 +192,7 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
     isGitHubCliAvailable(),
   );
   ipcMain.handle("env:git-publish-status", async (event, raw: unknown) => {
+    if (shuttingDown) throw new Error("Aya is quitting.");
     const request = requireRecord(raw, "env:git-publish-status");
     const directory = requireString(request.directory, "env:git-publish-status.directory");
     const requestId = requireString(request.requestId, "env:git-publish-status.requestId");

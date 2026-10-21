@@ -43,7 +43,7 @@ if [ -f "$FAKE_GIT_DELAY_ENABLED" ] && [ "$(pwd -P)" = "$FAKE_GIT_DELAY_DIR" ] &
 fi
 if [ -f "$FAKE_GIT_PUBLISH_STATUS_HOLD" ] && [ "$1" = "symbolic-ref" ] && [ "$2" = "--quiet" ] && [ "$3" = "--short" ] && [ "$4" = "HEAD" ]; then
   : > "$FAKE_GIT_PUBLISH_STATUS_STARTED"
-  exec node -e 'require("node:fs").writeFileSync(process.env.FAKE_GIT_PUBLISH_STATUS_PID, String(process.pid)); setInterval(() => {}, 1000);'
+  exec node -e 'require("node:fs").writeFileSync(process.env.FAKE_GIT_PUBLISH_STATUS_PID, String(process.pid)); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'
 fi
 /usr/bin/git "$@"
 status=$?

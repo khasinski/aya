@@ -1,11 +1,44 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { spawn, type ChildProcess } from "node:child_process";
 export const GIT_STATUS_TIMEOUT_MS = 12_000;
 const GH_TIMEOUT_MS = 30_000;
+const STATUS_KILL_GRACE_MS = 500;
+const STATUS_QUIT_WAIT_MS = 900;
+const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const GH_ENV = { ...process.env, GH_NO_UPDATE_NOTIFIER: "1", GH_PROMPT_DISABLED: "1" };
 const gitEnv = () => ({ ...process.env, GIT_TERMINAL_PROMPT: "0" });
+
+interface TrackedStatusChild {
+  child: ChildProcess;
+  closed: Promise<void>;
+}
+
+const activeStatusChildren = new Set<TrackedStatusChild>();
+
+/** Wait briefly for cancelled status commands, then force-kill any survivors. */
+export async function waitForGitStatusChildren(timeoutMs = STATUS_QUIT_WAIT_MS): Promise<void> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (activeStatusChildren.size > 0) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 100) break;
+    const current = [...activeStatusChildren];
+    await Promise.race([
+      Promise.all(current.map((entry) => entry.closed)),
+      new Promise<void>((resolve) => setTimeout(resolve, remaining - 100)),
+    ]);
+  }
+  for (const { child } of activeStatusChildren) {
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill("SIGKILL"); } catch { /* process may have exited concurrently */ }
+    }
+  }
+  const remaining = deadline - Date.now();
+  if (remaining > 0 && activeStatusChildren.size > 0) {
+    await Promise.race([
+      Promise.all([...activeStatusChildren].map((entry) => entry.closed)),
+      new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+    ]);
+  }
+}
 
 export interface PublishStatus {
   branch: string | null;
@@ -23,13 +56,75 @@ export type PullRequestResult = { ok: true; url: string } | { ok: false; error: 
 type Runner = (command: string, args: string[], cwd: string, timeout: number, env?: NodeJS.ProcessEnv, signal?: AbortSignal) => Promise<string>;
 type GhRunner = (directory: string, args: string[], timeout?: number) => Promise<string>;
 
-const run: Runner = async (command, args, cwd, timeout, env = process.env, signal) => {
-  const { stdout } = await execFileAsync(command, args, {
-    // execFile captures output through pipes and does not attach a TTY.
-    cwd, timeout, windowsHide: true, env, signal,
+const run: Runner = (command, args, cwd, timeout, env = process.env, signal) => new Promise((resolve, reject) => {
+  // spawn captures output through pipes and does not attach a TTY. Status children
+  // are tracked until close so quit can wait for or force-kill the actual process.
+  const child = spawn(command, args, { cwd, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let outputBytes = 0;
+  let spawnError: Error | null = null;
+  let failure: (Error & { code?: string; killed?: boolean; signal?: string; stderr?: string }) | null = null;
+  let escalation: NodeJS.Timeout | null = null;
+  let timedOut = false;
+  let settled = false;
+  const tracked: TrackedStatusChild | null = signal ? { child, closed: Promise.resolve() } : null;
+  let resolveClosed!: () => void;
+  if (tracked) {
+    tracked.closed = new Promise<void>((resolveDone) => { resolveClosed = resolveDone; });
+    activeStatusChildren.add(tracked);
+  }
+  const stop = (error?: Error, isTimeout = false) => {
+    if (error && !failure) failure = Object.assign(error, { stderr, killed: true, code: isTimeout ? "ETIMEDOUT" : undefined });
+    timedOut ||= isTimeout;
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    try { child.kill("SIGTERM"); } catch { /* process may have exited concurrently */ }
+    if (!escalation) {
+      escalation = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          try { child.kill("SIGKILL"); } catch { /* process may have exited concurrently */ }
+        }
+      }, STATUS_KILL_GRACE_MS);
+    }
+  };
+  const onAbort = () => stop(signal?.reason instanceof Error ? signal.reason : new Error("Git status was cancelled."));
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  const timeoutTimer = setTimeout(() => stop(new Error("The command timed out."), true), timeout);
+  const addOutput = (chunk: Buffer, stream: "stdout" | "stderr") => {
+    outputBytes += chunk.length;
+    if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
+      stop(Object.assign(new Error("The command output exceeded its limit."), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }));
+      return;
+    }
+    if (stream === "stdout") stdout += chunk.toString("utf8");
+    else stderr += chunk.toString("utf8");
+  };
+  child.stdout?.on("data", (chunk: Buffer) => addOutput(chunk, "stdout"));
+  child.stderr?.on("data", (chunk: Buffer) => addOutput(chunk, "stderr"));
+  child.once("error", (error) => { spawnError = error; });
+  child.once("close", (code, closeSignal) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutTimer);
+    if (escalation) clearTimeout(escalation);
+    signal?.removeEventListener("abort", onAbort);
+    if (tracked) {
+      activeStatusChildren.delete(tracked);
+      resolveClosed();
+    }
+    if (failure) {
+      failure.stderr = stderr;
+      reject(failure);
+    } else if (spawnError) {
+      reject(Object.assign(spawnError, { stderr }));
+    } else if (timedOut) {
+      reject(Object.assign(new Error("The command timed out."), { code: "ETIMEDOUT", killed: true, signal: closeSignal, stderr }));
+    } else if (code !== 0) {
+      reject(Object.assign(new Error(stderr || `The command exited with code ${code ?? closeSignal ?? "unknown"}.`), { code, signal: closeSignal, stderr }));
+    } else resolve(stdout);
   });
-  return stdout;
-};
+});
 
 export async function runGh(directory: string, args: string[], timeout = GH_TIMEOUT_MS): Promise<string> {
   return run("gh", args, directory, timeout, GH_ENV);

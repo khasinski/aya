@@ -679,7 +679,24 @@ function registerIpc(): TeamRunner {
     clipboard,
     home: () => app.getPath("home"),
     openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
-    onBeforeQuit: (teardown) => app.on("before-quit", teardown),
+    onBeforeQuit: (teardown) => {
+      let teardownStarted = false;
+      let teardownComplete = false;
+      const holdQuit = (event: Electron.Event) => {
+        if (teardownComplete) return;
+        event.preventDefault();
+        if (teardownStarted) return;
+        teardownStarted = true;
+        void teardown().catch((error) => {
+          console.warn("[aya] could not fully stop Git status checks before quit:", error);
+        }).finally(() => {
+          teardownComplete = true;
+          app.removeListener("before-quit", holdQuit);
+          app.quit();
+        });
+      };
+      app.on("before-quit", holdQuit);
+    },
   });
   registerDiffCommentsIpc({
     ipcMain,

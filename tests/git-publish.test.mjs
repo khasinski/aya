@@ -43,6 +43,7 @@ if (statusHead) {
   appendFileSync(join(state, 'publish-status-env'), (process.env.GIT_TERMINAL_PROMPT ?? '<unset>') + '\\n');
   if (existsSync(join(state, 'hold-publish-status'))) {
     writeFileSync(join(state, 'publish-status-pid'), String(process.pid));
+    process.on('SIGTERM', () => {});
     setInterval(() => {}, 1000);
   }
 }
