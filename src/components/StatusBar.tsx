@@ -120,6 +120,10 @@ function StatusBarImpl({
   const [committing, setCommitting] = useState(false);
   const [commitNotice, setCommitNotice] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<GitPublishStatus | null>(null);
+  const [createdPullRequest, setCreatedPullRequest] = useState<{ directory: string; branch: string | null; url: string } | null>(null);
+  const pullRequestUrl = createdPullRequest?.directory === gitDirectory && createdPullRequest.branch === publishStatus?.branch
+    ? createdPullRequest.url
+    : null;
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
@@ -188,6 +192,9 @@ function StatusBarImpl({
     setSelectedDirtyPaths([]);
     setCommitMessage("");
     setCommitError(null);
+    setCommitNotice(null);
+    setPublishError(null);
+    setCreatedPullRequest(null);
     setShowDiff(false);
     setDiffText("");
     setDiffQuery("");
@@ -297,7 +304,7 @@ function StatusBarImpl({
     try {
       const result = await window.aya.pushGitBranch(gitDirectory);
       if (!result.ok) { setPublishError(result.error); return; }
-      setCommitNotice("Branch pushed.");
+      setCommitNotice("Pushed.");
       await onGitStatusRefresh(gitDirectory);
       setPublishStatus(await window.aya.getGitPublishStatus(gitDirectory));
     } catch (error) {
@@ -309,9 +316,14 @@ function StatusBarImpl({
     if (!gitDirectory || publishing || publishStatus?.pullRequestDisabledReason) return;
     setPublishing(true); setPublishError(null); setCommitNotice(null);
     try {
-      const result = await window.aya.createGitPullRequest(gitDirectory);
-      if (!result.ok) { setPublishError(result.error); return; }
-      await window.aya.openUrl(result.url);
+      let url = pullRequestUrl;
+      if (!url) {
+        const result = await window.aya.createGitPullRequest(gitDirectory);
+        if (!result.ok) { setPublishError(result.error); return; }
+        url = result.url;
+        setCreatedPullRequest({ directory: gitDirectory, branch: publishStatus?.branch ?? null, url });
+      }
+      await window.aya.openUrl(url);
       setCommitNotice("Pull request opened.");
     } catch (error) {
       setPublishError(error instanceof Error ? error.message : "Aya could not open the pull request.");
@@ -660,7 +672,7 @@ function StatusBarImpl({
                         {publishing ? "Working..." : "Push branch"}
                       </button>
                       <button type="button" className="aya-statusbar-popover-action" disabled={publishing || !publishStatus || Boolean(publishStatus.pullRequestDisabledReason)} title={publishStatus?.pullRequestDisabledReason || undefined} onClick={() => void openPullRequest()}>
-                        Create pull request
+                        {pullRequestUrl ? "Open pull request" : "Create pull request"}
                       </button>
                     </div>
                     {publishStatus?.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pushDisabledReason}</div>}

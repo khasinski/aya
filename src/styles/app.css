@@ -1041,6 +1041,7 @@ body {
 .aya-statusbar-popover-empty {
   padding: 14px 12px;
   color: var(--fg-tertiary);
+  font: 11px var(--font-sans);
 }
 .aya-prompt-attachment-notice {
   position: absolute; top: 4px; left: 50%; z-index: 4; max-width: min(80%, 640px);
