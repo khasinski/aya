@@ -55,4 +55,30 @@ exports.default = async function afterPack(context) {
   if (!appPath) return;
   pruneElectronLocales(appPath);
   pruneNodePtyPrebuilds(appPath);
+
+  // electron-builder calls this hook before applying fuses and signing. If no
+  // certificate is available, ask its normal later signing phase to use the
+  // ad-hoc identity. This keeps signing after fuses and still runs our normal
+  // per-file entitlements hook.
+  const packager = context.packager;
+  const options = packager.platformSpecificBuildOptions;
+  const identity = options.identity;
+  let identityFound = identity === "-";
+  if (identity !== null && identity !== "-") {
+    const signingInfo = await packager.codeSigningInfo.value;
+    const found = await packager.helper.findSigningIdentity(
+      false,
+      options.type === "development",
+      identity,
+      signingInfo.keychainFile,
+      options,
+    );
+    identityFound = Boolean(found);
+  }
+  const { macSigningMode } = require("./macos-signing-policy.cjs");
+  const mode = macSigningMode({ platform: context.electronPlatformName, identity, identityFound });
+  if (mode === "ad-hoc-fallback") {
+    options.identity = "-";
+    console.info("No macOS signing identity was found; signing the local app ad hoc after fuses.");
+  }
 };
