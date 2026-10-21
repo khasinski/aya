@@ -278,22 +278,29 @@ test('manual success restores the normal three-attempt policy only after120s sta
  }finally{await cleanup(client);}
 });
 
-test('timeout after a partial replay preserves the retry notice after the successor socket closes',{timeout:15000},async()=>{
- const {client,status,logs,events}=await setup();const timer=globalThis.setTimeout;let expire;
+test('timeout after a partial replay preserves the retry notice after the successor socket closes',{timeout:30000},async()=>{
+ const {client,status,logs,events}=await setup();const timer=globalThis.setTimeout;let expire,recoveredToRelease=[];
  const sendEvents=client.sendToSinks.bind(client);
- // Model a loaded renderer/event loop where the recovery notice is delivered
- // after the supervisor times out and closes the successor socket.
- client.sendToSinks=items=>{const recovered=items.filter(event=>event.type==='recovered'),immediate=items.filter(event=>event.type!=='recovered');if(immediate.length)sendEvents(immediate);if(recovered.length)timer(()=>sendEvents(recovered),1500);};
+ // Hold the recovered event until the successor has actually timed out and
+ // closed. This models late renderer delivery without relying on a wall timer.
+ client.sendToSinks=items=>{const recovered=items.filter(event=>event.type==='recovered'),immediate=items.filter(event=>event.type!=='recovered');if(immediate.length)sendEvents(immediate);if(recovered.length){recoveredToRelease.push(...recovered);assert.equal(typeof expire,'function');expire();}};
  try{
-  // Capture the supervisor deadline; only the restored callback fires it.
+  // Capture the supervisor deadline; the recovered-event gate fires it.
   // The cancellable inert handle preserves cleanup without racing slow startup.
   globalThis.setTimeout=(callback,ms,...args)=>{if(ms===5678){expire=callback;return timer(()=>{},14000);}return timer(callback,ms,...args);};
   client.crashSupervisor.dispose();client.crashSupervisor=null;
-  client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields}),restored:()=>{assert.equal(typeof expire,'function');setImmediate(()=>expire());}},{delays:[1],attemptTimeoutMs:5678,stableMs:120000});
+  client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields}),restored:()=>{assert.equal(typeof expire,'function');}},{delays:[100],attemptTimeoutMs:5678,stableMs:120000});
   const send=client.sendRequest.bind(client);
   client.sendRequest=async(socket,req)=>{if(req.type==='spawn'&&req.req.replayAfter)await sleep(700);return send(socket,req);};
-  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));await wait(()=>!client.crashAttempt&&!client.socket);
-  await wait(()=>events.some(e=>e.type==='recovered'),'timeout occurs after the validated inventory was published');
+  process.kill(status.pid,'SIGKILL');
+  // The intercepted recovered event opens the timeout gate, guaranteeing the
+  // inventory was validated before the attempt expires.
+  await wait(()=>logs.some(e=>e.state==='exhausted'));await wait(()=>!client.crashAttempt&&!client.socket);
+  assert.equal(events.some(e=>e.type==='recovered'),false,'the restored view is still queued behind the closed successor');
+  assert.ok(recoveredToRelease.length>0,`validated inventory produced a recovered event: ${JSON.stringify(logs)}`);
+  assert.equal(client.socket,null,'the successor is closed before the delayed recovered event is delivered');
+  sendEvents(recoveredToRelease);
+  assert.ok(events.some(e=>e.type==='recovered'),'the delayed recovered event is delivered after the successor closes');
   const notice=events.filter(e=>e.type==='disconnected').at(-1);assert.match(notice.reason,/recovery budget/);assert.equal(notice.retryable,true);assert.equal(client.recoveryRetryable,true);assert.equal(client.crashBlocked,true);
  }finally{globalThis.setTimeout=timer;await cleanup(client);}
 });
