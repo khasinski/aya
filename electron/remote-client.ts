@@ -14,7 +14,7 @@ import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
 import { REMOTE_PROTOCOL_VERSION, REMOTE_TERMINAL_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 import { shellQuote } from "./pane-command";
 import { socketPathLimit } from "./socket-path";
-import { isSshTarget, requireSshTarget } from "./ssh";
+import { isSshTarget, requireSshTarget, sshArgs } from "./ssh";
 
 export interface RemoteTimeouts {
   bridgeMs: number;
@@ -53,6 +53,7 @@ export class RemoteTerminalClient extends EventEmitter {
   private buffer = "";
   private deferOutputEvents = false;
   private deferredOutputEvents: Array<{ terminalId: string; offset: number; data: string }> = [];
+  private deferredExitEvents: Array<{ terminalId: string; exitCode: number }> = [];
   private outputFlushScheduled = false;
   private snapshotReceived = false;
   private opened = false;
@@ -70,7 +71,7 @@ export class RemoteTerminalClient extends EventEmitter {
 
   static open(sshTarget: string): RemoteTerminalClient {
     const target = requireSshTarget(sshTarget);
-    const bridge = spawn("ssh", ["--", target, "aya remote --stdio"], { stdio: ["pipe", "pipe", "pipe"] });
+    const bridge = spawn("ssh", sshArgs(target, ["aya remote --stdio"]), { stdio: ["pipe", "pipe", "pipe"] });
     return new RemoteTerminalClient(bridge);
   }
 
@@ -136,7 +137,11 @@ export class RemoteTerminalClient extends EventEmitter {
       return;
     }
     if (value.type === "pty:exited") {
-      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && Number.isInteger(value.exitCode)) this.emit("exit", { terminalId: value.terminalId, exitCode: value.exitCode });
+      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && Number.isInteger(value.exitCode)) {
+        const exit = { terminalId: value.terminalId, exitCode: value.exitCode as number };
+        if (this.deferOutputEvents) this.deferredExitEvents.push(exit);
+        else this.emit("exit", exit);
+      }
       return;
     }
     if (value.type === "pty:spawn-failed") {
@@ -220,6 +225,7 @@ export class RemoteTerminalClient extends EventEmitter {
       this.outputFlushScheduled = false;
       this.deferOutputEvents = false;
       for (const event of this.deferredOutputEvents.splice(0)) this.emit("output", event);
+      for (const event of this.deferredExitEvents.splice(0)) this.emit("exit", event);
     });
   }
 

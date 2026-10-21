@@ -21,10 +21,12 @@ export interface RemoteTerminalSessionDeps {
   write: (terminalId: string, data: string) => Promise<boolean>;
   resize: (terminalId: string, cols: number, rows: number) => Promise<void>;
   exit: (terminalId: string) => Promise<void>;
+  isRunning?: (terminalId: string) => Promise<boolean | null>;
   newId?: () => string;
 }
 
-interface OutputChunk { offset: number; bytes: Buffer }
+const REPLAY_BLOCK_BYTES = 64 * 1024;
+interface OutputChunk { offset: number; bytes: Buffer; start: number; end: number }
 interface Session {
   terminalId: string;
   project: string;
@@ -32,7 +34,9 @@ interface Session {
   state: "running" | "exited" | "failed";
   exitCode?: number;
   failureReason?: string;
+  spawnFailed?: boolean;
   totalBytes: number;
+  retainedBytes: number;
   chunks: OutputChunk[];
   clients: Set<net.Socket>;
 }
@@ -66,8 +70,7 @@ export class RemotePtySessions implements PtyEventSink {
       if (bytes.length === 0) return;
       const offset = session.totalBytes;
       session.totalBytes += bytes.length;
-      session.chunks.push({ offset, bytes });
-      this.trim(session);
+      this.appendReplay(session, offset, bytes);
       for (const socket of [...session.clients]) this.writeOutput(socket, event.ptyId, offset, bytes);
       return;
     }
@@ -75,7 +78,7 @@ export class RemotePtySessions implements PtyEventSink {
       // pty-core reports a failed spawn before its banner and synthetic exit.
       // Keep that classification through the whole event sequence so the
       // original failure is returned to the caller that has not attached yet.
-      if (session.state === "failed") return;
+      if (session.spawnFailed || session.state === "exited") return;
       session.state = "exited";
       session.exitCode = event.exitCode;
       const message: RemoteTerminalMessage = {
@@ -87,6 +90,7 @@ export class RemotePtySessions implements PtyEventSink {
     }
     if (event.type === "spawn-failed" || event.type === "no-session") {
       session.state = "failed";
+      session.spawnFailed = true;
       session.failureReason = event.type === "spawn-failed" ? event.detail : "The host no longer has this terminal.";
       const message: RemoteTerminalMessage = {
         type: "pty:spawn-failed", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION,
@@ -117,7 +121,7 @@ export class RemotePtySessions implements PtyEventSink {
           if (!preset || !preset.command.trim()) throw new Error("The selected terminal preset is unavailable.");
           this.makeRoom();
           const terminalId = (this.deps.newId ?? randomUUID)();
-          const session: Session = { terminalId, project: project.slug, preset: preset.id, state: "running", totalBytes: 0, chunks: [], clients: new Set() };
+          const session: Session = { terminalId, project: project.slug, preset: preset.id, state: "running", totalBytes: 0, retainedBytes: 0, chunks: [], clients: new Set() };
           this.sessions.set(terminalId, session);
           try {
             await this.deps.spawn(terminalId, project, preset, request.cols, request.rows);
@@ -136,7 +140,7 @@ export class RemotePtySessions implements PtyEventSink {
           if (!session) throw new Error("The remote terminal is no longer available.");
           if (session.state === "failed") throw new Error(session.failureReason ?? "The remote terminal could not be started.");
           if (request.offset > session.totalBytes) throw new Error("The requested output position is ahead of this terminal.");
-          const oldest = session.chunks[0]?.offset ?? session.totalBytes;
+          const oldest = session.chunks[0] ? session.chunks[0].offset + session.chunks[0].start : session.totalBytes;
           let fromOffset = Math.max(request.offset, oldest);
           let replay = this.readFrom(session, fromOffset);
           while (replay.length && (replay[0] & 0xc0) === 0x80) {
@@ -168,12 +172,27 @@ export class RemotePtySessions implements PtyEventSink {
         case "pty:exit": {
           const session = this.sessions.get(request.terminalId);
           if (!session) throw new Error("The remote terminal is no longer available.");
-          if (session.state === "running") await this.deps.exit(request.terminalId);
-          if (session.state !== "exited") {
+          if (session.state === "running" || (session.state === "failed" && !session.spawnFailed)) {
+            try {
+              await this.deps.exit(request.terminalId);
+            } catch (error) {
+              const running = await this.deps.isRunning?.(request.terminalId).catch(() => null);
+              if (running !== false) {
+                session.state = "failed";
+                session.failureReason = "Aya could not confirm that this terminal stopped. It may still be running.";
+                throw new Error(session.failureReason, { cause: error });
+              }
+              session.state = "exited";
+              session.exitCode = 0;
+              this.sendExit(session);
+              writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
+              return;
+            }
+          }
+          if (session.state !== "exited" && !session.spawnFailed) {
             session.state = "exited";
             session.exitCode = 0;
-            const ended: RemoteTerminalMessage = { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: request.terminalId, exitCode: 0 };
-            for (const client of [...session.clients]) this.write(client, ended);
+            this.sendExit(session);
           }
           writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
           return;
@@ -191,24 +210,59 @@ export class RemotePtySessions implements PtyEventSink {
     }
   }
 
-  private trim(session: Session): void {
-    let retained = session.chunks.reduce((sum, item) => sum + item.bytes.length, 0);
-    while (retained > REMOTE_TERMINAL_REPLAY_MAX_BYTES && session.chunks.length) {
+  private appendReplay(session: Session, offset: number, input: Buffer): void {
+    let bytes = input;
+    let firstOffset = offset;
+    // Do not retain the backing store of a single oversized event.
+    if (bytes.length > REMOTE_TERMINAL_REPLAY_MAX_BYTES) {
+      const skipped = bytes.length - REMOTE_TERMINAL_REPLAY_MAX_BYTES;
+      bytes = bytes.subarray(skipped);
+      firstOffset += skipped;
+      session.chunks.length = 0;
+      session.retainedBytes = 0;
+    }
+    let consumed = 0;
+    while (consumed < bytes.length) {
+      let last = session.chunks[session.chunks.length - 1];
+      if (!last || last.end === last.bytes.length) {
+        last = { offset: firstOffset + consumed, bytes: Buffer.allocUnsafe(REPLAY_BLOCK_BYTES), start: 0, end: 0 };
+        session.chunks.push(last);
+      }
+      const count = Math.min(bytes.length - consumed, last.bytes.length - last.end);
+      bytes.copy(last.bytes, last.end, consumed, consumed + count);
+      last.end += count;
+      session.retainedBytes += count;
+      consumed += count;
+    }
+    this.trimReplay(session);
+  }
+
+  private trimReplay(session: Session): void {
+    let excess = session.retainedBytes - REMOTE_TERMINAL_REPLAY_MAX_BYTES;
+    while (excess > 0 && session.chunks.length) {
       const first = session.chunks[0];
-      const excess = retained - REMOTE_TERMINAL_REPLAY_MAX_BYTES;
-      if (first.bytes.length <= excess) {
-        retained -= first.bytes.length;
+      const available = first.end - first.start;
+      if (available <= excess) {
+        excess -= available;
+        session.retainedBytes -= available;
         session.chunks.shift();
       } else {
-        // Keep a UTF-8 boundary so replay does not begin with a replacement
-        // character when a multi-byte terminal glyph straddles the cap.
         let cut = excess;
-        while (cut < first.bytes.length && (first.bytes[cut] & 0xc0) === 0x80) cut += 1;
-        const removed = cut;
-        first.bytes = first.bytes.subarray(cut);
-        first.offset += removed;
-        retained -= removed;
+        while (cut < available && (first.bytes[first.start + cut] & 0xc0) === 0x80) cut += 1;
+        first.start += cut;
+        session.retainedBytes -= cut;
+        excess = 0;
       }
+    }
+    // A block boundary can land inside a UTF-8 sequence after whole blocks
+    // are removed. Advance the retained head to the next codepoint boundary.
+    const first = session.chunks[0];
+    if (first) {
+      while (first.start < first.end && (first.bytes[first.start] & 0xc0) === 0x80) {
+        first.start += 1;
+        session.retainedBytes -= 1;
+      }
+      if (first.start === first.end) session.chunks.shift();
     }
   }
 
@@ -222,10 +276,17 @@ export class RemotePtySessions implements PtyEventSink {
 
   private readFrom(session: Session, offset: number): Buffer {
     return Buffer.concat(session.chunks.flatMap((item) => {
-      const end = item.offset + item.bytes.length;
-      if (end <= offset) return [];
-      return [offset > item.offset ? item.bytes.subarray(offset - item.offset) : item.bytes];
+      const startOffset = item.offset + item.start;
+      const endOffset = item.offset + item.end;
+      if (endOffset <= offset) return [];
+      const start = Math.max(item.start, item.start + offset - startOffset);
+      return [item.bytes.subarray(start, item.end)];
     }));
+  }
+
+  private sendExit(session: Session): void {
+    const ended: RemoteTerminalMessage = { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, exitCode: session.exitCode ?? 0 };
+    for (const client of [...session.clients]) this.write(client, ended);
   }
 
   private writeOutput(socket: net.Socket, terminalId: string, offset: number, bytes: Buffer, writer: RemoteTerminalWriter = (target, message) => this.write(target, message)): void {

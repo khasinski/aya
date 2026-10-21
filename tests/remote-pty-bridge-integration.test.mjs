@@ -20,6 +20,8 @@ const { startRemoteServerOn } = await import("../dist-electron/remote-server.js"
 const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
 const { RemoteTerminalClient } = await import("../dist-electron/remote-client.js");
 const { MAX_PTY_PANES } = await import("../dist-electron/pty-pane-limits.js");
+const { createProject, listProjects, updateProjectFromLatest } = await import("../dist-electron/config.js");
+const { createRemoteTerminalOnSpawned } = await import("../dist-electron/remote-terminal-project.js");
 const { waitFor } = await import("./helpers/pty-host.mjs");
 
 const hostScript = resolve("dist-electron/pty-host.js");
@@ -51,6 +53,7 @@ async function waitForAsync(predicate, timeoutMs, stepMs = 25) {
 }
 
 test("remote bridges can die abruptly and reattach with the exact output gap", { timeout: 120_000 }, async (t) => {
+  await createProject("Project", projectDir);
   const host = new PtyHostClient(hostScript);
   const localEvents = [];
   const localSink = { isDestroyed: () => false, send: (_channel, event) => localEvents.push(event) };
@@ -70,13 +73,23 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
       ptyId: id, projectSlug: selectedProject.slug, presetId: preset.id,
       command: preset.command, cwd: selectedProject.directory, cols, rows,
     }),
-    onSpawned: async (id) => { sessionsPersisted.add(id); },
+    onSpawned: async (id, selectedProject, preset) => {
+      await onRemoteTerminalSpawned(id, selectedProject, preset);
+      sessionsPersisted.add(id);
+    },
     write: (id, data) => host.write(id, data),
     resize: (id, cols, rows) => host.resize(id, cols, rows),
     exit: (id) => host.kill(id),
     newId: () => `remote-session-${++nextTerminalId}`,
   });
   const sessionsPersisted = new Set();
+  const openedProjects = [];
+  const onRemoteTerminalSpawned = createRemoteTerminalOnSpawned({
+    updateProjectFromLatest,
+    openProject: async (directory) => { openedProjects.push(directory); },
+    broadcastProjects: () => {},
+    stopTerminal: (id) => host.kill(id),
+  });
   host.attachWebContents(sessions);
   const stopServer = startRemoteServerOn(process.env.AYA_REMOTE_SOCKET, {
     appVersion: "test",
@@ -193,12 +206,33 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
   await exerciseAbruptDisconnect("bridge");
   await exerciseAbruptDisconnect("ssh-parent");
 
+  const graceful = makeClient();
+  const gracefulSpawn = await graceful.client.spawnTerminal(project.slug, "test", 80, 24);
+  await graceful.client.attach(gracefulSpawn.terminalId, 0);
+  const gracefulPid = await host.getPid(gracefulSpawn.terminalId);
+  assert.ok(gracefulPid > 1);
+  await graceful.client.detach();
+  assert.equal(await host.getPid(gracefulSpawn.terminalId), gracefulPid);
+  const observer = makeClient();
+  assert.equal((await observer.client.list()).find((item) => item.terminalId === gracefulSpawn.terminalId)?.state, "running");
+  await observer.client.attach(gracefulSpawn.terminalId, 0);
+  const gracefulExit = new Promise((resolve) => observer.client.once("exit", resolve));
+  await observer.client.exit(gracefulSpawn.terminalId);
+  assert.equal((await gracefulExit).terminalId, gracefulSpawn.terminalId);
+  await waitForAsync(async () => (await host.getPid(gracefulSpawn.terminalId)) === null, 5_000);
+  assert.equal(await host.getPid(gracefulSpawn.terminalId), null);
+
+  const savedProject = (await listProjects()).find((item) => item.slug === project.slug);
+  assert.deepEqual(savedProject.tabs.map((tab) => tab.id), ["remote-session-1", "remote-session-2", gracefulSpawn.terminalId]);
+  assert.deepEqual(openedProjects, [projectDir, projectDir, projectDir]);
+  assert.deepEqual([...sessionsPersisted], ["remote-session-1", "remote-session-2", gracefulSpawn.terminalId]);
+
   const failedSpawnClient = makeClient();
   const projectDirectory = project.directory;
   project.directory = join(root, "directory-that-does-not-exist");
   await assert.rejects(failedSpawnClient.client.spawnTerminal(project.slug, "test", 80, 24), /directory does not exist/i);
   project.directory = projectDirectory;
-  assert.equal(sessionsPersisted.size, 2);
+  assert.equal(sessionsPersisted.size, 3);
   assert.equal((await failedSpawnClient.client.list()).find((item) => item.state === "failed")?.failureReason?.length > 0, true);
 
   // Fill the real local PTY host to its shared limit, then verify the remote
@@ -213,7 +247,7 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     assert.equal((await host.hostStatus()).ptyCount, MAX_PTY_PANES);
     const atCapacity = makeClient();
     await assert.rejects(atCapacity.client.spawnTerminal(project.slug, "test", 80, 24), /at most 128 terminals at once/);
-    assert.equal(sessionsPersisted.size, 2);
+    assert.equal(sessionsPersisted.size, 3);
     assert.equal((await host.hostStatus()).ptyCount, MAX_PTY_PANES);
     assert.equal((await atCapacity.client.list()).some((item) => item.state === "running"), false);
   } finally {

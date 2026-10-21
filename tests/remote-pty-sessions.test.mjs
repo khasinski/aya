@@ -124,6 +124,92 @@ test("failed remote spawn records are evicted before a valid spawn is refused", 
   assert.equal(listed[0].terminals.some((item) => item.terminalId === "terminal-valid"), true);
 });
 
+test("replay storage bounds chunk metadata and copies only the retained suffix", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => {},
+    write: async () => true,
+    resize: async () => {},
+    exit: async () => {},
+    newId: () => "terminal-tiny-output",
+  });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "spawn", project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+  const session = sessions.sessions.get("terminal-tiny-output");
+  const maxBytes = REMOTE_TERMINAL_REPLAY_MAX_BYTES;
+  for (let index = 0; index < Math.ceil(maxBytes / 16) + 10; index += 1) {
+    sessions.onPtyEvent({ type: "data", ptyId: session.terminalId, chunk: "abcdefghijklmnop" });
+  }
+  assert.equal(session.retainedBytes, maxBytes);
+  assert.equal(session.chunks.length <= 17, true);
+  assert.equal(session.chunks.every((chunk) => chunk.bytes.byteLength === 64 * 1024), true);
+  assert.equal(session.chunks.reduce((sum, chunk) => sum + chunk.end - chunk.start, 0), maxBytes);
+
+  const oversized = "z".repeat(maxBytes * 4);
+  sessions.onPtyEvent({ type: "data", ptyId: session.terminalId, chunk: oversized });
+  assert.equal(session.retainedBytes, maxBytes);
+  assert.equal(session.chunks.length <= 17, true);
+  assert.equal(session.chunks.every((chunk) => chunk.bytes.byteLength === 64 * 1024), true);
+  assert.equal(session.totalBytes, (Math.ceil(maxBytes / 16) + 10) * 16 + oversized.length);
+});
+
+test("an exit timeout reconciles an already-removed host PTY before reporting state", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  let running = true;
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => {},
+    write: async () => true,
+    resize: async () => {},
+    exit: async () => { running = false; throw new Error("host exit wait timed out"); },
+    isRunning: async () => running,
+    newId: () => "terminal-exit-timeout",
+  });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "spawn", project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+  const result = [];
+  await sessions.handle(socket, { type: "pty:exit", protocol: 2, id: "exit", terminalId: "terminal-exit-timeout" }, (_socket, message) => result.push(message));
+  assert.equal(result.some((message) => message.type === "pty:exit-result"), true);
+  const listed = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
+  assert.equal(listed[0].terminals[0].state, "exited");
+  const writeReply = [];
+  await sessions.handle(socket, { type: "pty:write", protocol: 2, id: "write", terminalId: "terminal-exit-timeout", data: "x" }, (_socket, message) => writeReply.push(message));
+  assert.match(writeReply[0].message, /no longer running/i);
+});
+
+test("an exit timeout with a signalable PTY is reported as uncertain and no longer writable", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => {},
+    write: async () => true,
+    resize: async () => {},
+    exit: async () => { throw new Error("host exit wait timed out"); },
+    isRunning: async () => true,
+    newId: () => "terminal-exit-uncertain",
+  });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "spawn", project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+  const result = [];
+  await sessions.handle(socket, { type: "pty:exit", protocol: 2, id: "exit", terminalId: "terminal-exit-uncertain" }, (_socket, message) => result.push(message));
+  assert.match(result.find((message) => message.type === "error")?.message ?? "", /could not confirm.*stopped.*may still be running/i);
+  const listed = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
+  assert.equal(listed[0].terminals[0].state, "failed");
+  assert.match(listed[0].terminals[0].failureReason, /may still be running/i);
+  const writeReply = [];
+  await sessions.handle(socket, { type: "pty:write", protocol: 2, id: "write", terminalId: "terminal-exit-uncertain", data: "x" }, (_socket, message) => writeReply.push(message));
+  assert.match(writeReply[0].message, /no longer running/i);
+});
+
 test("a non-reading v2 socket stays under the queue cap for replay and list replies", async () => {
   const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
   const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };

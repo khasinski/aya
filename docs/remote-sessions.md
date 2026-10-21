@@ -314,7 +314,9 @@ a normal project tab and starts it through its ordinary PTY host. Detaching
 only removes the stream subscription. A terminal ends only when its process
 exits or a client explicitly requests `pty:exit`.
 
-Each terminal retains at most 1 MiB of replay output. The host reports byte
+Each terminal retains at most 1 MiB of replay output in at most seventeen
+64 KiB blocks, so tiny writes cannot create an unbounded chunk list. An
+oversized event is copied only as its retained suffix. The host reports byte
 offsets and whether the requested offset predates retained output; output
 older than the retained window is then unavailable. Frames are newline
 delimited, terminal data is JSON-escaped without stripping ANSI bytes, and

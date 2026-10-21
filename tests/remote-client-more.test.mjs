@@ -14,6 +14,7 @@ import { PassThrough } from "node:stream";
 import { writeExecutable } from "./helpers/executable.mjs";
 
 const { RemoteTerminalClient } = await import("../dist-electron/remote-client.js");
+const { SSH_OPTIONS } = await import("../dist-electron/ssh.js");
 
 const root = mkdtempSync(join(tmpdir(), "aya-rc-more-"));
 test.after(() => rmSync(root, { recursive: true, force: true }));
@@ -35,16 +36,20 @@ test("attach replay is delivered after the caller's await continuation", async (
     } else if (request.type === "pty:attach") {
       const attached = { type: "pty:attached", protocol: 2, id: request.id, terminalId: request.terminalId, fromOffset: 12, endOffset: 17, truncated: false };
       const replay = { type: "pty:output", protocol: 2, terminalId: request.terminalId, offset: 12, data: "hello" };
-      bridge.stdout.write(`${JSON.stringify(attached)}\n${JSON.stringify(replay)}\n`);
+      const exited = { type: "pty:exited", protocol: 2, terminalId: request.terminalId, exitCode: 23 };
+      bridge.stdout.write(`${JSON.stringify(attached)}\n${JSON.stringify(replay)}\n${JSON.stringify(exited)}\n`);
     }
   });
   bridge.stdout.write(`${JSON.stringify({ type: "hello", protocol: 1 })}\n${JSON.stringify({ type: "snapshot", protocol: 1 })}\n`);
   const attached = await client.attach("terminal", 12);
   assert.equal(attached.endOffset, 17);
   const replay = [];
-  client.on("output", (event) => replay.push(event));
+  const order = [];
+  client.on("output", (event) => { replay.push(event); order.push("output"); });
+  client.on("exit", (event) => order.push(`exit:${event.exitCode}`));
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(replay, [{ terminalId: "terminal", offset: 12, data: "hello" }]);
+  assert.deepEqual(order, ["output", "exit:23"]);
   bridge.exitCode = 0;
   await client.detach();
 });
@@ -58,6 +63,7 @@ writeExecutable(
   `#!/bin/sh
 root="${root}"
 # ssh -- <target> <command>: skip the "--" that ends ssh's options.
+while [ "$1" = "-o" ]; do shift 2; done
 [ "$1" = "--" ] && shift
 target="$1"
 echo "$target" >> "$root/calls"
@@ -72,6 +78,19 @@ exit 99
 `,
 );
 process.env.PATH = `${root}:${process.env.PATH}`;
+
+test("RemoteTerminalClient spawns SSH with the hardened non-interactive options", () => {
+  const client = RemoteTerminalClient.open("safe-alias");
+  const pendingAttach = client.attach("terminal", 0).catch(() => {});
+  const argv = client.bridge.spawnargs;
+  assert.equal(argv[0], "ssh");
+  assert.deepEqual(argv.slice(1), [
+    ...SSH_OPTIONS.flatMap((option) => ["-o", option]),
+    "--", "safe-alias", "aya remote --stdio",
+  ]);
+  client.bridge.kill("SIGKILL");
+  return pendingAttach;
+});
 
 const {
   checkRemoteHealth,
