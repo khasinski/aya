@@ -154,7 +154,7 @@ test("Linux received masters have CLOEXEC before the worker reaches its fcntl fa
   const headers = [process.env.AYA_NODE_HEADERS, path.resolve(path.dirname(process.execPath), "../include/node"), "/usr/include/node", "/usr/local/include/node"].find(p => p && fs.existsSync(path.join(p, "node_api.h")));
   assert.ok(headers, "Prepared local Node headers are required; no download");
   const bridge = path.join(dir, "checked.node");
-  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", "-I", headers,
+  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", `-DOWNER_MAX_PANES=${MAX_PTY_PANES}`, "-I", headers,
     "tests/helpers/pty-owner-atomic-receive.c", "-o", bridge]);
   const owner = await startOwner(); t.after(() => owner.close());
   const c = await PtyOwnerClient.connect(owner.socket, owner.token, bridge); t.after(() => c.close());
