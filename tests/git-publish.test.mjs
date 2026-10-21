@@ -17,7 +17,9 @@ printf '%s|%s|%s|%s\n' "$GH_PROMPT_DISABLED" "$GH_NO_UPDATE_NOTIFIER" "$*" "$(te
 case "$1 $2" in
   "--version ") echo 'gh version test'; exit 0 ;;
   "auth status") [ -e "$FAKE_GH_STATE/unauth" ] && { echo 'account=private token=secret' >&2; exit 1; }; exit 0 ;;
-  "repo view") echo 'https://github.com/acme/repo'; exit 0 ;;
+  "repo view")
+    if [ -f "$FAKE_GH_STATE/switch-on-repo-view" ]; then git checkout -q alternate; : > "$FAKE_GH_STATE/switch-used"; fi
+    echo 'https://github.com/acme/repo'; exit 0 ;;
   "pr view") [ -e "$FAKE_GH_STATE/pr" ] && { cat "$FAKE_GH_STATE/pr"; exit 0; }; exit 1 ;;
   "pr create") cat "$FAKE_GH_STATE/create-url"; exit 0 ;;
 esac
@@ -57,11 +59,12 @@ function ghCalls() {
   return out;
 }
 
-test("push remote follows branch configuration, then origin, then the only remote; ambiguity refuses", async () => {
+test("push remote follows explicit configuration or the only remote; ambiguous remotes refuse", async () => {
   const dir = repo("remotes");
   git(dir, "remote", "add", "origin", "https://example.invalid/origin.git");
   git(dir, "remote", "add", "backup", "https://example.invalid/backup.git");
-  assert.equal((await getPublishStatus(dir)).remote, "origin");
+  assert.equal((await getPublishStatus(dir)).remote, null);
+  assert.match((await getPublishStatus(dir)).pushDisabledReason, /Choose a push remote/);
   git(dir, "config", "branch.main.pushRemote", "backup");
   assert.equal((await getPublishStatus(dir)).remote, "backup");
   git(dir, "config", "--unset", "branch.main.pushRemote");
@@ -78,6 +81,22 @@ test("push remote follows branch configuration, then origin, then the only remot
   git(dir, "remote", "remove", "extra");
   git(dir, "remote", "add", "only", "https://example.invalid/only.git");
   assert.equal((await getPublishStatus(dir)).remote, "only");
+});
+
+test("an unfetched remote default branch keeps pull requests disabled", async () => {
+  const dir = repo("unknown-default");
+  git(dir, "remote", "add", "origin", "https://example.invalid/origin.git");
+  const status = await getPublishStatus(dir);
+  assert.equal(status.pushDisabledReason, null);
+  assert.match(status.pullRequestDisabledReason, /default branch is unknown/);
+});
+
+test("missing remote disables push and pull request with one shared reason", async () => {
+  const dir = repo("no-remote");
+  const status = await getPublishStatus(dir);
+  assert.equal(status.remote, null);
+  assert.equal(status.pushDisabledReason, "Add a Git remote before pushing or opening a pull request.");
+  assert.equal(status.pullRequestDisabledReason, status.pushDisabledReason);
 });
 
 test("detached HEAD disables push and pull request; default branch allows push but not pull request", async () => {
@@ -114,9 +133,34 @@ test("push uses Git's fast-forward rejection and never changes the branch automa
   assert.equal(existsSync(join(dir, "other.txt")), false);
 });
 
+test("push refuses if the checkout changes while it is resolving upstream", async () => {
+  const dir = repo("push-branch-race");
+  git(dir, "remote", "add", "origin", "https://example.invalid/origin.git");
+  git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  git(dir, "checkout", "-q", "-b", "feature/target");
+  git(dir, "checkout", "-q", "-b", "alternate");
+  git(dir, "checkout", "-q", "feature/target");
+  const calls = [];
+  let switched = false;
+  const runner = async (command, args, cwd, timeout, env) => {
+    if (args[0] === "rev-parse" && args.at(-1) === "@{upstream}" && !switched) {
+      switched = true;
+      git(dir, "checkout", "-q", "alternate");
+    }
+    if (args[0] === "push") calls.push(args);
+    return execFileSync(command, args, { cwd, encoding: "utf8", env: env ?? process.env, stdio: ["ignore", "pipe", "pipe"] });
+  };
+  const result = await pushCurrentBranch(dir, runner);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /branch changed/);
+  assert.deepEqual(calls, []);
+});
+
 test("gh uses disabled prompts and pipes, hides auth details, and accepts only this repository's HTTPS PR URL", async () => {
   const dir = repo("gh-repo");
   git(dir, "checkout", "-q", "-b", "feature/gh");
+  git(dir, "remote", "add", "origin", "https://github.com/acme/repo.git");
+  git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
   ghCalls();
   setState("create-url", "https://github.com/acme/repo/pull/7\n");
   const created = await createOrFindPullRequest(dir);
@@ -124,17 +168,38 @@ test("gh uses disabled prompts and pipes, hides auth details, and accepts only t
   assert.deepEqual(ghCalls().map(([prompt, updates, args, tty]) => [prompt, updates, args, tty]), [
     ["1", "1", "--version", "pipe"], ["1", "1", "auth status", "pipe"],
     ["1", "1", "repo view --json url --jq .url", "pipe"],
-    ["1", "1", "pr view --json url --jq .url", "pipe"], ["1", "1", "pr create --fill", "pipe"],
+    ["1", "1", "pr view feature/gh --json url --jq .url", "pipe"], ["1", "1", "pr create --fill --head feature/gh", "pipe"],
   ]);
   setState("unauth", "");
   try {
     const refused = await createOrFindPullRequest(dir);
     assert.equal(refused.ok, false);
-    assert.match(refused.error, /gh auth login/);
+    assert.match(refused.error, /Run gh auth login/);
+    assert.doesNotMatch(refused.error, /`/);
     assert.doesNotMatch(refused.error, /private|secret/);
   } finally { setState("unauth", null); }
   setState("create-url", "https://evil.example/acme/repo/pull/7\n");
   assert.match((await createOrFindPullRequest(dir)).error, /did not return a pull request link/);
+});
+
+test("pull request action refuses if the checkout changes after repository lookup", async () => {
+  const dir = repo("pr-branch-race");
+  git(dir, "remote", "add", "origin", "https://github.com/acme/repo.git");
+  git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  git(dir, "checkout", "-q", "-b", "feature/target");
+  git(dir, "checkout", "-q", "-b", "alternate");
+  git(dir, "checkout", "-q", "feature/target");
+  ghCalls();
+  setState("switch-on-repo-view", "");
+  try {
+    const result = await createOrFindPullRequest(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /branch changed/);
+    assert.deepEqual(ghCalls().map(([, , args]) => args), ["--version", "auth status", "repo view --json url --jq .url"]);
+  } finally {
+    setState("switch-on-repo-view", null);
+    setState("switch-used", null);
+  }
 });
 
 test("every gh call is bounded and times out", async () => {

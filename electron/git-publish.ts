@@ -62,7 +62,6 @@ async function repoState(directory: string, runCommand: Runner): Promise<Publish
     ? `The configured push remote '${configured}' does not exist.` : undefined;
   const remote = remoteError ? null : configured
     ? configured
-    : remotes.includes("origin") ? "origin"
     : remotes.length === 1 ? remotes[0]
     : null;
 
@@ -75,17 +74,21 @@ async function repoState(directory: string, runCommand: Runner): Promise<Publish
     } catch { /* no advertised HEAD for this remote */ }
   }
   const isDefault = Boolean(branch && defaultBranch && branch === defaultBranch);
+  const remoteUnavailable = remoteError || (remote ? null
+    : remotes.length > 1 ? "Choose a push remote in Git before publishing."
+    : "Add a Git remote before pushing or opening a pull request.");
+  const unknownDefaultBranch = !defaultBranch && remote
+    ? "The remote default branch is unknown. Fetch the remote's default branch before opening a pull request."
+    : null;
   return {
     branch,
     detached,
     defaultBranch: isDefault,
     remote,
-    pushDisabledReason: detached ? "Create a branch before pushing." : remoteError || (remote ? null
-      : remotes.length > 1 ? "Choose a push remote in Git before pushing."
-      : "Add a Git remote before pushing."),
+    pushDisabledReason: detached ? "Create a branch before pushing." : remoteUnavailable,
     pullRequestDisabledReason: detached ? "Create a branch before opening a pull request."
-      : isDefault ? "Pull requests are for branches; switch to a feature branch first."
-      : null,
+      : remoteUnavailable || (isDefault ? "Pull requests are for branches; switch to a feature branch first."
+      : unknownDefaultBranch),
     remoteError,
   };
 }
@@ -100,9 +103,12 @@ export async function pushCurrentBranch(directory: string, runCommand: Runner = 
     if (state.remoteError) return { ok: false, error: state.remoteError };
     if (state.pushDisabledReason || !state.branch || !state.remote) return { ok: false, error: state.pushDisabledReason || "Choose a branch before pushing." };
     const upstream = await git(runCommand, directory, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).catch(() => "");
+    if (await git(runCommand, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {
+      return { ok: false, error: "The current branch changed before the push. Refresh and try again." };
+    }
     const args = upstream
-      ? ["push", state.remote, `HEAD:refs/heads/${state.branch}`]
-      : ["push", "--set-upstream", state.remote, "HEAD"];
+      ? ["push", state.remote, `refs/heads/${state.branch}:refs/heads/${state.branch}`]
+      : ["push", "--set-upstream", state.remote, `refs/heads/${state.branch}:refs/heads/${state.branch}`];
     await runCommand("git", args, directory, pushTimeout);
     return { ok: true };
   } catch (error) {
@@ -131,14 +137,20 @@ export async function createOrFindPullRequest(directory: string): Promise<PullRe
     try {
       await runGh(directory, ["auth", "status"]);
     } catch {
-      return { ok: false, error: "GitHub CLI is not signed in. Run `gh auth login`, then try again." };
+      return { ok: false, error: "GitHub CLI is not signed in. Run gh auth login, then try again." };
     }
     const repoUrl = (await runGh(directory, ["repo", "view", "--json", "url", "--jq", ".url"])).trim();
+    if (await git(run, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {
+      return { ok: false, error: "The current branch changed before the pull request could be opened. Refresh and try again." };
+    }
     let output: string;
     try {
-      output = await runGh(directory, ["pr", "view", "--json", "url", "--jq", ".url"]);
+      output = await runGh(directory, ["pr", "view", state.branch, "--json", "url", "--jq", ".url"]);
     } catch {
-      output = await runGh(directory, ["pr", "create", "--fill"]);
+      if (await git(run, directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "") !== state.branch) {
+        return { ok: false, error: "The current branch changed before the pull request could be opened. Refresh and try again." };
+      }
+      output = await runGh(directory, ["pr", "create", "--fill", "--head", state.branch]);
     }
     const url = safePullRequestUrl(output, repoUrl);
     return url ? { ok: true, url } : { ok: false, error: "GitHub did not return a pull request link for this repository." };
@@ -146,7 +158,7 @@ export async function createOrFindPullRequest(directory: string): Promise<PullRe
     const message = errorText(error);
     const details = error as { code?: string; killed?: boolean; signal?: string };
     if (details?.code === "ETIMEDOUT" || details?.killed || details?.signal === "SIGTERM" || /timed out|ETIMEDOUT|killed/i.test(message)) return { ok: false, error: "GitHub did not respond in time. Try again." };
-    if (/ENOENT|not found/i.test(message)) return { ok: false, error: "GitHub CLI is not installed. Install `gh`, then try again." };
+    if (/ENOENT|not found/i.test(message)) return { ok: false, error: "GitHub CLI is not installed. Install gh, then try again." };
     return { ok: false, error: message };
   }
 }

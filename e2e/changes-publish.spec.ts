@@ -36,6 +36,11 @@ async function openChanges(window: import("@playwright/test").Page) {
   return popover;
 }
 
+function addFakeRemote(repo: string) {
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/aya-e2e/project"], { cwd: repo });
+  execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: repo });
+}
+
 test("changes panel commits, sets upstream, pushes and opens the pull request without creating it twice", async ({ window, app, seeded }) => {
   const repo = seeded.projectDir;
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
@@ -91,22 +96,36 @@ test("changes panel commits, sets upstream, pushes and opens the pull request wi
   ]);
 });
 
-test("changes panel explains when gh is missing", async ({ window }) => {
+test("without a remote, changes panel disables publishing and shows one reason", async ({ window }) => {
+  const popover = await openChanges(window);
+  await expect(popover.getByRole("button", { name: "Push branch" })).toBeDisabled();
+  await expect(popover.getByRole("button", { name: "Create pull request" })).toBeDisabled();
+  await expect(popover.getByText("Add a Git remote before pushing or opening a pull request.")).toHaveCount(1);
+  await popover.screenshot({ path: "/tmp/changes-publish-no-remote.png" });
+});
+
+test("changes panel explains when gh is missing", async ({ window, seeded }) => {
+  addFakeRemote(seeded.projectDir);
   writeFileSync(join(fakeState, "missing"), "");
   try {
     const popover = await openChanges(window);
+    await expect(popover.getByRole("button", { name: "Push branch" })).toBeEnabled();
+    await expect(popover.getByRole("button", { name: "Create pull request" })).toBeEnabled();
     await popover.getByRole("button", { name: "Create pull request" }).click();
-    await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not installed. Install `gh`, then try again.");
+    await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not installed. Install gh, then try again.");
     await popover.screenshot({ path: "/tmp/changes-publish-gh-missing.png" });
   } finally { rmSync(join(fakeState, "missing"), { force: true }); }
 });
 
-test("changes panel gives safe sign-in guidance without showing gh output", async ({ window }) => {
+test("changes panel gives safe sign-in guidance without showing gh output", async ({ window, seeded }) => {
+  addFakeRemote(seeded.projectDir);
   writeFileSync(join(fakeState, "unauthenticated"), "");
   try {
     const popover = await openChanges(window);
+    await expect(popover.getByRole("button", { name: "Push branch" })).toBeEnabled();
+    await expect(popover.getByRole("button", { name: "Create pull request" })).toBeEnabled();
     await popover.getByRole("button", { name: "Create pull request" }).click();
-    await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not signed in. Run `gh auth login`, then try again.");
+    await expect(popover.getByRole("alert")).toHaveText("GitHub CLI is not signed in. Run gh auth login, then try again.");
     await expect(popover.getByText("private account and token details")).toHaveCount(0);
     await popover.screenshot({ path: "/tmp/changes-publish-gh-unauthenticated.png" });
   } finally { rmSync(join(fakeState, "unauthenticated"), { force: true }); }

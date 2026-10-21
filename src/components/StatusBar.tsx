@@ -676,7 +676,7 @@ function StatusBarImpl({
                       </button>
                     </div>
                     {publishStatus?.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pushDisabledReason}</div>}
-                    {publishStatus?.pullRequestDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
+                    {publishStatus?.pullRequestDisabledReason && publishStatus.pullRequestDisabledReason !== publishStatus.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
                     {publishError && <div className="aya-dirty-commit-error" role="alert">{publishError}</div>}
                   </div>
                 </>
