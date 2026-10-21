@@ -205,7 +205,7 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
 });
 
 
-test('a build installed by hand hands panes over after the planned-update window has elapsed',async({seeded})=>{
+test('a build installed by hand hands panes over after the planned-update window has elapsed and keeps the stale indicator',async({seeded})=>{
  test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);
  await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'MANUAL_INSTALL_ROUTE\\n'; sleep 1000\r"));
  await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('MANUAL_INSTALL_ROUTE\r\n');
@@ -216,11 +216,12 @@ test('a build installed by hand hands panes over after the planned-update window
  apps.splice(apps.indexOf(first.app),1);await first.app.evaluate(({app})=>app.quit());await exited;
  expect(readFileSync(join(seeded.ayaHome,'diagnostics.log'),'utf8')).toContain('"ev":"installed-build-quit","handover":"prepared"');
  const ticketName=readdirSync(seeded.ayaHome).find(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));expect(ticketName).toBeTruthy();
- expect(JSON.parse(readFileSync(join(seeded.ayaHome,ticketName!),'utf8'))).toMatchObject({format:2,purpose:'ordinary-quit',deadline:null});
+ expect(JSON.parse(readFileSync(join(seeded.ayaHome,ticketName!),'utf8'))).toMatchObject({format:2,purpose:'ordinary-quit',deadline:null,replacedBuild:true});
  const second=await launch(seeded,1,false,false,false,121000);
  await expect(visiblePane(second.window,'shell 1').locator('.xterm-rows')).toContainText('MANUAL_INSTALL_ROUTE');
  expect(identities(seeded.ayaHome)).toEqual(before);expect(inventory(seeded.ayaHome).pid).toBe(owner);
  expect(hostPidsForHome(seeded.ayaHome)).toHaveLength(1);
+ expect(await second.app.evaluate(({Menu})=>!Menu.getApplicationMenu()?.getMenuItemById('restart-aya')?.icon?.isEmpty())).toBe(true);
  expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
 });
 test('a failed manual-install announcement does not ask the user to stop panes',async({seeded})=>{

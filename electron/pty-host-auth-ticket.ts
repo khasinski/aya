@@ -7,7 +7,7 @@ import {performance} from "node:perf_hooks";
 import * as path from "node:path";
 import {parseCheckpointJson} from "./vt-checkpoint-schema";
 import {validAuthTransferDeadline,AUTH_QUIT_PUBLICATION_MS,type AuthTransferReservation} from "./pty-host-auth-transfer";
-export interface AuthTransferTicket extends AuthTransferReservation {format:2;nonce:string;hostPid:number;hostStartIdentity:string}
+export interface AuthTransferTicket extends AuthTransferReservation {format:2;nonce:string;hostPid:number;hostStartIdentity:string;replacedBuild?:boolean}
 export const AUTH_TRANSFER_TICKET_BYTES=1024;
 /** Unique per-attempt paths keep late cleanup away from every successor's
  * ticket. The startup locator will scan this fixed filename grammar only. */
@@ -23,7 +23,8 @@ function safe(stat:Stats):boolean{return stat.isFile()&&stat.uid===process.getui
 function valid(value:unknown,now:number):value is AuthTransferTicket{
  if(!value||typeof value!=="object"||Array.isArray(value))return false;
  const t=value as AuthTransferTicket;
- return Object.keys(t).sort().join(",")==="attempt,deadline,format,hostPid,hostStartIdentity,nonce,purpose"&&t.format===2&&
+ const keys=Object.keys(t).sort().join(",");
+ return (keys==="attempt,deadline,format,hostPid,hostStartIdentity,nonce,purpose"||keys==="attempt,deadline,format,hostPid,hostStartIdentity,nonce,purpose,replacedBuild")&&t.format===2&&(t.replacedBuild===undefined||typeof t.replacedBuild==="boolean")&&(!t.replacedBuild||t.purpose==="ordinary-quit")&&
   (t.purpose==="ordinary-quit"||t.purpose==="planned-update")&&typeof t.attempt==="string"&&/^[a-f0-9]{64}$/.test(t.attempt)&&typeof t.nonce==="string"&&/^[a-f0-9]{64}$/.test(t.nonce)&&
   validAuthTransferDeadline(t.purpose,t.deadline,now)&&Number.isSafeInteger(t.hostPid)&&t.hostPid>1&&typeof t.hostStartIdentity==="string"&&/^\d+:\d+$/.test(t.hostStartIdentity)&&t.hostStartIdentity.length<=63;
 }
