@@ -8,7 +8,7 @@ const root=join(__dirname,'..'),hostScript=join(root,'dist-electron/pty-host.js'
 const rulesScript=join(root,'dist-electron/agent-screen-rules.js'),rulesBuilt=readFileSync(rulesScript),packageFile=join(root,'package.json'),packageBuilt=readFileSync(packageFile);
 const apps:ElectronApplication[]=[];
 test.afterEach(async()=>{writeFileSync(hostScript,built);writeFileSync(rulesScript,rulesBuilt);writeFileSync(packageFile,packageBuilt);for(const app of apps.splice(0))await closeAndWait(app);});
-async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false,dateOffsetMs=0,failOrdinaryAnnouncement=false){
+async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false,dateOffsetMs=0,failOrdinaryAnnouncement=false,failStatusAfterReplacedTransfer=false){
  const wrapper=join(seeded.root,'handover-main.js');
  // Wrapper code is constant; disposable paths/options are data, never JS source.
  writeFileSync(wrapper,`const electron=require('electron'),path=require('node:path'),root=process.env.AYA_TEST_APP_ROOT;
@@ -37,6 +37,14 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
   const {PtyHostClient}=require(path.join(root,'dist-electron/pty-host-client.js'));
   PtyHostClient.prototype.announceOrdinaryQuit=async function(){require('node:fs').writeFileSync(process.env.AYA_TEST_ORDINARY_RESULT,'failed');return false;};
  }
+ if(process.env.AYA_TEST_FAIL_STATUS_AFTER_REPLACED_TRANSFER==='1'){
+  const original=MainClient.prototype.hostStatus;
+  MainClient.prototype.hostStatus=async function(...args){
+   const status=await original.apply(this,args);
+   if(this.hasCompletedReplacedBuildHandover&&!globalThis.failedStatusAfterReplacedTransfer){globalThis.failedStatusAfterReplacedTransfer=true;throw Error('injected status failure after replaced-build transfer');}
+   return status;
+  };
+ }
  const offset=Number(process.env.AYA_TEST_DATE_OFFSET_MS||0);
  if(offset){const now=Date.now;Date.now=()=>now()+offset;}
  require(path.join(root,'dist-electron/main.js'));
@@ -44,7 +52,7 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
  const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
   AYA_TEST_HANDOVER_CHOICE:String(choice),AYA_TEST_PLAIN_HOST:plainHost?'1':'0',AYA_TEST_PLAIN_NODE:process.execPath,AYA_TEST_PLAIN_RUNTIME:JSON.stringify({node:process.versions.node,electron:null}),
   AYA_TEST_BLOCK_DISPLAY:blockDisplay?'1':'0',AYA_TEST_DISPLAY_RELEASE:join(seeded.root,'release-display'),AYA_TEST_REAL_UPDATE:realUpdate?'1':'0',
-  AYA_TEST_DATE_OFFSET_MS:String(dateOffsetMs),AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT:failOrdinaryAnnouncement?'1':'0',AYA_TEST_QUESTIONS_FILE:join(seeded.root,'handover-questions.json'),AYA_TEST_ORDINARY_RESULT:join(seeded.root,'ordinary-result'),
+  AYA_TEST_DATE_OFFSET_MS:String(dateOffsetMs),AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT:failOrdinaryAnnouncement?'1':'0',AYA_TEST_FAIL_STATUS_AFTER_REPLACED_TRANSFER:failStatusAfterReplacedTransfer?'1':'0',AYA_TEST_QUESTIONS_FILE:join(seeded.root,'handover-questions.json'),AYA_TEST_ORDINARY_RESULT:join(seeded.root,'ordinary-result'),
  }})});apps.push(app);
  return {app,window:await app.firstWindow()};
 }
@@ -217,11 +225,24 @@ test('a build installed by hand hands panes over after the planned-update window
  expect(readFileSync(join(seeded.ayaHome,'diagnostics.log'),'utf8')).toContain('"ev":"installed-build-quit","handover":"prepared"');
  const ticketName=readdirSync(seeded.ayaHome).find(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));expect(ticketName).toBeTruthy();
  expect(JSON.parse(readFileSync(join(seeded.ayaHome,ticketName!),'utf8'))).toMatchObject({format:2,purpose:'ordinary-quit',deadline:null,replacedBuild:true});
- const second=await launch(seeded,1,false,false,false,121000);
+ const second=await launch(seeded,1,false,false,false,121000,false,true);
  await expect(visiblePane(second.window,'shell 1').locator('.xterm-rows')).toContainText('MANUAL_INSTALL_ROUTE');
  expect(identities(seeded.ayaHome)).toEqual(before);expect(inventory(seeded.ayaHome).pid).toBe(owner);
  expect(hostPidsForHome(seeded.ayaHome)).toHaveLength(1);
- expect(await second.app.evaluate(({Menu})=>!Menu.getApplicationMenu()?.getMenuItemById('restart-aya')?.icon?.isEmpty())).toBe(true);
+ expect(await second.app.evaluate(()=>({failed:(globalThis as unknown as {failedStatusAfterReplacedTransfer?:boolean}).failedStatusAfterReplacedTransfer,completed:(globalThis as unknown as {handoverMainClient?:{hasCompletedReplacedBuildHandover?:boolean}}).handoverMainClient?.hasCompletedReplacedBuildHandover}))).toEqual({failed:true,completed:true});
+ const staleIndicator=async()=>second.app.evaluate(({Menu})=>{
+  const menu=Menu.getApplicationMenu(),item=menu?.getMenuItemById('restart-aya'),icon=item?.icon;
+  return{hasMenu:!!menu,hasItem:!!item,hasIcon:!!icon,empty:icon?.isEmpty()??null};
+ });
+ await expect.poll(staleIndicator).toEqual({hasMenu:true,hasItem:true,hasIcon:true,empty:false});
+ const staleImage=await second.app.evaluate(({Menu,nativeImage})=>{
+  const item=Menu.getApplicationMenu()?.getMenuItemById('restart-aya'),icon=item?.icon;
+  const require=process.getBuiltinModule('node:module').createRequire(process.env.AYA_TEST_APP_ROOT+'/package.json');
+  const {makeCirclePng}=require(process.env.AYA_TEST_APP_ROOT+'/dist-electron/app-menu.js');
+  const expected=nativeImage.createFromBuffer(makeCirclePng(16,255,59,48),{scaleFactor:2}).toDataURL();
+  return{actual:icon?.toDataURL()??null,expected};
+ });
+ expect(staleImage.actual).toBe(staleImage.expected);
  expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
 });
 test('a failed manual-install announcement does not ask the user to stop panes',async({seeded})=>{

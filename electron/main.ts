@@ -829,13 +829,16 @@ app.whenReady().then(async () => {
     announcedTicket=await findAuthTransferTicket(AYA_HOME);
     if(announcedTicket)await ptyHost.redeemAnnouncedCapability(announcedTicket);
   }catch{diagnosticsLog.append("host-transfer-unavailable",{purpose:"startup"});}
+  // Ticket redemption establishes the pending capability; the first status
+  // request can complete owner continuity, so retain the flag on both sides
+  // of that fallible request below.
+  let keepReplacedBuildHost=ptyHost.hasCompletedReplacedBuildHandover;
   const keepPlannedHost=await plannedUpdate.resume(announcedTicket?.purpose==="planned-update"&&announcedTicket.deadline!==null?{...announcedTicket,deadline:announcedTicket.deadline}:undefined) === "kept";
-  let keepReplacedBuildHost=false;
   let keptCompatibleHosts: number[] = [];
   if(!keepPlannedHost)try {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
     const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
-    keepReplacedBuildHost=ptyHost.hasCompletedReplacedBuildHandover;
+    keepReplacedBuildHost ||= ptyHost.hasCompletedReplacedBuildHandover;
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       PTY_HOST_SCRIPT,
@@ -856,6 +859,9 @@ app.whenReady().then(async () => {
       );
     }
   } catch {
+    // hostStatus connects and completes announced continuity before returning.
+    // Keep that successful transfer even if the subsequent status probe failed.
+    keepReplacedBuildHost ||= ptyHost.hasCompletedReplacedBuildHandover;
     // best effort - never block startup on reconciliation
   }
 
