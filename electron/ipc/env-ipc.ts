@@ -21,7 +21,7 @@ import {
   worktreeBranchRemovalInfo,
 } from "../git";
 import { getGitHubLink, isGitHubCliAvailable } from "../github";
-import { createOrFindPullRequest, getPublishStatus, hasPendingGitStatusChildren, pushCurrentBranch, waitForGitStatusChildren } from "../git-publish";
+import { createOrFindPullRequest, getPublishStatus, hasPendingPublishChildren, pushCurrentBranch, waitForGitStatusChildren } from "../git-publish";
 import { optionalTrimmed, requireRecord, requireString } from "../validation";
 
 /** At most this many directory suggestions per completion request. */
@@ -88,7 +88,7 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
     for (const controller of pendingPublishStatus) controller.abort(new Error("Aya is quitting."));
     await waitForGitStatusChildren();
   };
-  deps.onBeforeQuit?.(abortPendingPublishStatus, hasPendingGitStatusChildren);
+  deps.onBeforeQuit?.(abortPendingPublishStatus, hasPendingPublishChildren);
   const publishStatus = deps.getPublishStatus ?? getPublishStatus;
   const pickPath = async (e: IpcMainInvokeEvent, options: OpenDialogOptions): Promise<string | null> => {
     const win = senderWindow(e);

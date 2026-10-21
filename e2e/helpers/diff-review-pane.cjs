@@ -18,5 +18,9 @@ if (mode === "hold") {
 
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.resume();
-process.stdin.on("data", (chunk) => fs.appendFileSync(log, chunk));
+process.stdin.on("data", async (chunk) => {
+  const hold = `${log}.hold`;
+  while (fs.existsSync(hold)) await new Promise((resolve) => setTimeout(resolve, 10));
+  fs.appendFileSync(log, chunk);
+});
 fs.writeFileSync(`${log}.ready`, "ready");

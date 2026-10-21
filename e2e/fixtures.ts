@@ -195,7 +195,9 @@ export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
 }
 
 export async function closeAndWait(app: ElectronApplication): Promise<void> {
-  const proc = app.process();
+  let proc: ReturnType<ElectronApplication["process"]>;
+  try { proc = app.process(); }
+  catch { return; } // A test may have explicitly quit Aya and awaited its exit.
   const pid = proc.pid;
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
   const closed = app.close().catch(() => undefined);

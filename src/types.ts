@@ -323,6 +323,27 @@ export interface GitPublishStatus {
 export type GitPublishResult = { ok: true } | { ok: false; error: string };
 export type GitPullRequestResult = { ok: true; url: string } | { ok: false; error: string };
 
+export interface PullRequestCheck {
+  name: string;
+  state: string;
+  bucket: "pass" | "fail" | "pending" | "skipping" | "cancel" | "unknown";
+  url: string | null;
+}
+
+export interface PullRequestChecks {
+  pullRequestUrl: string | null;
+  pullRequestState: "open" | "merged" | "closed" | "unknown" | "none";
+  checks: PullRequestCheck[];
+  error?: string;
+}
+
+export interface CiFailurePreview {
+  token: string;
+  checkName: string;
+  checkUrl: string;
+  prompt: string;
+}
+
 export interface RemoteHostInfo {
   id: string;
   name: string;
@@ -941,6 +962,10 @@ export interface AyaApi {
   cancelGitPublishStatus(requestId: string): Promise<void>;
   pushGitBranch(directory: string): Promise<GitPublishResult>;
   createGitPullRequest(directory: string): Promise<GitPullRequestResult>;
+  getPullRequestChecks(req: { projectSlug: string; directory: string; requestId: string }): Promise<PullRequestChecks>;
+  cancelCiCheckRequest(requestId: string): Promise<void>;
+  previewCiFailure(req: { projectSlug: string; directory: string; targetId: string; checkUrl: string; requestId: string }): Promise<CiFailurePreview>;
+  sendCiFailure(req: { projectSlug: string; targetId: string; token: string; requestId: string }): Promise<void>;
   getGitDiff(directory: string): Promise<string>;
   listDiffComments(projectSlug: string): Promise<DiffComment[]>;
   addDiffComment(projectSlug: string, comment: DiffComment): Promise<DiffComment[]>;

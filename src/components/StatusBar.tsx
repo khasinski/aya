@@ -4,6 +4,8 @@ import type {
   GitChangedFile,
   GitHubLink,
   GitPublishStatus,
+  PullRequestChecks,
+  CiFailurePreview,
   ProjectConfig,
   TerminalState,
   WorktreeStatus,
@@ -67,6 +69,22 @@ interface Props {
  *  name for one; the directory is its identity). */
 function checkoutName(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() || path;
+}
+
+function ciCheckLabel(check: PullRequestChecks["checks"][number]): string {
+  if (check.bucket === "pass") return "Passed";
+  if (check.bucket === "fail") return "Failed";
+  if (check.bucket === "pending") {
+    if (/queued|waiting|requested|pending/i.test(check.state)) return "Queued";
+    if (/in.progress|running/i.test(check.state)) return "Running";
+  }
+  return check.state;
+}
+
+function ciActionErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const message = error.message.replace(/^Error invoking remote method '[^']+':\s*Error:\s*/, "").trim();
+  return message || fallback;
 }
 
 function StatusBarImpl({
@@ -150,11 +168,35 @@ function StatusBarImpl({
     }
   }, [cancelPublishStatusRequest, isCurrentGitCheckout]);
   const [createdPullRequest, setCreatedPullRequest] = useState<{ directory: string; branch: string | null; url: string } | null>(null);
-  const pullRequestUrl = createdPullRequest?.directory === gitDirectory && createdPullRequest.branch === publishStatus?.branch
-    ? createdPullRequest.url
-    : null;
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [ciChecks, setCiChecks] = useState<PullRequestChecks | null>(null);
+  const [ciChecksError, setCiChecksError] = useState<string | null>(null);
+  const [ciActionError, setCiActionError] = useState<string | null>(null);
+  const ciRetryRef = useRef<(() => void) | null>(null);
+  const [ciTargetId, setCiTargetId] = useState<string | null>(null);
+  const ciTargetIdRef = useRef<string | null>(null);
+  ciTargetIdRef.current = ciTargetId;
+  const ciPreviewRequestId = useRef(0);
+  const ciActionRequestId = useRef<string | null>(null);
+  const [selectedCiCheckUrl, setSelectedCiCheckUrl] = useState<string | null>(null);
+  const [ciPreview, setCiPreview] = useState<CiFailurePreview | null>(null);
+  const [ciPreviewLoading, setCiPreviewLoading] = useState(false);
+  const [ciSending, setCiSending] = useState(false);
+  const cancelCiActionRequest = useCallback(() => {
+    const requestId = ciActionRequestId.current;
+    if (!requestId) return;
+    ciActionRequestId.current = null;
+    setCiPreviewLoading(false);
+    setCiSending(false);
+    void window.aya.cancelCiCheckRequest(requestId).catch(() => {});
+  }, []);
+  const [ciNotice, setCiNotice] = useState<string | null>(null);
+  const pullRequestUrl = createdPullRequest?.directory === gitDirectory && createdPullRequest.branch === publishStatus?.branch
+    ? createdPullRequest.url
+    : (ciChecks?.pullRequestState === "open" || ciChecks?.pullRequestState === "merged" || ciChecks?.pullRequestState === "closed") && publishStatus?.branch
+      ? ciChecks.pullRequestUrl
+      : null;
   const [showDiff, setShowDiff] = useState(false);
   const [diffText, setDiffText] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
@@ -169,6 +211,7 @@ function StatusBarImpl({
   const [commentError, setCommentError] = useState<string | null>(null);
   const [sendingComments, setSendingComments] = useState(false);
   const diffCommentsProject = project && !project.remote ? project.slug : null;
+  const localGitProjectSlug = project && !project.remote ? project.slug : null;
 
   useEffect(() => {
     let current = true;
@@ -239,13 +282,105 @@ function StatusBarImpl({
     setPublishError(null);
     setPublishStatus(null);
     setCreatedPullRequest(null);
+    setCiChecks(null);
+    setCiChecksError(null);
+    setCiActionError(null);
+    setSelectedCiCheckUrl(null);
+    setCiPreview(null);
+    setCiPreviewLoading(false);
+    setCiNotice(null);
     setShowDiff(false);
     setDiffText("");
     setDiffQuery("");
     setScrollToPath(null);
   }, [gitDirectory]);
 
-  useEffect(() => () => cancelPublishStatusRequest(), [gitDirectory, cancelPublishStatusRequest]);
+  useEffect(() => () => {
+    cancelPublishStatusRequest();
+    cancelCiActionRequest();
+  }, [gitDirectory, cancelPublishStatusRequest, cancelCiActionRequest]);
+
+  useEffect(() => {
+    if (!showDirtyFiles || !gitDirectory || !localGitProjectSlug || !publishStatus?.branch || !publishStatus.remote) {
+      setCiChecks(null);
+      setCiChecksError(null);
+      return;
+    }
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    const projectSlug = localGitProjectSlug;
+    let active = true;
+    const isCurrent = () => active && isCurrentGitCheckout(directory, generation);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let refreshInFlight = false;
+    let activeRequestId: string | null = null;
+    let delayIndex = 0;
+    const delays = [5_000, 10_000, 20_000, 30_000];
+    const refresh = async () => {
+      if (!active || refreshInFlight) return;
+      if (document.visibilityState === "hidden") {
+        timer = setTimeout(refresh, 30_000);
+        return;
+      }
+      refreshInFlight = true;
+      const requestId = uuid();
+      activeRequestId = requestId;
+      try {
+        const result = await window.aya.getPullRequestChecks({ projectSlug, directory, requestId });
+        if (!isCurrent()) return;
+        if (result.error) {
+          setCiChecksError(result.error);
+        } else {
+          setCiChecks(result);
+          setCiChecksError(null);
+        }
+        if (result.pullRequestState === "merged" || result.pullRequestState === "closed") return;
+      } catch (error) {
+        if (!isCurrent()) return;
+        setCiChecksError(error instanceof Error ? error.message : "Aya could not load pull request checks.");
+      } finally {
+        refreshInFlight = false;
+        if (activeRequestId === requestId) activeRequestId = null;
+      }
+      const delay = delays[Math.min(delayIndex, delays.length - 1)];
+      delayIndex += 1;
+      timer = setTimeout(refresh, delay);
+    };
+    const retryNow = () => {
+      if (!active) return;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      delayIndex = 0;
+      setCiChecksError(null);
+      void refresh();
+    };
+    ciRetryRef.current = retryNow;
+    void refresh();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && !timer) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+      if (activeRequestId) void window.aya.cancelCiCheckRequest(activeRequestId).catch(() => {});
+      cancelCiActionRequest();
+      setCiPreview(null);
+      setSelectedCiCheckUrl(null);
+      if (ciRetryRef.current === retryNow) ciRetryRef.current = null;
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [showDirtyFiles, gitDirectory, localGitProjectSlug, publishStatus?.branch, publishStatus?.remote, isCurrentGitCheckout, cancelCiActionRequest]);
+
+  useEffect(() => {
+    if (ciTargetId && reviewTargets.some((target) => target.id === ciTargetId)) return;
+    cancelCiActionRequest();
+    const targetId = reviewTargets[0]?.id ?? null;
+    ciTargetIdRef.current = targetId;
+    ciPreviewRequestId.current += 1;
+    setCiTargetId(targetId);
+    setCiPreview(null);
+  }, [reviewTargets, ciTargetId, cancelCiActionRequest]);
 
   const addReviewComment = async (anchor: DiffAnchor, note: string) => {
     if (!project || !gitDirectory) return;
@@ -400,6 +535,73 @@ function StatusBarImpl({
     } catch (error) {
       if (isCurrent()) setPublishError(error instanceof Error ? error.message : "Aya could not open the pull request.");
     } finally { setPublishing(false); }
+  };
+
+  const previewCiCheck = async (checkUrl: string) => {
+    if (!project || !gitDirectory || !ciTargetId) return;
+    cancelCiActionRequest();
+    const previewGeneration = ++ciPreviewRequestId.current;
+    const requestId = uuid();
+    ciActionRequestId.current = requestId;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    const projectSlug = project.slug;
+    const targetId = ciTargetId;
+    const isCurrent = () => isCurrentGitCheckout(directory, generation);
+    setSelectedCiCheckUrl(checkUrl);
+    setCommitNotice(null);
+    setCiPreview(null);
+    setCiPreviewLoading(true);
+    setCiNotice(null);
+    setCiChecksError(null);
+    setCiActionError(null);
+    try {
+      const preview = await window.aya.previewCiFailure({ projectSlug, directory, targetId, checkUrl, requestId });
+      if (!isCurrent() || previewGeneration !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId || ciActionRequestId.current !== requestId) return;
+      setCiPreview(preview);
+    } catch (error) {
+      if (!isCurrent() || previewGeneration !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId || ciActionRequestId.current !== requestId) return;
+      setCiActionError(ciActionErrorMessage(error, "Aya could not prepare this check for sending."));
+    } finally {
+      if (ciActionRequestId.current === requestId) {
+        ciActionRequestId.current = null;
+        setCiPreviewLoading(false);
+      }
+    }
+  };
+
+  const sendCiCheck = async () => {
+    if (!project || !ciPreview || !ciTargetId || ciSending) return;
+    const directory = gitDirectory;
+    const generation = gitCheckoutRef.current.generation;
+    const projectSlug = project.slug;
+    const targetId = ciTargetId;
+    const previewToken = ciPreview.token;
+    cancelCiActionRequest();
+    const requestId = uuid();
+    ciActionRequestId.current = requestId;
+    const isCurrent = () => directory !== null && isCurrentGitCheckout(directory, generation);
+    setCommitNotice(null);
+    setCiSending(true);
+    setCiChecksError(null);
+    setCiActionError(null);
+    setCiNotice("Sending...");
+    try {
+      await window.aya.sendCiFailure({ projectSlug, targetId, token: previewToken, requestId });
+      if (!isCurrent() || ciActionRequestId.current !== requestId) return;
+      setCiNotice(`Sent to ${reviewTargets.find((target) => target.id === targetId)?.name ?? "pane"}.`);
+      setCiPreview((current) => current?.token === previewToken ? null : current);
+    } catch (error) {
+      if (!isCurrent() || ciActionRequestId.current !== requestId) return;
+      setCiNotice(null);
+      setCiPreview((current) => current?.token === previewToken ? null : current);
+      setCiActionError(ciActionErrorMessage(error, "Aya could not send the check details."));
+    } finally {
+      if (ciActionRequestId.current === requestId) {
+        ciActionRequestId.current = null;
+        setCiSending(false);
+      }
+    }
   };
 
   const loadDiff = () => {
@@ -625,7 +827,7 @@ function StatusBarImpl({
           </button>
           {showDirtyFiles && (
             <div
-              className={`aya-statusbar-popover ${showDiff ? "aya-statusbar-popover--diff" : ""}`}
+              className={`aya-statusbar-popover aya-statusbar-popover--changes ${showDiff ? "aya-statusbar-popover--diff" : ""}`}
               role="dialog"
               aria-label={showDiff ? "Git diff" : "Changed files"}
             >
@@ -660,6 +862,7 @@ function StatusBarImpl({
                   </>
                 )}
               </div>
+              <div className="aya-statusbar-popover-content">
               {showDiff ? (
                 <DiffPanel
                   diff={diffText}
@@ -750,9 +953,77 @@ function StatusBarImpl({
                     {publishStatus?.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pushDisabledReason}</div>}
                     {publishStatus?.pullRequestDisabledReason && publishStatus.pullRequestDisabledReason !== publishStatus.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
                     {publishError && <div className="aya-dirty-commit-error" role="alert">{publishError}</div>}
+                    {ciNotice && <div className="aya-dirty-publish-notice" role="status">{ciNotice}</div>}
+                    {pullRequestUrl && (
+                      <section className="aya-ci-checks" aria-label="Pull request checks">
+                        <div className="aya-ci-checks-heading">
+                          <span>Pull request checks</span>
+                        </div>
+                        {ciChecksError && ciChecksError !== publishError && <div className="aya-ci-checks-error" role="alert"><span>{ciChecksError}</span><button type="button" className="aya-statusbar-popover-action" onClick={() => ciRetryRef.current?.()}>Retry</button></div>}
+                        {ciActionError && <div className="aya-ci-checks-error" role="alert">{ciActionError}</div>}
+                        {pullRequestUrl && <>
+                        {ciChecks?.pullRequestState === "merged" || ciChecks?.pullRequestState === "closed" ? (
+                          <div className="aya-dirty-publish-hint">This pull request is {ciChecks.pullRequestState}; check updates have stopped.</div>
+                        ) : ciChecks?.checks.length ? (
+                          <div className="aya-ci-check-list">
+                            {ciChecks.checks.map((check, index) => (
+                              <div className="aya-ci-check" key={`${check.url ?? check.name}-${index}`}>
+                                <span className={`aya-ci-check-state aya-ci-check-state--${check.bucket}`}>{ciCheckLabel(check)}</span>
+                                <span className="aya-ci-check-name">{check.name}</span>
+                                {check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Open ${check.name} log`} onClick={() => void window.aya.openUrl(check.url!)}>Open log</button>}
+                                {check.bucket === "fail" && check.url && <button type="button" className="aya-statusbar-popover-action" aria-label={`Preview ${check.name} failure details`} disabled={ciSending || !ciTargetId || reviewTargets.length === 0} onClick={() => void previewCiCheck(check.url!)}>Preview message</button>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : <div className="aya-dirty-publish-hint">{ciChecksError ? "" : ciChecks?.pullRequestState === "none" ? "No pull request for this branch yet." : "Waiting for checks..."}</div>}
+                        {ciChecks?.checks.some((check) => check.bucket === "fail" && check.url) && reviewTargets.length === 0 && (
+                          <div className="aya-dirty-publish-hint">Open an agent pane in this project before sending check details.</div>
+                        )}
+                        {ciChecks?.checks.some((check) => check.bucket === "fail" && check.url) && reviewTargets.length > 0 && (
+                          <label className="aya-ci-target-label" htmlFor="aya-ci-target">Send failed checks to
+                            <select id="aya-ci-target" value={ciTargetId ?? ""} disabled={ciSending} onChange={(event) => {
+                              cancelCiActionRequest();
+                              const targetId = event.currentTarget.value || null;
+                              ciTargetIdRef.current = targetId;
+                              ciPreviewRequestId.current += 1;
+                              setCiTargetId(targetId);
+                              setCiPreview(null);
+                            }}>
+                              {reviewTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        {selectedCiCheckUrl && ciPreview && (
+                          <div className="aya-ci-preview">
+                            <div className="aya-dirty-publish-hint">Will send to {reviewTargets.find((target) => target.id === ciTargetId)?.name ?? "selected pane"}</div>
+                            <label htmlFor="aya-ci-prompt-preview">Exact message to send</label>
+                            <textarea id="aya-ci-prompt-preview" readOnly value={ciPreview.prompt} rows={8} />
+                            <button type="button" className="aya-statusbar-popover-action" disabled={ciSending} onClick={() => {
+                              cancelCiActionRequest();
+                              ciPreviewRequestId.current += 1;
+                              setCiPreview(null);
+                              setSelectedCiCheckUrl(null);
+                            }}>Dismiss preview</button>
+                            <button type="button" className="aya-statusbar-popover-action" disabled={ciSending || !ciTargetId} onClick={() => void sendCiCheck()}>{ciSending ? "Sending..." : "Send"}</button>
+                          </div>
+                        )}
+                        {selectedCiCheckUrl && ciPreviewLoading && (
+                          <div className="aya-ci-preview" role="status">
+                            <span>Preparing the message...</span>
+                            <button type="button" className="aya-statusbar-popover-action" onClick={() => {
+                              cancelCiActionRequest();
+                              ciPreviewRequestId.current += 1;
+                              setSelectedCiCheckUrl(null);
+                            }}>Cancel preview</button>
+                          </div>
+                        )}
+                        </>}
+                      </section>
+                    )}
                   </div>
                 </>
               )}
+              </div>
             </div>
           )}
         </div>

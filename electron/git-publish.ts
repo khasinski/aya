@@ -4,6 +4,7 @@ const GH_TIMEOUT_MS = 30_000;
 const STATUS_KILL_GRACE_MS = 500;
 const STATUS_QUIT_WAIT_MS = 900;
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
+export const GH_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const GH_ENV = { ...process.env, GH_NO_UPDATE_NOTIFIER: "1", GH_PROMPT_DISABLED: "1" };
 const gitEnv = () => ({ ...process.env, GIT_TERMINAL_PROMPT: "0" });
 
@@ -15,7 +16,7 @@ interface TrackedStatusChild {
 const activeStatusChildren = new Set<TrackedStatusChild>();
 
 /** Synchronous snapshot used by before-quit; child registration happens in spawn(). */
-export function hasPendingGitStatusChildren(): boolean {
+export function hasPendingPublishChildren(): boolean {
   return activeStatusChildren.size > 0;
 }
 
@@ -58,10 +59,10 @@ export interface PublishStatus {
 export type PublishResult = { ok: true } | { ok: false; error: string };
 export type PullRequestResult = { ok: true; url: string } | { ok: false; error: string };
 
-type Runner = (command: string, args: string[], cwd: string, timeout: number, env?: NodeJS.ProcessEnv, signal?: AbortSignal) => Promise<string>;
+type Runner = (command: string, args: string[], cwd: string, timeout: number, env?: NodeJS.ProcessEnv, signal?: AbortSignal, maxBuffer?: number) => Promise<string>;
 type GhRunner = (directory: string, args: string[], timeout?: number) => Promise<string>;
 
-const run: Runner = (command, args, cwd, timeout, env = process.env, signal) => new Promise((resolve, reject) => {
+const run: Runner = (command, args, cwd, timeout, env = process.env, signal, maxBuffer = MAX_COMMAND_OUTPUT_BYTES) => new Promise((resolve, reject) => {
   // spawn captures output through pipes and does not attach a TTY. Status children
   // are tracked until close so quit can wait for or force-kill the actual process.
   const child = spawn(command, args, { cwd, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -98,7 +99,7 @@ const run: Runner = (command, args, cwd, timeout, env = process.env, signal) => 
   const timeoutTimer = setTimeout(() => stop(new Error("The command timed out."), true), timeout);
   const addOutput = (chunk: Buffer, stream: "stdout" | "stderr") => {
     outputBytes += chunk.length;
-    if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
+    if (outputBytes > maxBuffer) {
       stop(Object.assign(new Error("The command output exceeded its limit."), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }));
       return;
     }
@@ -131,8 +132,8 @@ const run: Runner = (command, args, cwd, timeout, env = process.env, signal) => 
   });
 });
 
-export async function runGh(directory: string, args: string[], timeout = GH_TIMEOUT_MS): Promise<string> {
-  return run("gh", args, directory, timeout, GH_ENV);
+export async function runGh(directory: string, args: string[], timeout = GH_TIMEOUT_MS, execute: Runner = run, env: NodeJS.ProcessEnv = GH_ENV, signal?: AbortSignal): Promise<string> {
+  return execute("gh", args, directory, timeout, { ...GH_ENV, ...env }, signal, GH_MAX_OUTPUT_BYTES);
 }
 
 function errorText(error: unknown): string {

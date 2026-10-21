@@ -303,6 +303,10 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     cancelGitPublishStatus: async () => undefined as never,
     pushGitBranch: async () => ({ ok: false, error: "Publishing is not available here." }),
     createGitPullRequest: async () => ({ ok: false, error: "Publishing is not available here." }),
+    getPullRequestChecks: async () => ({ pullRequestUrl: null, pullRequestState: "none", checks: [] }),
+    cancelCiCheckRequest: noopAsync,
+    previewCiFailure: async () => { throw new Error("Pull request checks are not available here."); },
+    sendCiFailure: async () => { throw new Error("Sending check details is not available here."); },
     // A scenario's directory is already its own checkout root, and it has no
     // extra worktrees to pick between, so the picker never appears.
     getGitRoot: async (directory: string) => directory as never,
