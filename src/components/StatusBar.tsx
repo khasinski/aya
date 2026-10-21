@@ -3,6 +3,7 @@ import hljs from "highlight.js/lib/common";
 import type {
   GitChangedFile,
   GitHubLink,
+  GitPublishStatus,
   ProjectConfig,
   TerminalState,
   WorktreeStatus,
@@ -117,6 +118,10 @@ function StatusBarImpl({
   const [commitMessage, setCommitMessage] = useState("");
   const [commitError, setCommitError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
+  const [commitNotice, setCommitNotice] = useState<string | null>(null);
+  const [publishStatus, setPublishStatus] = useState<GitPublishStatus | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
   const [diffText, setDiffText] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
@@ -189,6 +194,17 @@ function StatusBarImpl({
     setScrollToPath(null);
   }, [gitDirectory]);
 
+  useEffect(() => {
+    if (!gitDirectory) { setPublishStatus(null); return; }
+    let current = true;
+    void window.aya.getGitPublishStatus(gitDirectory).then((status) => {
+      if (current) setPublishStatus(status);
+    }).catch(() => {
+      if (current) setPublishStatus(null);
+    });
+    return () => { current = false; };
+  }, [gitDirectory]);
+
   const addReviewComment = async (anchor: DiffAnchor, note: string) => {
     if (!project || !gitDirectory) return;
     const comment: DiffComment = {
@@ -236,6 +252,7 @@ function StatusBarImpl({
   const toggleDirtyFiles = () => {
     if (!gitDirectory) return;
     setShowDirtyFiles((open) => !open);
+    void window.aya.getGitPublishStatus(gitDirectory).then(setPublishStatus).catch(() => setPublishStatus(null));
     setDirtyFilesLoading(true);
     void window.aya.getGitChangedFiles(gitDirectory).then((files) => {
       setDirtyFiles(files);
@@ -259,6 +276,9 @@ function StatusBarImpl({
         setCommitError(result.error);
         return;
       }
+      setCommitNotice(`Committed ${result.commit.slice(0, 7)}.`);
+      setPublishError(null);
+      setPublishStatus(await window.aya.getGitPublishStatus(gitDirectory));
       const files = await window.aya.getGitChangedFiles(gitDirectory);
       setDirtyFiles(files);
       setSelectedDirtyPaths([]);
@@ -269,6 +289,33 @@ function StatusBarImpl({
     } finally {
       setCommitting(false);
     }
+  };
+
+  const pushBranch = async () => {
+    if (!gitDirectory || publishing || publishStatus?.pushDisabledReason) return;
+    setPublishing(true); setPublishError(null); setCommitNotice(null);
+    try {
+      const result = await window.aya.pushGitBranch(gitDirectory);
+      if (!result.ok) { setPublishError(result.error); return; }
+      setCommitNotice("Branch pushed.");
+      await onGitStatusRefresh(gitDirectory);
+      setPublishStatus(await window.aya.getGitPublishStatus(gitDirectory));
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "Aya could not push this branch.");
+    } finally { setPublishing(false); }
+  };
+
+  const openPullRequest = async () => {
+    if (!gitDirectory || publishing || publishStatus?.pullRequestDisabledReason) return;
+    setPublishing(true); setPublishError(null); setCommitNotice(null);
+    try {
+      const result = await window.aya.createGitPullRequest(gitDirectory);
+      if (!result.ok) { setPublishError(result.error); return; }
+      await window.aya.openUrl(result.url);
+      setCommitNotice("Pull request opened.");
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "Aya could not open the pull request.");
+    } finally { setPublishing(false); }
   };
 
   const loadDiff = () => {
@@ -476,20 +523,21 @@ function StatusBarImpl({
           {githubLink.kind === "pr" ? "PR" : "branch on GitHub"}
         </button>
       )}
-      {git && git.dirty > 0 ? (
+      {git ? (
         <div className="aya-statusbar-popover-host" ref={dirtyRef}>
           <button
-            className="aya-statusbar-item aya-statusbar-button aya-statusbar-item--warn"
+            className={`aya-statusbar-item aya-statusbar-button ${git.dirty > 0 ? "aya-statusbar-item--warn" : ""}`}
             type="button"
-            title="Show changed files"
+            title={git.dirty > 0 ? "Show changed files" : "Show changes and publishing actions"}
+            style={git.dirty === 0 ? { color: "var(--status-active)" } : undefined}
             // Inline dropdown — keep terminal focus (same as the top-bar ones).
             onMouseDown={(e) => e.preventDefault()}
             onClick={toggleDirtyFiles}
           >
             <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
-              edit_note
+              {git.dirty > 0 ? "edit_note" : "check_circle"}
             </span>
-            {git.dirty} dirty
+            {git.dirty > 0 ? `${git.dirty} dirty` : "clean"}
           </button>
           {showDirtyFiles && (
             <div
@@ -551,11 +599,9 @@ function StatusBarImpl({
                 />
               ) : dirtyFilesLoading ? (
                 <div className="aya-statusbar-popover-empty">Loading...</div>
-              ) : dirtyFiles.length === 0 ? (
-                <div className="aya-statusbar-popover-empty">No changed files.</div>
               ) : (
                 <>
-                  <div className="aya-dirty-file-list">
+                  {dirtyFiles.length === 0 ? <div className="aya-statusbar-popover-empty">No changed files.</div> : <div className="aya-dirty-file-list">
                     <label className="aya-dirty-file-select-all">
                       <input
                         type="checkbox"
@@ -589,7 +635,7 @@ function StatusBarImpl({
                         </button>
                       </div>
                     ))}
-                  </div>
+                  </div>}
                   <div className="aya-dirty-commit">
                     <label htmlFor="aya-dirty-commit-message">Commit message</label>
                     <input
@@ -600,6 +646,7 @@ function StatusBarImpl({
                       placeholder="Commit message"
                     />
                     {commitError && <div className="aya-dirty-commit-error" role="alert">{commitError}</div>}
+                    {commitNotice && <div className="aya-dirty-publish-notice" role="status">{commitNotice}</div>}
                     <button
                       className="aya-statusbar-popover-action aya-dirty-commit-button"
                       type="button"
@@ -608,22 +655,23 @@ function StatusBarImpl({
                     >
                       {committing ? "Committing..." : "Commit selected"}
                     </button>
+                    <div className="aya-dirty-publish-actions">
+                      <button type="button" className="aya-statusbar-popover-action" disabled={publishing || !publishStatus || Boolean(publishStatus.pushDisabledReason)} title={publishStatus?.pushDisabledReason || undefined} onClick={() => void pushBranch()}>
+                        {publishing ? "Working..." : "Push branch"}
+                      </button>
+                      <button type="button" className="aya-statusbar-popover-action" disabled={publishing || !publishStatus || Boolean(publishStatus.pullRequestDisabledReason)} title={publishStatus?.pullRequestDisabledReason || undefined} onClick={() => void openPullRequest()}>
+                        Create pull request
+                      </button>
+                    </div>
+                    {publishStatus?.pushDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pushDisabledReason}</div>}
+                    {publishStatus?.pullRequestDisabledReason && <div className="aya-dirty-publish-hint">{publishStatus.pullRequestDisabledReason}</div>}
+                    {publishError && <div className="aya-dirty-commit-error" role="alert">{publishError}</div>}
                   </div>
                 </>
               )}
             </div>
           )}
         </div>
-      ) : git?.branch ? (
-        <span
-          className="aya-statusbar-item"
-          style={{ color: "var(--status-active)" }}
-        >
-          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
-            check_circle
-          </span>
-          clean
-        </span>
       ) : null}
     </footer>
   );

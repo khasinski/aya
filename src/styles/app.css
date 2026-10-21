@@ -1130,6 +1130,9 @@ body {
 .aya-dirty-commit-error { color: var(--status-error); overflow-wrap: anywhere; }
 .aya-dirty-commit-button { justify-self: end; }
 .aya-dirty-commit-button:disabled { opacity: .45; cursor: default; }
+.aya-dirty-publish-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.aya-dirty-publish-notice { color: var(--status-active); overflow-wrap: anywhere; }
+.aya-dirty-publish-hint { color: var(--fg-tertiary); }
 .aya-diff-panel {
   display: flex;
   flex-direction: column;
