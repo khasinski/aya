@@ -160,6 +160,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getGitDiff: inv("env:git-diff"),
     commitGitFiles: async () => ({ ok: false, error: "Committing from the Changes panel is not available in Aya Web." }),
     getGitPublishStatus: async () => ({ branch: null, detached: true, defaultBranch: false, remote: null, pushDisabledReason: "Publishing is not available in Aya Web.", pullRequestDisabledReason: "Publishing is not available in Aya Web." }),
+    cancelGitPublishStatus: async () => undefined,
     pushGitBranch: async () => ({ ok: false, error: "Publishing is not available in Aya Web." }),
     createGitPullRequest: async () => ({ ok: false, error: "Publishing is not available in Aya Web." }),
     getGitRoot: inv("env:git-root"),

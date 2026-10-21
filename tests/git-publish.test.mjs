@@ -9,6 +9,8 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), "aya-publish-")));
 const bin = join(root, "bin");
 const state = join(root, "state");
 mkdirSync(bin); mkdirSync(state);
+process.env.FAKE_GIT_REAL = realpathSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim());
+process.env.FAKE_GIT_TEST_STATE = state;
 process.env.FAKE_GH_STATE = state;
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 process.env.GIT_CONFIG_NOSYSTEM = "1";
@@ -27,6 +29,29 @@ if [ -e "$FAKE_GH_STATE/slow" ]; then sleep 1; fi
 exit 2
 `);
 chmodSync(join(bin, "gh"), 0o755);
+writeFileSync(join(bin, "git"), `#!/usr/bin/env node
+const { appendFileSync, existsSync, writeFileSync } = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const { join } = require('node:path');
+const args = process.argv.slice(2);
+const state = process.env.FAKE_GIT_TEST_STATE;
+if (existsSync(join(state, 'track-prompt-setting'))) {
+  appendFileSync(join(state, 'git-prompt-settings'), (process.env.GIT_TERMINAL_PROMPT ?? '<unset>') + '\\n');
+}
+const statusHead = args[0] === 'symbolic-ref' && args[1] === '--quiet' && args[2] === '--short' && args[3] === 'HEAD';
+if (statusHead) {
+  appendFileSync(join(state, 'publish-status-env'), (process.env.GIT_TERMINAL_PROMPT ?? '<unset>') + '\\n');
+  if (existsSync(join(state, 'hold-publish-status'))) {
+    writeFileSync(join(state, 'publish-status-pid'), String(process.pid));
+    setInterval(() => {}, 1000);
+  }
+}
+const result = spawnSync(process.env.FAKE_GIT_REAL, args, { encoding: 'utf8', env: process.env });
+if (result.stdout) process.stdout.write(result.stdout);
+if (result.stderr) process.stderr.write(result.stderr);
+process.exit(result.status ?? 1);
+`);
+chmodSync(join(bin, "git"), 0o755);
 process.env.PATH = `${bin}:${process.env.PATH}`;
 const { getPublishStatus, pushCurrentBranch, createOrFindPullRequest, runGh } = await import("../dist-electron/git-publish.js");
 
@@ -106,6 +131,70 @@ test("missing remote disables push and pull request with one shared reason", asy
   assert.equal(status.remote, null);
   assert.equal(status.pushDisabledReason, "Add a Git remote before pushing or opening a pull request.");
   assert.equal(status.pullRequestDisabledReason, status.pushDisabledReason);
+});
+
+test("publish status uses one deadline across sequential Git probes", async () => {
+  const dir = repo("status-deadline");
+  const budgets = [];
+  const began = Date.now();
+  const runner = async (_command, args, _cwd, timeout, env, signal) => {
+    budgets.push(timeout);
+    assert.equal(env.GIT_TERMINAL_PROMPT, "0");
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 60);
+      signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+    });
+    return args[0] === "symbolic-ref" ? "feature/slow\n" : "origin\n";
+  };
+  await assert.rejects(getPublishStatus(dir, { timeoutMs: 100, runCommand: runner }), /deadline/i);
+  assert.deepEqual(budgets.length, 2, "the second Git probe starts, then is cut off by the shared budget");
+  assert.ok(budgets[0] <= 100 && budgets[0] > 90);
+  assert.ok(budgets[1] < 50 && budgets[1] > 0, "the second probe receives only the remaining time");
+  assert.ok(Date.now() - began < 250, "the total query stays within one deadline plus scheduling allowance");
+});
+
+test("publish status disables Git prompts and aborting it kills its Git child", async () => {
+  const dir = repo("status-cancel");
+  git(dir, "remote", "add", "origin", "https://example.invalid/origin.git");
+  git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  const envLog = join(state, "publish-status-env");
+  const promptLog = join(state, "git-prompt-settings");
+  const trackPrompt = join(state, "track-prompt-setting");
+  const childPidPath = join(state, "publish-status-pid");
+  const hold = join(state, "hold-publish-status");
+  const waitForPid = async () => {
+    const until = Date.now() + 2_000;
+    while (!existsSync(childPidPath) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(existsSync(childPidPath), "the hanging Git child started");
+    return Number(readFileSync(childPidPath, "utf8"));
+  };
+  const expectDead = async (pid) => {
+    const until = Date.now() + 1_000;
+    while (Date.now() < until) {
+      try { process.kill(pid, 0); } catch (error) { if (error.code === "ESRCH") return; throw error; }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail(`Git child ${pid} survived cancellation`);
+  };
+
+  rmSync(envLog, { force: true });
+  rmSync(childPidPath, { force: true });
+  rmSync(promptLog, { force: true });
+  writeFileSync(trackPrompt, "");
+  await getPublishStatus(dir);
+  rmSync(trackPrompt, { force: true });
+  assert.ok(readFileSync(promptLog, "utf8").trim().split("\n").every((value) => value === "0"), "every status Git call disables terminal prompts");
+  assert.ok(readFileSync(envLog, "utf8").trim().split("\n").every((value) => value === "0"));
+
+  writeFileSync(hold, "");
+  rmSync(childPidPath, { force: true });
+  const controller = new AbortController();
+  const cancelledQuery = getPublishStatus(dir, { signal: controller.signal, timeoutMs: 2_000 });
+  const cancelledPid = await waitForPid();
+  controller.abort(new Error("The Changes panel closed."));
+  await assert.rejects(cancelledQuery, /panel closed/);
+  try { await expectDead(cancelledPid); }
+  finally { rmSync(hold, { force: true }); }
 });
 
 test("detached HEAD disables push and pull request; default branch allows push but not pull request", async () => {

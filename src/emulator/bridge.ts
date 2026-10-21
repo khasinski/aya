@@ -300,6 +300,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     getGitDiff: async () => null as never,
     commitGitFiles: async () => ({ ok: false, error: "Committing from the Changes panel is not available here." }),
     getGitPublishStatus: async () => ({ branch: null, detached: true, defaultBranch: false, remote: null, pushDisabledReason: "Publishing is not available here.", pullRequestDisabledReason: "Publishing is not available here." }),
+    cancelGitPublishStatus: async () => undefined as never,
     pushGitBranch: async () => ({ ok: false, error: "Publishing is not available here." }),
     createGitPullRequest: async () => ({ ok: false, error: "Publishing is not available here." }),
     // A scenario's directory is already its own checkout root, and it has no

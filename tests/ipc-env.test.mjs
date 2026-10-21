@@ -13,6 +13,7 @@ const { registerEnvIpc, completeDirectoryPath, MAX_PATH_COMPLETION_ENTRIES } = a
 function setup(over = {}) {
   const handlers = new Map();
   const calls = { dialog: [], openPath: [], urls: [] };
+  let beforeQuit;
   let clip = "";
   const window = { id: 7 };
   const webContents = { id: 8 };
@@ -29,10 +30,11 @@ function setup(over = {}) {
     clipboard: { readText: () => clip, writeText: (t) => (clip = t) },
     home: () => "/home/test",
     openExternalUrl: async (url) => void calls.urls.push(url),
+    onBeforeQuit: (teardown) => { beforeQuit = teardown; },
     ...over,
   });
   const call = (channel, event = {}, ...args) => handlers.get(channel)({ sender: webContents, ...event }, ...args);
-  return { handlers, call, calls, window };
+  return { handlers, call, calls, window, beforeQuit: () => beforeQuit?.() };
 }
 
 test("registers exactly the env:* channels", () => {
@@ -50,6 +52,7 @@ test("registers exactly the env:* channels", () => {
     "env:git-commit-files",
     "env:git-diff",
     "env:git-publish-status",
+    "env:git-publish-status-cancel",
     "env:git-pull-request",
     "env:git-push",
     "env:git-root",
@@ -94,6 +97,39 @@ test("git commit IPC forwards a valid request for the active checkout", async ()
   });
   assert.deepEqual(result, { ok: true, commit: "abc1234" });
   assert.deepEqual(forwarded, [["/tmp/project", ["chosen.txt"], "Chosen only"]]);
+});
+
+test("a closed Changes panel can cancel only its own pending status request", async () => {
+  let receivedSignal;
+  const { call } = setup({
+    getPublishStatus: (_directory, { signal }) => {
+      receivedSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  });
+  const pending = call("env:git-publish-status", {}, { directory: "/tmp/project", requestId: "open-1" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(receivedSignal.aborted, false);
+  await call("env:git-publish-status-cancel", {}, "open-1");
+  await assert.rejects(pending, /cancelled/);
+  assert.equal(receivedSignal.aborted, true);
+});
+
+test("a quit aborts an in-flight Changes status query", async () => {
+  let receivedSignal;
+  const { call, beforeQuit } = setup({
+    getPublishStatus: (_directory, { signal }) => {
+      receivedSignal = signal;
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    },
+  });
+  const pending = call("env:git-publish-status", {}, { directory: "/tmp/project", requestId: "quit-1" });
+  await new Promise((resolve) => setImmediate(resolve));
+  beforeQuit();
+  await assert.rejects(pending, /quitting/);
+  assert.equal(receivedSignal.aborted, true);
 });
 
 test("the directory picker opens on the asking window, or alone without one, from home", async () => {

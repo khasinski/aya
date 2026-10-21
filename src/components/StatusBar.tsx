@@ -113,6 +113,7 @@ function StatusBarImpl({
   const [showCheckouts, setShowCheckouts] = useState(false);
   const dirtyRef = useRef<HTMLDivElement>(null);
   const [showDirtyFiles, setShowDirtyFiles] = useState(false);
+  const showDirtyFilesRef = useRef(false);
   const [dirtyFiles, setDirtyFiles] = useState<GitChangedFile[]>([]);
   const [selectedDirtyPaths, setSelectedDirtyPaths] = useState<string[]>([]);
   const [dirtyFilesLoading, setDirtyFilesLoading] = useState(false);
@@ -125,6 +126,29 @@ function StatusBarImpl({
   const [committing, setCommitting] = useState(false);
   const [commitNotice, setCommitNotice] = useState<string | null>(null);
   const [publishStatus, setPublishStatus] = useState<GitPublishStatus | null>(null);
+  const publishStatusRequest = useRef<{ requestId: string; directory: string; generation: number } | null>(null);
+  const cancelPublishStatusRequest = useCallback(() => {
+    const request = publishStatusRequest.current;
+    if (!request) return;
+    publishStatusRequest.current = null;
+    void window.aya.cancelGitPublishStatus(request.requestId).catch(() => {});
+  }, []);
+  const refreshPublishStatus = useCallback(async (directory: string, generation: number): Promise<GitPublishStatus | null> => {
+    cancelPublishStatusRequest();
+    const request = { requestId: uuid(), directory, generation };
+    publishStatusRequest.current = request;
+    try {
+      const status = await window.aya.getGitPublishStatus(directory, request.requestId);
+      if (publishStatusRequest.current?.requestId !== request.requestId || !isCurrentGitCheckout(directory, generation)) return null;
+      setPublishStatus(status);
+      return status;
+    } catch {
+      if (publishStatusRequest.current?.requestId === request.requestId && isCurrentGitCheckout(directory, generation)) setPublishStatus(null);
+      return null;
+    } finally {
+      if (publishStatusRequest.current?.requestId === request.requestId) publishStatusRequest.current = null;
+    }
+  }, [cancelPublishStatusRequest, isCurrentGitCheckout]);
   const [createdPullRequest, setCreatedPullRequest] = useState<{ directory: string; branch: string | null; url: string } | null>(null);
   const pullRequestUrl = createdPullRequest?.directory === gitDirectory && createdPullRequest.branch === publishStatus?.branch
     ? createdPullRequest.url
@@ -165,11 +189,12 @@ function StatusBarImpl({
     const onPointerDown = (event: PointerEvent) => {
       if (!dirtyRef.current?.contains(event.target as Node)) {
         setShowDirtyFiles(false);
+        cancelPublishStatusRequest();
       }
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [showDirtyFiles]);
+  }, [showDirtyFiles, cancelPublishStatusRequest]);
 
   useEffect(() => {
     if (!showCheckouts) return;
@@ -198,6 +223,9 @@ function StatusBarImpl({
   useLayoutEffect(() => {
     gitCheckoutRef.current = { directory: gitDirectory, generation: gitCheckoutRef.current.generation + 1 };
   }, [gitDirectory]);
+  useLayoutEffect(() => {
+    showDirtyFilesRef.current = showDirtyFiles;
+  }, [showDirtyFiles]);
 
   useEffect(() => {
     setShowDirtyFiles(false);
@@ -217,19 +245,7 @@ function StatusBarImpl({
     setScrollToPath(null);
   }, [gitDirectory]);
 
-  useEffect(() => {
-    if (!gitDirectory) { setPublishStatus(null); return; }
-    const directory = gitDirectory;
-    const generation = gitCheckoutRef.current.generation;
-    let active = true;
-    const isCurrent = () => active && isCurrentGitCheckout(directory, generation);
-    void window.aya.getGitPublishStatus(directory).then((status) => {
-      if (isCurrent()) setPublishStatus(status);
-    }).catch(() => {
-      if (isCurrent()) setPublishStatus(null);
-    });
-    return () => { active = false; };
-  }, [gitDirectory, isCurrentGitCheckout]);
+  useEffect(() => () => cancelPublishStatusRequest(), [gitDirectory, cancelPublishStatusRequest]);
 
   const addReviewComment = async (anchor: DiffAnchor, note: string) => {
     if (!project || !gitDirectory) return;
@@ -279,12 +295,10 @@ function StatusBarImpl({
     if (!gitDirectory) return;
     const directory = gitDirectory;
     const generation = gitCheckoutRef.current.generation;
-    setShowDirtyFiles((open) => !open);
-    void window.aya.getGitPublishStatus(directory).then((status) => {
-      if (isCurrentGitCheckout(directory, generation)) setPublishStatus(status);
-    }).catch(() => {
-      if (isCurrentGitCheckout(directory, generation)) setPublishStatus(null);
-    });
+    const opening = !showDirtyFiles;
+    setShowDirtyFiles(opening);
+    if (opening) void refreshPublishStatus(directory, generation);
+    else cancelPublishStatusRequest();
     setDirtyFilesLoading(true);
     try {
       await window.aya.setActiveGitDirectory(directory);
@@ -322,9 +336,10 @@ function StatusBarImpl({
       }
       setCommitNotice(`Committed ${result.commit.slice(0, 7)}.`);
       setPublishError(null);
-      const updatedPublishStatus = await window.aya.getGitPublishStatus(directory);
-      if (!isCurrentGitCheckout(directory, generation)) return;
-      setPublishStatus(updatedPublishStatus);
+      if (showDirtyFilesRef.current) {
+        const updatedPublishStatus = await refreshPublishStatus(directory, generation);
+        if (!updatedPublishStatus || !isCurrentGitCheckout(directory, generation)) return;
+      }
       if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
       const files = await window.aya.getGitChangedFiles(directory);
       if (gitCheckoutRef.current.directory !== directory || gitCheckoutRef.current.generation !== generation) return;
@@ -354,9 +369,10 @@ function StatusBarImpl({
       if (!result.ok) { setPublishError(result.error); return; }
       await onGitStatusRefresh(directory);
       if (!isCurrent()) return;
-      const status = await window.aya.getGitPublishStatus(directory);
-      if (!isCurrent()) return;
-      setPublishStatus(status);
+      if (showDirtyFilesRef.current) {
+        const status = await refreshPublishStatus(directory, generation);
+        if (!status || !isCurrent()) return;
+      }
       setCommitNotice("Pushed.");
     } catch (error) {
       if (isCurrent()) setPublishError(error instanceof Error ? error.message : "Aya could not push this branch.");

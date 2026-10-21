@@ -789,7 +789,8 @@ export interface AyaApi {
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   setActiveGitDirectory(directory: string | null): Promise<void>;
   commitGitFiles(req: { directory: string; paths: string[]; message: string }): Promise<GitCommitResult>;
-  getGitPublishStatus(directory: string): Promise<GitPublishStatus>;
+  getGitPublishStatus(directory: string, requestId: string): Promise<GitPublishStatus>;
+  cancelGitPublishStatus(requestId: string): Promise<void>;
   pushGitBranch(directory: string): Promise<GitPublishResult>;
   createGitPullRequest(directory: string): Promise<GitPullRequestResult>;
   getGitDiff(directory: string): Promise<string>;

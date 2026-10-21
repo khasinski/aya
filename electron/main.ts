@@ -568,7 +568,7 @@ function registerIpc(): TeamRunner {
   };
   const teamRunner = registerTeamIpc({
     ipcMain,
-    onBeforeQuit: (teardown) => app.once("before-quit", teardown),
+    onBeforeQuit: (teardown) => app.on("before-quit", teardown),
     team: teamDeps,
     paneHost: teamPaneHost,
     intelligenceChat,
@@ -679,6 +679,7 @@ function registerIpc(): TeamRunner {
     clipboard,
     home: () => app.getPath("home"),
     openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
+    onBeforeQuit: (teardown) => app.on("before-quit", teardown),
   });
   registerDiffCommentsIpc({
     ipcMain,

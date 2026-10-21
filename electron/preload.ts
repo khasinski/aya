@@ -173,7 +173,8 @@ const api: AyaApi = {
     ipcRenderer.invoke("env:git-worktree-status", directory),
   getGitHubLink: (directory) =>
     ipcRenderer.invoke("env:github-link", directory),
-  getGitPublishStatus: (directory) => ipcRenderer.invoke("env:git-publish-status", directory),
+  getGitPublishStatus: (directory, requestId) => ipcRenderer.invoke("env:git-publish-status", { directory, requestId }),
+  cancelGitPublishStatus: (requestId) => ipcRenderer.invoke("env:git-publish-status-cancel", requestId),
   pushGitBranch: (directory) => ipcRenderer.invoke("env:git-push", directory),
   createGitPullRequest: (directory) => ipcRenderer.invoke("env:git-pull-request", directory),
   createWorktree: (req) => ipcRenderer.invoke("env:git-worktree-add", req),
