@@ -33,15 +33,24 @@ export function registerCiChecksIpc(deps: CiChecksIpcDeps): void {
     for (const { controller } of activeRequests.values()) controller.abort(new Error("Aya is quitting."));
   };
   deps.onBeforeQuit?.(abortActiveRequests);
-  deps.ipcMain.handle("git-checks:list", async (event, raw: unknown) => {
+  const beginRequest = (event: IpcMainInvokeEvent, rawId: unknown, channel: string) => {
     if (quitting) throw new Error("Aya is quitting.");
-    const request = requireRecord(raw, "git-checks:list");
-    const requestId = requireString(request.requestId, "git-checks:list.requestId");
-    if (requestId.length > 128) throw new Error("git-checks:list.requestId is too long");
-    const directory = checkout(request.directory);
+    const requestId = requireString(rawId, `${channel}.requestId`);
+    if (requestId.length > 128) throw new Error(`${channel}.requestId is too long`);
     if (activeRequests.has(requestId)) throw new Error("This pull request check request is already running.");
     const controller = new AbortController();
     activeRequests.set(requestId, { sender: event.sender, controller });
+    return {
+      controller,
+      finish: () => {
+        if (activeRequests.get(requestId)?.controller === controller) activeRequests.delete(requestId);
+      },
+    };
+  };
+  deps.ipcMain.handle("git-checks:list", async (event, raw: unknown) => {
+    const request = requireRecord(raw, "git-checks:list");
+    const directory = checkout(request.directory);
+    const { controller, finish } = beginRequest(event, request.requestId, "git-checks:list");
     try {
       await localProject(deps, request.projectSlug);
       let status: Awaited<ReturnType<typeof getPublishStatus>>;
@@ -70,39 +79,46 @@ export function registerCiChecksIpc(deps: CiChecksIpcDeps): void {
         };
       }
     } finally {
-      if (activeRequests.get(requestId)?.controller === controller) activeRequests.delete(requestId);
+      finish();
     }
   });
-  deps.ipcMain.handle("git-checks:list-cancel", (event, raw: unknown) => {
-    const requestId = requireString(raw, "git-checks:list-cancel.requestId");
+  deps.ipcMain.handle("git-checks:cancel", (event, raw: unknown) => {
+    const requestId = requireString(raw, "git-checks:cancel.requestId");
     const pending = activeRequests.get(requestId);
     if (pending?.sender === event.sender) pending.controller.abort(new Error("Pull request check refresh was cancelled."));
   });
-  deps.ipcMain.handle("git-checks:preview", async (_event, raw: unknown) => {
+  deps.ipcMain.handle("git-checks:preview", async (event, raw: unknown) => {
     const request = requireRecord(raw, "git-checks:preview");
-    const project = await localProject(deps, request.projectSlug);
-    const directory = checkout(request.directory);
-    const targetId = requireString(request.targetId, "git-checks:preview.targetId");
-    if (!project.tabs.some((tab) => tab.id === targetId)) throw new Error("Choose a pane from this project.");
-    const status = await getPublishStatus(directory);
-    if (!status.branch || status.detached) throw new Error("The current branch changed. Refresh and try again.");
-    return createCiFailurePreview({
-      directory,
-      branch: status.branch,
-      checkUrl: requireString(request.checkUrl, "git-checks:preview.checkUrl"),
-      projectSlug: project.slug,
-      targetId,
-    });
+    const { controller, finish } = beginRequest(event, request.requestId, "git-checks:preview");
+    try {
+      const project = await localProject(deps, request.projectSlug);
+      const directory = checkout(request.directory);
+      const targetId = requireString(request.targetId, "git-checks:preview.targetId");
+      if (!project.tabs.some((tab) => tab.id === targetId)) throw new Error("Choose a pane from this project.");
+      const status = await getPublishStatus(directory, { signal: controller.signal });
+      if (controller.signal.aborted) throw controller.signal.reason;
+      if (!status.branch || status.detached) throw new Error("The current branch changed. Refresh and try again.");
+      return await createCiFailurePreview({
+        directory,
+        branch: status.branch,
+        checkUrl: requireString(request.checkUrl, "git-checks:preview.checkUrl"),
+        projectSlug: project.slug,
+        targetId,
+      }, undefined, controller.signal);
+    } finally { finish(); }
   });
-  deps.ipcMain.handle("git-checks:send", async (_event, raw: unknown) => {
+  deps.ipcMain.handle("git-checks:send", async (event, raw: unknown) => {
     const request = requireRecord(raw, "git-checks:send");
-    const project = await localProject(deps, request.projectSlug);
-    const targetId = requireString(request.targetId, "git-checks:send.targetId");
-    if (!project.tabs.some((tab) => tab.id === targetId)) throw new Error("Choose a pane from this project.");
-    await sendCiFailurePreview({
-      token: requireString(request.token, "git-checks:send.token"),
-      projectSlug: project.slug,
-      targetId,
-    }, deps.sendToPane);
+    const { controller, finish } = beginRequest(event, request.requestId, "git-checks:send");
+    try {
+      const project = await localProject(deps, request.projectSlug);
+      const targetId = requireString(request.targetId, "git-checks:send.targetId");
+      if (!project.tabs.some((tab) => tab.id === targetId)) throw new Error("Choose a pane from this project.");
+      await sendCiFailurePreview({
+        token: requireString(request.token, "git-checks:send.token"),
+        projectSlug: project.slug,
+        targetId,
+      }, deps.sendToPane, undefined, controller.signal);
+    } finally { finish(); }
   });
 }

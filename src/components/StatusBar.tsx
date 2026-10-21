@@ -178,9 +178,19 @@ function StatusBarImpl({
   const ciTargetIdRef = useRef<string | null>(null);
   ciTargetIdRef.current = ciTargetId;
   const ciPreviewRequestId = useRef(0);
+  const ciActionRequestId = useRef<string | null>(null);
   const [selectedCiCheckUrl, setSelectedCiCheckUrl] = useState<string | null>(null);
   const [ciPreview, setCiPreview] = useState<CiFailurePreview | null>(null);
+  const [ciPreviewLoading, setCiPreviewLoading] = useState(false);
   const [ciSending, setCiSending] = useState(false);
+  const cancelCiActionRequest = useCallback(() => {
+    const requestId = ciActionRequestId.current;
+    if (!requestId) return;
+    ciActionRequestId.current = null;
+    setCiPreviewLoading(false);
+    setCiSending(false);
+    void window.aya.cancelCiCheckRequest(requestId).catch(() => {});
+  }, []);
   const [ciNotice, setCiNotice] = useState<string | null>(null);
   const pullRequestUrl = createdPullRequest?.directory === gitDirectory && createdPullRequest.branch === publishStatus?.branch
     ? createdPullRequest.url
@@ -277,6 +287,7 @@ function StatusBarImpl({
     setCiActionError(null);
     setSelectedCiCheckUrl(null);
     setCiPreview(null);
+    setCiPreviewLoading(false);
     setCiNotice(null);
     setShowDiff(false);
     setDiffText("");
@@ -284,7 +295,10 @@ function StatusBarImpl({
     setScrollToPath(null);
   }, [gitDirectory]);
 
-  useEffect(() => () => cancelPublishStatusRequest(), [gitDirectory, cancelPublishStatusRequest]);
+  useEffect(() => () => {
+    cancelPublishStatusRequest();
+    cancelCiActionRequest();
+  }, [gitDirectory, cancelPublishStatusRequest, cancelCiActionRequest]);
 
   useEffect(() => {
     if (!showDirtyFiles || !gitDirectory || !localGitProjectSlug || !publishStatus?.branch) {
@@ -348,20 +362,24 @@ function StatusBarImpl({
     return () => {
       active = false;
       if (timer) clearTimeout(timer);
-      if (activeRequestId) void window.aya.cancelPullRequestChecks(activeRequestId).catch(() => {});
+      if (activeRequestId) void window.aya.cancelCiCheckRequest(activeRequestId).catch(() => {});
+      cancelCiActionRequest();
+      setCiPreview(null);
+      setSelectedCiCheckUrl(null);
       if (ciRetryRef.current === retryNow) ciRetryRef.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [showDirtyFiles, gitDirectory, localGitProjectSlug, publishStatus?.branch, isCurrentGitCheckout]);
+  }, [showDirtyFiles, gitDirectory, localGitProjectSlug, publishStatus?.branch, isCurrentGitCheckout, cancelCiActionRequest]);
 
   useEffect(() => {
     if (ciTargetId && reviewTargets.some((target) => target.id === ciTargetId)) return;
+    cancelCiActionRequest();
     const targetId = reviewTargets[0]?.id ?? null;
     ciTargetIdRef.current = targetId;
     ciPreviewRequestId.current += 1;
     setCiTargetId(targetId);
     setCiPreview(null);
-  }, [reviewTargets, ciTargetId]);
+  }, [reviewTargets, ciTargetId, cancelCiActionRequest]);
 
   const addReviewComment = async (anchor: DiffAnchor, note: string) => {
     if (!project || !gitDirectory) return;
@@ -520,7 +538,10 @@ function StatusBarImpl({
 
   const previewCiCheck = async (checkUrl: string) => {
     if (!project || !gitDirectory || !ciTargetId) return;
-    const requestId = ++ciPreviewRequestId.current;
+    cancelCiActionRequest();
+    const previewGeneration = ++ciPreviewRequestId.current;
+    const requestId = uuid();
+    ciActionRequestId.current = requestId;
     const directory = gitDirectory;
     const generation = gitCheckoutRef.current.generation;
     const projectSlug = project.slug;
@@ -529,16 +550,22 @@ function StatusBarImpl({
     setSelectedCiCheckUrl(checkUrl);
     setCommitNotice(null);
     setCiPreview(null);
+    setCiPreviewLoading(true);
     setCiNotice(null);
     setCiChecksError(null);
     setCiActionError(null);
     try {
-      const preview = await window.aya.previewCiFailure({ projectSlug, directory, targetId, checkUrl });
-      if (!isCurrent() || requestId !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId) return;
+      const preview = await window.aya.previewCiFailure({ projectSlug, directory, targetId, checkUrl, requestId });
+      if (!isCurrent() || previewGeneration !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId || ciActionRequestId.current !== requestId) return;
       setCiPreview(preview);
     } catch (error) {
-      if (!isCurrent() || requestId !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId) return;
+      if (!isCurrent() || previewGeneration !== ciPreviewRequestId.current || ciTargetIdRef.current !== targetId || ciActionRequestId.current !== requestId) return;
       setCiActionError(ciActionErrorMessage(error, "Aya could not prepare this check for sending."));
+    } finally {
+      if (ciActionRequestId.current === requestId) {
+        ciActionRequestId.current = null;
+        setCiPreviewLoading(false);
+      }
     }
   };
 
@@ -549,6 +576,9 @@ function StatusBarImpl({
     const projectSlug = project.slug;
     const targetId = ciTargetId;
     const previewToken = ciPreview.token;
+    cancelCiActionRequest();
+    const requestId = uuid();
+    ciActionRequestId.current = requestId;
     const isCurrent = () => directory !== null && isCurrentGitCheckout(directory, generation);
     setCommitNotice(null);
     setCiSending(true);
@@ -556,16 +586,21 @@ function StatusBarImpl({
     setCiActionError(null);
     setCiNotice("Sending...");
     try {
-      await window.aya.sendCiFailure({ projectSlug, targetId, token: previewToken });
-      if (!isCurrent()) return;
+      await window.aya.sendCiFailure({ projectSlug, targetId, token: previewToken, requestId });
+      if (!isCurrent() || ciActionRequestId.current !== requestId) return;
       setCiNotice(`Sent to ${reviewTargets.find((target) => target.id === targetId)?.name ?? "pane"}.`);
       setCiPreview((current) => current?.token === previewToken ? null : current);
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || ciActionRequestId.current !== requestId) return;
       setCiNotice(null);
       setCiPreview((current) => current?.token === previewToken ? null : current);
       setCiActionError(ciActionErrorMessage(error, "Aya could not send the check details."));
-    } finally { setCiSending(false); }
+    } finally {
+      if (ciActionRequestId.current === requestId) {
+        ciActionRequestId.current = null;
+        setCiSending(false);
+      }
+    }
   };
 
   const loadDiff = () => {
@@ -946,6 +981,7 @@ function StatusBarImpl({
                         {ciChecks?.checks.some((check) => check.bucket === "fail" && check.url) && reviewTargets.length > 0 && (
                           <label className="aya-ci-target-label" htmlFor="aya-ci-target">Send failed checks to
                             <select id="aya-ci-target" value={ciTargetId ?? ""} disabled={ciSending} onChange={(event) => {
+                              cancelCiActionRequest();
                               const targetId = event.currentTarget.value || null;
                               ciTargetIdRef.current = targetId;
                               ciPreviewRequestId.current += 1;
@@ -961,7 +997,23 @@ function StatusBarImpl({
                             <div className="aya-dirty-publish-hint">Will send to {reviewTargets.find((target) => target.id === ciTargetId)?.name ?? "selected pane"}</div>
                             <label htmlFor="aya-ci-prompt-preview">Exact message to send</label>
                             <textarea id="aya-ci-prompt-preview" readOnly value={ciPreview.prompt} rows={8} />
+                            <button type="button" className="aya-statusbar-popover-action" disabled={ciSending} onClick={() => {
+                              cancelCiActionRequest();
+                              ciPreviewRequestId.current += 1;
+                              setCiPreview(null);
+                              setSelectedCiCheckUrl(null);
+                            }}>Dismiss preview</button>
                             <button type="button" className="aya-statusbar-popover-action" disabled={ciSending || !ciTargetId} onClick={() => void sendCiCheck()}>{ciSending ? "Sending..." : "Send"}</button>
+                          </div>
+                        )}
+                        {selectedCiCheckUrl && ciPreviewLoading && (
+                          <div className="aya-ci-preview" role="status">
+                            <span>Preparing the message...</span>
+                            <button type="button" className="aya-statusbar-popover-action" onClick={() => {
+                              cancelCiActionRequest();
+                              ciPreviewRequestId.current += 1;
+                              setSelectedCiCheckUrl(null);
+                            }}>Cancel preview</button>
                           </div>
                         )}
                         </>}

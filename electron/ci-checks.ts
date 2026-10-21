@@ -138,14 +138,14 @@ function jobFromUrl(url: string | null): { runId: string; jobId: string } | null
   return match ? { runId: match[1], jobId: match[2] } : null;
 }
 
-export async function buildCiFailurePrompt(directory: string, branch: string, checkUrl: string, gh: Gh = runGhWithSignal): Promise<{ check: PullRequestCheck; prompt: string }> {
-  const state = await getPullRequestChecks(directory, branch, gh);
+export async function buildCiFailurePrompt(directory: string, branch: string, checkUrl: string, gh: Gh = runGhWithSignal, signal?: AbortSignal): Promise<{ check: PullRequestCheck; prompt: string }> {
+  const state = await getPullRequestChecks(directory, branch, gh, signal);
   const check = state.checks.find((item) => item.url === checkUrl && item.bucket === "fail");
   if (!check) throw new Error("That check is no longer failing. Refresh the list and try again.");
   const ids = jobFromUrl(check.url);
   if (!ids) throw new Error("Aya could not open the failed job log for this check.");
   let rawLog: string;
-  try { rawLog = await gh(directory, ["run", "view", ids.runId, "--job", ids.jobId, "--log-failed"], GH_TIMEOUT_MS); }
+  try { rawLog = await gh(directory, ["run", "view", ids.runId, "--job", ids.jobId, "--log-failed"], GH_TIMEOUT_MS, signal); }
   catch (error) { throw friendlyGhError(error); }
   const tail = boundedCiLogTail(rawLog);
   const prompt = `CI check failed: ${check.name}\n${check.url}\n\nTail of the failed job log (up to 8 KB; earlier output may be omitted):\n${tail || "(No log output was available.)"}`;
@@ -178,8 +178,9 @@ function makePreviewRoom(now = Date.now()): void {
   }
 }
 
-export async function createCiFailurePreview(input: Omit<StoredPreview, "promptHash" | "expiresAt">, gh: Gh = runGhWithSignal): Promise<CiFailurePreview> {
-  const result = await buildCiFailurePrompt(input.directory, input.branch, input.checkUrl, gh);
+export async function createCiFailurePreview(input: Omit<StoredPreview, "promptHash" | "expiresAt">, gh: Gh = runGhWithSignal, signal?: AbortSignal): Promise<CiFailurePreview> {
+  const result = await buildCiFailurePrompt(input.directory, input.branch, input.checkUrl, gh, signal);
+  if (signal?.aborted) throw signal.reason ?? new Error("Check details were cancelled.");
   const token = randomBytes(24).toString("hex");
   const now = Date.now();
   makePreviewRoom(now);
@@ -187,7 +188,7 @@ export async function createCiFailurePreview(input: Omit<StoredPreview, "promptH
   return { token, checkName: result.check.name, checkUrl: result.check.url!, prompt: result.prompt };
 }
 
-export async function sendCiFailurePreview(input: { token: string; projectSlug: string; targetId: string }, send: (projectSlug: string, targetId: string, text: string) => Promise<unknown>, gh: Gh = runGhWithSignal): Promise<void> {
+export async function sendCiFailurePreview(input: { token: string; projectSlug: string; targetId: string }, send: (projectSlug: string, targetId: string, text: string) => Promise<unknown>, gh: Gh = runGhWithSignal, signal?: AbortSignal): Promise<void> {
   const saved = previews.get(input.token);
   if (!saved || saved.expiresAt <= Date.now() || saved.projectSlug !== input.projectSlug || saved.targetId !== input.targetId) {
     previews.delete(input.token);
@@ -196,7 +197,8 @@ export async function sendCiFailurePreview(input: { token: string; projectSlug: 
   // Consume synchronously before any asynchronous refetch so two simultaneous
   // IPC sends cannot both use the same preview token.
   previews.delete(input.token);
-  const latest = await buildCiFailurePrompt(saved.directory, saved.branch, saved.checkUrl, gh);
+  const latest = await buildCiFailurePrompt(saved.directory, saved.branch, saved.checkUrl, gh, signal);
+  if (signal?.aborted) throw signal.reason ?? new Error("Check details were cancelled.");
   const digest = createHash("sha256").update(latest.prompt).digest("hex");
   if (digest !== saved.promptHash) {
     throw new Error("The failed job log changed. Review the updated preview before sending.");

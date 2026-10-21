@@ -47,6 +47,10 @@ case "$1 $2" in
       : > "$state/send-slow-started"
       while [ ! -f "$state/send-slow-release" ]; do sleep 0.01; done
     fi
+    if [ "$3" = "33333" ] && [ -f "$state/run-view-hold" ]; then
+      : > "$state/run-view-started"
+      exec node -e 'require("node:fs").writeFileSync(process.env.FAKE_GH_RUN_VIEW_PID, String(process.pid)); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'
+    fi
     [ -f "$state/failed-log" ] && { cat "$state/failed-log"; exit 0; }; exit 0 ;;
   "pr create") echo 'https://github.com/aya-e2e/project/pull/42'; exit 0 ;;
 esac
@@ -64,6 +68,9 @@ const publishStatusPid = join(fakeState, "publish-status-pid");
 const checksHold = join(fakeState, "checks-hold");
 const checksStarted = join(fakeState, "checks-started");
 const checksPid = join(fakeState, "checks-pid");
+const runViewHold = join(fakeState, "run-view-hold");
+const runViewStarted = join(fakeState, "run-view-started");
+const runViewPid = join(fakeState, "run-view-pid");
 writeFileSync(fakeGit, `#!/bin/sh
 if [ -f "$FAKE_GIT_DELAY_ENABLED" ] && [ "$(pwd -P)" = "$FAKE_GIT_DELAY_DIR" ] && [ "$1" = "symbolic-ref" ] && [ "$4" = "HEAD" ]; then
   : > "$FAKE_GIT_DELAY_STARTED"
@@ -86,6 +93,7 @@ const launchEnv = {
   FAKE_GIT_PUBLISH_STATUS_STARTED: publishStatusStarted,
   FAKE_GIT_PUBLISH_STATUS_PID: publishStatusPid,
   FAKE_GH_CHECKS_PID: checksPid,
+  FAKE_GH_RUN_VIEW_PID: runViewPid,
 };
 test.use({ seedOptions: { gitRepo: true, launchEnv } });
 test.afterAll(() => rmSync(fakeRoot, { recursive: true, force: true }));
@@ -367,6 +375,123 @@ test("changes panel gives safe sign-in guidance without showing gh output", asyn
 
 test.describe("failed pull request checks", () => {
   test.use({ seedOptions: { gitRepo: true, rightTab: { presetId: "ci-review-target", name: "CI review target" }, presetList: [recorderPreset], launchEnv } });
+
+  async function prepareFailedCheck(seeded: { projectDir: string; ayaHome: string; tabIds: { right: string } }) {
+    addFakeRemote(seeded.projectDir);
+    writeFileSync(join(fakeState, "check-pr.json"), JSON.stringify({ url: "https://github.com/aya-e2e/project/pull/42", state: "OPEN", isDraft: false }));
+    writeFileSync(join(fakeState, "checks.json"), JSON.stringify([{
+      name: "Linux tests", state: "failure", bucket: "fail",
+      link: "https://github.com/aya-e2e/project/actions/runs/33333/job/67890",
+    }]));
+    writeFileSync(join(fakeState, "failed-log"), "failed near test 42\n");
+    const paneLog = join(seeded.ayaHome, `ci-review-${seeded.tabIds.right}.log`);
+    await expect.poll(() => existsSync(`${paneLog}.ready`)).toBe(true);
+  }
+
+  async function waitForHeldRunView() {
+    await expect.poll(() => existsSync(runViewStarted)).toBe(true);
+    await expect.poll(() => existsSync(runViewPid)).toBe(true);
+    return Number(readFileSync(runViewPid, "utf8"));
+  }
+
+  async function beginPreview(window: import("@playwright/test").Page) {
+    const popover = await openChanges(window);
+    const checks = window.getByRole("region", { name: "Pull request checks" });
+    await checks.getByRole("button", { name: "Preview Linux tests failure details" }).click();
+    return { popover, checks };
+  }
+
+  test("closing Changes cancels a held failure-preview log child", async ({ window, seeded }) => {
+    await prepareFailedCheck(seeded);
+    rmSync(runViewStarted, { force: true });
+    rmSync(runViewPid, { force: true });
+    writeFileSync(runViewHold, "");
+    try {
+      const { popover } = await beginPreview(window);
+      const pid = await waitForHeldRunView();
+      await window.locator(".aya-statusbar-button").filter({ hasText: "dirty" }).click();
+      await expect(popover).toBeHidden();
+      await expectPidGone(pid);
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "failed-log", "run-view-hold", "run-view-started", "run-view-pid"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+
+  test("dismissing a held failure preview cancels its log child", async ({ window, seeded }) => {
+    await prepareFailedCheck(seeded);
+    rmSync(runViewStarted, { force: true });
+    rmSync(runViewPid, { force: true });
+    writeFileSync(runViewHold, "");
+    try {
+      const { checks } = await beginPreview(window);
+      const pid = await waitForHeldRunView();
+      await checks.getByRole("button", { name: "Cancel preview" }).click();
+      await expect(checks.getByText("Preparing the message...")).toHaveCount(0);
+      await expectPidGone(pid);
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "failed-log", "run-view-hold", "run-view-started", "run-view-pid"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+
+  test("quitting Aya cancels a held failure-preview log child", async ({ window, app, seeded }) => {
+    await prepareFailedCheck(seeded);
+    rmSync(runViewStarted, { force: true });
+    rmSync(runViewPid, { force: true });
+    writeFileSync(runViewHold, "");
+    try {
+      await beginPreview(window);
+      const pid = await waitForHeldRunView();
+      const exited = new Promise<void>((resolve) => app.process().once("exit", () => resolve()));
+      await app.evaluate(({ app: electronApp }) => electronApp.quit());
+      await Promise.race([
+        exited,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("Aya did not quit with a failure preview held")), 5_000)),
+      ]);
+      await expectPidGone(pid);
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "failed-log", "run-view-hold", "run-view-started", "run-view-pid"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+
+  test("closing Changes cancels a held send log child", async ({ window, seeded }) => {
+    await prepareFailedCheck(seeded);
+    rmSync(runViewStarted, { force: true });
+    rmSync(runViewPid, { force: true });
+    try {
+      const { popover, checks } = await beginPreview(window);
+      await expect(checks.getByRole("textbox", { name: "Exact message to send" })).toBeVisible();
+      writeFileSync(runViewHold, "");
+      await checks.getByRole("button", { name: "Send", exact: true }).click();
+      const pid = await waitForHeldRunView();
+      await window.locator(".aya-statusbar-button").filter({ hasText: "dirty" }).click();
+      await expect(popover).toBeHidden();
+      await expectPidGone(pid);
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "failed-log", "run-view-hold", "run-view-started", "run-view-pid"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
+
+  test("quitting Aya cancels a held send log child", async ({ window, app, seeded }) => {
+    await prepareFailedCheck(seeded);
+    rmSync(runViewStarted, { force: true });
+    rmSync(runViewPid, { force: true });
+    try {
+      const { checks } = await beginPreview(window);
+      await expect(checks.getByRole("textbox", { name: "Exact message to send" })).toBeVisible();
+      writeFileSync(runViewHold, "");
+      await checks.getByRole("button", { name: "Send", exact: true }).click();
+      const pid = await waitForHeldRunView();
+      const exited = new Promise<void>((resolve) => app.process().once("exit", () => resolve()));
+      await app.evaluate(({ app: electronApp }) => electronApp.quit());
+      await Promise.race([
+        exited,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("Aya did not quit with a send log held")), 5_000)),
+      ]);
+      await expectPidGone(pid);
+    } finally {
+      for (const name of ["check-pr.json", "checks.json", "failed-log", "run-view-hold", "run-view-started", "run-view-pid"]) rmSync(join(fakeState, name), { force: true });
+    }
+  });
 
   test("previews the failed job tail and sends it to the selected pane", async ({ window, seeded }) => {
     addFakeRemote(seeded.projectDir);

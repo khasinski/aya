@@ -815,9 +815,9 @@ export interface AyaApi {
   pushGitBranch(directory: string): Promise<GitPublishResult>;
   createGitPullRequest(directory: string): Promise<GitPullRequestResult>;
   getPullRequestChecks(req: { projectSlug: string; directory: string; requestId: string }): Promise<PullRequestChecks>;
-  cancelPullRequestChecks(requestId: string): Promise<void>;
-  previewCiFailure(req: { projectSlug: string; directory: string; targetId: string; checkUrl: string }): Promise<CiFailurePreview>;
-  sendCiFailure(req: { projectSlug: string; targetId: string; token: string }): Promise<void>;
+  cancelCiCheckRequest(requestId: string): Promise<void>;
+  previewCiFailure(req: { projectSlug: string; directory: string; targetId: string; checkUrl: string; requestId: string }): Promise<CiFailurePreview>;
+  sendCiFailure(req: { projectSlug: string; targetId: string; token: string; requestId: string }): Promise<void>;
   getGitDiff(directory: string): Promise<string>;
   listDiffComments(projectSlug: string): Promise<DiffComment[]>;
   addDiffComment(projectSlug: string, comment: DiffComment): Promise<DiffComment[]>;

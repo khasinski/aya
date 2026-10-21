@@ -164,7 +164,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     pushGitBranch: async () => ({ ok: false, error: "Publishing is not available in Aya Web." }),
     createGitPullRequest: async () => ({ ok: false, error: "Publishing is not available in Aya Web." }),
     getPullRequestChecks: async () => ({ pullRequestUrl: null, pullRequestState: "none", checks: [] }),
-    cancelPullRequestChecks: async () => undefined,
+    cancelCiCheckRequest: async () => undefined,
     previewCiFailure: async () => { throw new Error("Pull request checks are not available in Aya Web."); },
     sendCiFailure: async () => { throw new Error("Sending check details is not available in Aya Web."); },
     getGitRoot: inv("env:git-root"),
