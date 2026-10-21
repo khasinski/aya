@@ -7,6 +7,8 @@ import { builtinScreenRules, HOLD_RULES_UNAVAILABLE } from "./screen-rule-provid
 import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_RECOVERY_UNKNOWN, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
 export interface PaneStateResult {
   state: "unknown" | "stopped" | "starting" | "waiting" | "busy" | "held" | "idle" | "shell";
+  /** True only when this client observed an explicit process-exit event. */
+  exited: boolean;
   reason?: string; screenEvidence?: boolean;
   hold: string | null; busy: boolean; waiting: boolean | null; generation: string | null;
   rules: { available: boolean; version?: string; digest?: string; reason?: string };
@@ -18,8 +20,8 @@ function ruleMetadata(): PaneStateResult["rules"] {
   const r = builtinScreenRules.get();
   return r.available ? { available: true, version: r.rules.version, digest: r.rules.digest } : { available: false, reason: r.reason };
 }
-export function unavailablePaneState(reason: string, state: "unknown" | "stopped" | "starting" = "unknown"): PaneStateResult {
-  return { state, hold: reason, busy: false, waiting: null, generation: null, rules: ruleMetadata(), evidence: [{ for: "hold", policy: state, source: "pty-host-client" }] };
+export function unavailablePaneState(reason: string, state: "unknown" | "stopped" | "starting" = "unknown", exited = false): PaneStateResult {
+  return { state, exited, hold: reason, busy: false, waiting: null, generation: null, rules: ruleMetadata(), evidence: [{ for: "hold", policy: state, source: "pty-host-client" }] };
 }
 export function explainPaneSnapshot(snapshot: VtSnapshot): PaneStateResult {
   const hold = snapshotHold(snapshot).hold, busy = snapshotBusy(snapshot), status = snapshotStatus(snapshot), rules = ruleMetadata();
@@ -44,7 +46,7 @@ export function explainPaneSnapshot(snapshot: VtSnapshot): PaneStateResult {
     const policies = new Map([[HOLD_SHELL,"shell"],[HOLD_STARTING,"starting"],[HOLD_DRAFT,"draft"],[HOLD_CHOICE,"numbered-choice"],[HOLD_APPROVE_AYA,"approve-aya"],[HOLD_RECOVERY_UNKNOWN,"recovery-screen-unknown"],[HOLD_RULES_UNAVAILABLE,"rules-unavailable"]]);
     evidence.push({for:"hold",policy:policies.get(hold) ?? "pane-hold"});
   }
-  return { state, ...(reason ? { reason } : {}), screenEvidence: !unknown, hold, busy, waiting: status.waiting, generation: snapshot.generation, rules, evidence };
+  return { state, exited: false, ...(reason ? { reason } : {}), screenEvidence: !unknown, hold, busy, waiting: status.waiting, generation: snapshot.generation, rules, evidence };
 }
 export function formatPaneState(name: string, result: PaneStateResult, explain: boolean): string {
   const lines = [`${printable(JSON.stringify(name))}: ${result.state}; busy: ${result.busy ? "yes" : "no"}; waiting: ${result.waiting === null ? "unknown" : result.waiting ? "yes" : "no"}; hold: ${result.hold ?? "none"}`];

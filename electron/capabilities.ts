@@ -88,6 +88,13 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: ["Read-only: never starts a host or owner. A missing host reports unknown: terminal host not running. State answers, including unknown, exit 0; invalid targets/options exit nonzero."],
   },
   {
+    command: "pane wait",
+    usage: "aya pane wait target... [--until idle|waiting|exited[,..]] [--any] [--timeout seconds] [--project slug]",
+    summary: "Wait for one or more panes to become idle, wait for you, or exit.",
+    example: 'aya pane wait reviewer builder --until idle,waiting --timeout 120',
+    notes: ["By default every target must match; --any returns when the first does. Default condition is idle and default timeout is 30 seconds.", "Exit 0 when met, 1 on timeout, 2 when a target is unknown or ambiguous. Ctrl+C cancels the wait."],
+  },
+  {
     command: "pane read",
     usage: "aya pane read target [--project slug]",
     summary: "Print another pane's recent output as plain text, as its screen shows it, newest last; a control character in it shows as its \\uXXXX escape.",

@@ -1,5 +1,6 @@
 import type { AutomaticWriteContext } from "./screen-user-rule-input";
 import { formatPaneState, type PaneStateResult } from "./pane-state";
+import { formatPaneWaitReply, waitForPaneTargets, type PaneWaitCondition } from "./pane-wait";
 import type { BrowserWindow } from "electron";
 import { notePaneInput, paneInputRevision, withPaneInputLock } from "./pane-input-queue";
 import { listenOwnerOnly } from "./owner-socket";
@@ -106,6 +107,7 @@ export interface ControlServerOptions {
   /** Automatic input with a current policy decision and host first-byte fence. */
   writePaneChecked?: (terminalId: string, data: string, context: AutomaticWriteContext & { cancelled?: () => boolean }) => Promise<boolean | void>;
   paneState?: (terminalId: string) => Promise<PaneStateResult>;
+  subscribePaneState?: (terminalId: string, listener: (state: PaneStateResult) => void) => () => void;
   /** All live windows (and window-like sinks); status updates are broadcast
    *  because the terminal they describe may be in an unfocused window. */
   getWindows?: () => ControlStatusSink[];
@@ -549,6 +551,33 @@ async function handleRequest(
     const result = await options.paneState(resolved.match.terminalId);
     return { output: formatPaneState(resolved.match.name, result, request.explain) };
   }
+  if (request.type === "pane-wait") {
+    if (!options.listProjects || !options.paneState || !options.subscribePaneState) throw new Error("pane wait is not available");
+    const projects = await options.listProjects();
+    const targets: Array<{ terminalId: string; name: string }> = [];
+    const seen = new Set<string>();
+    for (const target of request.targets) {
+      const explicitId = target.startsWith("pane:") ? target.slice("pane:".length) : undefined;
+      const resolved = resolvePaneTarget(projects, {
+        terminalId: explicitId,
+        name: explicitId ? undefined : target,
+        projectSlug: request.projectSlug,
+      });
+      if (!resolved.ok) return { error: resolved.error, exitCode: 2 };
+      if (seen.has(resolved.match.terminalId)) continue;
+      seen.add(resolved.match.terminalId);
+      targets.push({ terminalId: resolved.match.terminalId, name: resolved.match.name });
+    }
+    const result = await waitForPaneTargets(targets, {
+      until: request.until as PaneWaitCondition[],
+      any: request.any,
+      timeoutMs: request.timeoutMs,
+      signal: callerGone,
+      readState: options.paneState,
+      subscribe: options.subscribePaneState,
+    });
+    return formatPaneWaitReply(result, targets, request.until, request.timeoutMs);
+  }
   if (request.type === "pane-read" || request.type === "pane-send") {
     return handlePaneRequest(request, options, callerDisconnected);
   }
@@ -707,6 +736,9 @@ export function startControlServerOn(
         try {
           const raw: unknown = JSON.parse(line);
           const [request, caller] = [parseControlRequest(raw), parseControlCaller(raw)];
+          // A pane wait owns its own deadline, which may be much longer than the
+          // ordinary idle limit for unanswered control requests.
+          if (request.type === "pane-wait") socket.setTimeout(0);
           const { undo, ...payload } = (await debugAnswer(options.team, request, caller, handleRequest(request, caller, options, callerGone.signal, callerDisconnected.signal))) ?? {};
           if (!(await sendJson(socket, { ok: true, ...payload })) && typeof undo === "function") await undo();
         } catch (err) {
