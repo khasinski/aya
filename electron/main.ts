@@ -110,6 +110,7 @@ import { createWindowProjectState } from "./window-slices";
 import { loadWebConfig, saveWebConfig } from "./web-config";
 import { captureIpcHandlers } from "./ipc/web-capture";
 import { registerEnvIpc } from "./ipc/env-ipc";
+import { registerGitStatusQuitGuard } from "./git-status-quit";
 import { registerDiffCommentsIpc } from "./ipc/diff-comments-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
 import { registerSystemIpc } from "./ipc/system-ipc";
@@ -679,24 +680,11 @@ function registerIpc(): TeamRunner {
     clipboard,
     home: () => app.getPath("home"),
     openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
-    onBeforeQuit: (teardown) => {
-      let teardownStarted = false;
-      let teardownComplete = false;
-      const holdQuit = (event: Electron.Event) => {
-        if (teardownComplete) return;
-        event.preventDefault();
-        if (teardownStarted) return;
-        teardownStarted = true;
-        void teardown().catch((error) => {
-          console.warn("[aya] could not fully stop Git status checks before quit:", error);
-        }).finally(() => {
-          teardownComplete = true;
-          app.removeListener("before-quit", holdQuit);
-          app.quit();
-        });
-      };
-      app.on("before-quit", holdQuit);
-    },
+    onBeforeQuit: (teardown, hasPendingChildren) => registerGitStatusQuitGuard(app, {
+      teardown,
+      hasPendingChildren,
+      onError: (error) => console.warn("[aya] could not fully stop Git status checks before quit:", error),
+    }),
   });
   registerDiffCommentsIpc({
     ipcMain,

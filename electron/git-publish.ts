@@ -14,6 +14,11 @@ interface TrackedStatusChild {
 
 const activeStatusChildren = new Set<TrackedStatusChild>();
 
+/** Synchronous snapshot used by before-quit; child registration happens in spawn(). */
+export function hasPendingGitStatusChildren(): boolean {
+  return activeStatusChildren.size > 0;
+}
+
 /** Wait briefly for cancelled status commands, then force-kill any survivors. */
 export async function waitForGitStatusChildren(timeoutMs = STATUS_QUIT_WAIT_MS): Promise<void> {
   const deadline = Date.now() + Math.max(0, timeoutMs);

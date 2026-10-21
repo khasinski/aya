@@ -21,7 +21,7 @@ import {
   worktreeBranchRemovalInfo,
 } from "../git";
 import { getGitHubLink, isGitHubCliAvailable } from "../github";
-import { createOrFindPullRequest, getPublishStatus, pushCurrentBranch, waitForGitStatusChildren } from "../git-publish";
+import { createOrFindPullRequest, getPublishStatus, hasPendingGitStatusChildren, pushCurrentBranch, waitForGitStatusChildren } from "../git-publish";
 import { optionalTrimmed, requireRecord, requireString } from "../validation";
 
 /** At most this many directory suggestions per completion request. */
@@ -41,7 +41,7 @@ export interface EnvIpcDeps {
   /** Test seam; production uses the real checked git implementation. */
   commitGitFiles?: typeof commitGitFiles;
   /** Abort subprocesses owned by IPC work when Aya begins quitting. */
-  onBeforeQuit?: (teardown: () => Promise<void>) => void;
+  onBeforeQuit?: (teardown: () => Promise<void>, hasPendingChildren: () => boolean) => void;
   /** Test seam for pending publish-status requests. */
   getPublishStatus?: typeof getPublishStatus;
 }
@@ -88,7 +88,7 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
     for (const controller of pendingPublishStatus) controller.abort(new Error("Aya is quitting."));
     await waitForGitStatusChildren();
   };
-  deps.onBeforeQuit?.(abortPendingPublishStatus);
+  deps.onBeforeQuit?.(abortPendingPublishStatus, hasPendingGitStatusChildren);
   const publishStatus = deps.getPublishStatus ?? getPublishStatus;
   const pickPath = async (e: IpcMainInvokeEvent, options: OpenDialogOptions): Promise<string | null> => {
     const win = senderWindow(e);
