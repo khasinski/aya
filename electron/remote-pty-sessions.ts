@@ -195,6 +195,13 @@ export class RemotePtySessions implements PtyEventSink {
               writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
               return;
             }
+            if (session.state === "uncertain") {
+              const running = await this.deps.isRunning?.(session.processIdentity).catch(() => null);
+              if (running !== false) {
+                session.failureReason = "Aya could not confirm that this terminal stopped. It may still be running.";
+                throw new Error(session.failureReason);
+              }
+            }
           }
           if (session.state !== "exited" && !session.spawnFailed) {
             session.state = "exited";

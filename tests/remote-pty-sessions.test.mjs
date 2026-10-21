@@ -255,6 +255,52 @@ test("a missing PTY-host map entry is unknown, and an uncertain live session is 
   assert.equal(listed[0].terminals[0].state, "uncertain");
 });
 
+test("a successful retry keeps an uncertain PTY until its captured process is confirmed gone", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  let exitAttempts = 0;
+  let running = true;
+  const identity = { pid: 303, startIdentity: "303:started" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => identity,
+    write: async () => true,
+    resize: async () => {},
+    exit: async () => {
+      exitAttempts += 1;
+      if (exitAttempts === 1) throw new Error("PTY removed from host map before child close");
+    },
+    isRunning: async (seen) => {
+      assert.deepEqual(seen, identity);
+      return running;
+    },
+    newId: () => "terminal-retry-exit",
+  });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "spawn", project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+
+  const first = [];
+  await sessions.handle(socket, { type: "pty:exit", protocol: 2, id: "exit-1", terminalId: "terminal-retry-exit" }, (_socket, message) => first.push(message));
+  assert.equal(first.some((message) => message.type === "error"), true);
+
+  const second = [];
+  await sessions.handle(socket, { type: "pty:exit", protocol: 2, id: "exit-2", terminalId: "terminal-retry-exit" }, (_socket, message) => second.push(message));
+  assert.equal(second.some((message) => message.type === "pty:exit-result"), false);
+  assert.match(second.find((message) => message.type === "error")?.message ?? "", /could not confirm.*stopped/i);
+  const stillUncertain = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list-uncertain" }, (_socket, message) => stillUncertain.push(message));
+  assert.equal(stillUncertain[0].terminals[0].state, "uncertain");
+
+  running = false;
+  const third = [];
+  await sessions.handle(socket, { type: "pty:exit", protocol: 2, id: "exit-3", terminalId: "terminal-retry-exit" }, (_socket, message) => third.push(message));
+  assert.equal(third.some((message) => message.type === "pty:exit-result"), true);
+  const confirmedGone = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list-gone" }, (_socket, message) => confirmedGone.push(message));
+  assert.equal(confirmedGone[0].terminals[0].state, "exited");
+});
+
 test("a non-reading v2 socket stays under the queue cap for replay and list replies", async () => {
   const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
   const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
