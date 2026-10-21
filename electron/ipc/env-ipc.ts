@@ -20,6 +20,7 @@ import {
   worktreeBranchRemovalInfo,
 } from "../git";
 import { getGitHubLink, isGitHubCliAvailable } from "../github";
+import { createOrFindPullRequest, getPublishStatus, pushCurrentBranch } from "../git-publish";
 import { optionalTrimmed, requireRecord, requireString } from "../validation";
 
 /** At most this many directory suggestions per completion request. */
@@ -174,6 +175,15 @@ export function registerEnvIpc(deps: EnvIpcDeps): void {
   });
   ipcMain.handle("env:github-cli-available", async () =>
     isGitHubCliAvailable(),
+  );
+  ipcMain.handle("env:git-publish-status", async (_e, directory: unknown) =>
+    getPublishStatus(requireString(directory, "env:git-publish-status.directory")),
+  );
+  ipcMain.handle("env:git-push", async (_e, directory: unknown) =>
+    pushCurrentBranch(requireString(directory, "env:git-push.directory")),
+  );
+  ipcMain.handle("env:git-pull-request", async (_e, directory: unknown) =>
+    createOrFindPullRequest(requireString(directory, "env:git-pull-request.directory")),
   );
   ipcMain.handle("env:pick-dir", async (e) =>
     pickPath(e, {

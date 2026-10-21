@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 // commands. `gh browse` and `gh --version` are local and return instantly.
 const GH_TIMEOUT_MS = 6000;
 
-const GH_ENV = { ...process.env, GH_NO_UPDATE_NOTIFIER: "1" } as const;
+const GH_ENV = { ...process.env, GH_NO_UPDATE_NOTIFIER: "1", GH_PROMPT_DISABLED: "1" } as const;
 const OPTS = { timeout: GH_TIMEOUT_MS, windowsHide: true, env: GH_ENV } as const;
 
 /** Runs `gh` with the given args in `directory` and returns trimmed stdout.

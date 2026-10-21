@@ -200,6 +200,18 @@ export interface GitHubLink {
   url: string;
 }
 
+export interface GitPublishStatus {
+  branch: string | null;
+  detached: boolean;
+  defaultBranch: boolean;
+  remote: string | null;
+  pushDisabledReason: string | null;
+  pullRequestDisabledReason: string | null;
+  remoteError?: string;
+}
+export type GitPublishResult = { ok: true } | { ok: false; error: string };
+export type GitPullRequestResult = { ok: true; url: string } | { ok: false; error: string };
+
 export interface RemoteHostInfo {
   id: string;
   name: string;
@@ -777,6 +789,9 @@ export interface AyaApi {
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   setActiveGitDirectory(directory: string | null): Promise<void>;
   commitGitFiles(req: { directory: string; paths: string[]; message: string }): Promise<GitCommitResult>;
+  getGitPublishStatus(directory: string): Promise<GitPublishStatus>;
+  pushGitBranch(directory: string): Promise<GitPublishResult>;
+  createGitPullRequest(directory: string): Promise<GitPullRequestResult>;
   getGitDiff(directory: string): Promise<string>;
   listDiffComments(projectSlug: string): Promise<DiffComment[]>;
   addDiffComment(projectSlug: string, comment: DiffComment): Promise<DiffComment[]>;
