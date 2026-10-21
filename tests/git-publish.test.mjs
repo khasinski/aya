@@ -20,7 +20,7 @@ case "$1 $2" in
   "repo view")
     if [ -f "$FAKE_GH_STATE/switch-on-repo-view" ]; then git checkout -q alternate; : > "$FAKE_GH_STATE/switch-used"; fi
     echo 'https://github.com/acme/repo'; exit 0 ;;
-  "pr view") [ -e "$FAKE_GH_STATE/pr" ] && { cat "$FAKE_GH_STATE/pr"; exit 0; }; exit 1 ;;
+  "pr view") [ -e "$FAKE_GH_STATE/pr" ] && { cat "$FAKE_GH_STATE/pr"; exit 0; }; echo 'no pull requests found for branch' >&2; exit 1 ;;
   "pr create") cat "$FAKE_GH_STATE/create-url"; exit 0 ;;
 esac
 if [ -e "$FAKE_GH_STATE/slow" ]; then sleep 1; fi
@@ -200,6 +200,31 @@ test("pull request action refuses if the checkout changes after repository looku
     setState("switch-on-repo-view", null);
     setState("switch-used", null);
   }
+});
+
+test("pull request view timeout never falls through to create", async () => {
+  const dir = repo("pr-view-timeout");
+  git(dir, "remote", "add", "origin", "https://github.com/acme/repo.git");
+  git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  git(dir, "checkout", "-q", "-b", "feature/timeout");
+  const ghCalls = [];
+  const gitRunner = async (command, args, cwd, _timeout, env) => execFileSync(command, args, {
+    cwd, encoding: "utf8", env: env ?? process.env, stdio: ["ignore", "pipe", "pipe"],
+  });
+  const ghRunner = async (_directory, args) => {
+    ghCalls.push(args);
+    if (args[0] === "--version" || args[0] === "auth" || args[0] === "repo") {
+      return args[0] === "repo" ? "https://github.com/acme/repo" : "ok";
+    }
+    if (args[0] === "pr" && args[1] === "view") {
+      throw Object.assign(new Error("request timed out"), { code: "ETIMEDOUT", stderr: "network timeout" });
+    }
+    if (args[0] === "pr" && args[1] === "create") return "https://github.com/acme/repo/pull/8";
+    throw new Error(`Unexpected gh args: ${args.join(" ")}`);
+  };
+  const result = await createOrFindPullRequest(dir, gitRunner, ghRunner);
+  assert.deepEqual(result, { ok: false, error: "GitHub did not respond in time. Try again." });
+  assert.deepEqual(ghCalls.map((args) => args.slice(0, 2)), [["--version"], ["auth", "status"], ["repo", "view"], ["pr", "view"]]);
 });
 
 test("every gh call is bounded and times out", async () => {

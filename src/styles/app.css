@@ -1029,6 +1029,10 @@ body {
   padding: 3px 7px;
   border: 1px solid var(--border);
 }
+.aya-statusbar-popover-action:disabled {
+  opacity: .45;
+  cursor: default;
+}
 .aya-statusbar-popover-back {
   padding: 0;
   color: var(--fg-secondary);
