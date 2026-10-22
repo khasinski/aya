@@ -18,6 +18,14 @@ export function writeRemoteTerminalFrame(socket: net.Socket, message: unknown): 
     socket.destroy();
     return false;
   }
-  socket.write(frame);
-  return true;
+  try {
+    socket.write(frame);
+    return true;
+  } catch {
+    // The peer can disappear between the destroyed check and write(). A
+    // terminal output callback must not let that race escape into the host's
+    // PTY event loop and interrupt unrelated sessions.
+    socket.destroy();
+    return false;
+  }
 }

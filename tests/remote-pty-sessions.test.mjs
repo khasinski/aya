@@ -444,3 +444,17 @@ test("a non-reading v2 socket stays under the queue cap for replay and list repl
   assert.equal(listSocket.destroyed, true);
   assert.equal(listSocket.writableLength <= REMOTE_TERMINAL_SOCKET_QUEUE_MAX_BYTES, true);
 });
+
+test("a terminal frame write racing a disconnected peer is contained", () => {
+  const socket = {
+    destroyed: false,
+    writableLength: 0,
+    destroyCalls: 0,
+    write() { throw Object.assign(new Error("broken pipe"), { code: "EPIPE" }); },
+    destroy() { this.destroyed = true; this.destroyCalls += 1; },
+  };
+
+  assert.equal(writeRemoteTerminalFrame(socket, { type: "pty:output", protocol: 2, terminalId: "t", offset: 0, data: "x" }), false);
+  assert.equal(socket.destroyed, true);
+  assert.equal(socket.destroyCalls, 1);
+});

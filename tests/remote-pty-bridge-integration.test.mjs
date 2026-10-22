@@ -174,7 +174,10 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
       assert.equal(processAlive(childBridgePid), false);
     }
 
-    await waitFor(() => localEvents.filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay).map((event) => event.chunk).join("").includes("REMOTE-OUTPUT-79"), 10_000);
+    // The host continues draining the finite output script after its bridge
+    // disappears. Coverage and loaded macOS runners can stretch the 4 s script
+    // well past 10 s, so use the same bounded slow-runner allowance as above.
+    await waitFor(() => localEvents.filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay).map((event) => event.chunk).join("").includes("REMOTE-OUTPUT-79"), 30_000);
     assert.equal(await host.getPid(terminalId), originalPid);
     const hostBytes = Buffer.from(localEvents
       .filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay)

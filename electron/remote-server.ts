@@ -193,6 +193,13 @@ export function startRemoteServerOn(
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");
     const terminalSession = { protocol: null as number | null };
+    // A remote client can disappear while PTY output is being forwarded.
+    // Consume socket write errors and drop its subscriptions; a dead reader
+    // must not turn into an uncaught EPIPE in the host process.
+    socket.on("error", () => {
+      options.terminalSessions?.detach(socket);
+      socket.destroy();
+    });
     sendJson(
       socket,
       remoteHello(options.host ?? defaultHostInfo(), options.appVersion),
