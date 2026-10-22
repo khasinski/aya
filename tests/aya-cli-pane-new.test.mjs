@@ -23,6 +23,7 @@ const OTHER_WORKER = "c0ffee00-1234-4abc-8def-001122334433";
 const PROJECTS = [
   { slug: "libeval", name: "libeval", directory: LIBEVAL_DIR, tabs: [] },
   { slug: "other", name: "other", directory: OTHER_DIR, tabs: [{ id: OTHER_WORKER, name: "worker", presetId: "claude" }] },
+  { slug: "box", name: "box", directory: "/srv/box", remote: { host: "box" }, tabs: [] },
 ];
 const PRESETS = [
   { id: "claude", name: "Claude Code", command: "claude" },
@@ -75,6 +76,8 @@ const OPENS = [
   ["the cwd's project", ["claude"], { cwd: LIBEVAL_DIR }, "libeval", { presetId: "claude", name: "Claude Code" }],
   ["the caller's pane beats the cwd", ["claude"], { cwd: LIBEVAL_DIR, env: { AYA_TERMINAL_ID: OTHER_WORKER } }, "other", { presetId: "claude", name: "Claude Code" }],
   ["AYA_PROJECT_SLUG", ["claude"], { env: { AYA_PROJECT_SLUG: "libeval" } }, "libeval", { presetId: "claude", name: "Claude Code" }],
+  ["a name with a newline and ESC is one line", ["claude", "--name", "a\nb\u001b[31mc", "--project", "other"], {}, "other", { presetId: "claude", name: "a b [31mc" }],
+  ["a name of controls only falls back to the preset's", ["claude", "--name", "\n", "--project", "other"], {}, "other", { presetId: "claude", name: "Claude Code" }],
   ["--project beats AYA_PROJECT_SLUG", ["claude", "--project", "other"], { env: { AYA_PROJECT_SLUG: "libeval" } }, "other", { presetId: "claude", name: "Claude Code" }],
 ];
 
@@ -100,7 +103,8 @@ const REFUSALS = [
   ["an unknown flag", ["claude", "--force"], {}, /Usage/],
   ["an unknown preset", ["nope", "--project", "other"], {}, /no preset "nope"; presets: claude, codex; nothing was opened/],
   ["a preset not installed", ["codex", "--project", "other"], {}, /preset "codex" \(Codex\) is not installed; nothing was opened/],
-  ["an unknown project", ["claude", "--project", "nope"], { cwd: LIBEVAL_DIR }, /no project "nope"; projects: libeval, other; nothing was opened/],
+  ["an unknown project", ["claude", "--project", "nope"], { cwd: LIBEVAL_DIR }, /no project "nope"; projects: libeval, other, box; nothing was opened/],
+  ["a remote project", ["claude", "--project", "box"], {}, /project box is remote; aya pane new works only on local projects; nothing was opened/],
   ["no project at all", ["claude"], {}, /pass --project <slug>; nothing was opened/],
 ];
 

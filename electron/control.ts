@@ -558,11 +558,15 @@ async function handleRequest(
         : "run aya pane new in an Aya pane, in the directory of a project open in Aya, or pass --project <slug>";
       throw new Error(`${where}; nothing was opened`);
     }
+    // The presets and the install check below are this machine's, not the remote host's, as for aya team open.
+    if (project.remote) throw new Error(`project ${project.slug} is remote; aya pane new works only on local projects; nothing was opened`);
     const presets = await host.listPresets();
     const preset = presets.find((p) => p.id === request.presetId);
     if (!preset) throw new Error(`no preset "${request.presetId}"; presets: ${presets.map((p) => p.id).join(", ")}; nothing was opened`);
     if (!(await host.presetInstalled(preset))) throw new Error(`preset "${preset.id}" (${preset.name}) is not installed; nothing was opened`);
-    const pane = { id: host.newPaneId(), presetId: preset.id, name: request.name || preset.name, teamLaunch: false };
+    // A tab name is one line in the tab bar and in pane list.
+    const name = (request.name && oneLine(request.name)) || preset.name;
+    const pane = { id: host.newPaneId(), presetId: preset.id, name, teamLaunch: false };
     await host.openPanes(project.slug, [pane]);
     return { output: `${pane.id}\n` };
   }

@@ -88,7 +88,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     example: 'aya pane new claude --name "reviewer"',
     notes: [
       "preset is an id from aya presets; the pane is named after the preset unless --name is given.",
-      "Outside a pane, the project is the one whose directory you are in, or --project.",
+      "The project is --project, else AYA_PROJECT_SLUG (set in every pane), else the project whose directory you are in. Remote projects are refused.",
       "The printed id works with pane read / pane send / pane wait.",
     ],
   },
