@@ -62,6 +62,10 @@ export interface RestoredRemoteTerminal {
 
 export type RemoteTerminalWriter = (socket: net.Socket, message: unknown) => void;
 
+function socketIsOpen(socket: net.Socket): boolean {
+  return !socket.destroyed && socket.writable !== false;
+}
+
 /** Per-main-process remote terminal registry. It owns only stream attachments
  * and a bounded replay ring; PTY ownership remains in the ordinary terminal
  * host behind the injected callbacks. */
@@ -197,7 +201,7 @@ export class RemotePtySessions implements PtyEventSink {
     // Readiness may resolve after the peer has already disconnected. Its
     // close handler detached it before this continuation resumed, so a dead
     // socket must not reclaim control or rejoin a terminal.
-    if (socket.destroyed || socket.writable === false) return;
+    if (!socketIsOpen(socket)) return;
     const request = parseRemoteTerminalRequest(raw);
     if (!request || request.type === "session:open") {
       const requestId = isRecord(raw) && typeof raw.id === "string" && raw.id.length <= 128 ? raw.id : undefined;
@@ -211,10 +215,14 @@ export class RemotePtySessions implements PtyEventSink {
           const identity = this.clientIdFor(socket);
           if (this.controllerClientId && this.controllerClientId !== identity) this.requireController(socket);
           await this.deps.ensureCapacity?.();
+          if (!socketIsOpen(socket)) return;
           const projects = await this.deps.listProjects();
+          if (!socketIsOpen(socket)) return;
           const project = projects.find((item) => item.slug === request.project && !item.remote);
           if (!project) throw new Error("The selected host project is unavailable.");
-          const preset = (await this.deps.listPresets()).find((item) => item.id === request.preset);
+          const presets = await this.deps.listPresets();
+          if (!socketIsOpen(socket)) return;
+          const preset = presets.find((item) => item.id === request.preset);
           if (!preset || !preset.command.trim()) throw new Error("The selected terminal preset is unavailable.");
           this.makeRoom();
           const terminalId = request.terminalId ?? (this.deps.newId ?? randomUUID)();

@@ -244,6 +244,61 @@ test("a socket closed during readiness cannot attach or take control afterward",
   assert.equal(sessions.sessions.get("live")?.clients.has(dead), false);
 });
 
+test("a socket closed during each spawn lookup await cannot create an orphan controller", async (t) => {
+  for (const stage of ["ensureCapacity", "listProjects", "listPresets"]) {
+    await t.test(stage, async () => {
+      const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+      const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+      let release;
+      let notifyStarted;
+      const started = new Promise((resolve) => { notifyStarted = resolve; });
+      const gate = new Promise((resolve) => { release = resolve; });
+      let held = false;
+      const hold = async () => {
+        if (held) return;
+        held = true;
+        notifyStarted();
+        await gate;
+      };
+      let spawnCalls = 0;
+      const sessions = new RemotePtySessions({
+        ensureCapacity: async () => { if (stage === "ensureCapacity") await hold(); },
+        listProjects: async () => { if (stage === "listProjects") await hold(); return [project]; },
+        listPresets: async () => { if (stage === "listPresets") await hold(); return [preset]; },
+        spawn: async () => { spawnCalls += 1; },
+        write: async () => true,
+        resize: async () => {},
+        exit: async () => {},
+        newId: () => "terminal-after-disconnect",
+      });
+      const disconnected = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+      sessions.registerClient(disconnected, "gone-client");
+      const replies = [];
+      const pendingSpawn = sessions.handle(disconnected, { type: "pty:spawn", protocol: 2, id: "spawn-gone", project: "repo", preset: "shell", cols: 80, rows: 24 }, (_socket, message) => replies.push(message));
+      await started;
+      sessions.detach(disconnected);
+      disconnected.destroyed = true;
+      disconnected.writable = false;
+      release();
+      await pendingSpawn;
+      assert.equal(spawnCalls, 0);
+      assert.deepEqual(replies, []);
+      assert.equal(sessions.sessions.size, 0);
+      assert.equal(sessions.controllerClientId, undefined);
+      assert.equal(sessions.clientSockets.size, 0);
+
+      const live = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+      const liveReplies = [];
+      await sessions.handle(live, { type: "pty:spawn", protocol: 2, id: "spawn-live", project: "repo", preset: "shell", cols: 80, rows: 24 }, (_socket, message) => liveReplies.push(message));
+      assert.equal(liveReplies.find((message) => message.type === "pty:spawned")?.terminalId, "terminal-after-disconnect");
+      const attached = [];
+      await sessions.handle(live, { type: "pty:attach", protocol: 2, id: "attach-live", terminalId: "terminal-after-disconnect", offset: 0 }, (_socket, message) => attached.push(message));
+      assert.equal(attached.find((message) => message.type === "pty:attached")?.readOnly, undefined);
+      assert.equal(spawnCalls, 1);
+    });
+  }
+});
+
 test("separate bridges from one Aya process share the same host control identity", async () => {
   const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
   const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
