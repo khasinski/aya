@@ -7,7 +7,7 @@
 // re-implemented with browser equivalents here, so the server never needs a
 // BrowserWindow for a web session.
 
-import type { AyaApi, ControlStatusUpdate, PtyEvent } from "../types";
+import type { AyaApi, ControlStatusUpdate, PtyEvent, WaitingNotificationRequest } from "../types";
 import { shortcutForKey } from "./shortcuts";
 import type { WebTransport } from "./transport";
 
@@ -40,6 +40,29 @@ async function writeClipboardWeb(text: string): Promise<void> {
   } finally {
     textarea.remove();
   }
+}
+
+function showWaitingNotificationWeb(request: WaitingNotificationRequest): Promise<void> {
+  // Aya Web is often plain HTTP over a LAN. Never prompt for permission, and
+  // never try the system notification API outside a secure, already-approved
+  // browser context; the in-page banner remains available in every context.
+  if (
+    !window.isSecureContext ||
+    typeof Notification === "undefined" ||
+    Notification.permission !== "granted"
+  ) return Promise.resolve();
+  try {
+    const notification = new Notification("Aya", { body: request.body });
+    notification.onclick = () => {
+      window.focus();
+      window.dispatchEvent(new CustomEvent("aya:notification-select-terminal", { detail: request }));
+      notification.close();
+    };
+  } catch {
+    // Browser notification support can disappear between the capability and
+    // construction checks. The in-page alert is still the primary path.
+  }
+  return Promise.resolve();
 }
 
 const isMacClient = /Mac/i.test(navigator.platform);
@@ -200,7 +223,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     toggleMaximizeWindow: noopAsync,
     closeWindow: noopAsync,
     setFullScreen: noopAsync,
-    showWaitingNotification: noopAsync,
+    showWaitingNotification: showWaitingNotificationWeb,
     cliStatus: inv("app:cli-status"),
     installCli: inv("app:install-cli"),
     getDiagnostics: inv("app:diagnostics"),
@@ -213,7 +236,18 @@ export function createWebAya(transport: WebTransport): AyaApi {
     micStatus: inv("mic:status"),
     requestMicAccess: inv("mic:request"),
     openMicrophoneSettings: noopAsync,
-    onTerminalNotificationSelect: on("notification:select-terminal"),
+    onTerminalNotificationSelect: (handler) => {
+      const unsubscribeTransport = on<WaitingNotificationRequest>("notification:select-terminal")(handler);
+      const onLocalNotificationClick = (event: Event) => {
+        const detail = (event as CustomEvent<WaitingNotificationRequest>).detail;
+        if (detail) handler(detail);
+      };
+      window.addEventListener("aya:notification-select-terminal", onLocalNotificationClick);
+      return () => {
+        unsubscribeTransport();
+        window.removeEventListener("aya:notification-select-terminal", onLocalNotificationClick);
+      };
+    },
     onControlStatus: on<ControlStatusUpdate>("control:status"),
     onUpdateStatus: on("updates:status"),
     // No GPU helper process in a browser session (#79 is desktop-only).

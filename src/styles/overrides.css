@@ -1095,6 +1095,9 @@
     border-bottom: 1px solid var(--border);
     overflow: hidden;
   }
+  .aya-web-waiting-banners {
+    top: calc(48px + 54px + env(safe-area-inset-top, 0px) + 8px);
+  }
   .aya-sidebar-header,
   .aya-sidebar > .aya-launcher,
   .aya-sidebar-resize,
