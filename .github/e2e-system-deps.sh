@@ -15,6 +15,16 @@ case "${1:?prepare or install}" in
       /etc/apt/sources.list.d/*chrome* \
       /etc/apt/sources.list.d/*microsoft* \
       /etc/apt/sources.list.d/*vscode*
+    # Some Azure mirror connections trickled packages for the whole job's
+    # 20-minute budget. Use Ubuntu's archive and bound stalled connections.
+    for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+      if [[ -f "$source" ]]; then
+        sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' "$source"
+      fi
+    done
+    printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "30";' \
+      'Acquire::https::Timeout "30";' 'Acquire::ForceIPv4 "true";' |
+      sudo tee /etc/apt/apt.conf.d/99aya-ci-network >/dev/null
     mkdir -p "$cache_dir"
     package_manifest > "$RUNNER_TEMP/e2e-packages-before.tsv"
     echo "image=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
