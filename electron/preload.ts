@@ -58,7 +58,7 @@ const api: AyaApi = {
   ptyWrite: (ptyId, data) => ipcRenderer.invoke("pty:write", ptyId, data),
   ptyResize: (ptyId, cols, rows) =>
     ipcRenderer.invoke("pty:resize", ptyId, cols, rows),
-  ptyKill: (ptyId) => ipcRenderer.invoke("pty:kill", ptyId),
+  ptyKill: (ptyId, action) => ipcRenderer.invoke("pty:kill", ptyId, action),
   ptyBuffer: (ptyId) => ipcRenderer.invoke("pty:buffer", ptyId),
   ptyCwd: (ptyId) => ipcRenderer.invoke("pty:cwd", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),

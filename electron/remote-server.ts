@@ -118,7 +118,7 @@ function expandRemotePath(rawPath: string): string {
   return path.resolve(rawPath);
 }
 
-async function handleCommand(
+async function dispatchCommand(
   socket: net.Socket,
   options: RemoteServerOptions,
   raw: unknown,
@@ -145,6 +145,7 @@ async function handleCommand(
       sendTerminalJson(socket, remoteError("terminal_unavailable", "Remote terminals are not available on this Aya.", id));
       return;
     }
+    options.terminalSessions.registerClient(socket, request.clientId);
     terminalSession.protocol = REMOTE_TERMINAL_PROTOCOL_VERSION;
     sendTerminalJson(socket, { type: "session:ready", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: request.id });
     return;
@@ -212,6 +213,28 @@ async function handleCommand(
   }
 }
 
+async function handleCommand(
+  socket: net.Socket,
+  options: RemoteServerOptions,
+  raw: unknown,
+  terminalSession: { protocol: number | null },
+): Promise<void> {
+  try {
+    await dispatchCommand(socket, options, raw, terminalSession);
+  } catch (err) {
+    const id = isRecord(raw) ? optionalString(raw.id) : undefined;
+    const type = isRecord(raw) ? optionalString(raw.type) : undefined;
+    const message = (err instanceof Error ? err.message : String(err)).slice(0, 512);
+    const terminalCommand = type === "session:open" || (typeof type === "string" && type.startsWith("pty:"));
+    const frame = remoteError("command_failed", message || "Remote command failed.", id);
+    if (terminalCommand || terminalSession.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION) {
+      sendTerminalJson(socket, frame);
+    } else {
+      sendJson(socket, frame);
+    }
+  }
+}
+
 export function startRemoteServerOn(
   socketPath: string,
   options: RemoteServerOptions,
@@ -252,7 +275,17 @@ export function startRemoteServerOn(
       for (const line of frames) {
         if (!line) continue;
         try {
-          void handleCommand(socket, options, JSON.parse(line), terminalSession);
+          void handleCommand(socket, options, JSON.parse(line), terminalSession).catch((err) => {
+            // handleCommand converts command failures to protocol frames. Keep a final
+            // rejection boundary here for unexpected failures in that reporting path.
+            if (socket.destroyed) return;
+            const message = (err instanceof Error ? err.message : String(err)).slice(0, 512);
+            try {
+              sendTerminalJson(socket, remoteError("command_failed", message || "Remote command failed."));
+            } catch {
+              socket.destroy();
+            }
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           sendJson(socket, remoteError("bad_json", message));

@@ -124,6 +124,11 @@ export function applyPtyEvent(
     }
     return {...prev,[event.ptyId]:{...t,disconnected:true,disconnectedReason:event.reason,status:"error",stopped:false,bell:false}};
   }
+  if (event.type === "remote-control") {
+    const t = prev[event.ptyId];
+    if (!t || (t.remoteControlled === event.controlled && t.remoteReadOnly === (event.readOnly ?? false))) return prev;
+    return { ...prev, [event.ptyId]: { ...t, remoteControlled: event.controlled, remoteReadOnly: event.readOnly ?? false } };
+  }
   if (event.type === "disconnected") {
     const t = prev[event.ptyId];
     if (!t || (t.disconnected && t.disconnectedReason === event.reason && t.recoveryRetryable === event.retryable && t.recoveryBlocked === event.recoveryBlocked)) return prev;

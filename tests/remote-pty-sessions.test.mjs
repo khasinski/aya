@@ -35,6 +35,108 @@ test("remote terminal attach reports truncation and replays no more than the byt
   assert.equal(outputs.map((output) => output.data).join(""), "x".repeat(REMOTE_TERMINAL_REPLAY_MAX_BYTES));
 });
 
+test("one socket controls the host while other sockets can only observe until it disconnects", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const controlChanges = [];
+  let writes = 0;
+  let resizes = 0;
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => {},
+    write: async () => { writes += 1; return true; },
+    resize: async () => { resizes += 1; },
+    exit: async () => {},
+    onController: (id, controlled) => controlChanges.push({ id, controlled }),
+  });
+  const makeSocket = () => ({ destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } });
+  const first = makeSocket();
+  const second = makeSocket();
+  const firstWriter = (_socket, message) => {};
+  await sessions.handle(first, { type: "pty:spawn", protocol: 2, id: "spawn-a", project: "repo", preset: "shell", cols: 80, rows: 24, terminalId: "terminal-a" }, firstWriter);
+
+  const firstAttach = [];
+  await sessions.handle(first, { type: "pty:attach", protocol: 2, id: "attach-first", terminalId: "terminal-a", offset: 0 }, (_socket, message) => firstAttach.push(message));
+  assert.equal(firstAttach.find((message) => message.type === "pty:attached").readOnly, undefined);
+  await sessions.handle(first, { type: "pty:spawn", protocol: 2, id: "spawn-b", project: "repo", preset: "shell", cols: 80, rows: 24, terminalId: "terminal-b" }, firstWriter);
+  const firstAttachB = [];
+  await sessions.handle(first, { type: "pty:attach", protocol: 2, id: "attach-first-b", terminalId: "terminal-b", offset: 0 }, (_socket, message) => firstAttachB.push(message));
+  assert.equal(firstAttachB.find((message) => message.type === "pty:attached").readOnly, undefined);
+
+  const secondAttach = [];
+  await sessions.handle(second, { type: "pty:attach", protocol: 2, id: "attach-second", terminalId: "terminal-a", offset: 0 }, (_socket, message) => secondAttach.push(message));
+  assert.equal(secondAttach.find((message) => message.type === "pty:attached").readOnly, true);
+  const secondAttachB = [];
+  await sessions.handle(second, { type: "pty:attach", protocol: 2, id: "attach-second-b", terminalId: "terminal-b", offset: 0 }, (_socket, message) => secondAttachB.push(message));
+  assert.equal(secondAttachB.find((message) => message.type === "pty:attached").readOnly, true);
+
+  const deniedSpawn = [];
+  await sessions.handle(second, { type: "pty:spawn", protocol: 2, id: "spawn-denied", project: "repo", preset: "shell", cols: 80, rows: 24, terminalId: "terminal-c" }, (_socket, message) => deniedSpawn.push(message));
+  assert.match(deniedSpawn.find((message) => message.type === "error")?.message ?? "", /another Aya controls this host/i);
+
+  const deniedWrite = [];
+  await sessions.handle(second, { type: "pty:write", protocol: 2, id: "write-second", terminalId: "terminal-b", data: "must not arrive" }, (_socket, message) => deniedWrite.push(message));
+  assert.match(deniedWrite.find((message) => message.type === "error")?.message ?? "", /another Aya controls this host/i);
+  const deniedResize = [];
+  await sessions.handle(second, { type: "pty:resize", protocol: 2, id: "resize-second", terminalId: "terminal-b", cols: 100, rows: 30 }, (_socket, message) => deniedResize.push(message));
+  assert.match(deniedResize.find((message) => message.type === "error")?.message ?? "", /another Aya controls this host/i);
+  assert.equal(writes, 0);
+  assert.equal(resizes, 0);
+
+  sessions.detach(first);
+  const promotedAttach = [];
+  await sessions.handle(second, { type: "pty:attach", protocol: 2, id: "attach-promoted", terminalId: "terminal-b", offset: 0 }, (_socket, message) => promotedAttach.push(message));
+  assert.equal(promotedAttach.find((message) => message.type === "pty:attached").readOnly, undefined);
+  await sessions.handle(second, { type: "pty:write", protocol: 2, id: "write-promoted", terminalId: "terminal-b", data: "allowed" }, () => {});
+  await sessions.handle(second, { type: "pty:resize", protocol: 2, id: "resize-promoted", terminalId: "terminal-b", cols: 100, rows: 30 }, () => {});
+  const promotedSpawn = [];
+  await sessions.handle(second, { type: "pty:spawn", protocol: 2, id: "spawn-promoted", project: "repo", preset: "shell", cols: 80, rows: 24, terminalId: "terminal-c" }, (_socket, message) => promotedSpawn.push(message));
+  assert.equal(promotedSpawn.some((message) => message.type === "pty:spawned" && message.terminalId === "terminal-c"), true);
+  assert.equal(writes, 1);
+  assert.equal(resizes, 1);
+  assert.deepEqual(controlChanges, [
+    { id: "terminal-a", controlled: true },
+    { id: "terminal-b", controlled: true },
+    { id: "terminal-a", controlled: false },
+    { id: "terminal-b", controlled: false },
+    { id: "terminal-b", controlled: true },
+  ]);
+});
+
+test("separate bridges from one Aya process share the same host control identity", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  const makeSocket = () => ({ destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } });
+  const firstBridge = makeSocket();
+  const secondBridge = makeSocket();
+  const otherAya = makeSocket();
+  sessions.registerClient(firstBridge, "same-aya");
+  sessions.registerClient(secondBridge, "same-aya");
+  sessions.registerClient(otherAya, "other-aya");
+
+  const send = (socket, message, replies = []) => sessions.handle(socket, message, (_socket, reply) => replies.push(reply));
+  await send(firstBridge, { type: "pty:spawn", protocol: 2, id: "spawn-a", project: "repo", preset: "shell", cols: 80, rows: 24, terminalId: "terminal-a" });
+  await send(secondBridge, { type: "pty:spawn", protocol: 2, id: "spawn-b", project: "repo", preset: "shell", cols: 80, rows: 24, terminalId: "terminal-b" });
+  const refused = [];
+  await send(otherAya, { type: "pty:spawn", protocol: 2, id: "spawn-other", project: "repo", preset: "shell", cols: 80, rows: 24, terminalId: "terminal-c" }, refused);
+  assert.match(refused.find((message) => message.type === "error")?.message ?? "", /another Aya controls this host/i);
+
+  sessions.detach(firstBridge);
+  const allowed = [];
+  await send(secondBridge, { type: "pty:write", protocol: 2, id: "write-b", terminalId: "terminal-b", data: "still controlled" }, allowed);
+  assert.equal(allowed.some((message) => message.type === "pty:written"), true);
+  sessions.detach(secondBridge);
+  const acquired = [];
+  await send(otherAya, { type: "pty:attach", protocol: 2, id: "attach-c", terminalId: "terminal-a", offset: 0 }, acquired);
+  assert.equal(acquired.find((message) => message.type === "pty:attached")?.readOnly, undefined);
+});
+
 test("remote session metadata stays capped and only an exited record is evicted", async () => {
   const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
   const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };

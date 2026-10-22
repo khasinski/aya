@@ -249,6 +249,39 @@ export const test = base.extend<{
   },
 
   app: async ({ seeded, seedOptions }, use) => {
+    let remoteTerminalHost: ReturnType<typeof spawn> | null = null;
+    const remoteHostMode = seedOptions.remoteTerminalHost ?? (seedOptions.remoteProject ? "v1" : undefined);
+    if (remoteHostMode) {
+      const remoteHome = join(seeded.root, "remote-terminal-host-home");
+      const remoteSocket = seeded.launchEnv?.AYA_REMOTE_SOCKET;
+      if (!remoteSocket) throw new Error("remote terminal host fixture is missing AYA_REMOTE_SOCKET");
+      const hostEnv = {
+        ...appEnv(seeded, process.env, false),
+        AYA_HOME: remoteHome,
+        AYA_REMOTE_SOCKET: remoteSocket,
+        AYA_REMOTE_TEST_MODE: remoteHostMode,
+        AYA_REMOTE_TEST_PROJECT: seeded.projectDir,
+        AYA_REMOTE_TEST_PTY_HOST: PTY_HOST_SCRIPT,
+        AYA_REMOTE_TEST_STATE: join(seeded.root, "remote-terminal-state.json"),
+        AYA_REMOTE_TEST_PRESETS: JSON.stringify(seedOptions.presetList ?? []),
+      };
+      remoteTerminalHost = spawn(process.execPath, [join(APP_ROOT, "e2e/helpers/fake-remote-terminal-host.cjs")], {
+        cwd: APP_ROOT,
+        env: hostEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let ready = "";
+      let errorOutput = "";
+      remoteTerminalHost.stdout?.on("data", (chunk) => { ready += String(chunk); });
+      remoteTerminalHost.stderr?.on("data", (chunk) => { errorOutput += String(chunk); });
+      const readyDeadline = Date.now() + 5_000;
+      while (!ready.includes("READY\n")) {
+        if (remoteTerminalHost.exitCode !== null) throw new Error(`remote terminal host exited before ready: ${errorOutput}`);
+        if (Date.now() > readyDeadline) throw new Error(`remote terminal host did not become ready: ${errorOutput}`);
+        await delay(20);
+      }
+    }
+    try {
     // A host started FIRST makes the app treat it as REUSED, so boot-restored
     // tabs must attach-only instead of respawning.
     if (seedOptions.preStartPtyHost) {
@@ -270,6 +303,15 @@ export const test = base.extend<{
     const app = await launchApp(seeded);
     await use(app);
     await closeAndWait(app);
+    } finally {
+      if (remoteTerminalHost && remoteTerminalHost.exitCode === null) {
+        const child = remoteTerminalHost;
+        const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+        child.kill("SIGTERM");
+        await Promise.race([closed, delay(5_000)]);
+        if (child.exitCode === null) child.kill("SIGKILL");
+      }
+    }
   },
 
   window: async ({ app }, use) => {

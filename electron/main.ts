@@ -70,6 +70,8 @@ import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
 import { RemotePtySessions } from "./remote-pty-sessions";
+import { RemoteTerminalClient } from "./remote-client";
+import { RemoteTerminalManager } from "./remote-terminal-manager";
 import { createRemoteTerminalOnSpawned } from "./remote-terminal-project";
 import { headCommit, workingTreeState } from "./git";
 import {
@@ -139,6 +141,7 @@ import {
 import { restartDialog } from "./native-ui-text";
 import type {
   ControlStatusUpdate,
+  PtyEvent,
   SpawnRequest,
 } from "./types";
 
@@ -583,6 +586,10 @@ function registerIpc(): TeamRunner {
     answerPaneOpen: (requestId, error) => paneOpens.answer(requestId, error),
   });
   const prepareSpawn = async (validated: SpawnRequest): Promise<SpawnRequest> => {
+    const project = validated.projectSlug ? (await listProjects()).find((item) => item.slug === validated.projectSlug) : undefined;
+    // The remote host prepares the command and its Aya files. Never interpret
+    // a remote working directory as a local path or decorate its command here.
+    if (project?.remote) return validated;
     if (SPAWN_PREP_DELAY_MS) await new Promise((done) => setTimeout(done, SPAWN_PREP_DELAY_MS));
     const request = await withSharedDirCommand(validated);
     // A broken presets.json must not stop panes from spawning.
@@ -596,7 +603,18 @@ function registerIpc(): TeamRunner {
       ? { ...briefed, command: withCliFirst(briefed.command, path.dirname(bundledAyaCliPath(__dirname))) }
       : briefed;
   };
+  const remoteTerminalManager = new RemoteTerminalManager({
+    connect: (target) => RemoteTerminalClient.open(target),
+    sendEvent: broadcastPtyEvent,
+  });
   const sendSpawn = async (spawn: SpawnRequest) => {
+    const project = spawn.projectSlug ? (await listProjects()).find((item) => item.slug === spawn.projectSlug) : undefined;
+    if (project?.remote) {
+      const mode = await remoteTerminalManager.spawn(spawn, project.remote.sshTarget, project.slug);
+      if (mode === "remote") return true;
+      // Old hosts cannot detach PTYs from SSH. Preserve the previous behavior,
+      // but tell the user that closing this terminal will end the session.
+    }
     await ptyHost.spawn(spawn);
     void cliAdoption
       .launched({
@@ -667,18 +685,26 @@ function registerIpc(): TeamRunner {
       if (!currentIdentity) return null;
       return currentIdentity === identity.startIdentity;
     },
+    onController: (terminalId, controlled) => broadcastPtyEvent({ type: "remote-control", ptyId: terminalId, controlled }),
   });
   ptyHost.attachWebContents(remotePtySessions);
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
     gate: spawnGate,
+    remote: {
+      write: (ptyId, data) => remoteTerminalManager.write(ptyId, data),
+      resize: (ptyId, cols, rows) => remoteTerminalManager.resize(ptyId, cols, rows),
+      detach: (ptyId) => remoteTerminalManager.detach(ptyId),
+      end: (ptyId) => remoteTerminalManager.end(ptyId),
+    },
     prepareSpawn,
     sendSpawn,
     forgetBrief: (ptyId) => removePaneBrief(AYA_HOME, ptyId),
     forgetDisplay: (ptyId) => handoverDisplays.forget(ptyId),
     hasDisplay: (ptyId) => handoverDisplays.has(ptyId),
     noteTyping: async (ptyId, text) => {
+      if (remoteTerminalManager.has(ptyId)) return;
       // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
       const answered = await noteUserAnswer(ptyId, text, () => userRulePanes.holdReason(ptyId));
       if (answered) broadcastStatus(answered);
@@ -855,6 +881,13 @@ function statusSinks(): ControlStatusSink[] {
 
 function broadcastStatus(update: ControlStatusUpdate): void {
   for (const sink of statusSinks()) sink.webContents.send("control:status", update);
+}
+
+function broadcastPtyEvent(event: PtyEvent): void {
+  for (const win of ayaWindows) {
+    if (!win.isDestroyed()) win.webContents.send("pty:event", event);
+  }
+  ayaWeb.broadcast("pty:event", event);
 }
 
 // Triggered when a second `Aya` launch happens while we're already running

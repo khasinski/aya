@@ -28,8 +28,8 @@ export interface RemoteDirectoryEntry {
 }
 
 export type RemoteTerminalRequest =
-  | { type: "session:open"; protocol: number; id: string }
-  | { type: "pty:spawn"; protocol: 2; id: string; project: string; preset: string; cols: number; rows: number }
+  | { type: "session:open"; protocol: number; id: string; clientId?: string }
+  | { type: "pty:spawn"; protocol: 2; id: string; project: string; preset: string; cols: number; rows: number; terminalId?: string }
   | { type: "pty:attach"; protocol: 2; id: string; terminalId: string; offset: number }
   | { type: "pty:write"; protocol: 2; id: string; terminalId: string; data: string }
   | { type: "pty:resize"; protocol: 2; id: string; terminalId: string; cols: number; rows: number }
@@ -39,7 +39,7 @@ export type RemoteTerminalRequest =
 export type RemoteTerminalMessage =
   | { type: "session:ready"; protocol: 2; id: string }
   | { type: "pty:spawned"; protocol: 2; id: string; terminalId: string; project: string; preset: string }
-  | { type: "pty:attached"; protocol: 2; id: string; terminalId: string; fromOffset: number; endOffset: number; truncated: boolean }
+  | { type: "pty:attached"; protocol: 2; id: string; terminalId: string; fromOffset: number; endOffset: number; truncated: boolean; readOnly?: boolean }
   | { type: "pty:output"; protocol: 2; terminalId: string; offset: number; data: string }
   | { type: "pty:spawn-failed"; protocol: 2; terminalId: string; reason?: string; message: string }
   | { type: "pty:written"; protocol: 2; id: string; terminalId: string; accepted: boolean }
@@ -61,14 +61,17 @@ export function parseRemoteTerminalRequest(value: unknown): RemoteTerminalReques
   const str = (key: string, max = 256): boolean => typeof record[key] === "string" && (record[key] as string).length > 0 && (record[key] as string).length <= max;
   const dimension = (key: string): boolean => Number.isSafeInteger(record[key]) && (record[key] as number) >= 1 && (record[key] as number) <= 500;
   if (record.type === "session:open") {
-    if (!ownKeys(record, ["type", "protocol", "id"]) || !str("id", 128) || !Number.isSafeInteger(record.protocol)) return null;
-    return { type: "session:open", protocol: record.protocol as number, id: record.id as string };
+    if (!(ownKeys(record, ["type", "protocol", "id"]) || ownKeys(record, ["type", "protocol", "id", "clientId"])) || !str("id", 128) || !Number.isSafeInteger(record.protocol) || (record.clientId !== undefined && !str("clientId", 128))) return null;
+    return { type: "session:open", protocol: record.protocol as number, id: record.id as string, ...(typeof record.clientId === "string" ? { clientId: record.clientId } : {}) };
   }
   if (record.protocol !== REMOTE_TERMINAL_PROTOCOL_VERSION || !str("id", 128)) return null;
   switch (record.type) {
-    case "pty:spawn":
-      return ownKeys(record, ["type", "protocol", "id", "project", "preset", "cols", "rows"]) && str("project") && str("preset") && dimension("cols") && dimension("rows")
-        ? { type: "pty:spawn", protocol: 2, id: record.id as string, project: record.project as string, preset: record.preset as string, cols: record.cols as number, rows: record.rows as number } : null;
+    case "pty:spawn": {
+      const baseKeys = ["type", "protocol", "id", "project", "preset", "cols", "rows"];
+      const withTerminalIdKeys = [...baseKeys, "terminalId"];
+      return (ownKeys(record, baseKeys) || ownKeys(record, withTerminalIdKeys)) && str("project") && str("preset") && dimension("cols") && dimension("rows") && (record.terminalId === undefined || str("terminalId", 128))
+        ? { type: "pty:spawn", protocol: 2, id: record.id as string, project: record.project as string, preset: record.preset as string, cols: record.cols as number, rows: record.rows as number, ...(typeof record.terminalId === "string" ? { terminalId: record.terminalId } : {}) } : null;
+    }
     case "pty:attach":
       return ownKeys(record, ["type", "protocol", "id", "terminalId", "offset"]) && str("terminalId") && Number.isSafeInteger(record.offset) && (record.offset as number) >= 0
         ? { type: "pty:attach", protocol: 2, id: record.id as string, terminalId: record.terminalId as string, offset: record.offset as number } : null;

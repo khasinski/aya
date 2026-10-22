@@ -55,6 +55,37 @@ test("attach replay is delivered after the caller's await continuation", async (
   await client.detach();
 });
 
+test("separate terminal bridges from one Aya process share their host control identity", async () => {
+  class FakeBridge extends EventEmitter {
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    exitCode = null;
+    signalCode = null;
+    kill() {}
+  }
+  const identities = [];
+  const clients = [];
+  for (let index = 0; index < 2; index += 1) {
+    const bridge = new FakeBridge();
+    const client = new RemoteTerminalClient(bridge);
+    clients.push({ bridge, client });
+    bridge.stdin.on("data", (chunk) => {
+      const request = JSON.parse(String(chunk).trim());
+      if (request.type === "session:open") {
+        identities.push(request.clientId);
+        bridge.stdout.write(`${JSON.stringify({ type: "session:ready", protocol: 2, id: request.id })}\n`);
+      } else if (request.type === "pty:attach") {
+        bridge.stdout.write(`${JSON.stringify({ type: "pty:attached", protocol: 2, id: request.id, terminalId: request.terminalId, fromOffset: 0, endOffset: 0, truncated: false })}\n`);
+      }
+    });
+    bridge.stdout.write(`${JSON.stringify({ type: "hello", protocol: 1 })}\n${JSON.stringify({ type: "snapshot", protocol: 1 })}\n`);
+    await client.attach(`terminal-${index}`, 0);
+  }
+  assert.equal(typeof identities[0], "string");
+  assert.equal(identities[0], identities[1]);
+  for (const { bridge, client } of clients) { bridge.exitCode = 0; await client.detach(); }
+});
+
 // Per target, `<root>/<target>.mode` says what this ssh does:
 //   bridge:<socket>  run the remote command (the node bridge) here, against <socket>
 //   stdout:<file>    print <file> and exit 0

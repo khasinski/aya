@@ -362,9 +362,11 @@ function TerminalViewComponent({
   useEffect(()=>{recoveryGenerationRef.current=terminal.recoveryGeneration;},[terminal.recoveryGeneration]);
   const disconnectedRef = useRef(!!terminal.disconnected);
   disconnectedRef.current = !!terminal.disconnected;
+  const remoteReadOnlyRef = useRef(!!terminal.remoteReadOnly);
+  remoteReadOnlyRef.current = !!terminal.remoteReadOnly;
   useEffect(() => {
-    if (xtermRef.current) xtermRef.current.options.disableStdin = !!terminal.disconnected || handoverInputPausedRef.current;
-  }, [terminal.disconnected]);
+    if (xtermRef.current) xtermRef.current.options.disableStdin = !!terminal.disconnected || !!terminal.remoteReadOnly || handoverInputPausedRef.current;
+  }, [terminal.disconnected, terminal.remoteReadOnly]);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
@@ -403,7 +405,7 @@ function TerminalViewComponent({
       disconnectedRef.current=true;term.options.disableStdin=true;
       setHistoryNotice(notice=>notice??"The terminal host is disconnected. The process may still be running; input remains disabled.");
     }else{
-      term.options.disableStdin=false;
+      term.options.disableStdin=remoteReadOnlyRef.current;
       term.write(`\r\n[Terminal attachment failed: ${String(error).replace(/[\x00-\x1f\x7f]/g,' ')}]\r\n`);
     }
     markRestoring(false);
@@ -785,7 +787,7 @@ function TerminalViewComponent({
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
     const term = createRendererVt({
-      disableStdin: disconnectedRef.current,
+      disableStdin: disconnectedRef.current || remoteReadOnlyRef.current,
       theme: toXtermTheme(themeColors),
       fontSize,
       fontFamily: fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY,
@@ -878,7 +880,7 @@ function TerminalViewComponent({
     const retireHandoverForRestart=()=>{
       displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
       awaitingReplay=false;displayGeneration=null;replayToken=null;appliedToken=false;
-      handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+      handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current || remoteReadOnlyRef.current;
       setHistoryNotice(null);
     };
     retireHandoverForRestartRef.current=retireHandoverForRestart;
@@ -893,7 +895,12 @@ function TerminalViewComponent({
       if (isRestoringRef.current) markRestoring(false);
       if(event.type === "host-connection"){
         if(!event.connected){waitingForPrincipal=true;disconnectedRef.current=true;term.options.disableStdin=true;setHistoryNotice(event.reason);}
-        else if(waitingForPrincipal){waitingForPrincipal=false;disconnectedRef.current=false;term.options.disableStdin=handoverInputPausedRef.current;setHistoryNotice(notice=>notice===event.reason?null:notice);}
+        else if(waitingForPrincipal){waitingForPrincipal=false;disconnectedRef.current=false;term.options.disableStdin=handoverInputPausedRef.current || remoteReadOnlyRef.current;setHistoryNotice(notice=>notice===event.reason?null:notice);}
+      } else if (event.type === "remote-control") {
+        remoteReadOnlyRef.current = !!event.readOnly;
+        term.options.disableStdin = disconnectedRef.current || remoteReadOnlyRef.current || handoverInputPausedRef.current;
+        if (event.readOnly) setHistoryNotice("Another Aya controls this host. You can watch, but not type.");
+        else setHistoryNotice((notice) => notice === "Another Aya controls this host. You can watch, but not type." ? null : notice);
       } else if(event.type === "recovered") {
         displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
         // Also queue RIS behind already-buffered parser writes: an old async
@@ -931,7 +938,7 @@ function TerminalViewComponent({
             if(disposed)return;
             if(applyingEpoch!==displayEpoch){replayingOutputRef.current=Math.max(0,replayingOutputRef.current-1);return;}
             replayingOutputRef.current = Math.max(0, replayingOutputRef.current - 1);
-            handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+            handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current || remoteReadOnlyRef.current;
             if(displayGeneration){void window.aya.acknowledgeHandoverDisplay(terminal.id,displayGeneration,event.replayToken).catch(()=>{});displayGeneration=null;}
           });
         } else {
@@ -947,7 +954,7 @@ function TerminalViewComponent({
         }
         if (onPtyData) onPtyData(event.chunk);
       } else if (event.type === "exit") {
-        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current || remoteReadOnlyRef.current;
         const restartHint =
           event.exitCode === 0
             ? " — press Shift+Enter to restart"
@@ -960,7 +967,7 @@ function TerminalViewComponent({
         if(event.reason)setHistoryNotice(event.reason);
         term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Use Settings > Diagnostics > PTY host > Restart to review stopping it.]\x1b[0m\r\n");
       } else if (event.type === "no-session") {
-        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current || remoteReadOnlyRef.current;
         // Attach-only re-mount with no live PTY: the process ended while we were
         // away. Show a restartable hint instead of a fresh, contextless session.
         term.write(
@@ -1128,7 +1135,7 @@ function TerminalViewComponent({
           try{restoreRendererVt(term,JSON.parse(display.json) as RendererVtCheckpoint);richInputRef.current=term.modes.sendFocusMode;}
           catch{display.json=null;display.offset=0;setHistoryNotice("History from replay after the update; the display could not be restored.");}
         }
-      }else{awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;}
+      }else{awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current || remoteReadOnlyRef.current;}
       const previouslyRequested=spawnedRef.current;spawnedRef.current = true;
       if(display)replayToken=crypto.randomUUID();
       // First mount this session -> normal spawn (boot auto-start). A re-mount
@@ -1538,13 +1545,23 @@ function TerminalViewComponent({
     xtermRef.current?.focus();
   };
 
+  const endRemoteTerminal = async () => {
+    try {
+      await window.aya.ptyKill(terminal.id, "end-remote");
+    } catch (error) {
+      xtermRef.current?.write(`\r\n[Could not end the remote terminal: ${String(error).replace(/[\x00-\x1f\x7f]/g, " ")}]\r\n`);
+    }
+    setContextMenu(null);
+    xtermRef.current?.focus();
+  };
+
   return (
     <div
       data-testid="terminal-pane"
       data-terminal-id={terminal.id}
       data-terminal-name={terminal.name}
       className={
-        `aya-pane ${isScrollbarHidden ? "aya-pane--scrollbar-hidden" : ""} ${
+        `aya-pane ${terminal.remoteHost ? "aya-pane--remote" : ""} ${isScrollbarHidden ? "aya-pane--scrollbar-hidden" : ""} ${
           isActivePane ? "aya-pane--active-split" : ""
         }`
       }
@@ -1560,6 +1577,14 @@ function TerminalViewComponent({
           {preset.icon}
         </span>
         <span className="aya-pane-header-title">{terminal.name}</span>
+        {terminal.remoteHost && (
+          <span className="aya-pane-remote-label" title={`Remote: ${terminal.remoteHost}`}>
+            <span aria-hidden="true" style={{ fontFamily: "Material Symbols Outlined" }}>lan</span>
+            Remote: {terminal.remoteHost}
+          </span>
+        )}
+        {terminal.remoteControlled && <span className="aya-pane-remote-control">Remote client controls this pane</span>}
+        {terminal.remoteReadOnly && <span className="aya-pane-remote-control">Read-only remote view</span>}
         {processTitle && (
           <>
             <span className="aya-pane-header-sep">·</span>
@@ -1680,7 +1705,7 @@ function TerminalViewComponent({
             data-aya-terminal-paste
             className="aya-terminal-context-item"
             type="button"
-            disabled={terminal.disconnected}
+            disabled={terminal.disconnected || terminal.remoteReadOnly}
             onClick={pasteClipboard}
           >
             <span style={{ fontFamily: "Material Symbols Outlined" }}>
@@ -1688,6 +1713,18 @@ function TerminalViewComponent({
             </span>
             Paste
           </button>
+          {terminal.remoteHost && (
+            <button
+              data-testid="terminal-context-end-remote"
+              className="aya-terminal-context-item"
+              type="button"
+              disabled={terminal.remoteReadOnly || terminal.disconnected}
+              onClick={() => void endRemoteTerminal()}
+            >
+              <span style={{ fontFamily: "Material Symbols Outlined" }}>power_settings_new</span>
+              End terminal on remote host
+            </button>
+          )}
           <button
             data-testid="terminal-context-select-all"
             className="aya-terminal-context-item"

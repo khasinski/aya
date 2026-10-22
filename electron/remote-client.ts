@@ -27,12 +27,16 @@ export const REMOTE_TIMEOUTS: RemoteTimeouts = { bridgeMs: 15_000, sshKillMs: 25
 const REMOTE_BRIDGE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 // The bridge's grace after client.end() for stdout to flush before it exits.
 const EXIT_FLUSH_DELAY_MS = 250;
+// Every bridge opened by this Aya process shares one host-control identity.
+// A separate Aya process gets a different id and observes read-only.
+const REMOTE_TERMINAL_CLIENT_ID = randomUUID();
 
 export interface RemoteTerminalAttachResult {
   terminalId: string;
   fromOffset: number;
   endOffset: number;
   truncated: boolean;
+  readOnly: boolean;
 }
 
 interface PendingTerminalRequest {
@@ -120,7 +124,7 @@ export class RemoteTerminalClient extends EventEmitter {
       if (value.protocol !== REMOTE_PROTOCOL_VERSION) { this.fail(new Error("Remote Aya sent an incompatible snapshot.")); return; }
       if (!this.snapshotReceived) {
         this.snapshotReceived = true;
-        this.send({ type: "session:open", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: this.id() });
+        this.send({ type: "session:open", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: this.id(), clientId: REMOTE_TERMINAL_CLIENT_ID });
       }
       return;
     }
@@ -128,7 +132,7 @@ export class RemoteTerminalClient extends EventEmitter {
       const id = typeof value.id === "string" ? value.id : "";
       if (id && this.pending.has(id)) this.rejectPending(id, new Error(typeof value.message === "string" ? value.message : "Remote Aya rejected the request."));
       else if (!this.opened) {
-        const message = value.code === "read_only"
+        const message = value.code === "read_only" || value.code === "terminal_unavailable"
           ? "Remote Aya does not support terminal protocol version 2; update Aya on the host."
           : typeof value.message === "string" ? value.message : "Remote Aya rejected the terminal session.";
         this.fail(new Error(message));
@@ -176,8 +180,8 @@ export class RemoteTerminalClient extends EventEmitter {
     }
   }
 
-  async spawnTerminal(project: string, preset: string, cols: number, rows: number): Promise<{ terminalId: string }> {
-    const response = await this.request("pty:spawn", ["pty:spawned"], { project, preset, cols, rows });
+  async spawnTerminal(project: string, preset: string, cols: number, rows: number, terminalId?: string): Promise<{ terminalId: string }> {
+    const response = await this.request("pty:spawn", ["pty:spawned"], { project, preset, cols, rows, ...(terminalId ? { terminalId } : {}) });
     if (typeof response.terminalId !== "string") throw new Error("Remote Aya returned an invalid terminal id.");
     return { terminalId: response.terminalId };
   }
@@ -185,7 +189,7 @@ export class RemoteTerminalClient extends EventEmitter {
   async attach(terminalId: string, offset: number): Promise<RemoteTerminalAttachResult> {
     const response = await this.request("pty:attach", ["pty:attached"], { terminalId, offset });
     if (typeof response.terminalId !== "string" || !Number.isSafeInteger(response.fromOffset) || !Number.isSafeInteger(response.endOffset) || typeof response.truncated !== "boolean") throw new Error("Remote Aya returned an invalid attach response.");
-    return { terminalId: response.terminalId, fromOffset: response.fromOffset as number, endOffset: response.endOffset as number, truncated: response.truncated };
+    return { terminalId: response.terminalId, fromOffset: response.fromOffset as number, endOffset: response.endOffset as number, truncated: response.truncated, readOnly: response.readOnly === true };
   }
 
   async write(terminalId: string, data: string): Promise<boolean> {

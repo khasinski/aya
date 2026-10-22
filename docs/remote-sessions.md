@@ -361,14 +361,14 @@ renderer/controller.
 
 ## Resize And Control Policy
 
-Multiple clients can create conflicting terminal sizes and input streams. Start
-simple:
-
-- v1 supports one controlling client per remote host.
-- Other clients are read-only viewers.
-- The controlling client sends resize events.
-- Host UI should show when a remote client has control.
-- Host can revoke control.
+Multiple clients can create conflicting terminal sizes and input streams. V2
+uses one controlling Aya process per remote host. Separate SSH bridges opened
+by the same Aya process share a client identity, so its terminals remain
+controllable across bridge connections. Other clients can attach and replay,
+but cannot spawn, write, resize or end terminals while that controller is
+connected. The host shows which panes are controlled remotely; control is
+released after all bridges from the controlling Aya disconnect, and another
+client can take control by attaching or spawning.
 
 Later:
 

@@ -356,8 +356,9 @@ function TopBarImpl({
                     }}
                   >
                     {isRemote && (
-                      <span className="aya-tab-remote-chip" title={displayPath}>
-                        SSH
+                      <span className="aya-tab-remote-chip" title={`Remote: ${p.remote?.label ?? "host"}`} aria-label={`Remote: ${p.remote?.label ?? "host"}`}>
+                        <span aria-hidden="true" style={{ fontFamily: "Material Symbols Outlined" }}>lan</span>
+                        Remote: {p.remote?.label ?? "host"}
                       </span>
                     )}
                     {p.name}
