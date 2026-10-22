@@ -19,10 +19,11 @@ mkdirSync(home, { recursive: true });
 
 const LIBEVAL_WORKER = "3f1c2a9e-0d4b-4e8a-9c51-7b2d6e0f1a11";
 const OTHER_WORKER = "c0ffee00-1234-4abc-8def-001122334433";
+const OTHER_REVIEWER = "c0ffee00-1234-4abc-8def-001122334434";
 const tab = (id, name) => ({ id, name, presetId: "claude" });
 const PROJECTS = [
   { slug: "libeval", name: "libeval", directory: join(root, "libeval"), tabs: [tab(LIBEVAL_WORKER, "worker")] },
-  { slug: "other", name: "other", directory: join(root, "other"), tabs: [tab(OTHER_WORKER, "worker")] },
+  { slug: "other", name: "other", directory: join(root, "other"), tabs: [tab(OTHER_WORKER, "worker"), tab(OTHER_REVIEWER, "reviewer")] },
 ];
 
 const changes = [];
@@ -86,6 +87,8 @@ const REFUSALS = [
   ["a name over 200 characters", ["worker", "x".repeat(201), "--project", "other"], /the name is 201 characters, the most is 200; nothing was renamed/],
   ["a name in two projects", ["worker", "x"], /ambiguous/],
   ["an unknown pane", ["nope", "x"], /no pane named "nope"/],
+  ["an unknown project", ["worker", "x", "--project", "nope"], /no project "nope"; projects: libeval, other/],
+  ["the name of another pane in the project", ["worker", " Reviewer ", "--project", "other"], new RegExp(`pane ${OTHER_REVIEWER} in project other is already named reviewer; nothing was renamed`)],
 ];
 
 test("pane rename refuses before it asks the window", async () => {
@@ -125,4 +128,11 @@ test("pane rename passes on the window's refusal, and says a missed deadline may
   } finally {
     windowAnswer = async () => {};
   }
+});
+
+test("pane rename keeps its own name in another case", async () => {
+  changes.length = 0;
+  const r = await aya(["worker", "Worker", "--project", "other"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(changes.map((c) => c.change), [{ rename: "Worker" }]);
 });
