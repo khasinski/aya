@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getPreset,
   type Preset,
@@ -7,6 +7,7 @@ import {
   type Worktree,
 } from "../types";
 import { useDragReorder } from "../hooks/useDragReorder";
+import { handleRovingItemKeyDown, isContextMenuKey } from "../keyboard-navigation";
 import { paneRoles } from "../team-view";
 import { TerminalStatusDot } from "./TerminalStatusDot";
 import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
@@ -112,20 +113,47 @@ function SidebarImpl({
   } | null>(null);
   const mobileLauncherRef = useRef<HTMLDivElement>(null);
   const [showMobileLauncher, setShowMobileLauncher] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuOpenerRef = useRef<HTMLElement | null>(null);
+  const restoreMenuFocusRef = useRef(false);
+
+  const closeMenu = useCallback((restoreFocus = true) => {
+    restoreMenuFocusRef.current = restoreFocus;
+    setMenu(null);
+  }, []);
+
+  useEffect(() => {
+    if (menu || !restoreMenuFocusRef.current) return;
+    restoreMenuFocusRef.current = false;
+    const id = window.requestAnimationFrame(() => {
+      const opener = menuOpenerRef.current;
+      if (opener?.isConnected) opener.focus();
+      else document.querySelector<HTMLElement>('.aya-sidebar-row[aria-current="true"]')?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [menu]);
 
   useEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
+    const id = window.requestAnimationFrame(() =>
+      menuRef.current?.querySelector<HTMLElement>(".aya-context-menu-item")?.focus(),
+    );
+    const close = () => closeMenu(false);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenu();
+      }
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(id);
       window.removeEventListener("mousedown", close);
       window.removeEventListener("keydown", onKey);
     };
-  }, [menu]);
+  }, [menu, closeMenu]);
   useEffect(() => {
     if (!showMobileLauncher) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -242,11 +270,25 @@ function SidebarImpl({
         className={`aya-sidebar-row ${isActive ? "aya-sidebar-row--active" : ""} ${
           isDragging ? "aya-sidebar-row--dragging" : ""
         } ${dropClass}`}
+        role="listitem"
+        aria-current={isActive ? "true" : undefined}
+        tabIndex={isActive ? 0 : -1}
         draggable={!isRenamingRow}
         {...itemHandlers(t.id)}
         onClick={() => onSelect(t.id)}
+        onKeyDown={(e) => {
+          if (isContextMenuKey(e.nativeEvent)) {
+            e.preventDefault();
+            menuOpenerRef.current = e.currentTarget;
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenu({ x: rect.left, y: rect.bottom, terminalId: t.id });
+            return;
+          }
+          handleRovingItemKeyDown(e);
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
+          menuOpenerRef.current = e.currentTarget;
           setMenu({ x: e.clientX, y: e.clientY, terminalId: t.id });
         }}
         title={`${t.name} — ${t.cwd}`}
@@ -307,16 +349,18 @@ function SidebarImpl({
             {splitAssignments[t.id] + 1}
           </span>
         )}
-        <span
+        <button
+          type="button"
           className="aya-sidebar-close"
           onClick={(e) => {
             e.stopPropagation();
             onClose(t.id);
           }}
-          title="Close terminal"
+          aria-label={`Close terminal ${t.name}`}
+          title={`Close terminal ${t.name}`}
         >
           ×
-        </span>
+        </button>
       </div>
     );
   };
@@ -378,13 +422,15 @@ function SidebarImpl({
                   )}
                 </button>
                 {g.terminals.length > 0 ? (
-                  g.terminals.map(renderRow)
+                  <div role="list" aria-label={`Terminals in ${worktreeName(g.worktree.path)}`}>
+                    {g.terminals.map(renderRow)}
+                  </div>
                 ) : (
                   <div className="aya-worktree-empty">No terminals yet</div>
                 )}
               </div>
             ))
-          : terminals.map(renderRow)}
+          : <div role="list" aria-label="Terminals">{terminals.map(renderRow)}</div>}
         {(groups || projectRemote || onCreateWorktrees) && (
           <button
             type="button"
@@ -488,6 +534,8 @@ function SidebarImpl({
       />
       {menu && (
         <div
+          ref={menuRef}
+          role="menu"
           className="aya-context-menu"
           style={{ left: menu.x, top: menu.y }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -497,7 +545,7 @@ function SidebarImpl({
             onClick={() => {
               const terminal = terminals.find((t) => t.id === menu.terminalId);
               if (terminal) startRename(terminal);
-              setMenu(null);
+              closeMenu();
             }}
           >
             Rename terminal
@@ -508,7 +556,7 @@ function SidebarImpl({
             title={terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? terminals.find(t=>t.id===menu.terminalId)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
             onClick={() => {
               onRestart(menu.terminalId);
-              setMenu(null);
+              closeMenu();
             }}
           >
             Restart terminal{terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? " - host recovering" : ""}
@@ -517,7 +565,7 @@ function SidebarImpl({
             className="aya-context-menu-item"
             onClick={() => {
               onAssignToSplit(menu.terminalId);
-              setMenu(null);
+              closeMenu();
             }}
           >
             Show in active pane
@@ -527,7 +575,7 @@ function SidebarImpl({
               className="aya-context-menu-item"
               onClick={() => {
                 onSplitRight(menu.terminalId);
-                setMenu(null);
+                closeMenu();
               }}
             >
               Split right
@@ -538,7 +586,7 @@ function SidebarImpl({
               className="aya-context-menu-item"
               onClick={() => {
                 onSplitBelow(menu.terminalId);
-                setMenu(null);
+                closeMenu();
               }}
             >
               Split below
@@ -549,7 +597,7 @@ function SidebarImpl({
               className="aya-context-menu-item"
               onClick={() => {
                 onRemoveFromSplit(menu.terminalId);
-                setMenu(null);
+                closeMenu();
               }}
             >
               Remove from split
@@ -561,14 +609,14 @@ function SidebarImpl({
               teams={teams}
               current={roles[menu.terminalId]}
               onAssign={onAssignTeamRole}
-              onDone={() => setMenu(null)}
+              onDone={() => closeMenu()}
             />
           )}
           <button
             className="aya-context-menu-item aya-context-menu-item--danger"
             onClick={() => {
               onClose(menu.terminalId);
-              setMenu(null);
+              closeMenu();
             }}
           >
             Close terminal
