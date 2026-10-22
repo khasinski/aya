@@ -616,6 +616,7 @@ function registerIpc(): TeamRunner {
   const remoteTerminalManager = new RemoteTerminalManager({
     connect: (target) => RemoteTerminalClient.open(target),
     sendEvent: broadcastPtyEvent,
+    assertSpawnAllowed,
     outputSinks: () => [...ayaWindows].filter((win) => !win.isDestroyed()).map((win) => win.webContents.id),
   });
   forgetRemoteOutputSink = (webContentsId) => remoteTerminalManager.forgetOutputSink(webContentsId);
