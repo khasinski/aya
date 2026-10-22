@@ -3,7 +3,7 @@ import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../ollama-defa
 import { PRESET_ID_SHELL } from "../preset-ids";
 import { uuid } from "../uuid";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   type AyaIntelligenceConfig,
   type CliStatus,
@@ -257,11 +257,13 @@ function SettingsRow({
   title,
   children,
   control,
+  labelFor,
 }: {
   icon: string;
   title: ReactNode;
   children?: ReactNode;
   control: ReactNode;
+  labelFor?: string;
 }) {
   return (
     <div className="aya-settings-general-row">
@@ -270,7 +272,13 @@ function SettingsRow({
           <SettingsIcon name={icon} />
         </div>
         <div>
-          <div className="aya-settings-general-title">{title}</div>
+          {labelFor ? (
+            <label className="aya-settings-general-title" htmlFor={labelFor}>
+              {title}
+            </label>
+          ) : (
+            <div className="aya-settings-general-title">{title}</div>
+          )}
           {children && <div className="aya-modal-hint">{children}</div>}
         </div>
       </div>
@@ -320,6 +328,7 @@ export function SettingsModal({
   onRestartPtyHost,
   initialTab = "general",
 }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [draft, setDraft] = useState<DraftPreset[]>(() => presets.map(toDraft));
   const [activePresetKey, setActivePresetKey] = useState<string | null>(null);
@@ -694,11 +703,47 @@ export function SettingsModal({
   );
 
   useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusableSelector = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled]):not([type=hidden])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(",");
+    const focusable = () =>
+      [...dialog.querySelectorAll<HTMLElement>(focusableSelector)].filter(
+        (element) => element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0,
+      );
+    (focusable()[0] ?? dialog).focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !dialog.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   // Small wrappers that also mark a slice as dirty whenever the user edits its
@@ -1030,10 +1075,12 @@ export function SettingsModal({
       onClick={(e) => closeFromBackdropClick(e, onClose)}
     >
       <div
+        ref={dialogRef}
         className="aya-modal aya-modal--settings"
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         {showUsageConsent && (
@@ -1283,8 +1330,10 @@ export function SettingsModal({
           <SettingsRow
             icon="text_fields"
             title="Terminal font"
+            labelFor="aya-terminal-font-family"
             control={(
               <input
+                id="aya-terminal-font-family"
                 className="aya-modal-input"
                 style={{ width: 320 }}
                 value={terminalFontFamily}

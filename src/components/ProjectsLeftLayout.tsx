@@ -565,6 +565,7 @@ function ProjectsLeftLayoutImpl({
           </button>
           <button
             className="aya-iconbtn"
+            aria-label="Settings"
             title={blockChrome ? "Settings (close the open dialog first)" : "Settings"}
             onClick={() => onOpenSettings()}
             disabled={blockChrome}
@@ -580,11 +581,12 @@ function ProjectsLeftLayoutImpl({
           />
         </div>
       </header>
-      <div
+      <main
         className="aya-main aya-main--alt"
         style={{ gridTemplateColumns: `${railWidth}px 1fr` }}
       >
-        <aside className="aya-projectrail" style={{ width: railWidth }}>
+        <h1 className="aya-visually-hidden">Aya</h1>
+        <nav className="aya-projectrail" aria-label="Projects and terminals" style={{ width: railWidth }}>
           <div className="aya-projectrail-header">
             <div className="aya-brand">
               <span
@@ -766,9 +768,9 @@ function ProjectsLeftLayoutImpl({
               document.body.style.cursor = "col-resize";
             }}
           />
-        </aside>
+        </nav>
         {body}
-      </div>
+      </main>
       {projectMenu && onMoveProjectToWindow && (
         <div
           className="aya-context-menu"

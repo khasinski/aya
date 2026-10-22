@@ -313,7 +313,7 @@ function SidebarImpl({
   };
 
   return (
-    <aside className="aya-sidebar" style={{ width: sidebarWidth }}>
+    <nav className="aya-sidebar" aria-label="Terminals" style={{ width: sidebarWidth }}>
       <div className="aya-sidebar-header">
         <span>{terminals.length} terminals</span>
       </div>
@@ -566,7 +566,7 @@ function SidebarImpl({
           </button>
         </div>
       )}
-    </aside>
+    </nav>
   );
 }
 
