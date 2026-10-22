@@ -1,6 +1,7 @@
 // A stand-in agent for team e2e: in the default modes tab-left sends one team message; every pane
 // records what reaches its input in team-<pane>.log in the project dir.
 const { execFile, execFileSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -230,20 +231,32 @@ if ((mode.startsWith("ask") || (mode === "relaunch" && !relaunched)) && me === "
 } else if (mode === "plan" || mode === "permission") {
   // The preset says opencode for both panes, and Aya holds an OpenCode pane until it draws OpenCode's bar.
   process.stdout.write(screen("opencode-idle.screen.txt"));
-} else if (mode === "monitor") {
+} else if (mode === "monitor" || mode === "monitor-no-session") {
   // Claude Code's footer pill for running background tasks (2.1.289 bundle), on tab-right only; the args show a resume.
   composer();
   process.stdout.write(me === "tab-right" ? "  ⏵⏵ auto mode on · 2 shells, 1 monitor\r\n" : "  ⏵⏵ auto mode on\r\n");
   const args = process.argv.slice(4);
   const resumed = args.includes("--resume") || args.includes("--continue");
   // Saved as claude saves a conversation, so Aya's restart resumes it instead of starting a new one.
-  const id = args[args.findIndex((a) => a === "--session-id" || a === "--resume") + 1];
-  if (id) {
-    const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(require("node:os").homedir(), ".claude"), "projects", "e2e");
+  const sessionFlag = args.findIndex((arg) => arg === "--session-id" || arg === "--resume");
+  const id = sessionFlag >= 0 ? args[sessionFlag + 1] : resumed ? crypto.randomUUID() : null;
+  if (id && mode !== "monitor-no-session") {
+    // Match Claude's per-process session registry and transcript layout so Aya's real
+    // watcher learns this pane's ID, including after a directory-wide --continue.
+    const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(process.env.HOME || require("node:os").homedir(), ".claude");
+    const projects = path.join(configDir, "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"));
+    fs.mkdirSync(path.join(configDir, "sessions"), { recursive: true });
+    fs.writeFileSync(path.join(configDir, "sessions", `${process.pid}.json`), JSON.stringify({
+      pid: process.pid,
+      sessionId: id,
+      cwd: process.cwd(),
+      startedAt: Date.now(),
+    }));
     fs.mkdirSync(projects, { recursive: true });
     fs.writeFileSync(path.join(projects, `${id}.jsonl`), "{}\n");
   }
   fs.appendFileSync(log, `LAUNCH ${resumed ? "resumed" : "fresh"}\n`);
+  fs.appendFileSync(log, `SESSION ${mode === "monitor-no-session" ? "none" : id ?? "none"}\nARGS ${JSON.stringify(args)}\n`);
 } else {
   composer();
 }
