@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
-const { RemoteTerminalManager, isUnsupportedV2 } = await import("../dist-electron/remote-terminal-manager.js");
+const { RemoteTerminalManager, RemoteReconnectBackoff, isUnsupportedV2 } = await import("../dist-electron/remote-terminal-manager.js");
 
 class FakeTerminalClient extends EventEmitter {
   calls = [];
@@ -10,6 +10,9 @@ class FakeTerminalClient extends EventEmitter {
   failSpawn = null;
   failAttach = null;
   outputDuringSpawn = null;
+  attachOutput = null;
+  attachEndOffset = 0;
+  attachTruncated = false;
   async spawnTerminal(project, preset, cols, rows, terminalId) {
     this.calls.push(["spawn", project, preset, cols, rows, terminalId]);
     if (this.failSpawn) throw this.failSpawn;
@@ -19,7 +22,8 @@ class FakeTerminalClient extends EventEmitter {
   async attach(terminalId, offset) {
     this.calls.push(["attach", terminalId, offset]);
     if (this.failAttach) throw this.failAttach;
-    return { terminalId, fromOffset: 0, endOffset: 0, truncated: false, readOnly: this.readOnly };
+    if (this.attachOutput) setImmediate(() => this.emit("output", { terminalId, offset, data: this.attachOutput }));
+    return { terminalId, fromOffset: this.attachTruncated ? Math.max(0, offset - 1) : offset, endOffset: this.attachEndOffset, truncated: this.attachTruncated, readOnly: this.readOnly };
   }
   async write(terminalId, data) { this.calls.push(["write", terminalId, data]); return true; }
   async resize(terminalId, cols, rows) { this.calls.push(["resize", terminalId, cols, rows]); }
@@ -121,6 +125,66 @@ test("an explicitly restarted pane creates a new session after an attach reports
   assert.deepEqual(clients[1].calls[0], ["spawn", "remote-repo", "codex", 90, 28, "tab-uuid"]);
 });
 
+test("a truncated remote replay resets the local display before replay bytes are delivered", async () => {
+  const client = new FakeTerminalClient();
+  client.attachTruncated = true;
+  client.attachOutput = "recent suffix";
+  client.attachEndOffset = 20;
+  const events = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, sendEvent: event => events.push(event) });
+
+  await manager.spawn({ ...request, attachOnly: true }, "devbox", "remote-repo");
+  assert.equal(events[0].type, "remote-replay-truncated");
+  assert.deepEqual(events[0], { type: "remote-replay-truncated", ptyId: request.ptyId });
+  await new Promise(resolve => setImmediate(resolve));
+  const replayIndex = events.findIndex(event => event.type === "data" && event.chunk === "recent suffix");
+  assert.ok(replayIndex > 0);
+  assert.ok(events.findIndex(event => event.type === "remote-replay-truncated") < replayIndex);
+  client.emit("output", { terminalId: request.ptyId, offset: 19, data: "recent suffix" });
+  assert.equal(events.at(-1).type, "data");
+  assert.equal(events.at(-1).chunk, "recent suffix");
+});
+
+test("remote output pauses its bridge until the renderer acknowledges delivery", async () => {
+  const client = Object.assign(new FakeTerminalClient(), {
+    outputPaused: false,
+    pauseOutput() { this.outputPaused = true; },
+    resumeOutput() { this.outputPaused = false; },
+  });
+  const events = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, outputSinks: () => [101], sendEvent: event => events.push(event) });
+  await manager.spawn(request, "devbox", "remote-repo");
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "render this" });
+  const delivered = events.find(event => event.type === "data");
+  assert.equal(delivered.chunk, "render this");
+  assert.equal(typeof delivered.remoteDeliveryId, "string");
+  assert.equal(client.outputPaused, true);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, "stale-delivery", 101), false);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId, 202), false);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId, 101), true);
+  assert.equal(client.outputPaused, false);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId), false);
+});
+
+test("remote output waits for every renderer sink and drops closed windows", async () => {
+  const client = Object.assign(new FakeTerminalClient(), {
+    outputPaused: false,
+    pauseOutput() { this.outputPaused = true; },
+    resumeOutput() { this.outputPaused = false; },
+  });
+  const events = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, outputSinks: () => [11, 22], sendEvent: event => events.push(event) });
+  await manager.spawn(request, "devbox", "remote-repo");
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "bounded frame" });
+  const delivered = events.find(event => event.type === "data");
+  assert.ok(delivered.remoteDeliveryId);
+  assert.equal(client.outputPaused, true);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId, 11), true);
+  assert.equal(client.outputPaused, true, "fast window cannot resume delivery while the second window is stalled");
+  manager.forgetOutputSink(22);
+  assert.equal(client.outputPaused, false, "closing the stalled window releases its outstanding acknowledgement");
+});
+
 test("restarting a pane after its remote process exits starts a fresh host terminal", async () => {
   const events = [];
   const clients = [];
@@ -139,4 +203,57 @@ test("restarting a pane after its remote process exits starts a fresh host termi
     ["attach", "tab-uuid", 0],
   ]);
   assert.equal(clients[0].calls.at(-1)[0], "detach");
+});
+
+test("remote reconnect backs off, resumes at the last offset, and replays the gap once", async () => {
+  const delays = [];
+  const events = [];
+  const clients = [];
+  const manager = new RemoteTerminalManager({
+    connect: () => {
+      const client = new FakeTerminalClient();
+      if (clients.length === 1) client.failAttach = new Error("host still unavailable");
+      if (clients.length === 2) { client.attachOutput = "gap"; client.attachEndOffset = 8; }
+      clients.push(client);
+      return client;
+    },
+    sendEvent: (event) => events.push(event),
+    schedule: (callback, delayMs) => {
+      const task = { callback, delayMs, cancelled: false };
+      delays.push(task);
+      return () => { task.cancelled = true; };
+    },
+  });
+  assert.equal(await manager.spawn(request, "devbox", "remote-repo", "Dev box"), "remote");
+  clients[0].emit("output", { terminalId: request.ptyId, offset: 0, data: "start" });
+  clients[0].emit("error", new Error("bridge lost"));
+  assert.deepEqual(events.at(-1), { type: "remote-connection", ptyId: request.ptyId, host: "Dev box", connected: false, retryInMs: 1_000 });
+  await assert.rejects(manager.write(request.ptyId, "must not leak"), /disconnected/i);
+
+  const run = async () => {
+    const task = delays.find(item => !item.cancelled && !item.ran);
+    assert.ok(task);
+    task.ran = true;
+    task.callback();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  assert.equal(delays[0].delayMs, 1_000);
+  await run();
+  assert.equal(delays[1].delayMs, 2_000);
+  await run();
+  assert.deepEqual(clients[2].calls[0], ["attach", request.ptyId, 5]);
+  assert.equal(events.filter(event => event.type === "data" && event.chunk === "gap").length, 1);
+  const connectedIndex = events.findIndex(event => event.type === "remote-connection" && event.connected);
+  const replayIndex = events.findIndex(event => event.type === "data" && event.chunk === "gap");
+  assert.ok(connectedIndex >= 0);
+  assert.ok(replayIndex > connectedIndex, "replay is delivered after the client resumes reading");
+  assert.equal(await manager.write(request.ptyId, "after reconnect"), true);
+});
+
+test("remote reconnect backoff resets after success and then repeats its last delay", () => {
+  const backoff = new RemoteReconnectBackoff();
+  assert.deepEqual(Array.from({ length: 8 }, () => backoff.next()), [1_000, 2_000, 5_000, 10_000, 30_000, 30_000, 30_000, 30_000]);
+  backoff.reset();
+  assert.equal(backoff.next(), 1_000);
 });

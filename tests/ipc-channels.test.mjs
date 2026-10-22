@@ -19,7 +19,7 @@ function sources(dir) {
 
 /** Channels a file registers: handle("x") / on("x"), and `p:${v}` handled inside `for (const v of [...])`. */
 function registered(text) {
-  const channels = [...text.matchAll(/\.(?:handle|on)\(\s*"([a-z][a-z0-9-]*:[a-z0-9:-]+)"/g)].map((m) => m[1]);
+  const channels = [...text.matchAll(/\.(?:handle|on)(?:\?\.)?\(\s*"([a-z][a-z0-9-]*:[a-z0-9:-]+)"/g)].map((m) => m[1]);
   for (const loop of text.matchAll(/for \(const (\w+) of \[([^\]]*)\]/g)) {
     const [, name, list] = loop;
     const body = text.slice(loop.index, loop.index + 600);

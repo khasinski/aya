@@ -49,6 +49,16 @@ test("replay and live chunks of the same pty stay separate events", () => {
   assert.deepEqual(sent, [data("a", "R1R2", true), data("a", "L1")]);
 });
 
+test("remote frames with separate renderer acknowledgements are never merged", () => {
+  const out = [];
+  const scheduler = manualScheduler();
+  const coalescer = createPtyDataCoalescer(event => out.push(event), scheduler.schedule);
+  coalescer.push({ type: "data", ptyId: "remote", chunk: "one", remoteDeliveryId: "remote:1" });
+  coalescer.push({ type: "data", ptyId: "remote", chunk: "two", remoteDeliveryId: "remote:2" });
+  coalescer.flush();
+  assert.deepEqual(out.map(event => [event.chunk, event.remoteDeliveryId]), [["one", "remote:1"], ["two", "remote:2"]]);
+});
+
 test("a non-data event flushes pending data first (exit can't overtake output)", () => {
   const sent = [];
   const s = manualScheduler();
@@ -122,6 +132,19 @@ test("coalesceAdjacentData passes through short batches", () => {
   const one = [data("a", "x")];
   assert.equal(coalesceAdjacentData(one), one);
   assert.deepEqual(coalesceAdjacentData([]), []);
+});
+
+test("stream offsets survive only contiguous output coalescing", () => {
+  const contiguous = coalesceAdjacentData([
+    { type: "data", ptyId: "a", chunk: "é", streamOffset: 0 },
+    { type: "data", ptyId: "a", chunk: "x", streamOffset: 2 },
+  ]);
+  assert.deepEqual(contiguous, [{ type: "data", ptyId: "a", chunk: "éx", streamOffset: 0 }]);
+  const gap = coalesceAdjacentData([
+    { type: "data", ptyId: "a", chunk: "a", streamOffset: 0 },
+    { type: "data", ptyId: "a", chunk: "b", streamOffset: 2 },
+  ]);
+  assert.equal(gap.length, 2);
 });
 
 

@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
+const { restoreRemoteTerminalSessions } = await import("../dist-electron/remote-session-restore.js");
 const { REMOTE_TERMINAL_REPLAY_MAX_BYTES } = await import("../dist-electron/remote-protocol.js");
 const { MAX_PTY_PANES } = await import("../dist-electron/pty-pane-limits.js");
 const { REMOTE_TERMINAL_SOCKET_QUEUE_MAX_BYTES, writeRemoteTerminalFrame } = await import("../dist-electron/remote-terminal-stream.js");
@@ -33,6 +35,114 @@ test("remote terminal attach reports truncation and replays no more than the byt
   assert.equal(outputs[0].offset, 17);
   assert.equal(outputs.reduce((sum, output) => sum + Buffer.byteLength(output.data, "utf8"), 0), REMOTE_TERMINAL_REPLAY_MAX_BYTES);
   assert.equal(outputs.map((output) => output.data).join(""), "x".repeat(REMOTE_TERMINAL_REPLAY_MAX_BYTES));
+});
+
+test("main-process restoration rebuilds a live session at the host output offset and retains ended tabs", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project], listPresets: async () => [preset],
+    spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  sessions.restoreTerminal({ terminalId: "live-after-main-restart", project: "repo", preset: "shell", output: "base", endOffset: 4, running: true, processIdentity: { pid: 100, startIdentity: "start" } });
+  sessions.restoreTerminal({ terminalId: "ended-after-main-restart", project: "repo", preset: "shell", output: "done", endOffset: 4, running: false });
+  // An event that was already included in the snapshot is ignored, while the
+  // first byte after its high-water mark is appended once.
+  sessions.onPtyEvent({ type: "data", ptyId: "live-after-main-restart", chunk: "base", streamOffset: 0 });
+  sessions.onPtyEvent({ type: "data", ptyId: "live-after-main-restart", chunk: "gap", streamOffset: 4 });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const replay = [];
+  await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach-live", terminalId: "live-after-main-restart", offset: 4 }, (_socket, message) => replay.push(message));
+  assert.equal(replay.find(message => message.type === "pty:attached").endOffset, 7);
+  assert.equal(replay.filter(message => message.type === "pty:output").map(message => message.data).join(""), "gap");
+  const ended = [];
+  await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach-ended", terminalId: "ended-after-main-restart", offset: 0 }, (_socket, message) => ended.push(message));
+  assert.equal(ended.some(message => message.type === "pty:output" && message.data === "done"), true);
+  assert.equal(ended.some(message => message.type === "pty:exited"), true);
+});
+
+test("remote session restore discovers durable tabs, marks dead PTYs exited, and catches up across subscription", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [
+    { id: "restored-live", presetId: "shell", name: "Remote Shell", remoteTerminal: true },
+    { id: "restored-dead", presetId: "shell", name: "Remote Shell 2", remoteTerminal: true },
+    { id: "ordinary", presetId: "shell", name: "Shell" },
+  ] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({ listProjects: async () => [project], listPresets: async () => [preset], spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {} });
+  const outputCalls = new Map();
+  let attached = 0;
+  const count = await restoreRemoteTerminalSessions({
+    sessions,
+    listProjects: async () => [project],
+    getPid: async (id) => id === "restored-live" ? 321 : null,
+    getOutput: async (id) => {
+      if (id === "restored-dead") return { output: "ended", endOffset: 5 };
+      const call = (outputCalls.get(id) ?? 0) + 1; outputCalls.set(id, call);
+      return call === 1 ? { output: "base", endOffset: 4 } : { output: "basegap", endOffset: 7 };
+    },
+    processStartIdentity: (pid) => pid === 321 ? "process-start" : null,
+    isAlive: () => true,
+    attach: () => { attached += 1; sessions.onPtyEvent({ type: "data", ptyId: "restored-live", chunk: "gap", streamOffset: 4 }); },
+  });
+  assert.equal(count, 2);
+  assert.equal(attached, 1);
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const listed = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
+  assert.deepEqual(listed[0].terminals.map(item => [item.terminalId, item.state]), [["restored-live", "running"], ["restored-dead", "exited"]]);
+  const replay = [];
+  await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach", terminalId: "restored-live", offset: 4 }, (_socket, message) => replay.push(message));
+  assert.equal(replay.filter(message => message.type === "pty:output").map(message => message.data).join(""), "gap");
+});
+
+test("remote session restore deduplicates and caps records with bounded host-probe concurrency", async () => {
+  const tabs = Array.from({ length: MAX_PTY_PANES + 30 }, (_, index) => ({
+    id: `remote-${index}`, presetId: "shell", name: `Remote ${index}`, remoteTerminal: true,
+  }));
+  tabs.push({ ...tabs[0] });
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project], listPresets: async () => [preset],
+    spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  let active = 0;
+  let maxActive = 0;
+  let pidCalls = 0;
+  let outputCalls = 0;
+  const probe = async (kind) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    if (kind === "pid") pidCalls += 1;
+    else outputCalls += 1;
+    await new Promise(resolve => setImmediate(resolve));
+    active -= 1;
+  };
+  const count = await restoreRemoteTerminalSessions({
+    sessions,
+    listProjects: async () => [project],
+    getPid: async () => { await probe("pid"); return null; },
+    getOutput: async () => { await probe("output"); return { output: "", endOffset: 0 }; },
+    processStartIdentity: () => null,
+    isAlive: () => false,
+    attach: () => {},
+  });
+  assert.equal(count, MAX_PTY_PANES);
+  assert.equal(pidCalls, MAX_PTY_PANES);
+  assert.equal(outputCalls, MAX_PTY_PANES * 2);
+  assert.ok(maxActive <= 4, `host probes in flight: ${maxActive}`);
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const messages = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "bounded-list" }, (_socket, message) => messages.push(message));
+  assert.equal(messages[0].terminals.length, MAX_PTY_PANES);
+});
+
+test("Aya main restores remote sessions before accepting remote connections on every startup", () => {
+  const source = readFileSync(new URL("../electron/main.ts", import.meta.url), "utf8");
+  assert.match(source, /initializeRemoteSessionsOnStartup\(\{/);
+  assert.match(source, /getPid: \(terminalId\) => ptyHost\.getPid\(terminalId\)/);
+  assert.match(source, /getOutput: \(terminalId\) => ptyHost\.getRemoteOutput\(terminalId\)/);
+  assert.match(source, /attach: \(\) => ptyHost\.attachWebContents\(remotePtySessions!\)/);
 });
 
 test("one socket controls the host while other sockets can only observe until it disconnects", async () => {
@@ -102,6 +212,91 @@ test("one socket controls the host while other sockets can only observe until it
     { id: "terminal-b", controlled: false },
     { id: "terminal-b", controlled: true },
   ]);
+});
+
+test("a socket closed during readiness cannot attach or take control afterward", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project], listPresets: async () => [preset],
+    spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  sessions.restoreTerminal({ terminalId: "live", project: "repo", preset: "shell", output: "", endOffset: 0, running: true });
+  let ready;
+  sessions.setReady(new Promise((resolve) => { ready = resolve; }));
+  const dead = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  sessions.registerClient(dead, "disconnected-client");
+  const deadReplies = [];
+  const pendingAttach = sessions.handle(dead, { type: "pty:attach", protocol: 2, id: "late", terminalId: "live", offset: 0 }, (_socket, message) => deadReplies.push(message));
+
+  // The server's close handler runs while this request is suspended at ready.
+  sessions.detach(dead);
+  dead.destroyed = true;
+  dead.writable = false;
+  ready();
+  await pendingAttach;
+  assert.deepEqual(deadReplies, []);
+
+  const next = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const nextReplies = [];
+  await sessions.handle(next, { type: "pty:attach", protocol: 2, id: "next", terminalId: "live", offset: 0 }, (_socket, message) => nextReplies.push(message));
+  assert.equal(nextReplies.find((message) => message.type === "pty:attached")?.readOnly, undefined);
+  assert.equal(sessions.sessions.get("live")?.clients.has(dead), false);
+});
+
+test("a socket closed during each spawn lookup await cannot create an orphan controller", async (t) => {
+  for (const stage of ["ensureCapacity", "listProjects", "listPresets"]) {
+    await t.test(stage, async () => {
+      const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+      const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+      let release;
+      let notifyStarted;
+      const started = new Promise((resolve) => { notifyStarted = resolve; });
+      const gate = new Promise((resolve) => { release = resolve; });
+      let held = false;
+      const hold = async () => {
+        if (held) return;
+        held = true;
+        notifyStarted();
+        await gate;
+      };
+      let spawnCalls = 0;
+      const sessions = new RemotePtySessions({
+        ensureCapacity: async () => { if (stage === "ensureCapacity") await hold(); },
+        listProjects: async () => { if (stage === "listProjects") await hold(); return [project]; },
+        listPresets: async () => { if (stage === "listPresets") await hold(); return [preset]; },
+        spawn: async () => { spawnCalls += 1; },
+        write: async () => true,
+        resize: async () => {},
+        exit: async () => {},
+        newId: () => "terminal-after-disconnect",
+      });
+      const disconnected = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+      sessions.registerClient(disconnected, "gone-client");
+      const replies = [];
+      const pendingSpawn = sessions.handle(disconnected, { type: "pty:spawn", protocol: 2, id: "spawn-gone", project: "repo", preset: "shell", cols: 80, rows: 24 }, (_socket, message) => replies.push(message));
+      await started;
+      sessions.detach(disconnected);
+      disconnected.destroyed = true;
+      disconnected.writable = false;
+      release();
+      await pendingSpawn;
+      assert.equal(spawnCalls, 0);
+      assert.deepEqual(replies, []);
+      assert.equal(sessions.sessions.size, 0);
+      assert.equal(sessions.controllerClientId, undefined);
+      assert.equal(sessions.clientSockets.size, 0);
+
+      const live = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+      const liveReplies = [];
+      await sessions.handle(live, { type: "pty:spawn", protocol: 2, id: "spawn-live", project: "repo", preset: "shell", cols: 80, rows: 24 }, (_socket, message) => liveReplies.push(message));
+      assert.equal(liveReplies.find((message) => message.type === "pty:spawned")?.terminalId, "terminal-after-disconnect");
+      const attached = [];
+      await sessions.handle(live, { type: "pty:attach", protocol: 2, id: "attach-live", terminalId: "terminal-after-disconnect", offset: 0 }, (_socket, message) => attached.push(message));
+      assert.equal(attached.find((message) => message.type === "pty:attached")?.readOnly, undefined);
+      assert.equal(spawnCalls, 1);
+    });
+  }
 });
 
 test("separate bridges from one Aya process share the same host control identity", async () => {
@@ -528,19 +723,20 @@ test("a non-reading v2 socket stays under the queue cap for replay and list repl
   assert.equal(replyAndReplay.frames.some((message) => message.type === "pty:output"), true);
 
   const manySessions = new RemotePtySessions({
-    listProjects: async () => [project],
-    listPresets: async () => [preset],
-    spawn: async (id) => manySessions.onPtyEvent({ type: "spawn-failed", ptyId: id, reason: "spawn-prepare-failed", detail: "x".repeat(3000) }),
+    listProjects: async () => [{ ...project, slug: "p".repeat(128) }],
+    listPresets: async () => [{ ...preset, id: "s".repeat(128) }],
+    spawn: async () => {},
     write: async () => true,
     resize: async () => {},
     exit: async () => {},
-    newId: (() => { let id = 0; return () => `list-target-${++id}`; })(),
+    newId: (() => { let id = 0; return () => `${String(++id).padStart(4, "0")}${"t".repeat(124)}`; })(),
   });
+  const seedSocket = slow();
   for (let index = 0; index < MAX_PTY_PANES; index += 1) {
-    await manySessions.handle(socket, { type: "pty:spawn", protocol: 2, id: `seed-${index}`, project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+    await manySessions.handle(seedSocket, { type: "pty:spawn", protocol: 2, id: `seed-${index}`, project: "p".repeat(128), preset: "s".repeat(128), cols: 80, rows: 24 }, () => {});
   }
   const listSocket = slow();
-  for (let index = 0; index < 10 && !listSocket.destroyed; index += 1) {
+  for (let index = 0; index < 100 && !listSocket.destroyed; index += 1) {
     await manySessions.handle(listSocket, { type: "pty:list", protocol: 2, id: `list-${index}` }, cappedWriter);
   }
   assert.equal(listSocket.destroyed, true);

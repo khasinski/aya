@@ -26,7 +26,7 @@ export function createRemoteTerminalOnSpawned(deps: RemoteTerminalProjectDeps): 
         const used = new Set(current.tabs.map((tab) => tab.name));
         let name = baseName;
         for (let suffix = 2; used.has(name); suffix += 1) name = `${baseName} ${suffix}`;
-        return { ...current, tabs: [...current.tabs, { id: terminalId, presetId: preset.id, name }] };
+        return { ...current, tabs: [...current.tabs, { id: terminalId, presetId: preset.id, name, remoteTerminal: true }] };
       });
       tabAdded = true;
       await deps.openProject(project.directory);

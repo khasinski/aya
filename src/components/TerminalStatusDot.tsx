@@ -2,10 +2,13 @@ import type { TerminalState } from "../types";
 
 type StatusDotTerminal = Pick<
   TerminalState,
-  "name" | "status" | "stopped" | "disconnected" | "spawnFailure" | "exitCode"
+  "name" | "status" | "stopped" | "disconnected" | "remoteDisconnected" | "spawnFailure" | "exitCode"
 >;
 
 export function terminalStatusDotText(terminal: StatusDotTerminal): string {
+  if (terminal.remoteDisconnected) {
+    return "Remote terminal is disconnected. Aya is trying to reconnect.";
+  }
   if (terminal.disconnected) {
     return "Terminal is disconnected. Select it to view recovery options.";
   }
@@ -37,8 +40,8 @@ export function TerminalStatusDot({
   const text = terminalStatusDotText(terminal);
   return (
     <span
-      className={`aya-sidebar-statusdot aya-sidebar-statusdot--${terminal.status}${
-        recentlyActive ? " aya-sidebar-statusdot--blinking" : ""
+      className={`aya-sidebar-statusdot aya-sidebar-statusdot--${terminal.remoteDisconnected ? "disconnected" : terminal.status}${
+        recentlyActive && !terminal.remoteDisconnected ? " aya-sidebar-statusdot--blinking" : ""
       }`}
       role="img"
       aria-label={`${terminal.name}: ${text}`}

@@ -264,6 +264,7 @@ export const test = base.extend<{
         AYA_REMOTE_TEST_PTY_HOST: PTY_HOST_SCRIPT,
         AYA_REMOTE_TEST_STATE: join(seeded.root, "remote-terminal-state.json"),
         AYA_REMOTE_TEST_PRESETS: JSON.stringify(seedOptions.presetList ?? []),
+        AYA_REMOTE_TEST_MAIN_PID_FILE: join(seeded.root, "remote-terminal-main.pid"),
       };
       remoteTerminalHost = spawn(process.execPath, [join(APP_ROOT, "e2e/helpers/fake-remote-terminal-host.cjs")], {
         cwd: APP_ROOT,

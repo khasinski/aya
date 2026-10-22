@@ -32,6 +32,10 @@ test("each sidebar dot state has a screen-reader label and visible tooltip", () 
   expectDot("idle", "Terminal finished successfully.", { exitCode: 0 });
   expectDot("idle", "Terminal exited with code 2.", { exitCode: 2 });
   expectDot("error", "Terminal is disconnected. Select it to view recovery options.", { disconnected: true });
+  const remote = render("running", { disconnected: true, remoteDisconnected: true });
+  assert.match(remote, /aya-sidebar-statusdot--disconnected/);
+  assert.match(remote, /Remote terminal is disconnected\. Aya is trying to reconnect\./);
+  assert.doesNotMatch(remote, /statusdot--error/);
   expectDot("error", "Terminal could not start. Select it to view the error.", {
     spawnFailure: { reason: "command-not-found", detail: "missing" },
   });

@@ -29,6 +29,7 @@ import {
   recoverPtyCorePane,
   ptyRecoveryStates,
   getBufferedOutput,
+  getBufferedRemoteOutput,
   getPtyLaunch,
   getPtySize,
   getPtyPid,
@@ -373,6 +374,9 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "buffer") {
     return getBufferedOutput(request.ptyId);
+  }
+  if (request.type === "remote-output") {
+    return getBufferedRemoteOutput(request.ptyId);
   }
   if (request.type === "size") {
     return getPtySize(request.ptyId);

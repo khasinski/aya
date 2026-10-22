@@ -992,6 +992,16 @@ export class PtyHostClient {
     return typeof result === "string" ? result : "";
   }
 
+  /** Retained bytes with their absolute output position, used to rebuild
+   * host-owned detached remote sessions after main alone restarts. */
+  async getRemoteOutput(ptyId: string): Promise<{ output: string; endOffset: number } | null> {
+    const result = await this.request({ id: 0, type: "remote-output", ptyId });
+    if (!result || typeof result !== "object") return null;
+    const value = result as { output?: unknown; endOffset?: unknown };
+    if (typeof value.output !== "string" || !Number.isSafeInteger(value.endOffset) || (value.endOffset as number) < 0) return null;
+    return { output: value.output, endOffset: value.endOffset as number };
+  }
+
   /** Why a message must not be typed into the pane now, or null. Fails closed:
    *  a host that does not answer (or predates the request) cannot vouch that Enter will not answer a prompt. */
   async holdReason(ptyId: string, pasted?: string): Promise<string | null> {

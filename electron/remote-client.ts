@@ -62,6 +62,7 @@ export class RemoteTerminalClient extends EventEmitter {
   private snapshotReceived = false;
   private opened = false;
   private closed = false;
+  private outputPaused = false;
 
   constructor(private readonly bridge: ChildProcess) {
     super();
@@ -79,6 +80,29 @@ export class RemoteTerminalClient extends EventEmitter {
     bridge.once("close", (code, signal) => this.fail(new Error(`Remote terminal bridge closed (${signal ?? code ?? "unknown"}).`)));
   }
 
+  /** E2E-only bridge interruption. The IPC exposing this is registered only
+   * when AYA_E2E_RUN is set; production UI has no route to this method. */
+  killBridgeForTests(): void { this.bridge.kill("SIGKILL"); }
+
+  /** Backpressure from the renderer is propagated through the bridge and SSH
+   *  stream so its bounded host-side output ring can absorb a slow consumer. */
+  pauseOutput(): void {
+    this.outputPaused = true;
+    this.bridge.stdout?.pause();
+  }
+
+  resumeOutput(): void {
+    if (this.closed || !this.outputPaused) return;
+    this.outputPaused = false;
+    this.consumeBuffer();
+    if (!this.outputPaused) this.bridge.stdout?.resume();
+  }
+
+  destroy(): void {
+    this.closed = true;
+    this.bridge.kill("SIGKILL");
+  }
+
   static open(sshTarget: string): RemoteTerminalClient {
     const target = requireSshTarget(sshTarget);
     const bridge = spawn("ssh", sshArgs(target, ["aya remote --stdio"]), { stdio: ["pipe", "pipe", "pipe"] });
@@ -87,6 +111,10 @@ export class RemoteTerminalClient extends EventEmitter {
 
   private onData(chunk: string): void {
     this.buffer += chunk;
+    this.consumeBuffer();
+  }
+
+  private consumeBuffer(): void {
     while (true) {
       const idx = this.buffer.indexOf("\n");
       if (idx < 0) {
@@ -109,6 +137,7 @@ export class RemoteTerminalClient extends EventEmitter {
       catch { this.fail(new Error("Remote Aya returned invalid JSON.")); continue; }
       if (!isRecord(value)) { this.fail(new Error("Remote Aya returned an invalid message.")); continue; }
       this.onMessage(value);
+      if (this.outputPaused) return;
     }
   }
 
@@ -303,8 +332,9 @@ function finish(code) {
   setTimeout(() => process.exit(code), ${EXIT_FLUSH_DELAY_MS});
 }
 client.setEncoding("utf8");
+process.stdout.on("drain", () => client.resume());
 client.on("data", (chunk) => {
-  process.stdout.write(chunk);
+  if (!process.stdout.write(chunk)) client.pause();
   buffer += chunk;
   while (buffer.includes("\\n")) {
     const idx = buffer.indexOf("\\n");

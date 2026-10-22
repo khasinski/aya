@@ -73,6 +73,7 @@ import { RemotePtySessions } from "./remote-pty-sessions";
 import { RemoteTerminalClient } from "./remote-client";
 import { RemoteTerminalManager } from "./remote-terminal-manager";
 import { createRemoteTerminalOnSpawned } from "./remote-terminal-project";
+import { initializeRemoteSessionsOnStartup } from "./remote-session-restore";
 import { headCommit, workingTreeState } from "./git";
 import {
   AYA_HOME,
@@ -90,6 +91,7 @@ import {
   AGENT_BRIEF_FILES_FILE,
 } from "./paths";
 import { createPtyLog } from "./pty-log";
+import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
 import { watchOmarchyTheme } from "./omarchy";
 import { openExternalUrl } from "./navigation";
@@ -312,6 +314,8 @@ const externalShell = {
   openPath: (filePath: string): Promise<string> => shell.openPath(filePath),
 };
 
+let forgetRemoteOutputSink: (webContentsId: number) => void = () => {};
+
 const windows = createAyaWindows({
   BrowserWindow,
   ptyHost,
@@ -330,6 +334,7 @@ const windows = createAyaWindows({
   openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
   claimBootWindow: windowProjects.claimBootWindow,
   releaseWindowSlices: windowProjects.releaseWindowSlices,
+  onWindowClosed: (webContentsId) => forgetRemoteOutputSink(webContentsId),
   quitting: () => appQuitting,
 });
 const { ayaWindows, focusedAyaWindow, eachAyaWindow, createWindow, openNewWindow, createWindowOnce, windowForOpen, isAyaFullScreen, setAyaFullScreen, toggleAyaFullScreen } = windows;
@@ -606,11 +611,19 @@ function registerIpc(): TeamRunner {
   const remoteTerminalManager = new RemoteTerminalManager({
     connect: (target) => RemoteTerminalClient.open(target),
     sendEvent: broadcastPtyEvent,
+    outputSinks: () => [...ayaWindows].filter((win) => !win.isDestroyed()).map((win) => win.webContents.id),
   });
+  forgetRemoteOutputSink = (webContentsId) => remoteTerminalManager.forgetOutputSink(webContentsId);
+  if (process.env.AYA_E2E_RUN === "1") {
+    ipcMain.handle("e2e:remote-drop-bridge", (_event, ptyId: unknown) => {
+      if (typeof ptyId !== "string" || ptyId.length > 256) return false;
+      return remoteTerminalManager.dropBridgeForTests(ptyId);
+    });
+  }
   const sendSpawn = async (spawn: SpawnRequest) => {
     const project = spawn.projectSlug ? (await listProjects()).find((item) => item.slug === spawn.projectSlug) : undefined;
     if (project?.remote) {
-      const mode = await remoteTerminalManager.spawn(spawn, project.remote.sshTarget, project.slug);
+      const mode = await remoteTerminalManager.spawn(spawn, project.remote.sshTarget, project.slug, project.remote.label);
       if (mode === "remote") return true;
       // Old hosts cannot detach PTYs from SSH. Preserve the previous behavior,
       // but tell the user that closing this terminal will end the session.
@@ -687,7 +700,18 @@ function registerIpc(): TeamRunner {
     },
     onController: (terminalId, controlled) => broadcastPtyEvent({ type: "remote-control", ptyId: terminalId, controlled }),
   });
-  ptyHost.attachWebContents(remotePtySessions);
+  void initializeRemoteSessionsOnStartup({
+    sessions: remotePtySessions,
+    listProjects,
+    getPid: (terminalId) => ptyHost.getPid(terminalId),
+    getOutput: (terminalId) => ptyHost.getRemoteOutput(terminalId),
+    processStartIdentity: ownerProcessStartIdentity,
+    isAlive: (pid) => {
+      try { process.kill(pid, 0); return true; }
+      catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+    },
+    attach: () => ptyHost.attachWebContents(remotePtySessions!),
+  });
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
@@ -697,6 +721,8 @@ function registerIpc(): TeamRunner {
       resize: (ptyId, cols, rows) => remoteTerminalManager.resize(ptyId, cols, rows),
       detach: (ptyId) => remoteTerminalManager.detach(ptyId),
       end: (ptyId) => remoteTerminalManager.end(ptyId),
+      reconnect: (ptyId) => remoteTerminalManager.reconnectNow(ptyId),
+      acknowledgeOutput: (ptyId, deliveryId, sinkId) => remoteTerminalManager.acknowledgeOutput(ptyId, deliveryId, sinkId),
     },
     prepareSpawn,
     sendSpawn,
@@ -883,11 +909,16 @@ function broadcastStatus(update: ControlStatusUpdate): void {
   for (const sink of statusSinks()) sink.webContents.send("control:status", update);
 }
 
-function broadcastPtyEvent(event: PtyEvent): void {
+function deliverPtyEvent(event: PtyEvent): void {
   for (const win of ayaWindows) {
     if (!win.isDestroyed()) win.webContents.send("pty:event", event);
   }
   ayaWeb.broadcast("pty:event", event);
+}
+
+const ptyEventBroadcaster = createPtyDataCoalescer(deliverPtyEvent);
+function broadcastPtyEvent(event: PtyEvent): void {
+  ptyEventBroadcaster.push(event);
 }
 
 // Triggered when a second `Aya` launch happens while we're already running

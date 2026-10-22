@@ -13,8 +13,9 @@ export type ProjectBadgeLevel = "active" | "done" | "waiting" | "error";
 
 /** What one terminal adds to its project's badge, or null for nothing (a wait on a teammate among them). */
 export function projectBadgeLevel(
-  t: Pick<TerminalState, "status" | "externalStatus" | "spawnFailure" | "bell" | "exitCode" | "presetId">,
+  t: Pick<TerminalState, "status" | "externalStatus" | "spawnFailure" | "bell" | "exitCode" | "presetId" | "remoteDisconnected">,
 ): ProjectBadgeLevel | null {
+  if (t.remoteDisconnected) return null;
   if (t.status === "error" || t.externalStatus?.level === "error" || t.spawnFailure) return "error";
   if (t.bell || t.status === "waiting" || t.externalStatus?.level === "waiting") return "waiting";
   if (isTerminalDone(t)) return "done";
@@ -51,6 +52,7 @@ export function attentionFor(
   project: ProjectConfig,
   terminal: TerminalState,
 ): AttentionRow | null {
+  if (terminal.remoteDisconnected) return null;
   if (
     terminal.status === "error" ||
     terminal.externalStatus?.level === "error" ||

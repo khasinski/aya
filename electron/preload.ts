@@ -59,6 +59,8 @@ const api: AyaApi = {
   ptyResize: (ptyId, cols, rows) =>
     ipcRenderer.invoke("pty:resize", ptyId, cols, rows),
   ptyKill: (ptyId, action) => ipcRenderer.invoke("pty:kill", ptyId, action),
+  ptyRemoteReconnect: (ptyId) => ipcRenderer.invoke("pty:remote-reconnect", ptyId),
+  e2eDropRemoteBridge: (ptyId) => ipcRenderer.invoke("e2e:remote-drop-bridge", ptyId),
   ptyBuffer: (ptyId) => ipcRenderer.invoke("pty:buffer", ptyId),
   ptyCwd: (ptyId) => ipcRenderer.invoke("pty:cwd", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
@@ -68,7 +70,12 @@ const api: AyaApi = {
   stopOtherPtyHosts: () => ipcRenderer.invoke("pty-host:stop-others"),
   confirmPaneRestart: (ptyId: string) => ipcRenderer.invoke("pty:confirm-restart", ptyId),
   onPtyEvent: (handler) => {
-    const listener = (_e: unknown, event: PtyEvent) => handler(event);
+    const listener = (_e: unknown, event: PtyEvent) => {
+      handler(event);
+      if (event.type === "data" && event.remoteDeliveryId) {
+        ipcRenderer.send("pty:remote-output-ack", event.ptyId, event.remoteDeliveryId);
+      }
+    };
     ipcRenderer.on("pty:event", listener);
     return () => ipcRenderer.removeListener("pty:event", listener);
   },

@@ -240,6 +240,8 @@ export interface WorkingTab {
   sharedDir?: true;
   /** Opened for a team role: every launch is widened to reach Aya, unless Aya may not lift the block. */
   teamLaunch?: boolean;
+  /** This tab is the host-side record for a detached remote terminal. */
+  remoteTerminal?: true;
   /** A tab opened on a machine from the machines popover: it runs `ssh -- <sshTarget>` instead of its preset's command. */
   sshTarget?: string;
 }
@@ -477,7 +479,7 @@ export interface SpawnRequest {
 }
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string; replayModeUnknown?: true }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string; replayModeUnknown?: true; streamOffset?: number; remoteDeliveryId?: string }
   | { type: "exit"; ptyId: string; exitCode: number; ownerExit?:{generation:number;event:number} }
   | {
       type: "spawn-failed";
@@ -490,6 +492,8 @@ export type PtyEvent =
   | { type: "no-session"; ptyId: string }
   | { type: "host-connection"; ptyId:string;connected:boolean;reason:string }
   | { type: "remote-control"; ptyId: string; controlled: boolean; readOnly?: boolean }
+  | { type: "remote-connection"; ptyId: string; host: string; connected: boolean; retryInMs?: number }
+  | { type: "remote-replay-truncated"; ptyId: string }
   | { type: "disconnected"; ptyId: string; reason?:string;recoveryBlocked?:boolean;retryable?:boolean }
   | {type:"recovery-unavailable";ptyId:string;reason:string}
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
@@ -828,6 +832,8 @@ export interface AyaApi {
   ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string, action?: "end-remote"): Promise<void>;
+  ptyRemoteReconnect(ptyId: string): Promise<boolean>;
+  e2eDropRemoteBridge(ptyId: string): Promise<boolean>;
   ptyBuffer(ptyId: string): Promise<string>;
   /** Live cwd of a terminal's process - where the console actually is after a
    *  `cd`, not the cwd Aya spawned it with. null when it can't be read (old
@@ -1129,6 +1135,8 @@ export interface TerminalState {
    *  it never shows as a "done"/successful finish. Cleared on restart. */
   stopped?: boolean;
   disconnected?: boolean;
+  /** The remote terminal's bridge is reconnecting; this is informational, not a local PTY failure. */
+  remoteDisconnected?: boolean;
   disconnectedReason?: string;
   recoveryGeneration?: string;
   recoveryNotice?: string;
@@ -1142,8 +1150,11 @@ export interface TerminalState {
   remoteControlled?: boolean;
   /** This local view is attached read-only because another client controls it. */
   remoteReadOnly?: boolean;
+  remoteReconnectDelayMs?: number;
   /** Display name of the machine that owns this pane. Derived from its remote project. */
   remoteHost?: string;
+  /** Some earlier output was no longer retained when Aya reattached. */
+  remoteReplayTruncated?: boolean;
   /** Opened for a team role (WorkingTab.teamLaunch). */
   /** Opened on a machine (WorkingTab.sshTarget). */
   sshTarget?: string;

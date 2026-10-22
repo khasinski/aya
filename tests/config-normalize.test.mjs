@@ -376,6 +376,11 @@ test("normalizeTab keeps teamLaunch true, drops anything else", () => {
   assert.equal("teamLaunch" in normalizeTab({ id: "b", presetId: "codex", name: "x", teamLaunch: "yes" }), false);
 });
 
+test("normalizeTab preserves the durable marker for detached remote terminals", () => {
+  assert.equal(normalizeTab({ id: "remote-id", presetId: "shell", name: "Remote Shell", remoteTerminal: true }).remoteTerminal, true);
+  assert.equal("remoteTerminal" in normalizeTab({ id: "ordinary", presetId: "shell", name: "Remote Shell", remoteTerminal: "yes" }), false);
+});
+
 test("normalizeTab keeps a machine tab's ssh target only when it is a plain alias or user@host", () => {
   assert.equal(normalizeTab({ id: "a", presetId: "shell", name: "ssh athena", sshTarget: "athena" }).sshTarget, "athena");
   assert.equal(normalizeTab({ id: "b", presetId: "shell", name: "x", sshTarget: "me@devbox" }).sshTarget, "me@devbox");
