@@ -115,6 +115,7 @@ const api: AyaApi = {
 
   getUsage: () => ipcRenderer.invoke("usage:get"),
   getCodexUsage: () => ipcRenderer.invoke("usage:get-codex"),
+  getAntigravityUsage: () => ipcRenderer.invoke("usage:get-antigravity"),
   getGrokUsage: () => ipcRenderer.invoke("usage:get-grok"),
   teamStart: (projectSlug, team, task, to) => ipcRenderer.invoke("teams:start", projectSlug, team, task, to),
   teamPause: (projectSlug, team) => ipcRenderer.invoke("teams:pause", projectSlug, team),

@@ -297,7 +297,7 @@ export function App() {
     samePollPayload,
   });
 
-  const { usageAccounts, codexUsageAccounts, grokUsage, monitoredSessions } =
+  const { usageAccounts, codexUsageAccounts, antigravityUsageAccounts, grokUsage, monitoredSessions } =
     useUsagePolling(samePollPayload);
 
   const { openProjectRef, unsavedOpensRef, unsavedOpensTick, drain: openQueueDrain } =
@@ -1146,6 +1146,7 @@ export function App() {
               projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
               usageAccounts={usageAccounts}
               codexUsageAccounts={codexUsageAccounts}
+              antigravityUsageAccounts={antigravityUsageAccounts}
               grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
               terminals={projectTerminals}
@@ -1193,6 +1194,7 @@ export function App() {
               projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
               usageAccounts={usageAccounts}
               codexUsageAccounts={codexUsageAccounts}
+              antigravityUsageAccounts={antigravityUsageAccounts}
               grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
             />

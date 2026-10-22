@@ -12,6 +12,7 @@ import {
 } from "../status-hook-codex";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "../usage";
 import { codexUsageSources, readCodexUsageAccountsFromSources } from "../usage-codex";
+import { readAntigravityUsage } from "../usage-antigravity";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "../usage-grok";
 import { installUsageHook, uninstallUsageHook, usageHookStatus } from "../usage-hook";
 
@@ -54,6 +55,10 @@ export function registerUsageIpc(ipcMain: Pick<IpcMain, "handle">): void {
       .filter((p) => p.agent === "grok" && p.configDir)
       .map((p) => expandUserPath(p.configDir as string));
     return readGrokUsage(grokDirs.length > 0 ? grokDirs : [DEFAULT_GROK_HOME]);
+  });
+  ipcMain.handle("usage:get-antigravity", async () => {
+    const presets = await listPresets();
+    return presets.some((p) => p.agent === "antigravity") ? readAntigravityUsage() : [];
   });
   // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
   // + a fetch script). The Aya process never reads a token or calls the

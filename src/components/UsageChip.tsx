@@ -170,7 +170,9 @@ export function UsageChip({
   label,
   accent,
   showHarnessName,
+  quotaGroups = false,
 }: {
+  quotaGroups?: boolean;
   accounts: UsageAccount[];
   label: string;
   accent: string;
@@ -192,15 +194,20 @@ export function UsageChip({
   if (accounts.length === 0) return null;
 
   const stale = allUsageStale(accounts);
-  const { pct: weeklyPct, ring: avgRing } = averageUsagePct(accounts);
-  const accountText =
-    accounts.length === 1 ? "1 account" : `${accounts.length} accounts`;
+  const average = averageUsagePct(accounts);
+  const weeklyPct = quotaGroups
+    ? Math.max(...accounts.flatMap(a => [a.usage.sevenDay?.pct, a.usage.fiveHour?.pct].filter((pct): pct is number => pct !== undefined)))
+    : average.pct;
+  const avgRing = average.ring;
+  const accountText = quotaGroups
+    ? `${accounts.length} quota ${accounts.length === 1 ? "group" : "groups"}`
+    : accounts.length === 1 ? "1 account" : `${accounts.length} accounts`;
 
   return (
     <div className="aya-recent-projects" ref={ref}>
       <button
         className="aya-iconbtn"
-        title={`${label} usage — ${accountText}, account-wide (all sessions, not this project)`}
+        title={`${label} usage — ${accountText}, account-wide (all sessions, not this project)${quotaGroups ? "; most-used limit" : ""}`}
         aria-label={`${label} usage, account-wide`}
         // Don't steal keyboard focus from the active terminal: peeking at usage
         // shouldn't force a re-click to resume typing (the old Settings-focus
@@ -317,7 +324,7 @@ export function UsageChip({
                 paddingTop: 8,
               }}
             >
-              {Math.round(weeklyPct)}% average {avgRing} used
+              {Math.round(weeklyPct)}% {quotaGroups ? "most-used limit" : `average ${avgRing} used`}
             </div>
           )}
         </div>

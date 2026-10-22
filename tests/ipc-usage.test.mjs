@@ -17,6 +17,7 @@ test("registers exactly the usage and hook channels", () => {
     "usage-hook:status",
     "usage-hook:uninstall",
     "usage:get",
+    "usage:get-antigravity",
     "usage:get-codex",
     "usage:get-grok",
   ]);

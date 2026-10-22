@@ -82,8 +82,9 @@ run commands.
 - **Many agents.** Presets for Claude Code, Codex, Cursor Agent, GitHub Copilot,
   Grok, Gemini, Aider, OpenCode, Kilo Code, Pi, Droid, Devin, and more, with
   session-precise resume via OSC 9001.
-- **Usage in view.** Claude and Codex usage chips in the top bar, read from
-  local snapshots. Aya does not proxy provider APIs or read Anthropic tokens.
+- **Usage in view.** Claude, Codex and Grok usage from local snapshots, plus
+  Antigravity quota groups from its official CLI. Aya does not proxy provider
+  APIs or read provider auth tokens.
 - **Snippets, diffs, themes.** Inject saved prompts without spending agent
   context, keep branch and changed-file context in the status bar, and run a
   GPU-accelerated terminal with custom themes and a light or dark chrome.

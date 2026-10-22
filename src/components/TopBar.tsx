@@ -70,6 +70,7 @@ interface Props {
   /** Account-wide Codex usage snapshots. Read-only. */
   codexUsageAccounts?: UsageAccount[];
   /** Account-wide Grok usage (tokens + cost, last 7 days). Read-only. */
+  antigravityUsageAccounts?: UsageAccount[];
   grokUsage?: GrokUsage | null;
   showUsageHarnessName: boolean;
 }
@@ -110,6 +111,7 @@ function TopBarImpl({
   projectSummaries = {},
   usageAccounts = [],
   codexUsageAccounts = [],
+  antigravityUsageAccounts = [],
   grokUsage = null,
   showUsageHarnessName,
 }: Props) {
@@ -473,6 +475,15 @@ function TopBarImpl({
             label="Codex"
             accent={CODEX_BRAND_COLOR}
             showHarnessName={showUsageHarnessName}
+          />
+        )}
+        {antigravityUsageAccounts.length > 0 && (
+          <UsageChip
+            accounts={antigravityUsageAccounts}
+            label="Antigravity"
+            accent="#4285f4"
+            showHarnessName={showUsageHarnessName}
+            quotaGroups
           />
         )}
         {grokUsage && (

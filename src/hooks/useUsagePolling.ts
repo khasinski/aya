@@ -13,11 +13,12 @@ export function useUsagePolling(
   const [codexUsageAccounts, setCodexUsageAccounts] = useState<
     UsageAccount[]
   >([]);
+  const [antigravityUsageAccounts, setAntigravityUsageAccounts] = useState<UsageAccount[]>([]);
   const [grokUsage, setGrokUsage] = useState<GrokUsage | null>(null);
   const [monitoredSessions, setMonitoredSessions] = useState<MonitoredSession[]>([]);
 
-  // Re-read the account-wide usage snapshot a user hook writes (~/.aya/usage.json).
-  // Aya only reads the file - it never fetches usage or touches any token.
+  // Poll provider usage: local snapshots and the official Antigravity CLI command.
+  // Authentication stays with the provider tools.
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -33,6 +34,9 @@ export function useUsagePolling(
           );
         }
       });
+      void window.aya.getAntigravityUsage().then((u) => {
+        if (!cancelled) setAntigravityUsageAccounts((prev) => samePollPayload(prev, u) ? prev : u);
+      }).catch(() => {});
       void window.aya.getGrokUsage().then((u) => {
         if (!cancelled) {
           setGrokUsage((prev) => (samePollPayload(prev, u) ? prev : u));
@@ -64,7 +68,7 @@ export function useUsagePolling(
     };
   }, [samePollPayload]);
 
-  return { usageAccounts, codexUsageAccounts, grokUsage, monitoredSessions };
+  return { usageAccounts, codexUsageAccounts, antigravityUsageAccounts, grokUsage, monitoredSessions };
 }
 
 export function useHarnessScan() {

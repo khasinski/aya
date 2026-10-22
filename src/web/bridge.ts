@@ -143,6 +143,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
 
     getUsage: inv("usage:get"),
     getCodexUsage: inv("usage:get-codex"),
+    getAntigravityUsage: inv("usage:get-antigravity"),
     getGrokUsage: inv("usage:get-grok"),
     teamStart: inv("teams:start"),
     teamPause: inv("teams:pause"),

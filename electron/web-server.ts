@@ -215,6 +215,7 @@ export const WEB_BRIDGE_INVOKE_CHANNELS = [
   "usage-hook:status",
   "usage-hook:uninstall",
   "usage:get",
+  "usage:get-antigravity",
   "usage:get-codex",
   "usage:get-grok",
   "web:configure",

@@ -1,5 +1,64 @@
 # Changelog
 
+## v0.13.0 - 2026-10-22
+
+Antigravity usage in view, worktrees and Changes ready for everyday use, and
+terminal processes that survive host crashes and updates.
+
+### Features
+
+- **Google Antigravity usage.** A ring shows the most-used quota limit;
+  its popover splits Gemini and Claude/GPT pools into weekly and five-hour
+  windows, with reset times. Aya asks the official `agy /usage` command for
+  structured data, without reading Google credentials or running a model turn.
+- **Worktrees.** Start several worktrees from one prompt, group panes by
+  checkout, and remove a worktree with an optional safe branch deletion (#248).
+- **Changes.** Comment on diff lines and send the comments to an agent as one
+  prompt; commit selected files, push the branch, open a pull request, and
+  inspect its checks. Send a failed check to an agent from the same panel
+  (#243, #257, #260, #263).
+- **Machines.** Discover and monitor Ollama and OpenAI-compatible model servers,
+  add a machine in one sentence, and see per-model Ollama memory (#156, #195,
+  #198).
+- **Attachments.** Drop files and paste images into terminals as paths,
+  including over SSH (#244).
+- **Pane state and CLI.** Add custom screen rules, inspect decisions with
+  `aya pane state --explain`, and wait for panes with `aya pane wait`
+  (#232, #242, #247).
+- **Aya Web.** A phone-sized layout and waiting-agent banners; host-changing
+  actions stay in the desktop app (#264, #265, #272).
+- **Accessibility.** Keyboard navigation for Settings, consent dialogs and
+  the workspace, with labelled pane status indicators (#238, #267).
+
+### Fixes
+
+- A native PTY owner keeps terminal processes alive while Aya replaces or
+  recovers its JavaScript terminal host, including after a manual app update.
+  Supports up to 128 panes, with a shared recovery message at the limit
+  (#226, #228, #229, #230, #254, #255, #256, #266).
+- Ask before restarting with an agent mid-turn or a shell command running;
+  team role notes explain when a restart can help (#219, #225, #227, #235,
+  #239, #240).
+- More reliable team message delivery, waits, round supervision and role
+  restarts, with team status and clearer role notes (#149, #153, #154, #155,
+  #157, #159, #160, #165, #169).
+- Codex panes keep their own identity and mouse scrolling after remounts
+  (#148, #241). Grok usage chooses the newest limit across homes without
+  double-counting a symlinked home (#187). Parallel Claude usage hooks copy
+  their own account snapshot (#221).
+- Project config watchers notice files restored after deletion; theme imports
+  report invalid colors instead of silently losing them (#189, #192).
+
+### Security and internal
+
+- Sandboxed renderer, bundled fonts and preload, Content Security Policy,
+  hardened Electron fuses and macOS entitlements (#164, #175, #176, #177).
+- Owner-only sockets and web configuration, authenticated PTY host connections,
+  an explicit Aya Web IPC allowlist, local-only web listening by default, and
+  untrusted repository launcher configuration (#170, #191, #201, #203, #205,
+  #231, #245).
+- Dependency security updates and broader local/CI coverage.
+
 ## v0.12.0 - 2026-09-29
 
 Teams: give panes roles and let Aya carry the messages between them, for any

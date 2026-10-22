@@ -759,6 +759,7 @@ export interface AyaApi {
   getUsage(): Promise<UsageAccount[]>;
   /** Read-only Codex usage parsed from its local rollout logs. */
   getCodexUsage(): Promise<UsageAccount[]>;
+  getAntigravityUsage(): Promise<UsageAccount[]>;
   getGrokUsage(): Promise<GrokUsage | null>;
   /** Start a team: unpause, send every role a delivery test, arm its rounds. */
   teamStart(projectSlug: string, team: string, task?: string, to?: string): Promise<TeamStartResult>;
