@@ -675,6 +675,8 @@ export interface UpdateStatus {
   phase: UpdateStatusPhase;
   supported: boolean;
   currentVersion: string;
+  /** True while Aya has frozen terminal changes to prepare an app update. */
+  preparingUpdate?: boolean;
   availableVersion?: string;
   downloadedVersion?: string;
   percent?: number;

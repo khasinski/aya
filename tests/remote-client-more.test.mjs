@@ -20,6 +20,36 @@ const { SSH_OPTIONS } = await import("../dist-electron/ssh.js");
 const root = mkdtempSync(join(tmpdir(), "aya-rc-more-"));
 test.after(() => rmSync(root, { recursive: true, force: true }));
 
+test("remote spawn's final guard runs after SSH readiness and before pty:spawn is written", async () => {
+  class FakeBridge extends EventEmitter {
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    exitCode = null;
+    signalCode = null;
+    kill() {}
+  }
+  const bridge = new FakeBridge();
+  const client = new RemoteTerminalClient(bridge);
+  const requests = [];
+  bridge.stdin.on("data", (chunk) => requests.push(JSON.parse(String(chunk).trim())));
+  let updatePreparing = false;
+  const spawning = client.spawnTerminal("project", "codex", 80, 24, "terminal", () => {
+    if (updatePreparing) throw new Error("Aya is getting ready to restart for an update.");
+  });
+  let opened;
+  const sessionOpen = new Promise((resolve) => { opened = resolve; });
+  bridge.stdin.once("data", (chunk) => opened(JSON.parse(String(chunk).trim())));
+  bridge.stdout.write(`${JSON.stringify({ type: "hello", protocol: 1 })}\n${JSON.stringify({ type: "snapshot", protocol: 1 })}\n`);
+  const openRequest = await sessionOpen;
+  assert.equal(openRequest.type, "session:open");
+  updatePreparing = true;
+  bridge.stdout.write(`${JSON.stringify({ type: "session:ready", protocol: 2, id: openRequest.id })}\n`);
+  await assert.rejects(spawning, /getting ready to restart for an update/);
+  assert.equal(requests.some((request) => request.type === "pty:spawn"), false, "the final guard refuses before writing any remote spawn frame");
+  bridge.exitCode = 0;
+  await client.detach();
+});
+
 test("attach replay is delivered after the caller's await continuation", async () => {
   class FakeBridge extends EventEmitter {
     stdin = new PassThrough();

@@ -70,6 +70,7 @@ interface Props {
   onCloseTerminal: (id: string) => void;
   onRenameTerminal: (id: string, name: string) => void;
   onLaunchTerminal: (preset: Preset) => void;
+  updatePreparing?: boolean;
   onReorderTerminals: (orderedIds: string[]) => void;
   onRestartTerminal: (id: string) => void;
   /** Teams per project slug: role chips, rail unread sums, Team role items. */
@@ -140,6 +141,7 @@ function ProjectsLeftLayoutImpl({
   onCloseTerminal,
   onRenameTerminal,
   onLaunchTerminal,
+  updatePreparing = false,
   onReorderTerminals,
   onRestartTerminal,
   teamsByProject = NO_TEAMS_BY_PROJECT,
@@ -631,13 +633,15 @@ function ProjectsLeftLayoutImpl({
           </div>
           <div className="aya-termtab-launcher" ref={launcherRef}>
             <div
-              className="aya-tab-new"
-              title="New terminal"
+              className={`aya-tab-new${updatePreparing ? " aya-tab-new--disabled" : ""}`}
+              title={updatePreparing ? "Aya is preparing to restart for an update." : "New terminal"}
               role="button"
               tabIndex={0}
               aria-label="New terminal"
-              onClick={(e) => toggleLauncher(e.currentTarget)}
+              aria-disabled={updatePreparing}
+              onClick={(e) => { if (!updatePreparing) toggleLauncher(e.currentTarget); }}
               onKeyDown={(e) => {
+                if (updatePreparing) return;
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   toggleLauncher(e.currentTarget);
@@ -663,11 +667,13 @@ function ProjectsLeftLayoutImpl({
                 }}
               >
                 <div className="aya-recent-menu-title">New terminal</div>
+                {updatePreparing && <div className="aya-search-secondary" role="status">Aya is preparing to restart for an update.</div>}
                 {presets.map((p) => (
                   <button
                     key={p.id}
                     className="aya-recent-menu-item"
                     role="menuitem"
+                    disabled={updatePreparing}
                     onClick={() => {
                       setShowLauncher(false);
                       onLaunchTerminal(p);
@@ -688,6 +694,7 @@ function ProjectsLeftLayoutImpl({
           </div>
         </div>
         <div className="aya-topbar-right">
+          {updatePreparing && <div className="aya-update-preparing" role="status">Aya is preparing to restart for an update.</div>}
           {!commandRail && usageAccounts.length > 0 && (
             <UsageChip
               accounts={usageAccounts}

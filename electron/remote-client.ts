@@ -209,8 +209,8 @@ export class RemoteTerminalClient extends EventEmitter {
     }
   }
 
-  async spawnTerminal(project: string, preset: string, cols: number, rows: number, terminalId?: string): Promise<{ terminalId: string }> {
-    const response = await this.request("pty:spawn", ["pty:spawned"], { project, preset, cols, rows, ...(terminalId ? { terminalId } : {}) });
+  async spawnTerminal(project: string, preset: string, cols: number, rows: number, terminalId?: string, beforeSend?: () => void): Promise<{ terminalId: string }> {
+    const response = await this.request("pty:spawn", ["pty:spawned"], { project, preset, cols, rows, ...(terminalId ? { terminalId } : {}) }, beforeSend);
     if (typeof response.terminalId !== "string") throw new Error("Remote Aya returned an invalid terminal id.");
     return { terminalId: response.terminalId };
   }
@@ -251,9 +251,12 @@ export class RemoteTerminalClient extends EventEmitter {
     return new Promise((resolve) => this.bridge.once("close", () => resolve()));
   }
 
-  private async request(type: string, expected: string[], data: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async request(type: string, expected: string[], data: Record<string, unknown>, beforeSend?: () => void): Promise<Record<string, unknown>> {
     await this.ready;
     if (this.closed) throw new Error("Remote terminal bridge is closed.");
+    // The host handshake may wait for SSH while an update starts locally.
+    // Check immediately before the first byte of a new remote PTY request.
+    beforeSend?.();
     const id = this.id();
     return new Promise((resolve, reject) => {
       this.pending.set(id, { expected, resolve, reject });

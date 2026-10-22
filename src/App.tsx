@@ -100,6 +100,7 @@ import {
   type TerminalState,
   type WaitingPanes,
   type Theme,
+  type UpdateStatus,
 } from "./types";
 
 // Cap on preset suggestions offered during repo preset import.
@@ -185,6 +186,19 @@ export function App() {
   >({});
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
+  const [updatePreparing, setUpdatePreparing] = useState(false);
+  useEffect(() => {
+    let eventVersion = 0;
+    const unsubscribe = window.aya.onUpdateStatus((status) => {
+      eventVersion += 1;
+      setUpdatePreparing(Boolean(status.preparingUpdate));
+    });
+    const versionAtRead = eventVersion;
+    void window.aya.getUpdateStatus().then((status: UpdateStatus) => {
+      if (versionAtRead === eventVersion) setUpdatePreparing(Boolean(status.preparingUpdate));
+    }).catch(() => {});
+    return unsubscribe;
+  }, []);
   const settingsOpenerRef = useRef<HTMLElement | null>(null);
   const {
     appThemePreference,
@@ -1131,6 +1145,11 @@ export function App() {
             openSettings={openSettings}
             closeProject={closeProject}
             restartTerminal={restartTerminal}
+            onSpawnFailure={(id) => setTerminals((prev) => {
+              const terminal = prev[id];
+              if (!terminal) return prev;
+              return { ...prev, [id]: { ...terminal, status: "idle", stopped: true, exitCode: null, bell: false } };
+            })}
             restartTriggers={restartTriggers}
             macOptionKeyMode={macOptionKeyMode}
             anyOverlayOpen={anyOverlayOpen}
@@ -1161,6 +1180,7 @@ export function App() {
             onClose={closeTerminal}
             onRename={renameTerminal}
             onLaunch={launchTerminal}
+            updatePreparing={updatePreparing}
             worktrees={worktrees}
             projectDir={
               activeProject ? projectBaseCwd(activeProject) : undefined
@@ -1309,6 +1329,7 @@ export function App() {
               onCloseTerminal={closeTerminal}
               onRenameTerminal={renameTerminal}
               onLaunchTerminal={launchTerminal}
+            updatePreparing={updatePreparing}
               onReorderTerminals={reorderActiveProjectTerminals}
               onRestartTerminal={forceRestartTerminal}
               body={body ?? panesNode}
@@ -1467,9 +1488,11 @@ export function App() {
             selectTerminalFromSidebar(terminalId);
           }}
           onRunPreset={(presetId) => {
+            if (updatePreparing) return;
             const preset = presets.find((p) => p.id === presetId);
             if (preset) launchTerminal(preset);
           }}
+          launchDisabled={updatePreparing}
           onClose={() => setShowSearch(false)}
         />
       )}

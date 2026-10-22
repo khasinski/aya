@@ -8,14 +8,19 @@ class FakeTerminalClient extends EventEmitter {
   calls = [];
   readOnly = false;
   failSpawn = null;
+  spawnReady = Promise.resolve();
+  spawnResponse = null;
   failAttach = null;
   outputDuringSpawn = null;
   attachOutput = null;
   attachEndOffset = 0;
   attachTruncated = false;
-  async spawnTerminal(project, preset, cols, rows, terminalId) {
+  async spawnTerminal(project, preset, cols, rows, terminalId, beforeSend) {
+    await this.spawnReady;
+    beforeSend?.();
     this.calls.push(["spawn", project, preset, cols, rows, terminalId]);
     if (this.failSpawn) throw this.failSpawn;
+    if (this.spawnResponse) await this.spawnResponse;
     if (this.outputDuringSpawn) this.emit("output", { terminalId, offset: 0, data: this.outputDuringSpawn });
     return { terminalId };
   }
@@ -32,6 +37,48 @@ class FakeTerminalClient extends EventEmitter {
 }
 
 const request = { ptyId: "tab-uuid", projectSlug: "remote-repo", presetId: "codex", cols: 90, rows: 28 };
+
+test("remote spawn rechecks update preparation after the SSH bridge becomes ready and before dispatch", async () => {
+  let ready;
+  const client = new FakeTerminalClient();
+  client.spawnReady = new Promise((resolve) => { ready = resolve; });
+  let preparing = false;
+  const manager = new RemoteTerminalManager({
+    connect: () => client,
+    sendEvent: () => {},
+    assertSpawnAllowed: () => { if (preparing) throw new Error("Aya is getting ready to restart for an update."); },
+  });
+
+  const spawning = manager.spawn(request, "devbox", "remote-repo");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(client.calls, [], "the SSH bridge is still waiting for its ready response");
+  preparing = true;
+  ready();
+  await assert.rejects(spawning, /getting ready to restart for an update/);
+  assert.equal(client.calls.some(([kind]) => kind === "spawn"), false, "no pty:spawn request was dispatched after update preparation began");
+  assert.equal(manager.has(request.ptyId), false, "a refused spawn does not enter the reattach registry");
+});
+
+test("a remote PTY already dispatched before update preparation completes into the reattach registry", async () => {
+  let finishSpawn;
+  const client = new FakeTerminalClient();
+  client.spawnResponse = new Promise((resolve) => { finishSpawn = resolve; });
+  let preparing = false;
+  const manager = new RemoteTerminalManager({
+    connect: () => client,
+    sendEvent: () => {},
+    assertSpawnAllowed: () => { if (preparing) throw new Error("Aya is getting ready to restart for an update."); },
+  });
+
+  const spawning = manager.spawn(request, "devbox", "remote-repo");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(client.calls[0]?.[0], "spawn", "the remote PTY request crossed the dispatch boundary");
+  preparing = true;
+  finishSpawn();
+  assert.equal(await spawning, "remote");
+  assert.equal(manager.has(request.ptyId), true, "the accepted host-owned PTY remains registered for reattach after local update preparation begins");
+  assert.equal(client.calls.some(([kind]) => kind === "attach"), true);
+});
 
 test("remote pane writes and resizes through v2, detaches without ending, and reattaches for replay", async () => {
   const clients = [];

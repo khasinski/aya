@@ -315,6 +315,10 @@ body {
 }
 .aya-tab-new:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
 .aya-tab-new:disabled { cursor: not-allowed; }
+.aya-tab-new.aya-tab-new--disabled { opacity: 0.35; cursor: not-allowed; }
+.aya-tab-new.aya-tab-new--disabled:hover { background: transparent; }
+.aya-update-preparing { color: var(--fg-secondary); font: 11px var(--font-sans); white-space: nowrap; }
+.aya-launcher .aya-update-preparing { white-space: normal; margin: 0 0 8px; }
 .aya-topbar-right {
   -webkit-app-region: no-drag;
   display: flex; align-items: center; padding: 0 10px; gap: 6px;
@@ -785,6 +789,8 @@ body {
   color: var(--fg-primary);
   border-color: var(--border-strong);
 }
+.aya-launcher-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+.aya-launcher-btn:disabled:hover { background: var(--bg); color: var(--fg-secondary); border-color: var(--border); }
 .aya-launcher-btn-icon {
   flex-shrink: 0;
   width: 12px; height: 12px;
