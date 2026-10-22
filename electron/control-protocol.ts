@@ -71,6 +71,13 @@ export type ControlRequest =
       projectSlug?: string;
       selfTerminalId?: string;
     }
+  // Rename a pane's tab; the target resolves as for pane read/send.
+  | {
+      type: "pane-rename";
+      target: string;
+      name: string;
+      projectSlug?: string;
+    }
   | { type: "capabilities" }
   // aya machines: argv as typed after "machines".
   | { type: "machines"; argv: string[]; user?: string; token?: string }
@@ -223,6 +230,13 @@ export function parseControlRequest(value: unknown): ControlRequest {
       projectSlug: optionalString(value.projectSlug),
       selfTerminalId: optionalString(value.selfTerminalId),
     };
+  }
+  if (type === "pane-rename") {
+    const target = optionalString(value.target);
+    if (!target) throw new Error("pane-rename requires target");
+    const name = optionalString(value.name)?.trim();
+    if (!name) throw new Error("pane-rename requires name");
+    return { type, target, name, projectSlug: optionalString(value.projectSlug) };
   }
   if (type === "pane-wait") {
     if (!Array.isArray(value.targets) || value.targets.length < 1 || value.targets.length > 64 || value.targets.some((v) => typeof v !== "string" || !v.trim())) throw new Error("pane-wait requires one or more targets");

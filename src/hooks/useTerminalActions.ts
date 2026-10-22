@@ -341,6 +341,34 @@ export function useTerminalActions({
     [persistProject, setTerminals],
   );
 
+  // aya pane rename: main resolved the pane. The save is awaited, unlike
+  // renameTerminal's, so a pane list right after the CLI returns shows the name.
+  useEffect(
+    () =>
+      window.aya.onPaneChange(({ requestId, projectSlug, paneId, change }) => {
+        const rename = async () => {
+          const project = findProject(projectsRef.current, projectSlug);
+          const terminal = terminalsRef.current[paneId];
+          if (!project || terminal?.projectSlug !== projectSlug) throw new Error(`pane ${paneId} is not open in this window`);
+          const next = { ...terminalsRef.current, [paneId]: { ...terminal, name: change.rename } };
+          terminalsRef.current = next;
+          const tabs = Object.values(next)
+            .filter((t) => t.projectSlug === projectSlug)
+            .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
+          const updated: ProjectConfig = { ...project, tabs };
+          setTerminals((prev) => (prev[paneId] ? { ...prev, [paneId]: { ...prev[paneId], name: change.rename } } : prev));
+          setAllProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
+          setProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
+          await window.aya.updateProject(updated);
+        };
+        void rename().then(
+          () => window.aya.teamPanesOpened(requestId, null),
+          (err: unknown) => window.aya.teamPanesOpened(requestId, err instanceof Error ? err.message : String(err)),
+        );
+      }),
+    [projectsRef, terminalsRef, setTerminals, setAllProjects, setProjects],
+  );
+
   /** Called by TerminalView when the user presses Shift+Enter in a
    *  cleanly-exited terminal. Clears the exit state so the PTY event router
    *  can resume updating status when the new PTY emits data. */

@@ -255,6 +255,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     teamOpenPanes: async () => ({ panes: [], leftWithoutPane: [] }),
     onTeamOpenPanes: noopSubscription,
     teamPanesOpened: noopAsync,
+    onPaneChange: noopSubscription,
     usageHookStatus: noopAsync,
     installUsageHook: noopAsync,
     uninstallUsageHook: noopAsync,

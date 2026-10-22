@@ -117,6 +117,13 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: "pane rename",
+    usage: "aya pane rename target name [--project slug]",
+    summary: "Rename a pane's tab.",
+    example: 'aya pane rename reviewer "reviewer: auth fix"',
+    notes: ["target and --project work as in pane read."],
+  },
+  {
     command: "team whoami",
     usage: "aya team whoami",
     summary: "Print this pane's team, role, who it sends to, what it must not do, and the protocol.",

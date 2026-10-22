@@ -31,10 +31,10 @@ import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isD
 import { debugAnswer } from "./team-debug";
 import { oneLine, printable } from "./printable";
 import { handleTeamRequest, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
-import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
+import { handleTeamPanesRequest, PaneOpenTimeout, THIS_PANE, type TeamPaneDeps } from "./team-panes";
 import { handleTeamShow } from "./team-show";
 import type { TeamRunner } from "./team-runner";
-import type { ControlStatusUpdate, ProjectConfig, PtyEvent } from "./types";
+import type { ControlStatusUpdate, PaneChangeRequest, ProjectConfig, PtyEvent } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
@@ -115,6 +115,8 @@ export interface ControlServerOptions {
   openProject: (directory: string) => Promise<void> | void;
   /** Every parsed request, with the pane it came from (adoption, #117); awaited before the request runs. */
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void | Promise<void>;
+  /** Asks the window that shows the project to change one of its tabs; settles with the window's answer. */
+  changePane?: (projectSlug: string, paneId: string, change: PaneChangeRequest["change"]) => Promise<void>;
   /** What `aya team` runs on (the same deps as the team runner); teams are off without it. */
   team?: TeamControlDeps;
   /** Told of a team saved with aya team save, as after the Teams window's Save. */
@@ -543,6 +545,16 @@ async function handleRequest(
       selfTerminalId: request.selfTerminalId,
     });
     return { output: formatPaneList(entries) };
+  }
+  if (request.type === "pane-rename") {
+    if (!options.listProjects || !options.changePane) throw new Error("pane control is not available");
+    const resolved = resolvePaneTarget(await options.listProjects(), { name: request.target, projectSlug: request.projectSlug });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const { projectSlug, terminalId, name } = resolved.match;
+    await options.changePane(projectSlug, terminalId, { rename: request.name }).catch((err: unknown) => {
+      throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be renamed") : err;
+    });
+    return { output: `renamed ${name} to ${request.name}\n` };
   }
   if (request.type === "pane-state") {
     if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");

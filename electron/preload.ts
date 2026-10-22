@@ -10,6 +10,7 @@ import type {
   AyaApi,
   ConfigChange,
   ControlStatusUpdate,
+  PaneChangeRequest,
   PtyEvent,
   TeamOpenPanesRequest,
   UpdateStatus,
@@ -134,6 +135,11 @@ const api: AyaApi = {
     return () => ipcRenderer.removeListener("teams:open-panes", listener);
   },
   teamPanesOpened: (requestId, error) => ipcRenderer.invoke("teams:panes-opened", requestId, error),
+  onPaneChange: (handler) => {
+    const listener = (_e: unknown, request: PaneChangeRequest) => handler(request);
+    ipcRenderer.on("panes:change", listener);
+    return () => ipcRenderer.removeListener("panes:change", listener);
+  },
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
   installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
   uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),
