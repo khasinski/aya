@@ -33,7 +33,9 @@ test('closed payload, expiry, bounds and private types are refused without FIFO 
    await fs.writeFile(file,JSON.stringify(value),{mode:0o600});await assert.rejects(readAuthTransferTicket(file));assert.equal(syncFs.existsSync(file),false,'safe invalid payload is consumed');
   }
   await fs.writeFile(file,Buffer.alloc(1025,32),{mode:0o600});await assert.rejects(readAuthTransferTicket(file));assert.equal(syncFs.existsSync(file),true);await fs.unlink(file);
-  await fs.writeFile(file,JSON.stringify(t),{mode:0o644});await assert.rejects(readAuthTransferTicket(file));await fs.unlink(file);
+  await fs.writeFile(file,JSON.stringify(t),{mode:0o644});
+  // Creation modes are filtered by umask; force the unsafe mode under both strict and permissive umasks.
+  syncFs.chmodSync(file,0o644);await assert.rejects(readAuthTransferTicket(file));await fs.unlink(file);
   execFileSync('/usr/bin/mkfifo',[file]);const start=performance.now();await assert.rejects(readAuthTransferTicket(file,budget({deadline:performance.now()+200})));assert.ok(performance.now()-start<500);await fs.unlink(file);
   await fs.writeFile(path.join(f.root,'real'),JSON.stringify(t),{mode:0o600});await fs.symlink('real',file);await assert.rejects(readAuthTransferTicket(file));
  }finally{await f.close();}
