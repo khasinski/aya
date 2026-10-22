@@ -1134,6 +1134,8 @@ export interface TerminalState {
    *  it never shows as a "done"/successful finish. Cleared on restart. */
   stopped?: boolean;
   disconnected?: boolean;
+  /** The remote terminal's bridge is reconnecting; this is informational, not a local PTY failure. */
+  remoteDisconnected?: boolean;
   disconnectedReason?: string;
   recoveryGeneration?: string;
   recoveryNotice?: string;

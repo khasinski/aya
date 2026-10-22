@@ -1662,7 +1662,28 @@ function TerminalViewComponent({
         }}
       >
         {attachmentNotice && <div data-testid="prompt-attachment-notice" className={`aya-prompt-attachment-notice ${attachmentNotice.error ? "aya-prompt-attachment-notice--error" : ""}`} role={attachmentNotice.error ? "alert" : "status"}>{attachmentNotice.text}{copiedAttachmentPath && <button type="button" onClick={() => void copyAttachmentPath()}>Copy path</button>}</div>}
-        {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}{terminal.disconnected&&terminal.remoteHost&&<button type="button" data-testid="remote-reconnect-now" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.ptyRemoteReconnect(terminal.id).catch(()=>{});}}>Reconnect now</button>}{terminal.recoveryRetryable&&<button type="button" data-testid="terminal-recovery-retry" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.retryPtyHostRecovery().catch(error=>setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`));}}>Try again</button>}</div>}
+        {terminal.remoteDisconnected && historyNotice ? (
+          <div
+            data-testid="terminal-history-notice"
+            className="aya-terminal-remote-disconnected-notice"
+            role="status"
+          >
+            <span>{historyNotice}</span>
+            <button
+              type="button"
+              data-testid="remote-reconnect-now"
+              onClick={() => { void window.aya.ptyRemoteReconnect(terminal.id).catch(() => {}); }}
+            >
+              Reconnect now
+            </button>
+          </div>
+        ) : (historyNotice || terminal.recoveryNotice || terminal.recoveryScreenUnknown) ? (
+          <div data-testid="terminal-history-notice" role="status" style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 3, padding: "2px 8px", fontSize: 11, background: "var(--aya-term-bg)", pointerEvents: "none" }}>
+            {historyNotice ?? terminal.recoveryNotice}
+            {terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}
+            {terminal.recoveryRetryable && <button type="button" data-testid="terminal-recovery-retry" style={{ pointerEvents: "auto", marginLeft: 8 }} onClick={() => { void window.aya.retryPtyHostRecovery().catch(error => setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`)); }}>Try again</button>}
+          </div>
+        ) : null}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
           <div className="aya-terminal-restoring" aria-live="polite">

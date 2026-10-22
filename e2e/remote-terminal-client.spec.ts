@@ -122,6 +122,30 @@ test.describe("remote terminal v2 client", () => {
     expect(await window.evaluate(id => window.aya.e2eDropRemoteBridge(id), terminalId)).toBe(true);
     await expect(pane.getByTestId("terminal-history-notice")).toContainText("Disconnected from fakehost", { timeout: 10_000 });
     await expect(pane.getByTestId("remote-reconnect-now")).toBeVisible();
+    const sidebarDot = window.locator('[data-testid="sidebar-terminal"][data-terminal-name="Shell"] .aya-sidebar-statusdot');
+    await expect(sidebarDot).toHaveClass(/aya-sidebar-statusdot--disconnected/);
+    await expect(sidebarDot).not.toHaveClass(/aya-sidebar-statusdot--error/);
+    await expect(sidebarDot).toHaveAttribute("aria-label", /Remote terminal is disconnected/);
+    await expect(window.locator(".aya-status-rail")).toHaveCount(0);
+    await expect(window.getByTitle("Open attention center")).toHaveText(/activity/);
+    const reconnectButton = pane.getByTestId("remote-reconnect-now");
+    await expect(pane.getByTestId("terminal-history-notice")).toHaveClass(/aya-terminal-remote-disconnected-notice/);
+    const noticeStyle = await pane.getByTestId("terminal-history-notice").evaluate((node) => ({
+      color: getComputedStyle(node).color,
+      background: getComputedStyle(node).backgroundColor,
+      fontFamily: getComputedStyle(node).fontFamily,
+    }));
+    expect(noticeStyle.color).not.toBe("rgb(128, 128, 128)");
+    expect(noticeStyle.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(noticeStyle.fontFamily).not.toMatch(/monospace/i);
+    const buttonStyle = await reconnectButton.evaluate((node) => ({
+      background: getComputedStyle(node).backgroundColor,
+      borderStyle: getComputedStyle(node).borderStyle,
+      cursor: getComputedStyle(node).cursor,
+    }));
+    expect(buttonStyle.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(buttonStyle.borderStyle).toBe("solid");
+    expect(buttonStyle.cursor).toBe("pointer");
     await expect(window.evaluate(({ id }) => window.aya.ptyWrite(id, "MUST_NOT_BE_SENT\n"), { id: terminalId })).rejects.toThrow(/disconnected/i);
     await window.screenshot({ path: join(SHOTS, "remote-disconnected.png") });
 
