@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
   GitChangedFile,
@@ -33,6 +33,8 @@ interface GitInfo {
 }
 
 interface Props {
+  /** Command Rail: leading slot (the command-search entry). */
+  leading?: ReactNode;
   project: ProjectConfig | null;
   git: GitInfo | null;
   /** The checkout `git` describes and the changed files / diff are read from:
@@ -88,6 +90,7 @@ function ciActionErrorMessage(error: unknown, fallback: string): string {
 }
 
 function StatusBarImpl({
+  leading,
   project,
   git,
   gitDirectory,
@@ -645,6 +648,7 @@ function StatusBarImpl({
 
   return (
     <footer className="aya-statusbar">
+      {leading}
       {project && (
         <button
           className="aya-statusbar-item aya-statusbar-button"

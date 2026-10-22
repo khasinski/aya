@@ -303,6 +303,10 @@ export interface ProjectGitInfo {
  *  top. The two are rendered by separate, self-contained layout components. */
 export type LayoutMode = "classic" | "projects-left";
 
+/** App-chrome look. "classic" is the original; "command-rail" is the denser
+ *  slate-blue skin (dark only). Independent of the window layout. */
+export type ChromeStyle = "classic" | "command-rail";
+
 export type GitHubLinkKind = "pr" | "branch";
 
 /** A GitHub URL for the active project's current branch: its open PR, or the

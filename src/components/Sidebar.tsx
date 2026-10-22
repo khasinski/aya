@@ -57,6 +57,12 @@ interface Props {
   /** Cross-project attention summary. Kept inside the sidebar so appearing
    *  notifications never reduce the terminal viewport height. */
   statusRail?: ReactNode;
+  /** Command Rail: replaces the "N terminals" header. */
+  header?: ReactNode;
+  /** Command Rail: appended to the scrolling list (other projects). */
+  extraSection?: ReactNode;
+  /** Command Rail: pinned under the launcher (usage bars). */
+  footer?: ReactNode;
   /** This project's teams, for role chips and the tab menu's Team role items. */
   teams?: TeamSummary[];
   onAssignTeamRole?: (team: string, role: string, paneId: string | null) => void;
@@ -71,6 +77,9 @@ function BellIcon() {
 }
 
 function SidebarImpl({
+  header,
+  extraSection,
+  footer,
   terminals,
   activeId,
   sidebarWidth,
@@ -391,10 +400,12 @@ function SidebarImpl({
   };
 
   return (
-    <nav className="aya-sidebar" aria-label="Terminals" style={{ width: sidebarWidth }}>
-      <div className="aya-sidebar-header">
-        <span>{terminals.length} terminals</span>
-      </div>
+    <nav aria-label="Terminals" className="aya-sidebar" style={{ width: sidebarWidth }}>
+      {header ?? (
+        <div className="aya-sidebar-header">
+          <span>{terminals.length} terminals</span>
+        </div>
+      )}
       <div className="aya-sidebar-list">
         {groups
           ? groups.map((g) => (
@@ -486,6 +497,7 @@ function SidebarImpl({
             </div>
           )}
         </div>
+        {extraSection}
       </div>
       <div className="aya-launcher">
         <div className="aya-launcher-label">
@@ -520,6 +532,7 @@ function SidebarImpl({
         </div>
         {statusRail}
       </div>
+      {footer}
       {createWorktreeTarget &&
         createWorktreeTarget.projectId === (projectId ?? "") &&
         createWorktreeTarget.projectDir === projectDir &&

@@ -13,6 +13,7 @@ import "@xterm/xterm/css/xterm.css";
 import "../styles/armillary.css";
 import "../styles/app.css";
 import "../styles/overrides.css";
+import "../styles/command-rail.css";
 
 import { createRoot } from "react-dom/client";
 import { createEmulatorAya } from "./bridge";
