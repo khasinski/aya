@@ -6,7 +6,23 @@ const require=createRequire(import.meta.url),{Terminal}=require('@xterm/headless
 const {RecoveryScreen}=await import('../dist-electron/vt-recovery-screen.js');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const write=(t,s)=>new Promise(resolve=>t.write(s,resolve));
-function fixture(rows=4){const term=new Terminal({cols:120,rows,allowProposedApi:true});const states=[];const tracker=new RecoveryScreen(term,(known,timeout)=>states.push({known,timeout}),10,100);return {term,states,close:()=>{tracker.dispose();term.dispose();}};}
+function controlledTimeout(delay){
+ const originalSetTimeout=globalThis.setTimeout,originalClearTimeout=globalThis.clearTimeout;let callback,handle;
+ globalThis.setTimeout=(fn,ms,...args)=>{
+  if(ms!==delay)return originalSetTimeout(fn,ms,...args);
+  callback=()=>fn(...args);handle=originalSetTimeout(()=>{},60_000);return handle;
+ };
+ globalThis.clearTimeout=timer=>{if(timer===handle)callback=undefined;return originalClearTimeout(timer);};
+ return {restoreSetTimeout:()=>{globalThis.setTimeout=originalSetTimeout;},restoreClearTimeout:()=>{globalThis.clearTimeout=originalClearTimeout;},fire:()=>{const current=callback;callback=undefined;if(handle)originalClearTimeout(handle);current?.();}};
+}
+function fixture(rows=4){
+ const term=new Terminal({cols:120,rows,allowProposedApi:true}),states=[],deadline=controlledTimeout(100);
+ let tracker;
+ try{tracker=new RecoveryScreen(term,(known,timeout)=>states.push({known,timeout}),10,100);}
+ catch(error){deadline.restoreSetTimeout();deadline.restoreClearTimeout();term.dispose();throw error;}
+ deadline.restoreSetTimeout();
+ return {term,states,fireDeadline:deadline.fire,close:()=>{tracker.dispose();term.dispose();deadline.restoreClearTimeout();}};
+}
 for(const cli of ['claude','codex'])test(`recorded ${cli} rows become known after an Ink-style per-row redraw and settle`,async()=>{
  const lines=fs.readFileSync(new URL(`./fixtures/busy-${cli}.screen.txt`,import.meta.url),'utf8').trimEnd().split('\n');
  const f=fixture(lines.length);
@@ -14,14 +30,14 @@ for(const cli of ['claude','codex'])test(`recorded ${cli} rows become known afte
  finally{f.close();}
 });
 test('fragments and control-looking OSC/DCS payloads do not prove full screen',async()=>{
- const f=fixture();try{await write(f.term,'partial\x1b]2;fake [2J\x07\x1bPfake [2J\x1b\\');await sleep(25);assert.deepEqual(f.states,[]);await sleep(100);assert.deepEqual(f.states,[{known:false,timeout:true}]);await write(f.term,'\x1b[2Jlater redraw');await sleep(25);assert.deepEqual(f.states.at(-1),{known:true,timeout:false});}finally{f.close();}
+ const f=fixture();try{await write(f.term,'partial\x1b]2;fake [2J\x07\x1bPfake [2J\x1b\\');await sleep(25);assert.deepEqual(f.states,[]);f.fireDeadline();assert.deepEqual(f.states,[{known:false,timeout:true}]);await write(f.term,'\x1b[2Jlater redraw');await sleep(25);assert.deepEqual(f.states,[{known:false,timeout:true},{known:true,timeout:false}]);}finally{f.close();}
 });
 for(const reset of ['\x1bc','\x1b[2J'])test(`parser-dispatched full reset ${JSON.stringify(reset)} needs quiet applied output`,async()=>{
  const f=fixture();try{await write(f.term,reset);for(let n=0;n<4;n++){await sleep(5);await write(f.term,'x');assert.deepEqual(f.states,[]);}await sleep(25);assert.deepEqual(f.states,[{known:true,timeout:false}]);}finally{f.close();}
 });
 test('resize and alternate-buffer activation invalidate prior row coverage',async()=>{
  for(const action of [t=>t.resize(119,4),t=>write(t,'\x1b[?1049h')]){
-  const f=fixture();try{await write(f.term,'\x1b[1;1H\x1b[2Kfirst\x1b[2;1H\x1b[2Ksecond');await action(f.term);await write(f.term,'\x1b[3;1H\x1b[2Kthird\x1b[4;1H\x1b[2Kfourth');await sleep(25);assert.deepEqual(f.states,[]);await write(f.term,'\x1b[1;1H\x1b[2Kfirst\x1b[2;1H\x1b[2Ksecond');await sleep(25);assert.deepEqual(f.states,[{known:true,timeout:false}]);}finally{f.close();}
+  const f=fixture();try{await write(f.term,'\x1b[1;1H\x1b[2Kfirst\x1b[2;1H\x1b[2Ksecond');await action(f.term);await write(f.term,'\x1b[3;1H\x1b[2Kthird\x1b[4;1H\x1b[2Kfourth');await sleep(25);assert.deepEqual(f.states,[]);await write(f.term,'\x1b[1;1H\x1b[2Kfirst\x1b[2;1H\x1b[2Ksecond');await sleep(25);assert.deepEqual(f.states,[{known:true,timeout:false}]);f.fireDeadline();assert.deepEqual(f.states,[{known:true,timeout:false}],'successful recovery cancels the controlled timeout');}finally{f.close();}
  }
 });
 test('scrolling a fragment cannot cover rows that were only shifted',async()=>{
