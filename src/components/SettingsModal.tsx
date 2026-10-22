@@ -1115,7 +1115,10 @@ export function SettingsModal({
             }}
             onClick={(e) => {
               e.stopPropagation();
-              closeFromBackdropClick(e, () => setShowUsageConsent(false));
+              closeFromBackdropClick(
+                e,
+                () => closeConsent(() => setShowUsageConsent(false)),
+              );
             }}
           >
             <div
@@ -1175,7 +1178,10 @@ export function SettingsModal({
             }}
             onClick={(e) => {
               e.stopPropagation();
-              closeFromBackdropClick(e, () => setShowStatusConsent(false));
+              closeFromBackdropClick(
+                e,
+                () => closeConsent(() => setShowStatusConsent(false)),
+              );
             }}
           >
             <div

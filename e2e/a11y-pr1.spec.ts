@@ -96,6 +96,14 @@ test("Settings consent prompts contain focus and Escape closes only the top dial
     await expect(consent).toHaveCount(0);
     await expect(settings).toBeVisible();
     await expect(consentOpener).toBeFocused();
+
+    await consentOpener.focus();
+    await window.keyboard.press("Enter");
+    await expect(consent).toBeVisible();
+    await window.locator(".aya-modal-backdrop").last().click({ position: { x: 5, y: 5 } });
+    await expect(consent).toHaveCount(0);
+    await expect(settings).toBeVisible();
+    await expect(consentOpener).toBeFocused();
   }
 
   await window.keyboard.press("Escape");
