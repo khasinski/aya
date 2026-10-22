@@ -82,6 +82,8 @@ const REFUSALS = [
   ["an empty name", ["worker", ""], /Usage/],
   ["three words unquoted", ["worker", "auth", "fix"], /Usage/],
   ["a blank name", ["worker", "   ", "--project", "other"], /pane-rename requires name/],
+  ["a name of controls only", ["worker", "\n\u001b", "--project", "other"], /the name has no visible characters; nothing was renamed/],
+  ["a name over 200 characters", ["worker", "x".repeat(201), "--project", "other"], /the name is 201 characters, the most is 200; nothing was renamed/],
   ["a name in two projects", ["worker", "x"], /ambiguous/],
   ["an unknown pane", ["nope", "x"], /no pane named "nope"/],
 ];
@@ -95,6 +97,14 @@ test("pane rename refuses before it asks the window", async () => {
     assert.match(r.stderr, error, label);
     assert.deepEqual(changes, [], label);
   }
+});
+
+test("pane rename sends a name with line breaks and escapes as one plain line", async () => {
+  changes.length = 0;
+  const r = await aya(["worker", "x\n  shell 2   shell  tab-forged\u001b[31m‮", "--project", "other"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(changes.map((c) => c.change), [{ rename: "x   shell 2   shell  tab-forged [31m" }]);
+  assert.equal(r.stdout, "renamed worker to x   shell 2   shell  tab-forged [31m\n");
 });
 
 test("pane rename passes on the window's refusal, and says a missed deadline may still rename", async () => {

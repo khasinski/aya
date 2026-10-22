@@ -425,6 +425,9 @@ export class PaneInputChangedError extends Error {
   constructor() { super("The pane received other text while the file was copying."); }
 }
 
+/** Longest tab name pane rename sets; a name is shown whole in the tab bar and in every pane list row. */
+const PANE_NAME_MAX_CHARS = 200;
+
 /** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
 const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);
 
@@ -551,10 +554,14 @@ async function handleRequest(
     const resolved = resolvePaneTarget(await options.listProjects(), { name: request.target, projectSlug: request.projectSlug });
     if (!resolved.ok) throw new Error(resolved.error);
     const { projectSlug, terminalId, name } = resolved.match;
-    await options.changePane(projectSlug, terminalId, { rename: request.name }).catch((err: unknown) => {
+    // A tab name is one line in the tab bar and in pane list.
+    const newName = oneLine(request.name);
+    if (!newName) throw new Error("the name has no visible characters; nothing was renamed");
+    if (newName.length > PANE_NAME_MAX_CHARS) throw new Error(`the name is ${newName.length} characters, the most is ${PANE_NAME_MAX_CHARS}; nothing was renamed`);
+    await options.changePane(projectSlug, terminalId, { rename: newName }).catch((err: unknown) => {
       throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be renamed") : err;
     });
-    return { output: `renamed ${name} to ${request.name}\n` };
+    return { output: `renamed ${name} to ${newName}\n` };
   }
   if (request.type === "pane-state") {
     if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");

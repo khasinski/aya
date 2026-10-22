@@ -38,7 +38,7 @@ interface TerminalActionsOptions {
   setSingleViewByProject: Dispatch<SetStateAction<Record<string, string | null>>>;
   setCloseFocusHold: Dispatch<SetStateAction<{ slug: string; terminalId: string } | null>>;
   appendProjectEvent: (event: Omit<ProjectEvent, "id" | "createdAt"> & { createdAt?: number }) => void;
-  persistProject: (slug: string, nextTerminals: Record<string, TerminalState>) => void;
+  persistProject: (slug: string, nextTerminals: Record<string, TerminalState>) => Promise<void>;
 }
 
 export function useTerminalActions({
@@ -341,32 +341,26 @@ export function useTerminalActions({
     [persistProject, setTerminals],
   );
 
-  // aya pane rename: main resolved the pane. The save is awaited, unlike
-  // renameTerminal's, so a pane list right after the CLI returns shows the name.
+  // aya pane rename: main resolved the pane. Saved through persistProject, as a
+  // sidebar rename, which writes the split tree; awaited, unlike renameTerminal's,
+  // so a pane list right after the CLI returns shows the name.
   useEffect(
     () =>
       window.aya.onPaneChange(({ requestId, projectSlug, paneId, change }) => {
         const rename = async () => {
-          const project = findProject(projectsRef.current, projectSlug);
           const terminal = terminalsRef.current[paneId];
-          if (!project || terminal?.projectSlug !== projectSlug) throw new Error(`pane ${paneId} is not open in this window`);
+          if (terminal?.projectSlug !== projectSlug) throw new Error(`pane ${paneId} is not open in this window`);
           const next = { ...terminalsRef.current, [paneId]: { ...terminal, name: change.rename } };
           terminalsRef.current = next;
-          const tabs = Object.values(next)
-            .filter((t) => t.projectSlug === projectSlug)
-            .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
-          const updated: ProjectConfig = { ...project, tabs };
           setTerminals((prev) => (prev[paneId] ? { ...prev, [paneId]: { ...prev[paneId], name: change.rename } } : prev));
-          setAllProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
-          setProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
-          await window.aya.updateProject(updated);
+          await persistProject(projectSlug, next);
         };
         void rename().then(
           () => window.aya.teamPanesOpened(requestId, null),
           (err: unknown) => window.aya.teamPanesOpened(requestId, err instanceof Error ? err.message : String(err)),
         );
       }),
-    [projectsRef, terminalsRef, setTerminals, setAllProjects, setProjects],
+    [persistProject, terminalsRef, setTerminals],
   );
 
   /** Called by TerminalView when the user presses Shift+Enter in a
