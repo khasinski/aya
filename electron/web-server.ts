@@ -51,6 +51,7 @@ export const WEB_DENIED_CHANNELS = new Set([
   "web:regenerate-password",
   "updates:install",
   "app:install-cli",
+  "intelligence:pull-ollama-model",
   "usage-hook:install",
   "usage-hook:uninstall",
   "status-hook:install",

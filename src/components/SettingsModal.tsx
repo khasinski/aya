@@ -2052,17 +2052,21 @@ export function SettingsModal({
                         >
                           {ollamaBusy ? "Working..." : "Refresh"}
                         </button>
-                        <button
-                          className="aya-modal-btn"
-                          onClick={pullOllamaModel}
-                          disabled={
-                            ollamaBusy ||
-                            !ollamaStatus?.installed ||
-                            !ayaIntelligence.ollamaModel.trim()
-                          }
-                        >
-                          {ollamaBusy ? "Downloading..." : "Download model"}
-                        </button>
+                        {window.aya.isWeb ? (
+                          <span className="aya-modal-hint">Available in the desktop app.</span>
+                        ) : (
+                          <button
+                            className="aya-modal-btn"
+                            onClick={pullOllamaModel}
+                            disabled={
+                              ollamaBusy ||
+                              !ollamaStatus?.installed ||
+                              !ayaIntelligence.ollamaModel.trim()
+                            }
+                          >
+                            {ollamaBusy ? "Downloading..." : "Download model"}
+                          </button>
+                        )}
                       </div>
                       <div className="aya-intelligence-status">
                         {!ollamaStatus

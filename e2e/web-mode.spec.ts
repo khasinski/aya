@@ -124,6 +124,7 @@ async function startServedApp(options: { tabs?: WorkingTab[] } = {}): Promise<{
     "env:github-cli-available": true,
     "mic:status": "unsupported",
     "intelligence:ollama-status": { available: false, model: "" },
+    "intelligence:pull-ollama-model": { installed: true, model: "" },
     "theme:omarchy-status": null,
   };
   const invocations: Array<{ channel: string; args: unknown[] }> = [];
@@ -376,6 +377,9 @@ test("Settings in Aya Web replaces desktop-only controls with clear availability
   try {
     browser = await chromium.launch();
     const page = await browser.newPage();
+    await page.addInitScript(() => {
+      localStorage.setItem("aya:intelligence", JSON.stringify({ provider: "ollama" }));
+    });
     await page.goto(base);
     const login = await page.request.post(`${base}/api/login`, {
       data: { user: USER, password: PASSWORD },
@@ -389,6 +393,11 @@ test("Settings in Aya Web replaces desktop-only controls with clear availability
     await expect(settings.getByText("Available in the desktop app.").first()).toBeVisible();
     await expect(settings.getByText("Aya Web server settings are available in the desktop app.")).toBeVisible();
     await expect(settings.getByText("never-render-this-in-web-settings")).toHaveCount(0);
+
+    await settings.getByRole("tab", { name: "Intelligence" }).click();
+    await expect(settings.getByRole("button", { name: "Refresh", exact: true })).toBeVisible();
+    await expect(settings.getByRole("button", { name: "Download model", exact: true })).toHaveCount(0);
+    await expect(settings.getByText("Available in the desktop app.").last()).toBeVisible();
 
     await settings.getByRole("tab", { name: "Machines" }).click();
     await expect(settings.getByText("Machine settings are available in the desktop app.")).toBeVisible();
@@ -404,9 +413,11 @@ test("Settings in Aya Web replaces desktop-only controls with clear availability
     const desktopOnlyChannels = new Set([
       "machines:status", "machines:setup", "machines:command", "machines:configure", "machines:discover",
       "web:configure", "web:regenerate-password", "updates:install", "app:install-cli",
+      "intelligence:pull-ollama-model",
       "usage-hook:install", "usage-hook:uninstall", "status-hook:install", "status-hook:uninstall",
     ]);
     expect(invocations.filter((call) => desktopOnlyChannels.has(call.channel))).toEqual([]);
+    expect(invocations.some((call) => call.channel === "intelligence:ollama-status")).toBe(true);
   } finally {
     await browser?.close();
     await stop();

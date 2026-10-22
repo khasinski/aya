@@ -203,6 +203,7 @@ test("desktop-only channels are denied while browser-safe settings saves stay av
     "web:regenerate-password",
     "updates:install",
     "app:install-cli",
+    "intelligence:pull-ollama-model",
     "usage-hook:install",
     "usage-hook:uninstall",
     "status-hook:install",
