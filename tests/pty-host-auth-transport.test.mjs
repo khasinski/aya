@@ -14,7 +14,7 @@ async function until(check){const deadline=Date.now()+2000;while(!check()){asser
 async function fixture(fn,options={}){
  await fs.mkdir('test-results',{recursive:true});const dir=await fs.mkdtemp(path.resolve('test-results/auth-wire-'));
  const socketPath=path.join(dir,'sock'),sockets=new Set(),received=[],failures=[],accepted=[];
- const auth=new HostSocketAuthenticator(key,options.ownPeer??host,options.authorize??(()=>{}),options.realPeer?undefined:options.readPeer??(()=>client));
+ const auth=new HostSocketAuthenticator(key,options.ownPeer??host,options.authorize??(()=>{}),options.realPeer?undefined:options.readPeer??(()=>client),undefined,options.diagnostics);
  const server=net.createServer(socket=>{
   sockets.add(socket);socket.once('close',()=>sockets.delete(socket));
   void auth.accept(socket).then(result=>{
@@ -53,6 +53,20 @@ test('wrong capability and a failed kernel identity probe neither authenticate n
  await fixture(async({connect,received,accepted})=>{
   const socket=await connect();socket.resume();await once(socket,'close');assert.deepEqual(received,[]);assert.deepEqual(accepted,[]);
  },{readPeer:()=>{throw new Error('kernel identity unavailable');}});
+});
+test('auth refusal diagnostics report peer identity, the handover attempt and a bounded proof reason only',async()=>{
+ const refusals=[],attempt='a'.repeat(64);
+ await fixture(async({connect})=>{
+  await assert.rejects(authenticateHostSocket(await connect(),Buffer.alloc(32,8),client,()=>host),{code:'PTY_HOST_AUTH_REQUIRED'});
+  await until(()=>refusals.length===1);
+  assert.deepEqual(refusals,[{
+   peerPid:client.pid,
+   peerStartIdentity:client.startIdentity,
+   handoverAttempt:attempt,
+   reason:'client-proof-missing-or-invalid',
+  }]);
+  assert.deepEqual(Object.keys(refusals[0]).sort(),['handoverAttempt','peerPid','peerStartIdentity','reason']);
+ },{diagnostics:{handoverAttempt:()=>attempt,refused:details=>refusals.push(details)}});
 });
 test('oversized unterminated handshake is rejected before dispatch',()=>fixture(async({connect,received,accepted})=>{
  const socket=await connect(),closed=once(socket,'close');socket.resume();socket.write('x'.repeat(1025));await closed;
