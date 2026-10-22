@@ -899,8 +899,8 @@ function TerminalViewComponent({
       } else if (event.type === "remote-control") {
         remoteReadOnlyRef.current = !!event.readOnly;
         term.options.disableStdin = disconnectedRef.current || remoteReadOnlyRef.current || handoverInputPausedRef.current;
-        if (event.readOnly) setHistoryNotice("Another Aya controls this terminal. You can watch, but not type.");
-        else setHistoryNotice((notice) => notice === "Another Aya controls this terminal. You can watch, but not type." ? null : notice);
+        if (event.readOnly) setHistoryNotice("Another Aya controls this host. You can watch, but not type.");
+        else setHistoryNotice((notice) => notice === "Another Aya controls this host. You can watch, but not type." ? null : notice);
       } else if(event.type === "recovered") {
         displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
         // Also queue RIS behind already-buffered parser writes: an old async

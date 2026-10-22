@@ -65,9 +65,9 @@ test("a read-only attachment refuses writes and explicit end", async () => {
   await manager.spawn({ ...request, attachOnly: true }, "devbox", "remote-repo");
   assert.equal(events[0].type, "remote-control");
   assert.equal(events[0].readOnly, true);
-  await assert.rejects(manager.write("tab-uuid", "blocked"), /another Aya controls this terminal/i);
-  await assert.rejects(manager.resize("tab-uuid", 100, 32), /another Aya controls this terminal/i);
-  await assert.rejects(manager.end("tab-uuid"), /another Aya controls this terminal/i);
+  await assert.rejects(manager.write("tab-uuid", "blocked"), /another Aya controls this host/i);
+  await assert.rejects(manager.resize("tab-uuid", 100, 32), /another Aya controls this host/i);
+  await assert.rejects(manager.end("tab-uuid"), /another Aya controls this host/i);
   assert.equal(client.calls.some(([kind]) => kind === "write" || kind === "resize" || kind === "exit"), false);
 });
 

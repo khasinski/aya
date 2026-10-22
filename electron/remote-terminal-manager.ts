@@ -119,7 +119,7 @@ export class RemoteTerminalManager {
     const terminal = this.terminals.get(ptyId);
     if (!terminal) return undefined;
     if (!terminal.client) throw new Error("The remote terminal is disconnected. Reopen the pane to reconnect.");
-    if (terminal.readOnly) throw new Error("Another Aya controls this terminal. You can watch, but not type.");
+    if (terminal.readOnly) throw new Error("Another Aya controls this host. You can watch, but not type.");
     return terminal.client.write(terminal.remoteTerminalId, data);
   }
 
@@ -127,7 +127,7 @@ export class RemoteTerminalManager {
     const terminal = this.terminals.get(ptyId);
     if (!terminal) return false;
     if (!terminal.client) throw new Error("The remote terminal is disconnected. Reopen the pane to reconnect.");
-    if (terminal.readOnly) throw new Error("Another Aya controls this terminal. You can watch, but not resize.");
+    if (terminal.readOnly) throw new Error("Another Aya controls this host. You can watch, but not resize.");
     await terminal.client.resize(terminal.remoteTerminalId, cols, rows);
     return true;
   }
@@ -144,7 +144,7 @@ export class RemoteTerminalManager {
     const terminal = this.terminals.get(ptyId);
     if (!terminal) return false;
     if (!terminal.client) throw new Error("Reconnect to the remote terminal before ending it.");
-    if (terminal.readOnly) throw new Error("Another Aya controls this terminal. You cannot end it.");
+    if (terminal.readOnly) throw new Error("Another Aya controls this host. You cannot end this terminal.");
     await terminal.client.exit(terminal.remoteTerminalId);
     await this.detach(ptyId);
     this.terminals.delete(ptyId);
