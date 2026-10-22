@@ -187,7 +187,15 @@ export class RemotePtySessions implements PtyEventSink {
             try {
               await this.deps.exit(request.terminalId);
             } catch (error) {
+              if (isExited(session)) {
+                writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
+                return;
+              }
               const running = await this.deps.isRunning?.(session.processIdentity).catch(() => null);
+              if (isExited(session)) {
+                writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
+                return;
+              }
               if (running !== false) {
                 session.state = "uncertain";
                 session.failureReason = "Aya could not confirm that this terminal stopped. It may still be running.";
@@ -330,4 +338,8 @@ export class RemotePtySessions implements PtyEventSink {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isExited(session: Session): boolean {
+  return session.state === "exited";
 }

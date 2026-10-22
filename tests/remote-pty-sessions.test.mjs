@@ -186,6 +186,50 @@ test("an exit timeout reconciles an already-removed host PTY before reporting st
   assert.match(writeReply[0].message, /no longer running/i);
 });
 
+test("a real exit event wins when it arrives before an explicit exit request rejects", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  let beginExit;
+  let rejectExit;
+  const exitStarted = new Promise((resolve) => { beginExit = resolve; });
+  const pendingExit = new Promise((_resolve, reject) => { rejectExit = reject; });
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project],
+    listPresets: async () => [preset],
+    spawn: async () => ({ pid: 304, startIdentity: "304:started" }),
+    write: async () => true,
+    resize: async () => {},
+    exit: async () => { beginExit(); return pendingExit; },
+    isRunning: async () => false,
+    newId: () => "terminal-exit-race",
+  });
+  const socket = {
+    destroyed: false,
+    writableLength: 0,
+    frames: [],
+    write(frame) { this.frames.push(JSON.parse(frame)); return true; },
+    destroy() { this.destroyed = true; },
+  };
+  await sessions.handle(socket, { type: "pty:spawn", protocol: 2, id: "spawn", project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+  await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach", terminalId: "terminal-exit-race", offset: 0 }, () => {});
+
+  const response = [];
+  const exitRequest = sessions.handle(socket, { type: "pty:exit", protocol: 2, id: "exit", terminalId: "terminal-exit-race" }, (_socket, message) => response.push(message));
+  await exitStarted;
+  sessions.onPtyEvent({ type: "exit", ptyId: "terminal-exit-race", exitCode: 23 });
+  rejectExit(new Error("host exit wait timed out after the child exited"));
+  await exitRequest;
+
+  const exitEvents = socket.frames.filter((message) => message.type === "pty:exited");
+  assert.equal(exitEvents.length, 1);
+  assert.equal(exitEvents[0].exitCode, 23);
+  assert.equal(exitEvents[0].killed, undefined);
+  assert.equal(response.some((message) => message.type === "pty:exit-result"), true);
+  const listed = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list", }, (_socket, message) => listed.push(message));
+  assert.equal(listed[0].terminals[0].state, "exited");
+});
+
 test("an exit timeout with a signalable PTY is reported as uncertain and no longer writable", async () => {
   const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
   const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
