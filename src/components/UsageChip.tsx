@@ -137,7 +137,7 @@ function UsageRow({
   );
 }
 
-function averageUsagePct(accounts: UsageAccount[]): {
+export function averageUsagePct(accounts: UsageAccount[]): {
   pct: number;
   /** Which ring the average was computed from - the popover label must not
    *  claim "weekly" for a 5h-only fallback (#92). */

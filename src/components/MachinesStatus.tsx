@@ -171,8 +171,8 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
                       {m.status.reachable && <div className="aya-machines-muted">
                         {loadText(m.status)} · {reachText(m.reach)}
                       </div>}
-                      {!m.status.reachable && m.status.api && <div className="aya-machines-state aya-machines-state--warn">Host telemetry unavailable: {m.status.error}</div>}
-                      {m.status.gpuError && <div className="aya-machines-state aya-machines-state--warn">GPU telemetry unavailable: {m.status.gpuError}</div>}
+                      {!m.status.reachable && m.status.api && <div className="aya-machines-state aya-machines-state--warn">Host telemetry unavailable</div>}
+                      {m.status.gpuError && <div className="aya-machines-state aya-machines-state--warn">GPU telemetry unavailable</div>}
                       {modelLines(m.status, now).map((line) => (
                         <div key={line}>{line}</div>
                       ))}

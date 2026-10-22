@@ -1,13 +1,17 @@
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR, GROK_BRAND_COLOR } from "../colors";
 import {
   memo,
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useDragReorder } from "../hooks/useDragReorder";
+import { handleMenuNavigation, handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
 import type {
   GrokUsage,
   MonitoredSession,
@@ -122,6 +126,8 @@ function TopBarImpl({
   const tabsRef = useRef<HTMLDivElement>(null);
   const recentRef = useRef<HTMLDivElement>(null);
   const sessionsRef = useRef<HTMLDivElement>(null);
+  const tabMenuRef = useRef<HTMLDivElement>(null);
+  const tabMenuOpenerRef = useRef<HTMLElement | null>(null);
   const [showRecent, setShowRecent] = useState(false);
   const [recentFilter, setRecentFilter] = useState("");
   const [showSessions, setShowSessions] = useState(false);
@@ -133,12 +139,47 @@ function TopBarImpl({
     slug: string;
     windows: Array<{ id: number; activeProject: string | null }>;
   } | null>(null);
+  const [focusProjectAfterMove, setFocusProjectAfterMove] = useState<{ slug: string; index: number } | null>(null);
+  const [focusedProjectSlug, setFocusedProjectSlug] = useState<string | null>(null);
+  const pendingRovingProjectFocus = useRef<HTMLElement | null>(null);
+  const rovingProjectSlug = projects.some((project) => project.slug === focusedProjectSlug)
+    ? focusedProjectSlug
+    : activeProjectId;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const target = pendingRovingProjectFocus.current;
+    if (!target) return;
+    pendingRovingProjectFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedProjectSlug]);
+
+  useLayoutEffect(() => {
+    if (!focusProjectAfterMove || projects.findIndex((project) => project.slug === focusProjectAfterMove.slug) !== focusProjectAfterMove.index) return;
+    const slug = focusProjectAfterMove.slug;
+    [...document.querySelectorAll<HTMLElement>('.aya-project-tablist [role="tab"][data-project-slug]')]
+      .find((item) => item.dataset.projectSlug === slug)?.focus();
+    setFocusProjectAfterMove(null);
+  }, [focusProjectAfterMove, projects]);
+
+  const closeTabMenu = useCallback((restoreFocus = true) => {
+    const opener = tabMenuOpenerRef.current;
+    setTabMenu(null);
+    if (restoreFocus) window.setTimeout(() => {
+      if (opener?.isConnected) opener.focus();
+      else document.querySelector<HTMLElement>('.aya-tab[role="tab"][aria-selected="true"]')?.focus();
+    });
+  }, []);
+
+  useLayoutEffect(() => {
     if (!tabMenu) return;
-    const close = () => setTabMenu(null);
+    tabMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    const close = () => closeTabMenu(false);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setTabMenu(null);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTabMenu();
+      }
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
@@ -146,15 +187,28 @@ function TopBarImpl({
       window.removeEventListener("mousedown", close);
       window.removeEventListener("keydown", onKey);
     };
-  }, [tabMenu]);
+  }, [tabMenu, closeTabMenu]);
 
-  const openTabMenu = (e: ReactMouseEvent, slug: string) => {
-    if (!onMoveProjectToWindow) return;
+  const openTabMenu = (slug: string, opener: HTMLElement, x: number, y: number) => {
+    tabMenuOpenerRef.current = opener;
+    const at = { x, y };
+    if (!onMoveProjectToWindow) {
+      setTabMenu({ ...at, slug, windows: [] });
+      return;
+    }
+    void window.aya.listOtherWindows().then((windows) => setTabMenu({ ...at, slug, windows }));
+  };
+
+  const openTabMenuFromMouse = (e: ReactMouseEvent<HTMLElement>, slug: string) => {
     e.preventDefault();
-    const at = { x: e.clientX, y: e.clientY };
-    void window.aya.listOtherWindows().then((windows) => {
-      setTabMenu({ ...at, slug, windows });
-    });
+    openTabMenu(slug, e.currentTarget, e.clientX, e.clientY);
+  };
+
+  const openTabMenuFromKeyboard = (e: ReactKeyboardEvent<HTMLElement>, slug: string) => {
+    if (!isContextMenuKey(e.nativeEvent)) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    openTabMenu(slug, e.currentTarget, rect.left, rect.bottom);
   };
 
   // Memoized: these ran (flatMap+sort / filter) on every TopBar render even
@@ -285,7 +339,8 @@ function TopBarImpl({
         <span>{isDev ? "Aya Dev" : "Aya"}</span>
       </div>
       <div className="aya-tabs" ref={tabsRef}>
-        {projects.map((p) => {
+        <div className="aya-project-tablist" role="tablist" aria-label="Projects">
+          {projects.map((p) => {
           const isActive = p.slug === activeProjectId;
           const badge = projectBadges[p.slug];
           const isRenaming = renamingSlug === p.slug;
@@ -302,9 +357,13 @@ function TopBarImpl({
               ? "aya-tab--drop-before"
               : "aya-tab--drop-after"
             : "";
-          return (
+            return (
             <div
               key={p.slug}
+              data-project-slug={p.slug}
+              role="tab"
+              aria-selected={isActive}
+              tabIndex={rovingProjectSlug === p.slug ? 0 : -1}
               className={`aya-tab ${isActive ? "aya-tab--active" : ""} ${
                 isDragging ? "aya-tab--dragging" : ""
               } ${isRemote ? "aya-tab--remote" : ""} ${dropClass}`}
@@ -318,10 +377,24 @@ function TopBarImpl({
               draggable={!isRenaming}
               {...itemHandlers(p.slug)}
               onClick={() => !isRenaming && onSelectProject(p.slug)}
+              onFocus={() => setFocusedProjectSlug(p.slug)}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Delete") {
+                  e.preventDefault();
+                  onCloseProject(p.slug);
+                  return;
+                }
+                if (!isRemote) openTabMenuFromKeyboard(e, p.slug);
+                handleRovingItemKeyDown(e, (target) => {
+                  pendingRovingProjectFocus.current = target;
+                  setFocusedProjectSlug(target.dataset.projectSlug ?? null);
+                });
+              }}
               onContextMenu={(e) => {
                 // Remote projects can't be adopted by directory (it lives on
                 // the remote host) - no move menu for them yet.
-                if (!isRemote) openTabMenu(e, p.slug);
+                if (!isRemote) openTabMenuFromMouse(e, p.slug);
               }}
               title={
                 isRenaming
@@ -380,19 +453,24 @@ function TopBarImpl({
                   title={`${badge.count} monitored session${badge.count > 1 ? "s" : ""}: ${badge.level}`}
                 />
               )}
-              <span
+              <button
+                type="button"
                 className="aya-tab-close"
+                  aria-hidden="true"
+                  tabIndex={-1}
                 onClick={(e) => {
                   e.stopPropagation();
                   onCloseProject(p.slug);
                 }}
-                title="Close project"
+                aria-label={`Close project ${p.name}`}
+                title={`Close project ${p.name}`}
               >
                 ×
-              </span>
+              </button>
             </div>
-          );
-        })}
+            );
+          })}
+        </div>
         <button
           type="button"
           className={`aya-tab-new ${blockChrome ? "aya-tab-new--disabled" : ""}`}
@@ -598,28 +676,43 @@ function TopBarImpl({
           onClose={onCloseWindow}
         />
       </div>
-      {tabMenu && onMoveProjectToWindow && (
+      {tabMenu && (
         <div
+          ref={tabMenuRef}
+          role="menu"
           className="aya-context-menu"
           style={{ left: tabMenu.x, top: tabMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={handleMenuNavigation}
         >
-          <button
-            className="aya-context-menu-item"
-            onClick={() => {
-              onMoveProjectToWindow(tabMenu.slug, "new");
-              setTabMenu(null);
-            }}
-          >
-            Move to New Window
-          </button>
-          {tabMenu.windows.map((w) => (
-            <button
+          {(() => {
+            const index = projects.findIndex((project) => project.slug === tabMenu.slug);
+            return (
+              <>
+                <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
+                  const slug = tabMenu.slug;
+                  setFocusProjectAfterMove({ slug, index: index - 1 });
+                  onReorderProjects(moveItem(projects.map((project) => project.slug), index, -1));
+                  closeTabMenu(false);
+                }}>Move left</button>
+                <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= projects.length - 1} className="aya-context-menu-item" onClick={() => {
+                  const slug = tabMenu.slug;
+                  setFocusProjectAfterMove({ slug, index: index + 1 });
+                  onReorderProjects(moveItem(projects.map((project) => project.slug), index, 1));
+                  closeTabMenu(false);
+                }}>Move right</button>
+                <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item aya-context-menu-item--danger" onClick={() => { onCloseProject(tabMenu.slug); closeTabMenu(); }}>Close project</button>
+              </>
+            );
+          })()}
+          {onMoveProjectToWindow && <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item" onClick={() => { onMoveProjectToWindow(tabMenu.slug, "new"); closeTabMenu(); }}>Move to New Window</button>}
+          {onMoveProjectToWindow && tabMenu.windows.map((w) => (
+            <button type="button" role="menuitem" tabIndex={-1}
               key={w.id}
               className="aya-context-menu-item"
               onClick={() => {
                 onMoveProjectToWindow(tabMenu.slug, w.id);
-                setTabMenu(null);
+                closeTabMenu();
               }}
             >
               Move to Window: {w.activeProject ?? "(empty)"}

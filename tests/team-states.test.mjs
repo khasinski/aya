@@ -772,7 +772,7 @@ worldTest("aya team send | Remove while the text is being typed: the sender is t
     await deliver(pane, text);
     await removeTeam(w);
   };
-  await assert.rejects(handleTeamRequest(SEND, "pane-t", w.deps), /implementer: typed into its pane, but not recorded \(team was removed/);
+  await assert.rejects(handleTeamRequest(SEND, "pane-t", w.deps), /implementer: the message was typed into its pane, but Aya could not log it/);
   assert.equal(w.toImplementer().length, 1);
   assert.equal(existsSync(teamDirOf(w)), false);
 });

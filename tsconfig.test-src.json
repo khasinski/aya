@@ -53,6 +53,7 @@
     "src/terminal-rendering.ts",
     "src/terminal-vt-checkpoint.ts",
     "src/terminal-sound-prefs.ts",
+    "src/terminal-focus-retry.ts",
     "src/terminal-visibility.ts",
     "src/theme-skin.ts",
     "src/snippet-payload.ts",

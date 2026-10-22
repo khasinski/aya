@@ -26,15 +26,16 @@ import {
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
-import { handleTeamAuthorRequest } from "./team-author";
+import { callerProject, handleTeamAuthorRequest } from "./team-author";
+import { paneTeamRole } from "./team-files";
 import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
 import { oneLine, printable } from "./printable";
 import { handleTeamRequest, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
-import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
+import { handleTeamPanesRequest, PaneOpenTimeout, THIS_PANE, type TeamPaneDeps } from "./team-panes";
 import { handleTeamShow } from "./team-show";
 import type { TeamRunner } from "./team-runner";
-import type { ControlStatusUpdate, ProjectConfig, PtyEvent } from "./types";
+import type { ControlStatusUpdate, PaneChangeRequest, ProjectConfig, PtyEvent } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
@@ -115,6 +116,8 @@ export interface ControlServerOptions {
   openProject: (directory: string) => Promise<void> | void;
   /** Every parsed request, with the pane it came from (adoption, #117); awaited before the request runs. */
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void | Promise<void>;
+  /** Asks the window that shows the project to change one of its tabs; settles with the window's answer. */
+  changePane?: (projectSlug: string, paneId: string, change: PaneChangeRequest["change"]) => Promise<void>;
   /** What `aya team` runs on (the same deps as the team runner); teams are off without it. */
   team?: TeamControlDeps;
   /** Told of a team saved with aya team save, as after the Teams window's Save. */
@@ -423,6 +426,13 @@ export class PaneInputChangedError extends Error {
   constructor() { super("The pane received other text while the file was copying."); }
 }
 
+/** Longest tab name pane rename sets; a name is shown whole in the tab bar and in every pane list row. */
+const PANE_NAME_MAX_CHARS = 200;
+
+/** A pane in these states has no task in flight: pane close stops it without --force. Not `waiting` (the agent asked
+ *  the user something mid-task) and not `shell`: it names the preset, not what runs, so a dev server reads as shell. */
+const CLOSABLE_PANE_STATES = new Set<PaneStateResult["state"]>(["idle", "stopped"]);
+
 /** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
 const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);
 
@@ -432,7 +442,7 @@ const speaksAsPane = (request: ControlRequest): boolean =>
 
 /** Requests that act on the pane or project whose id they carry: a Codex daemon's id may be another project's pane.
  *  `status` too: a question is a team's signal, it holds the named pane's rounds. */
-const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status"]);
+const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status", "pane-new", "pane-close"]);
 
 async function daemonRefusal(caller: ControlCaller, options: ControlServerOptions, shareMs?: number): Promise<string | null> {
   if (!caller.terminalId || !caller.pid) return null;
@@ -543,6 +553,73 @@ async function handleRequest(
       selfTerminalId: request.selfTerminalId,
     });
     return { output: formatPaneList(entries) };
+  }
+  if (request.type === "pane-new") {
+    const host = options.teamPanes;
+    if (!host) throw new Error("pane control is not available");
+    const projects = await host.listProjects();
+    // --project beats the caller's own project, as in pane list; an unknown slug never falls back to the cwd's project.
+    const project = request.projectSlug
+      ? projects.find((p) => p.slug === request.projectSlug)
+      : await callerProject(projects, caller.terminalId, { cwd: request.cwd });
+    if (!project) {
+      const where = request.projectSlug
+        ? `no project "${request.projectSlug}"; projects: ${projects.map((p) => p.slug).join(", ")}`
+        : "run aya pane new in an Aya pane, in the directory of a project open in Aya, or pass --project <slug>";
+      throw new Error(`${where}; nothing was opened`);
+    }
+    // The presets and the install check below are this machine's, not the remote host's, as for aya team open.
+    if (project.remote) throw new Error(`project ${project.slug} is remote; aya pane new works only on local projects; nothing was opened`);
+    const presets = await host.listPresets();
+    const preset = presets.find((p) => p.id === request.presetId);
+    if (!preset) throw new Error(`no preset "${request.presetId}"; presets: ${presets.map((p) => p.id).join(", ")}; nothing was opened`);
+    if (!(await host.presetInstalled(preset))) throw new Error(`preset "${preset.id}" (${preset.name}) is not installed; nothing was opened`);
+    // A tab name is one line in the tab bar and in pane list.
+    const name = (request.name && oneLine(request.name)) || preset.name;
+    const pane = { id: host.newPaneId(), presetId: preset.id, name, teamLaunch: false };
+    await host.openPanes(project.slug, [pane]);
+    return { output: `${pane.id}\n` };
+  }
+  if (request.type === "pane-rename") {
+    if (!options.listProjects || !options.changePane) throw new Error("pane control is not available");
+    const projects = await options.listProjects();
+    const resolved = resolvePaneTarget(projects, { name: request.target, projectSlug: request.projectSlug });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const { projectSlug, terminalId, name } = resolved.match;
+    // A tab name is one line in the tab bar and in pane list.
+    const newName = oneLine(request.name);
+    if (!newName) throw new Error("the name has no visible characters; nothing was renamed");
+    if (newName.length > PANE_NAME_MAX_CHARS) throw new Error(`the name is ${newName.length} characters, the most is ${PANE_NAME_MAX_CHARS}; nothing was renamed`);
+    // Pane commands target by name, so two panes of one project with one name need an id from then on.
+    const taken = projects.find((p) => p.slug === projectSlug)!.tabs.find((t) => t.id !== terminalId && t.name.trim().toLowerCase() === newName.toLowerCase());
+    if (taken) throw new Error(`pane ${taken.id} in project ${projectSlug} is already named ${taken.name}; nothing was renamed`);
+    await options.changePane(projectSlug, terminalId, { rename: newName }).catch((err: unknown) => {
+      throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be renamed") : err;
+    });
+    return { output: `renamed ${name} to ${newName}\n` };
+  }
+  if (request.type === "pane-close") {
+    if (!options.listProjects || !options.changePane || !options.paneState) throw new Error("pane control is not available");
+    const projects = await options.listProjects();
+    const resolved = resolvePaneTarget(projects, { name: request.target, projectSlug: request.projectSlug });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const { projectSlug, terminalId, name } = resolved.match;
+    // The CLI dies with its own pane, so the caller would never learn the result.
+    if (terminalId === caller.terminalId) throw new Error(`${name} is the pane running this command; close it from another pane or the tab bar; nothing was closed`);
+    if (!request.force) {
+      const refused = (why: string) => new Error(`${name} ${why}; pass --force to close it anyway; nothing was closed`);
+      const own = caller.terminalId ? projects.find((p) => p.tabs.some((t) => t.id === caller.terminalId)) : undefined;
+      if (own && own.slug !== projectSlug) throw refused(`is in project ${projectSlug}, not in this pane's project ${own.slug}`);
+      const project = projects.find((p) => p.slug === projectSlug);
+      const plays = project && options.team ? await paneTeamRole(options.team.teamHome, project, terminalId) : null;
+      if (plays) throw refused(`plays ${plays.role} in team ${plays.team}; closing it leaves the role without a pane`);
+      const { state } = await options.paneState(terminalId);
+      if (!CLOSABLE_PANE_STATES.has(state)) throw refused(`is ${state}; closing it stops what runs in it`);
+    }
+    await options.changePane(projectSlug, terminalId, { close: true }).catch((err: unknown) => {
+      throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be closed") : err;
+    });
+    return { output: `closed ${name}\n` };
   }
   if (request.type === "pane-state") {
     if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");

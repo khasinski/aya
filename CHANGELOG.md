@@ -2,10 +2,19 @@
 
 ## v0.13.0 - 2026-10-22
 
-Antigravity usage in view, worktrees and Changes ready for everyday use, and
-terminal processes that survive host crashes and updates.
+Antigravity usage in view, optional Command Rail, worktrees and Changes ready
+for everyday use, and terminal processes that survive host crashes and updates.
 
 ### Features
+
+- **Command Rail.** Choose the optional interface style in Settings; available
+  with either workspace layout (#262).
+- **Pane commands.** Create, rename and safely close panes with `aya pane new`,
+  `aya pane rename` and `aya pane close` (#273, #274, #275).
+- **Teams.** Start repository team definitions from the Teams window and save
+  role changes consistently (#234).
+- **Keyboard navigation.** Navigate project and terminal lists, open context
+  menus, reorder items and return to the terminal using the keyboard (#268).
 
 - **Google Antigravity usage.** A ring shows the most-used quota limit;
   its popover splits Gemini and Claude/GPT pools into weekly and five-hour
@@ -33,6 +42,9 @@ terminal processes that survive host crashes and updates.
   the workspace, with labelled pane status indicators (#238, #267).
 
 ### Fixes
+
+- Diagnose malformed terminal snapshots without logging screen contents (#233).
+- Show the shared pane-limit recovery guidance for remote terminals (#279).
 
 - Include shared runtime modules in packaged applications and unpacked CLI
   helpers, fixing startup failures caused by a missing `shared/printable.cjs`.

@@ -18,12 +18,14 @@ import type { PaneSize } from "./pane-render";
 import {
   asPaneSize,
   asVtSnapshot,
+  vtSnapshotValidationError,
   asSearchResult,
   type PtyHostMessage,
   type PtyHostRequest,
   type PtyHostResponse,
   type PtyOwnerStatus,
 } from "./pty-host-protocol";
+import { ptyLog } from "./pty-log";
 import {
   hostBuildHash,
   hostRuntimeIdentity,
@@ -107,10 +109,23 @@ export function openHostStderr(file: string = PTY_HOST_STDERR_FILE, maxBytes = P
 // Interval between connect attempts while waiting (ms).
 const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
 const DISPOSED_MESSAGE = "PTY host client is disposed";
-// holdReason when the terminal host cannot say; the message waits in the inbox.
-// A host kept from before an update does not know the request: say the fix.
+// holdReason when the terminal host did not return a usable response; an
+// explicit host rejection and a malformed snapshot have their own reasons.
 export const PANE_HOLD_UNKNOWN =
   "cannot be checked: the terminal host did not answer (after an update, use Settings > Diagnostics > PTY host > Restart)";
+export const PANE_HOLD_INVALID_SNAPSHOT =
+  "cannot be checked: the terminal host returned an invalid screen snapshot (see PTY diagnostics)";
+const PANE_HOLD_DISCONNECTED = "cannot be checked: the terminal host reports this pane disconnected";
+const PANE_HOLD_REJECTED = "cannot be checked: the terminal host rejected the screen check";
+
+const invalidSnapshotLogged = new Map<string, string>();
+function logInvalidSnapshotOnce(ptyId: string, check: string): void {
+  if (invalidSnapshotLogged.get(ptyId) === check) return;
+  invalidSnapshotLogged.delete(ptyId);
+  invalidSnapshotLogged.set(ptyId, check);
+  if (invalidSnapshotLogged.size > 512) invalidSnapshotLogged.delete(invalidSnapshotLogged.keys().next().value!);
+  ptyLog.append("invalid-pane-snapshot", { ptyId, check });
+}
 
 const PANE_ENDED_EVENTS: ReadonlySet<string> = new Set(["exit", "no-session"]);
 
@@ -1009,12 +1024,18 @@ export class PtyHostClient {
       const result = await this.request({ id: 0, type: "snapshot", ptyId });
       if (result === "starting") return HOLD_STARTING;
       if (result === null) return HOLD_NOT_RUNNING;
-      const snapshot = asVtSnapshot(result);
-      if (!snapshot) return PANE_HOLD_UNKNOWN;
+      if (result === "disconnected") return PANE_HOLD_DISCONNECTED;
+      const problem = vtSnapshotValidationError(result);
+      if (problem) {
+        logInvalidSnapshotOnce(ptyId, problem);
+        return PANE_HOLD_INVALID_SNAPSHOT;
+      }
+      const snapshot = asVtSnapshot(result)!;
       const verdict = snapshotHold(snapshot, pasted);
       if (verdict.composerSeen && !snapshot.composerSeen) await this.markComposer(ptyId, snapshot);
+      invalidSnapshotLogged.delete(ptyId);
       return verdict.hold;
-    } catch { return PANE_HOLD_UNKNOWN; }
+    } catch (error) { return (error as NodeJS.ErrnoException).code === "PTY_HOST_REMOTE_ERROR" ? PANE_HOLD_REJECTED : PANE_HOLD_UNKNOWN; }
   }
 
   /** A fresh applied mirror, evaluated by main; unknown still fails open. */
@@ -1030,10 +1051,16 @@ export class PtyHostClient {
       if (value === null) return unavailablePaneState("is not running", "stopped", this.observedPaneExits.has(ptyId));
       if (value === "starting") return unavailablePaneState("is still starting up", "starting");
       if (value === "disconnected") return unavailablePaneState("the terminal host is disconnected; its processes may still be running");
-      const snapshot = asVtSnapshot(value);
-      return snapshot ? explainPaneSnapshot(snapshot) : unavailablePaneState(PANE_HOLD_UNKNOWN);
+      const problem = vtSnapshotValidationError(value);
+      if (problem) {
+        logInvalidSnapshotOnce(ptyId, problem);
+        return unavailablePaneState(PANE_HOLD_INVALID_SNAPSHOT);
+      }
+      invalidSnapshotLogged.delete(ptyId);
+      return explainPaneSnapshot(asVtSnapshot(value)!);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+      if (code === "PTY_HOST_REMOTE_ERROR") return unavailablePaneState(PANE_HOLD_REJECTED);
       return unavailablePaneState(code === "ENOENT" || code === "ECONNREFUSED" ? "terminal host not running" : PANE_HOLD_UNKNOWN);
     }
   }
@@ -1080,8 +1107,12 @@ export class PtyHostClient {
 
   async paneBusy(ptyId: string): Promise<boolean> {
     try {
-      const snapshot = asVtSnapshot(await this.request({ id: 0, type: "snapshot", ptyId }));
-      return snapshot ? snapshotBusy(snapshot) : false;
+      const value = await this.request({ id: 0, type: "snapshot", ptyId });
+      if (value === null || value === "starting" || value === "disconnected") return false;
+      const problem = vtSnapshotValidationError(value);
+      if (problem) { logInvalidSnapshotOnce(ptyId, problem); return false; }
+      invalidSnapshotLogged.delete(ptyId);
+      return snapshotBusy(asVtSnapshot(value)!);
     } catch { return false; }
   }
   private async markComposer(ptyId: string, snapshot: VtSnapshot): Promise<void> {

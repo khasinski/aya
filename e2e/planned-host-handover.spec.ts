@@ -300,7 +300,7 @@ test('explicit restart before display lookup completes retires the old continuat
   ipcMain.removeHandler('pty:spawn');ipcMain.handle('pty:spawn',(event,req)=>{if(req.ptyId==='tab-left')(globalThis as unknown as {restartSpawns:number}).restartSpawns++;return spawn(event,req);});
  });
  await second.window.locator('.aya-sidebar-row[data-terminal-id="tab-left"]').click({button:'right'});
- await second.window.getByRole('button',{name:'Restart terminal',exact:true}).click();
+ await second.window.getByRole('menuitem',{name:'Restart terminal',exact:true}).click();
  await expect.poll(()=>{const pane=inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left');return !!pane&&pane.pid!==oldPid;}).toBe(true);
  const freshPid=inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left').pid;
  await second.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_EXPLICIT_RESTART\\n'\r"));
@@ -333,7 +333,7 @@ test('explicit restart of an ended pane with an unapplied acknowledgement starts
  writeFileSync(release,'go');await expect(pane.locator('.xterm-rows')).toContainText('process exited with code 23');
  expect(await second.window.evaluate(()=>window.aya.handoverDisplay('tab-left'))).not.toBe(null);
  await second.window.locator('.aya-sidebar-row[data-terminal-id="tab-left"]').click({button:'right'});
- await second.window.getByRole('button',{name:'Restart terminal',exact:true}).click();
+ await second.window.getByRole('menuitem',{name:'Restart terminal',exact:true}).click();
  await expect.poll(()=>{const p=inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left');return !!p&&p.pid!==oldPid;}).toBe(true);
  await pane.click();await second.window.keyboard.type("printf 'FRESH_ENDED_%s\\n' RESTART");await second.window.keyboard.press('Enter');
  await expect.poll(()=>second.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('FRESH_ENDED_RESTART');

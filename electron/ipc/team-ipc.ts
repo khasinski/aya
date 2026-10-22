@@ -2,7 +2,7 @@
 
 import type { IpcMain } from "electron";
 import type { ChatOptions } from "../intelligence-chat";
-import { listTeams, saveTeam } from "../team-admin";
+import { adoptRepoTeamIfNew, forgetPickSave, listTeams, saveTeam } from "../team-admin";
 import type { TeamControlDeps } from "../team-control";
 import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "../team-draft";
 import { projectBySlug } from "../team-files";
@@ -67,6 +67,8 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
       requireString(slug, "teams:start.projectSlug"),
       requireString(team, "teams:start.team"),
       text ? { text, ...(role ? { to: role } : {}) } : undefined,
+      undefined,
+      true,
     );
   });
   for (const action of ["pause", "resume", "remove"] as const) {
@@ -93,7 +95,12 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     const project = await teamProject(slug, "teams:assign");
     const [teamName, roleId] = [requireString(team, "teams:assign.team"), requireString(role, "teams:assign.role")];
     const pane = paneId === null ? null : requireString(paneId, "teams:assign.paneId");
-    await assignRoleLocked(teamDeps, project.slug, teamName, roleId, pane);
+    // A pane pick in the window is the user's: the team file is saved for it, as Start does.
+    const saved = pane ? await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName) : null;
+    await assignRoleLocked(teamDeps, project.slug, teamName, roleId, pane).catch(async (err: unknown) => {
+      if (saved !== null) await forgetPickSave(teamDeps.teamHome, project, teamName, saved);
+      throw err;
+    });
     return pane ? teamRunner.introduce(project.slug, teamName, roleId) : null;
   });
   ipcMain.handle("teams:draft-role", async (_e, team: unknown, roleId: unknown, config: unknown) =>
@@ -120,7 +127,12 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     const released = (release ?? []).map((role: unknown, i: number) => requireString(role, `teams:open-panes.release[${i}]`));
     // Each pick is the user's own choice in a row that shows what it replaces or moves;
     // "No pane" picks are released only once every other pick passed the check.
-    return openTeamPanes(panes, project, requireString(team, "teams:open-panes.team"), valid, { replace: true, release: released });
+    const teamName = requireString(team, "teams:open-panes.team");
+    const saved = valid.length ? await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName) : null;
+    return openTeamPanes(panes, project, teamName, valid, { replace: true, release: released }).catch(async (err: unknown) => {
+      if (saved !== null) await forgetPickSave(teamDeps.teamHome, project, teamName, saved);
+      throw err;
+    });
   });
   return teamRunner;
 }

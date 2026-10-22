@@ -21,7 +21,7 @@ const { startRemoteServerOn } = await import("../dist-electron/remote-server.js"
 const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
 const { initializeRemoteSessionsOnStartup } = await import("../dist-electron/remote-session-restore.js");
 const { RemoteTerminalClient } = await import("../dist-electron/remote-client.js");
-const { MAX_PTY_PANES } = await import("../dist-electron/pty-pane-limits.js");
+const { MAX_PTY_PANES, paneLimitFailureMessage } = await import("../dist-electron/pty-pane-limits.js");
 const { ownerProcessStartIdentity } = await import("../dist-electron/pty-owner-client.js");
 const { createProject, listProjects, updateProjectFromLatest } = await import("../dist-electron/config.js");
 const { createRemoteTerminalOnSpawned } = await import("../dist-electron/remote-terminal-project.js");
@@ -70,7 +70,7 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     ],
     ensureCapacity: async () => {
       const status = await host.hostStatus();
-      if (status.ptyCount >= MAX_PTY_PANES) throw new Error(`Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then try again.`);
+      if (status.ptyCount >= MAX_PTY_PANES) throw new Error(paneLimitFailureMessage());
     },
     spawn: (id, selectedProject, preset, cols, rows) => host.spawn({
       ptyId: id, projectSlug: selectedProject.slug, presetId: preset.id,
@@ -276,7 +276,7 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     }
     assert.equal((await host.hostStatus()).ptyCount, MAX_PTY_PANES);
     const atCapacity = makeClient();
-    await assert.rejects(atCapacity.client.spawnTerminal(project.slug, "test", 80, 24), /at most 128 terminals at once/);
+    await assert.rejects(atCapacity.client.spawnTerminal(project.slug, "test", 80, 24), { message: paneLimitFailureMessage() });
     assert.equal(sessionsPersisted.size, 3);
     assert.equal((await host.hostStatus()).ptyCount, MAX_PTY_PANES);
     assert.equal((await atCapacity.client.list()).some((item) => item.state === "running"), false);

@@ -71,6 +71,29 @@ export type ControlRequest =
       projectSlug?: string;
       selfTerminalId?: string;
     }
+  // Open a pane from a preset, as the launcher does. No slug: the caller's
+  // pane's project, else the project whose directory holds `cwd`.
+  | {
+      type: "pane-new";
+      presetId: string;
+      name?: string;
+      projectSlug?: string;
+      cwd?: string;
+    }
+  // Rename a pane's tab; the target resolves as for pane read/send.
+  | {
+      type: "pane-rename";
+      target: string;
+      name: string;
+      projectSlug?: string;
+    }
+  // Close a pane's tab and stop its process; without `force` only a pane with no work in flight.
+  | {
+      type: "pane-close";
+      target: string;
+      force: boolean;
+      projectSlug?: string;
+    }
   | { type: "capabilities" }
   // aya machines: argv as typed after "machines".
   | { type: "machines"; argv: string[]; user?: string; token?: string }
@@ -223,6 +246,30 @@ export function parseControlRequest(value: unknown): ControlRequest {
       projectSlug: optionalString(value.projectSlug),
       selfTerminalId: optionalString(value.selfTerminalId),
     };
+  }
+  if (type === "pane-new") {
+    const presetId = optionalString(value.presetId);
+    if (!presetId) throw new Error("pane-new requires presetId");
+    return {
+      type,
+      presetId,
+      name: optionalString(value.name)?.trim(),
+      projectSlug: optionalString(value.projectSlug),
+      cwd: optionalString(value.cwd),
+    };
+  }
+  if (type === "pane-rename") {
+    const target = optionalString(value.target);
+    if (!target) throw new Error("pane-rename requires target");
+    const name = optionalString(value.name)?.trim();
+    if (!name) throw new Error("pane-rename requires name");
+    return { type, target, name, projectSlug: optionalString(value.projectSlug) };
+  }
+  if (type === "pane-close") {
+    const target = optionalString(value.target);
+    if (!target) throw new Error("pane-close requires target");
+    if (typeof value.force !== "boolean") throw new Error("pane-close.force must be boolean");
+    return { type, target, force: value.force, projectSlug: optionalString(value.projectSlug) };
   }
   if (type === "pane-wait") {
     if (!Array.isArray(value.targets) || value.targets.length < 1 || value.targets.length > 64 || value.targets.some((v) => typeof v !== "string" || !v.trim())) throw new Error("pane-wait requires one or more targets");

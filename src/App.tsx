@@ -36,6 +36,12 @@ import { NewProjectModal } from "./components/NewProjectModal";
 import { ProjectPresetImportModal } from "./components/ProjectPresetImportModal";
 import { SearchModal } from "./components/SearchModal";
 import { SettingsModal } from "./components/SettingsModal";
+import {
+  CommandRailLayout,
+  CommandRailProjects,
+  CommandRailSidebarHeader,
+  CommandRailUsage,
+} from "./components/CommandRailLayout";
 import { ProjectsLeftLayout } from "./components/ProjectsLeftLayout";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -193,6 +199,8 @@ export function App() {
     setShowGitHubLink,
     layoutMode,
     setLayoutMode,
+    chromeStyle,
+    setChromeStyle,
     harnessSearchEnabled,
     setHarnessSearchEnabled,
     terminalSoundsEnabled,
@@ -1023,6 +1031,39 @@ export function App() {
     splitPaneBelow: () => splitActivePane("below"),
   });
 
+  useEffect(() => {
+    const onTerminalRegionKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.key !== "Tab" || chromeBlocked) return;
+      const active = document.activeElement as HTMLElement | null;
+      const terminalInput = active?.matches(".xterm-helper-textarea") ?? false;
+      if (event.shiftKey) {
+        if (terminalInput) return;
+        const pane = isSplit
+          ? document.querySelector<HTMLElement>(".aya-pane--active-split")
+          : activeTabId
+            ? document.querySelector<HTMLElement>(`[data-testid="terminal-pane"][data-terminal-id="${CSS.escape(activeTabId)}"]`)
+            : null;
+        const textarea = pane?.querySelector<HTMLElement>(".xterm-helper-textarea");
+        if (!textarea) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        textarea.focus();
+        return;
+      }
+      if (!terminalInput) return;
+      const selector = layoutMode === "projects-left"
+        ? '.aya-termtab[role="tab"][aria-selected="true"]'
+        : '.aya-sidebar-row[role="listitem"][aria-current="true"]';
+      const nextRegion = document.querySelector<HTMLElement>(selector);
+      if (!nextRegion) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      nextRegion.focus();
+    };
+    document.addEventListener("keydown", onTerminalRegionKeyDown, true);
+    return () => document.removeEventListener("keydown", onTerminalRegionKeyDown, true);
+  }, [activeTabId, chromeBlocked, isSplit, layoutMode]);
+
   useDoubleShiftSearch({
     enabled: !chromeBlocked,
     onToggle: () => setShowSearch((s) => !s),
@@ -1035,9 +1076,8 @@ export function App() {
         window.aya.platform === "darwin" ? "aya-app--macos" : "",
         isFullScreen ? "aya-app--fullscreen" : "",
       ].filter(Boolean).join(" ")}
-      data-theme={
-        appThemePreference === "system" ? undefined : appThemePreference
-      }
+      data-theme={appThemePreference === "system" ? undefined : appThemePreference}
+      data-chrome={chromeStyle === "classic" ? undefined : chromeStyle}
       data-accent="green"
     >
       <WebWaitingBanners
@@ -1105,8 +1145,123 @@ export function App() {
             projectTerminals={projectTerminals}
           />
         );
+        const commandRail = chromeStyle === "command-rail";
+        const sidebarNode = (
+          <Sidebar
+            teams={activeTeams}
+            onAssignTeamRole={onAssignTeamRole}
+            terminals={projectTerminals}
+            activeId={activeTabId}
+            sidebarWidth={sidebarWidth}
+            presets={activePresets}
+            recentlyActiveIds={recentlyActiveIds}
+            summaries={localSummariesEnabled ? terminalSummaries : EMPTY_SUMMARIES}
+            splitAssignments={splitAssignments}
+            onSelect={selectTerminalFromSidebar}
+            onClose={closeTerminal}
+            onRename={renameTerminal}
+            onLaunch={launchTerminal}
+            worktrees={worktrees}
+            projectDir={
+              activeProject ? projectBaseCwd(activeProject) : undefined
+            }
+            projectId={activeProjectId ?? undefined}
+            projectRemote={Boolean(activeProject?.remote)}
+            projectRemoteHost={activeProject?.remote?.label}
+            onCreateWorktrees={createWorktreesForProject}
+            onStartWorktrees={(projectId, preset, checkouts, prompt) => {
+              for (const checkout of checkouts) {
+                launchTerminal(preset, checkout.path, undefined, prompt, projectId);
+              }
+            }}
+            onRemoveWorktree={removeWorktreeForProject}
+            onResize={setSidebarWidth}
+            onReorder={reorderActiveProjectTerminals}
+            onRestart={forceRestartTerminal}
+            canSplitRight={canSplit}
+            canSplitBelow={canSplit}
+            onAssignToSplit={assignTerminalToActiveSplitCell}
+            onSplitRight={splitTerminalRight}
+            onSplitBelow={splitTerminalBelow}
+            onRemoveFromSplit={removeTerminalFromSplit}
+            statusRail={
+              <StatusRail
+                projects={projects}
+                terminals={terminals}
+                collapsed={statusRailCollapsed}
+                onCollapsedChange={setStatusRailCollapsed}
+                onSelectTerminal={focusTerminalFromNotification}
+              />
+            }
+            header={
+              commandRail ? (
+                <CommandRailSidebarHeader
+                  project={activeProject ?? null}
+                  summary={localSummariesEnabled && activeProjectId ? projectSummaries[activeProjectId] : undefined}
+                  homeDir={homeDir}
+                  onRename={renameProject}
+                />
+              ) : undefined
+            }
+            extraSection={
+              commandRail ? (
+                <CommandRailProjects
+                  projects={projects}
+                  activeProjectId={activeProjectId}
+                  homeDir={homeDir}
+                  projectBadges={projectBadges}
+                  projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
+                  onSelectProject={setActiveProjectId}
+                />
+              ) : undefined
+            }
+            footer={
+              commandRail ? (
+                <CommandRailUsage claude={usageAccounts} codex={codexUsageAccounts} antigravity={antigravityUsageAccounts} />
+              ) : undefined
+            }
+          />
+        );
         const body =
           !didBootstrap ? loadingNode : isEmpty ? emptyStateNode : null;
+        // Variant A (classic layout) gets the avatar-rail shell; variant B
+        // (projects-left) keeps its own layout, skinned by the same CSS.
+        if (commandRail && layoutMode !== "projects-left") {
+          return (
+            <CommandRailLayout
+              projects={projects}
+              closedProjects={closedProjects}
+              activeProjectId={activeProjectId}
+              homeDir={homeDir}
+              isDev={window.aya.isDev}
+              platform={window.aya.platform}
+              isFullScreen={isFullScreen}
+              isMaximized={isMaximized}
+              blockChrome={chromeBlocked}
+              onSelectProject={setActiveProjectId}
+              onOpenProject={openProjectBySlug}
+              onNewProject={showNewProjectModal}
+              onCloseProject={closeProject}
+              onMoveProjectToWindow={moveProjectToWindow}
+              onReorderProjects={reorderProjects}
+              onOpenSearch={openSearch}
+              onOpenSettings={openSettings}
+              onMinimizeWindow={minimizeWindow}
+              onToggleMaximizeWindow={toggleMaximizeWindow}
+              onToggleFullScreenWindow={toggleFullScreenWindow}
+              onCloseWindow={closeWindow}
+              projectBadges={projectBadges}
+              projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
+              teamsByProject={teamsByProject}
+              sidebar={sidebarNode}
+              sidebarWidth={sidebarWidth}
+              panes={panesNode}
+              body={body}
+              activeProjectName={activeProject?.name}
+              activeTerminalName={activeTerminal?.name}
+            />
+          );
+        }
         if (layoutMode === "projects-left") {
           return (
             <ProjectsLeftLayout
@@ -1143,6 +1298,8 @@ export function App() {
               antigravityUsageAccounts={antigravityUsageAccounts}
               grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
+              commandRail={commandRail}
+              worktrees={worktrees}
               terminals={projectTerminals}
               activeTerminalId={activeTabId}
               presets={activePresets}
@@ -1208,53 +1365,7 @@ export function App() {
                 style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
               >
                 <h1 className="aya-visually-hidden">Aya</h1>
-                <Sidebar
-                  teams={activeTeams}
-                  onAssignTeamRole={onAssignTeamRole}
-                  terminals={projectTerminals}
-                  activeId={activeTabId}
-                  sidebarWidth={sidebarWidth}
-                  presets={activePresets}
-                  recentlyActiveIds={recentlyActiveIds}
-                  summaries={localSummariesEnabled ? terminalSummaries : EMPTY_SUMMARIES}
-                  splitAssignments={splitAssignments}
-                  onSelect={selectTerminalFromSidebar}
-                  onClose={closeTerminal}
-                  onRename={renameTerminal}
-                  onLaunch={launchTerminal}
-                  worktrees={worktrees}
-                  projectDir={
-                    activeProject ? projectBaseCwd(activeProject) : undefined
-                  }
-                  projectId={activeProjectId ?? undefined}
-                  projectRemote={Boolean(activeProject?.remote)}
-                  projectRemoteHost={activeProject?.remote?.label}
-                  onCreateWorktrees={createWorktreesForProject}
-                  onStartWorktrees={(projectId, preset, checkouts, prompt) => {
-                    for (const checkout of checkouts) {
-                      launchTerminal(preset, checkout.path, undefined, prompt, projectId);
-                    }
-                  }}
-                  onRemoveWorktree={removeWorktreeForProject}
-                  onResize={setSidebarWidth}
-                  onReorder={reorderActiveProjectTerminals}
-                  onRestart={forceRestartTerminal}
-                  canSplitRight={canSplit}
-                  canSplitBelow={canSplit}
-                  onAssignToSplit={assignTerminalToActiveSplitCell}
-                  onSplitRight={splitTerminalRight}
-                  onSplitBelow={splitTerminalBelow}
-                  onRemoveFromSplit={removeTerminalFromSplit}
-                  statusRail={
-                    <StatusRail
-                      projects={projects}
-                      terminals={terminals}
-                      collapsed={statusRailCollapsed}
-                      onCollapsedChange={setStatusRailCollapsed}
-                      onSelectTerminal={focusTerminalFromNotification}
-                    />
-                  }
-                />
+                {sidebarNode}
                 {panesNode}
               </main>
             )}
@@ -1262,6 +1373,20 @@ export function App() {
         );
       })()}
       <StatusBar
+        leading={
+          chromeStyle === "command-rail" ? (
+            <button
+              type="button"
+              className="aya-statusbar-item aya-statusbar-button aya-cr-cmdk"
+              onClick={openSearch}
+              disabled={chromeBlocked}
+              title="Search (Cmd/Ctrl+K or Shift Shift)"
+            >
+              <kbd>{window.aya.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd>
+              Jump to a terminal, search, run a command
+            </button>
+          ) : undefined
+        }
         project={activeProject}
         reviewTargets={reviewTargets}
         git={activeGit}
@@ -1433,6 +1558,8 @@ export function App() {
           onShowGitHubLinkChange={updateShowGitHubLink}
           layoutMode={layoutMode}
           onLayoutModeChange={setLayoutMode}
+          chromeStyle={chromeStyle}
+          onChromeStyleChange={setChromeStyle}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}

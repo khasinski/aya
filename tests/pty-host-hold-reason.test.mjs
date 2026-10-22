@@ -1,7 +1,7 @@
 // Main evaluates a fresh mirror; unavailable or malformed snapshots never permit a team message.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PtyHostClient, PANE_HOLD_UNKNOWN } from "../dist-electron/pty-host-client.js";
+import { PtyHostClient, PANE_HOLD_UNKNOWN, PANE_HOLD_INVALID_SNAPSHOT } from "../dist-electron/pty-host-client.js";
 import { openVtPane, writeVtPane, vtSnapshot, closeVtPane } from "../dist-electron/vt-mirror.js";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "../dist-electron/pane-holds.js";
 
@@ -27,7 +27,7 @@ test("gone and starting are explicit; malformed answers fail closed", async () =
   assert.equal(await clientAnswering(() => null).client.holdReason("p"), HOLD_NOT_RUNNING);
   assert.equal(await clientAnswering(() => "starting").client.holdReason("p"), HOLD_STARTING);
   for (const value of [5, true, {}, { rows: [] }])
-    assert.equal(await clientAnswering(() => value).client.holdReason("p"), PANE_HOLD_UNKNOWN);
+    assert.equal(await clientAnswering(() => value).client.holdReason("p"), PANE_HOLD_INVALID_SNAPSHOT);
 });
 test("an older host without snapshot support holds the message and busy fails open", async () => {
   const { client } = clientAnswering(() => { throw new Error("unknown request"); });

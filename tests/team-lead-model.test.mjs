@@ -64,8 +64,8 @@ const MODELS = [
   ["rounds and no lead", { lead: null, cadenceMinutes: 30 }, /no role leads it/],
   ["no lead, no rounds", { lead: null, cadenceMinutes: null }, /no role leads it/],
   ["a lead the team does not have", { lead: "ghost", cadenceMinutes: null }, /lead names unknown role "ghost"/],
-  ["rounds every 0 min", { lead: "fixer", cadenceMinutes: 0 }, /every <1-1440> min/],
-  ["rounds every 1441 min", { lead: "fixer", cadenceMinutes: 1441 }, /every <1-1440> min/],
+  ["rounds every 0 min", { lead: "fixer", cadenceMinutes: 0 }, /the round timer must be 1 to 1440 minutes/],
+  ["rounds every 1441 min", { lead: "fixer", cadenceMinutes: 1441 }, /the round timer must be 1 to 1440 minutes/],
 ];
 for (const [name, model, refused] of MODELS) {
   test(`saving from the window | ${name}`, async () => {

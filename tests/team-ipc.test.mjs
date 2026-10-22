@@ -381,10 +381,10 @@ test("teams:start checks the task: none, a string, or too long before anything s
     for (const none of [undefined, null, ""]) await t.invoke("teams:start", "game", "ux-review", none);
     await t.invoke("teams:start", "game", "ux-review", "do the thing");
     assert.deepEqual(started, [
-      ["game", "ux-review", undefined],
-      ["game", "ux-review", undefined],
-      ["game", "ux-review", undefined],
-      ["game", "ux-review", { text: "do the thing" }],
+      ["game", "ux-review", undefined, undefined, true],
+      ["game", "ux-review", undefined, undefined, true],
+      ["game", "ux-review", undefined, undefined, true],
+      ["game", "ux-review", { text: "do the thing" }, undefined, true],
     ]);
     await assert.rejects(() => t.invoke("teams:start", "game", "ux-review", 5), { message: "Invalid IPC payload for teams:start.task: expected string." });
     await assert.rejects(() => t.invoke("teams:start", "game", "ux-review", "x".repeat(TEAM_MESSAGE_MAX_CHARS + 1)), new RegExp(`the task is ${TEAM_MESSAGE_MAX_CHARS + 1} characters, the most is ${TEAM_MESSAGE_MAX_CHARS};`));
@@ -402,8 +402,8 @@ test("teams:start passes the picked role with the task, none for an empty pick, 
     await t.invoke("teams:start", "game", "ux-review", "do it", "implementer");
     await t.invoke("teams:start", "game", "ux-review", "do it", "");
     assert.deepEqual(started, [
-      ["game", "ux-review", { text: "do it", to: "implementer" }],
-      ["game", "ux-review", { text: "do it" }],
+      ["game", "ux-review", { text: "do it", to: "implementer" }, undefined, true],
+      ["game", "ux-review", { text: "do it" }, undefined, true],
     ]);
     await assert.rejects(() => t.invoke("teams:start", "game", "ux-review", "do it", 5), { message: "Invalid IPC payload for teams:start.to: expected string." });
   } finally {

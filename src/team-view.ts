@@ -139,6 +139,16 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
   return { text: since ? `${since} - ${who}` : who, tone: "held" };
 }
 
+/** The roles the next Start runs: a project file edited since the save is saved by an idle team's Start first. */
+export function startDefinition(team: Pick<TeamSummary, "definition" | "repoDefinition" | "repoChanged" | "running">): TeamDefinition | null {
+  return !team.running && team.repoChanged && team.repoDefinition ? team.repoDefinition : team.definition;
+}
+
+/** The task's recipient as the next Start runs it: the role picked when the next Start still has it, else none (the default). */
+export function liveRecipient(definition: Pick<TeamDefinition, "roles"> | null, picked: string): string {
+  return definition?.roles.some((r) => r.id === picked) ? picked : "";
+}
+
 /** The Task field's placeholder: who Start gives the task to, as electron/team-runner.ts taskRecipient picks it. */
 export function taskPlaceholder(definition: Pick<TeamDefinition, "roles" | "lead"> | null, to?: string): string {
   if (!definition || definition.roles.length === 0) return "Task (optional)";
@@ -155,19 +165,28 @@ export function leadWarning(definition: Pick<TeamDefinition, "lead" | "leadConfl
 }
 
 /** The card's status note for a team: an unsaved team's definition is the repo parse, not a saved command. */
-export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefinition" | "unsaved" | "repoChanged">): ReturnType<typeof statusCommandNote> {
-  return statusCommandNote(team.unsaved ? null : team.definition, team.unsaved || team.repoChanged ? team.repoDefinition : null);
+export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefinition" | "unsaved" | "repoChanged" | "running">): ReturnType<typeof statusCommandNote> {
+  return statusCommandNote(team.unsaved ? null : team.definition, team.unsaved || team.repoChanged ? team.repoDefinition : null, team.running);
 }
 
-/** The card's word on the status command: the one saved, and a new one that "Save this team" or "Use the repo
- *  version" would start running, named before the click since it runs with the user's rights. */
+/** When a project file change takes effect: a running team keeps its copy until it stops. */
+export function changeWhen(running: boolean | undefined): string {
+  return running ? "After the team stops, its next Start" : "The next Start";
+}
+
+/** The card's word on the status command: the one saved, and a new one that the next Start would run, named before
+ *  the click since it runs with the user's rights. */
 export function statusCommandNote(
   saved: Pick<TeamDefinition, "statusCommand"> | null,
   repo: Pick<TeamDefinition, "statusCommand"> | null,
+  running?: boolean,
 ): { text: string; tone: "note" | "warning" } | null {
   const now = saved?.statusCommand;
   const next = repo?.statusCommand;
-  if (next && next !== now) return { text: `Saving the repo version runs this status command each round, with your rights: ${next}`, tone: "warning" };
+  const when = changeWhen(running);
+  if (next && next !== now) return { text: `${when} runs this status command each round, with your rights: ${next}`, tone: "warning" };
+  // The project's file no longer has the command Aya runs: the next Start drops it, and the card says so before the click.
+  if (repo && !next && now) return { text: `${when} removes the status command, which ran with your rights: ${now}`, tone: "warning" };
   return now ? { text: `Status command, its output goes with the lead's rounds: ${now}`, tone: "note" } : null;
 }
 

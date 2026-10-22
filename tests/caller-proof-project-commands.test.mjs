@@ -31,6 +31,8 @@ const REQUESTS = [
   { type: "team-start", team: "t" },
   { type: "team-open", team: "t", panes: [] },
   { type: "status", level: "waiting", text: "Which DB for project B?" },
+  { type: "pane-new", presetId: "claude" },
+  { type: "pane-close", target: "pane-b", force: false },
 ];
 
 // [label, caller, refused]

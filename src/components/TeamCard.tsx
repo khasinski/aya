@@ -13,10 +13,13 @@ import {
   livenessLine,
   leadWarning,
   cardStatusNote,
+  changeWhen,
   leadWaitingLine,
   livePane,
   olderRoleNote,
   roleStatus,
+  liveRecipient,
+  startDefinition,
   startSummary,
   taskPlaceholder,
   type PaneRole,
@@ -64,8 +67,11 @@ export function TeamCard({
   const [task, setTask] = useState("");
   // The role picked for the task; "" is the default recipient the placeholder names.
   const [taskTo, setTaskTo] = useState("");
+  const upcoming = startDefinition(team);
+  // A recipient the next Start no longer runs (its role left the project file) is shown as the default, and sent as none.
+  const recipient = liveRecipient(upcoming, taskTo);
   const start = async () => {
-    const result = await act(() => window.aya.teamStart(project.slug, team.name, task.trim() || undefined, task.trim() && taskTo ? taskTo : undefined));
+    const result = await act(() => window.aya.teamStart(project.slug, team.name, task.trim() || undefined, task.trim() && recipient ? recipient : undefined));
     if (!result) return;
     setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
     setNote({ start: result });
@@ -107,13 +113,6 @@ export function TeamCard({
     setNotReached((prev) => ({ ...prev, ...Object.fromEntries(result.panes.flatMap((p) => (p.notReached ? [[p.role, p.notReached]] : []))) }));
     if (result.panes.length) setNote({ apply: rolePanesSummary(result, team.running) });
   };
-  const repoDefinition = team.repoDefinition;
-  const saveRepoButton = (label: string) =>
-    repoDefinition && (
-      <button className="aya-modal-btn" onClick={() => act(() => window.aya.teamSave(project.slug, repoDefinition))}>
-        {label}
-      </button>
-    );
   return (
     <div className="aya-teams-card" data-testid={`team-${team.name}`}>
       <div className="aya-teams-card-head">
@@ -144,18 +143,18 @@ export function TeamCard({
                 <input
                   className="aya-modal-input aya-teams-task"
                   aria-label={`Task for ${team.name}`}
-                  placeholder={taskPlaceholder(definition, taskTo)}
+                  placeholder={taskPlaceholder(upcoming, taskTo)}
                   value={task}
                   onChange={(e) => setTask(e.target.value)}
                 />
                 <select
                   className="aya-modal-input aya-teams-task-to"
                   aria-label={`Task goes to for ${team.name}`}
-                  value={definition.roles.some((r) => r.id === taskTo) ? taskTo : ""}
+                  value={recipient}
                   onChange={(e) => setTaskTo(e.target.value)}
                 >
-                  <option value="">{definition.lead ? "lead" : "first role"}</option>
-                  {definition.roles.map((r) => (
+                  <option value="">{upcoming?.lead ? "lead" : "first role"}</option>
+                  {upcoming?.roles.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.id}
                     </option>
@@ -189,21 +188,14 @@ export function TeamCard({
           {statusNote.text}
         </div>
       )}
-      {team.unsaved && (
-        <div className="aya-teams-warning">
-          This team file is not saved in Aya yet, so no agent sees it and it cannot start. Read it, then save it to run it.
-          {saveRepoButton("Save this team")}
-        </div>
-      )}
       {team.repoChanged && (
         <div className="aya-teams-warning">
-          The repo file changed since this team was saved. Aya keeps running the saved version.
-          {saveRepoButton("Use the repo version")}
+          The team changed in the project. {changeWhen(team.running)} runs the new version.
         </div>
       )}
       {team.repoGone && (
         <div className="aya-teams-warning">
-          The team file is gone from the repo; Aya runs the saved copy. Remove the team to forget it, or Edit and Save it to write the file again.
+          The team is no longer in the project, so it keeps its last version. Remove the team to forget it.
           <button className="aya-modal-btn" disabled={busy} onClick={() => act(() => window.aya.teamRemove(project.slug, team.name))}>
             Remove team
           </button>
@@ -289,7 +281,6 @@ export function TeamCard({
                   className="aya-modal-input aya-teams-pane"
                   aria-label={`Pane for ${role.id}`}
                   value={picks[role.id] ?? current(role.id)}
-                  disabled={team.unsaved}
                   onChange={(e) => setPicks((prev) => ({ ...prev, [role.id]: e.target.value }))}
                 >
                   <option value="">No pane</option>

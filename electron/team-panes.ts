@@ -21,6 +21,7 @@ import type {
   PresetChoice,
   ProjectConfig,
   RolePane,
+  PaneChangeRequest,
   RolePanes,
   TeamOpenPanesRequest,
   TeamStartResult,
@@ -573,17 +574,21 @@ export class RendererRequests {
 /** The window side of PaneHost.openPanes; Electron's BrowserWindow in main. */
 export interface PaneWindow {
   isDestroyed(): boolean;
-  webContents: { isLoading(): boolean; send(channel: string, request: TeamOpenPanesRequest): void };
+  webContents: { isLoading(): boolean; send(channel: string, request: TeamOpenPanesRequest | PaneChangeRequest): void };
 }
 
-/** Asks the project's window to add the panes. A window still loading, or none with the project at boot, is refused at
- *  once as retryable, not after the deadline. */
-export function askWindowToOpenPanes(win: PaneWindow | null, requests: RendererRequests, projectSlug: string, panes: NewPane[], starting = false): Promise<void> {
+/** Asks the project's window to act on its tabs; the window answers on teams:panes-opened. A window still loading, or
+ *  none with the project at boot, is refused at once as retryable, not after the deadline. */
+export function askProjectWindow(win: PaneWindow | null, requests: RendererRequests, projectSlug: string, send: (win: PaneWindow, requestId: string) => void, starting = false): Promise<void> {
   if (!win || win.isDestroyed()) {
     return Promise.reject(starting ? new TryAgainError(STARTING_MESSAGE) : new Error(`project ${projectSlug} is not open in an Aya window`));
   }
   if (win.webContents.isLoading()) {
     return Promise.reject(new TryAgainError(`the Aya window of project ${projectSlug} is still loading; run it again in a moment`));
   }
-  return requests.ask((requestId) => win.webContents.send("teams:open-panes", { requestId, projectSlug, panes }));
+  return requests.ask((requestId) => send(win, requestId));
+}
+
+export function askWindowToOpenPanes(win: PaneWindow | null, requests: RendererRequests, projectSlug: string, panes: NewPane[], starting = false): Promise<void> {
+  return askProjectWindow(win, requests, projectSlug, (w, requestId) => w.webContents.send("teams:open-panes", { requestId, projectSlug, panes }), starting);
 }

@@ -82,6 +82,17 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: "pane new",
+    usage: "aya pane new preset [--name name] [--project slug]",
+    summary: "Open a new pane from a preset in this project and print its id.",
+    example: 'aya pane new claude --name "reviewer"',
+    notes: [
+      "preset is an id from aya presets; the pane is named after the preset unless --name is given.",
+      "The project is --project, else AYA_PROJECT_SLUG (set in every pane), else the project whose directory you are in. Remote projects are refused.",
+      "The printed id works with pane read / pane send / pane wait.",
+    ],
+  },
+  {
     command: "pane state",
     usage: "aya pane state target [--explain] [--project slug]",
     summary: "Show fresh pane state; --explain names matching rules, source, version, region and a short safe excerpt.",
@@ -114,6 +125,25 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
       "target and --project work as in pane read.",
       "--no-submit types without pressing Enter, for a prompt the user should review first.",
       "Only drive a pane the user asked you to drive.",
+    ],
+  },
+  {
+    command: "pane rename",
+    usage: "aya pane rename target name [--project slug]",
+    summary: "Rename a pane's tab.",
+    example: 'aya pane rename reviewer "reviewer: auth fix"',
+    notes: ["target and --project work as in pane read."],
+  },
+  {
+    command: "pane close",
+    usage: "aya pane close target [--force] [--project slug]",
+    summary: "Close a pane's tab and stop its process.",
+    example: "aya pane close reviewer",
+    notes: [
+      "target and --project work as in pane read.",
+      "Without --force only an idle agent pane or an exited pane of your own project closes. Refused: a shell pane (it may run a server or a migration), a busy, starting, held, unknown or waiting pane, a pane of another project, and a pane that plays a team role.",
+      "A pane cannot close itself, even with --force.",
+      "Only close a pane you opened or the user asked you to close.",
     ],
   },
   {

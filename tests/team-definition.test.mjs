@@ -138,7 +138,7 @@ test("cadence runs from 1 min up to a day, both ends included", () => {
   const every = (n) => parseTeamFile("ux-review", UX_REVIEW.replace("every 30 min", `every ${n} min`)).cadenceMinutes;
   assert.equal(every(1), 1);
   assert.equal(every(24 * 60), 24 * 60);
-  assert.throws(() => every(24 * 60 + 1), /cadence/);
+  assert.throws(() => every(24 * 60 + 1), /round timer/);
 });
 
 test("a file saved with Windows line endings reads the same", () => {

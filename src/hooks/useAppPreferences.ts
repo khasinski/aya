@@ -3,6 +3,7 @@ import {
   THEME_CODEC,
   MAC_OPTION_CODEC,
   LAYOUT_CODEC,
+  CHROME_STYLE_CODEC,
   HARNESS_NAME_CODEC,
   GITHUB_LINK_CODEC,
   HARNESS_SEARCH_CODEC,
@@ -14,6 +15,7 @@ import {
 } from "../app-preferences";
 import {
   APP_THEME_STORAGE_KEY,
+  CHROME_STYLE_STORAGE_KEY,
   CUSTOM_DONE_SOUND_STORAGE_KEY,
   CUSTOM_WAITING_SOUND_STORAGE_KEY,
   HARNESS_SEARCH_STORAGE_KEY,
@@ -50,6 +52,10 @@ export function useAppPreferences() {
     LAYOUT_MODE_STORAGE_KEY,
     LAYOUT_CODEC,
   );
+  const [chromeStyle, setChromeStyle] = usePersistentPreference(
+    CHROME_STYLE_STORAGE_KEY,
+    CHROME_STYLE_CODEC,
+  );
   const [harnessSearchEnabled, setHarnessSearchEnabled] =
     usePersistentPreference(HARNESS_SEARCH_STORAGE_KEY, HARNESS_SEARCH_CODEC);
   const [terminalSoundsEnabled, setTerminalSoundsEnabled] =
@@ -82,6 +88,8 @@ export function useAppPreferences() {
     setShowGitHubLink,
     layoutMode,
     setLayoutMode,
+    chromeStyle,
+    setChromeStyle,
     harnessSearchEnabled,
     setHarnessSearchEnabled,
     terminalSoundsEnabled,

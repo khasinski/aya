@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   getPreset,
   type Preset,
@@ -7,6 +7,7 @@ import {
   type Worktree,
 } from "../types";
 import { useDragReorder } from "../hooks/useDragReorder";
+import { handleMenuNavigation, handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
 import { paneRoles } from "../team-view";
 import { TerminalStatusDot } from "./TerminalStatusDot";
 import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
@@ -56,6 +57,12 @@ interface Props {
   /** Cross-project attention summary. Kept inside the sidebar so appearing
    *  notifications never reduce the terminal viewport height. */
   statusRail?: ReactNode;
+  /** Command Rail: replaces the "N terminals" header. */
+  header?: ReactNode;
+  /** Command Rail: appended to the scrolling list (other projects). */
+  extraSection?: ReactNode;
+  /** Command Rail: pinned under the launcher (usage bars). */
+  footer?: ReactNode;
   /** This project's teams, for role chips and the tab menu's Team role items. */
   teams?: TeamSummary[];
   onAssignTeamRole?: (team: string, role: string, paneId: string | null) => void;
@@ -70,6 +77,9 @@ function BellIcon() {
 }
 
 function SidebarImpl({
+  header,
+  extraSection,
+  footer,
   terminals,
   activeId,
   sidebarWidth,
@@ -112,12 +122,40 @@ function SidebarImpl({
   } | null>(null);
   const mobileLauncherRef = useRef<HTMLDivElement>(null);
   const [showMobileLauncher, setShowMobileLauncher] = useState(false);
+  const [focusTerminalAfterMove, setFocusTerminalAfterMove] = useState<{ id: string; index: number } | null>(null);
+  const [restoreMenuFocusId, setRestoreMenuFocusId] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    if (!focusTerminalAfterMove || terminals.findIndex((terminal) => terminal.id === focusTerminalAfterMove.id) !== focusTerminalAfterMove.index) return;
+    const id = focusTerminalAfterMove.id;
+    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>(".aya-sidebar-row[data-terminal-id]")]
+      .find((row) => row.dataset.terminalId === id)?.focus());
+    setFocusTerminalAfterMove(null);
+  }, [focusTerminalAfterMove, terminals]);
+  useLayoutEffect(() => {
+    if (menu || !restoreMenuFocusId) return;
+    const id = restoreMenuFocusId;
+    [...document.querySelectorAll<HTMLElement>(".aya-sidebar-row[data-terminal-id]")]
+      .find((row) => row.dataset.terminalId === id)?.focus();
+    setRestoreMenuFocusId(null);
+  }, [menu, restoreMenuFocusId, terminals]);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuOpenerRef = useRef<HTMLElement | null>(null);
+  const closeMenu = useCallback((restoreFocus = true) => {
+    const opener = menuOpenerRef.current;
+    setRestoreMenuFocusId(restoreFocus ? opener?.dataset.terminalId ?? null : null);
+    setMenu(null);
+  }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    const close = () => closeMenu(false);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenu();
+      }
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
@@ -125,7 +163,7 @@ function SidebarImpl({
       window.removeEventListener("mousedown", close);
       window.removeEventListener("keydown", onKey);
     };
-  }, [menu]);
+  }, [menu, closeMenu]);
   useEffect(() => {
     if (!showMobileLauncher) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -143,7 +181,21 @@ function SidebarImpl({
   }, [showMobileLauncher]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
+  const pendingRovingTerminalFocus = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (renamingId) inputRef.current?.select();
+  }, [renamingId]);
+  const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
+    ? focusedTerminalId
+    : activeId;
+  useLayoutEffect(() => {
+    const target = pendingRovingTerminalFocus.current;
+    if (!target) return;
+    pendingRovingTerminalFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedTerminalId]);
 
   // Worktrees are available for local repositories without an opt-in flag.
   const showWorktrees = worktrees.length > 0;
@@ -189,7 +241,6 @@ function SidebarImpl({
   const startRename = (t: TerminalState) => {
     setRenamingId(t.id);
     setDraft(t.name);
-    setTimeout(() => inputRef.current?.select(), 0);
   };
   const commit = () => {
     if (renamingId) {
@@ -242,11 +293,35 @@ function SidebarImpl({
         className={`aya-sidebar-row ${isActive ? "aya-sidebar-row--active" : ""} ${
           isDragging ? "aya-sidebar-row--dragging" : ""
         } ${dropClass}`}
+        role="listitem"
+        aria-current={isActive ? "true" : undefined}
+        tabIndex={rovingTerminalId === t.id ? 0 : -1}
         draggable={!isRenamingRow}
         {...itemHandlers(t.id)}
         onClick={() => onSelect(t.id)}
+        onFocus={() => setFocusedTerminalId(t.id)}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Delete") {
+            e.preventDefault();
+            onClose(t.id);
+            return;
+          }
+          if (isContextMenuKey(e.nativeEvent)) {
+            e.preventDefault();
+            menuOpenerRef.current = e.currentTarget;
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenu({ x: rect.left, y: rect.bottom, terminalId: t.id });
+            return;
+          }
+          handleRovingItemKeyDown(e, (target) => {
+            pendingRovingTerminalFocus.current = target;
+            setFocusedTerminalId(target.dataset.terminalId ?? null);
+          });
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
+          menuOpenerRef.current = e.currentTarget;
           setMenu({ x: e.clientX, y: e.clientY, terminalId: t.id });
         }}
         title={`${t.name} — ${t.cwd}`}
@@ -307,25 +382,31 @@ function SidebarImpl({
             {splitAssignments[t.id] + 1}
           </span>
         )}
-        <span
+        <button
+          type="button"
           className="aya-sidebar-close"
+          aria-hidden="true"
+          tabIndex={-1}
           onClick={(e) => {
             e.stopPropagation();
             onClose(t.id);
           }}
-          title="Close terminal"
+          aria-label={`Close terminal ${t.name}`}
+          title={`Close terminal ${t.name}`}
         >
           ×
-        </span>
+        </button>
       </div>
     );
   };
 
   return (
-    <nav className="aya-sidebar" aria-label="Terminals" style={{ width: sidebarWidth }}>
-      <div className="aya-sidebar-header">
-        <span>{terminals.length} terminals</span>
-      </div>
+    <nav aria-label="Terminals" className="aya-sidebar" style={{ width: sidebarWidth }}>
+      {header ?? (
+        <div className="aya-sidebar-header">
+          <span>{terminals.length} terminals</span>
+        </div>
+      )}
       <div className="aya-sidebar-list">
         {groups
           ? groups.map((g) => (
@@ -378,13 +459,15 @@ function SidebarImpl({
                   )}
                 </button>
                 {g.terminals.length > 0 ? (
-                  g.terminals.map(renderRow)
+                  <div role="list" aria-label={`Terminals in ${worktreeName(g.worktree.path)}`}>
+                    {g.terminals.map(renderRow)}
+                  </div>
                 ) : (
                   <div className="aya-worktree-empty">No terminals yet</div>
                 )}
               </div>
             ))
-          : terminals.map(renderRow)}
+          : <div role="list" aria-label="Terminals">{terminals.map(renderRow)}</div>}
         {(groups || projectRemote || onCreateWorktrees) && (
           <button
             type="button"
@@ -415,6 +498,7 @@ function SidebarImpl({
             </div>
           )}
         </div>
+        {extraSection}
       </div>
       <div className="aya-launcher">
         <div className="aya-launcher-label">
@@ -449,6 +533,7 @@ function SidebarImpl({
         </div>
         {statusRail}
       </div>
+      {footer}
       {createWorktreeTarget &&
         createWorktreeTarget.projectId === (projectId ?? "") &&
         createWorktreeTarget.projectDir === projectDir &&
@@ -488,46 +573,82 @@ function SidebarImpl({
       />
       {menu && (
         <div
+          ref={menuRef}
+          role="menu"
           className="aya-context-menu"
           style={{ left: menu.x, top: menu.y }}
           onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={handleMenuNavigation}
         >
           <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item"
             onClick={() => {
               const terminal = terminals.find((t) => t.id === menu.terminalId);
               if (terminal) startRename(terminal);
-              setMenu(null);
+              // The rename input is the next focus target; do not restore focus
+              // to the row while it is opening or its blur handler commits it.
+              closeMenu(false);
             }}
           >
             Rename terminal
           </button>
           <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item"
             disabled={!!terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked}
             title={terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? terminals.find(t=>t.id===menu.terminalId)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
             onClick={() => {
               onRestart(menu.terminalId);
-              setMenu(null);
+              closeMenu();
             }}
           >
             Restart terminal{terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? " - host recovering" : ""}
           </button>
           <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item"
             onClick={() => {
               onAssignToSplit(menu.terminalId);
-              setMenu(null);
+              closeMenu();
             }}
           >
             Show in active pane
           </button>
+          {(() => {
+            const index = terminals.findIndex((terminal) => terminal.id === menu.terminalId);
+            return (
+              <>
+                <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
+                  const id = menu.terminalId;
+                  setFocusTerminalAfterMove({ id, index: index - 1 });
+                  onReorder(moveItem(terminals.map((terminal) => terminal.id), index, -1));
+                  closeMenu(false);
+                }}>Move up</button>
+                <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= terminals.length - 1} className="aya-context-menu-item" onClick={() => {
+                  const id = menu.terminalId;
+                  setFocusTerminalAfterMove({ id, index: index + 1 });
+                  onReorder(moveItem(terminals.map((terminal) => terminal.id), index, 1));
+                  closeMenu(false);
+                }}>Move down</button>
+              </>
+            );
+          })()}
           {canSplitRight && (
             <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
               className="aya-context-menu-item"
               onClick={() => {
                 onSplitRight(menu.terminalId);
-                setMenu(null);
+                closeMenu();
               }}
             >
               Split right
@@ -535,10 +656,13 @@ function SidebarImpl({
           )}
           {canSplitBelow && (
             <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
               className="aya-context-menu-item"
               onClick={() => {
                 onSplitBelow(menu.terminalId);
-                setMenu(null);
+                closeMenu();
               }}
             >
               Split below
@@ -546,10 +670,13 @@ function SidebarImpl({
           )}
           {splitAssignments[menu.terminalId] !== undefined && (
             <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
               className="aya-context-menu-item"
               onClick={() => {
                 onRemoveFromSplit(menu.terminalId);
-                setMenu(null);
+                closeMenu();
               }}
             >
               Remove from split
@@ -561,14 +688,17 @@ function SidebarImpl({
               teams={teams}
               current={roles[menu.terminalId]}
               onAssign={onAssignTeamRole}
-              onDone={() => setMenu(null)}
+              onDone={() => closeMenu()}
             />
           )}
           <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item aya-context-menu-item--danger"
             onClick={() => {
               onClose(menu.terminalId);
-              setMenu(null);
+              closeMenu();
             }}
           >
             Close terminal

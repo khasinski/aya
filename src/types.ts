@@ -303,6 +303,10 @@ export interface ProjectGitInfo {
  *  top. The two are rendered by separate, self-contained layout components. */
 export type LayoutMode = "classic" | "projects-left";
 
+/** App-chrome look. "classic" is the original; "command-rail" is the denser
+ *  slate-blue skin (dark only). Independent of the window layout. */
+export type ChromeStyle = "classic" | "command-rail";
+
 export type GitHubLinkKind = "pr" | "branch";
 
 /** A GitHub URL for the active project's current branch: its open PR, or the
@@ -944,6 +948,8 @@ export interface AyaApi {
   /** Main asks this window to add panes as tabs; answer with teamPanesOpened. */
   onTeamOpenPanes(handler: (request: TeamOpenPanesRequest) => void): () => void;
   teamPanesOpened(requestId: string, error: string | null): Promise<void>;
+  /** Main asks this window to change one of its tabs (aya pane rename / close); answer with teamPanesOpened. */
+  onPaneChange(handler: (request: PaneChangeRequest) => void): () => void;
 
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;
@@ -1276,6 +1282,13 @@ export interface TeamOpenPanesRequest {
   requestId: string;
   projectSlug: string;
   panes: NewPane[];
+}
+
+export interface PaneChangeRequest {
+  requestId: string;
+  projectSlug: string;
+  paneId: string;
+  change: { rename: string } | { close: true };
 }
 
 /** The pane a role got: `preset` names a new session's preset, null an existing

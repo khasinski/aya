@@ -15,6 +15,8 @@ import {
   vtPaneAltScreen,
   writeVtPane,
 } from "../dist-electron/vt-state.js";
+import { vtSnapshot } from "../dist-electron/vt-mirror.js";
+import { asVtSnapshot } from "../dist-electron/pty-host-protocol.js";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "../dist-electron/constants.js";
 
 // xterm parses writes asynchronously, so a scan must come after a tick.
@@ -121,6 +123,23 @@ test("resize keeps the pane usable", async () => {
   await settle();
   assert.equal(screenShowsApproval(__testVtPane("p10").terminal), true);
   close();
+});
+
+test("the B4 cols-minus-one/back redraw nudge keeps applied mirror snapshots valid", async () => {
+  const id = "resize-nudge-snapshot";
+  openVtPane(id, 120, 40, () => {}, "codex");
+  try {
+    for (let i = 0; i < 80; i++) {
+      writeVtPane(id, `\x1b[${i % 38 + 1};${i % 118 + 1}H${"x".repeat(i % 117 + 1)}`);
+      resizeVtPane(id, 119, 40);
+      resizeVtPane(id, 120, 40);
+      const snapshot = await vtSnapshot(id);
+      assert.ok(snapshot, "a live pane should produce a snapshot");
+      assert.ok(asVtSnapshot(snapshot), "resized rows and cells must match the reported viewport");
+      assert.equal(snapshot.cols, 120);
+      assert.equal(snapshot.cells.length, snapshot.rows.length);
+    }
+  } finally { closeVtPane(id); }
 });
 
 test("closeAllVtPanes clears everything (host shutdown)", async () => {

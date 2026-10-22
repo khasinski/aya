@@ -41,13 +41,19 @@ if (require.main === module) (async () => {
   } : {};
   await build({ targets: (target === "darwin" ? Platform.MAC : Platform.LINUX).createTarget("dir", target === "darwin" ? Arch.arm64 : Arch.x64),
     publish: "never", config: { directories: { output }, electronDist: dist, npmRebuild: false, ...extraArtifacts,
-      mac: { identity: null, notarize: false } } });
+      mac: { identity: null, notarize: false },
+      afterPack: async (context) => {
+        await require("./after-pack-prune.cjs").default(context);
+        const resources = target === "darwin"
+          ? path.join(context.appOutDir, "Aya.app/Contents/Resources")
+          : path.join(context.appOutDir, "resources");
+        // afterPack precedes fuses and signing, which change Mach-O bytes.
+        exports.verifyBuildReceipt(path.join(resources, "app.asar.unpacked/dist-electron"), receipt);
+      } } });
   const app = path.join(output, "mac-arm64", "Aya.app");
   const resources = target === "darwin" ? path.join(app, "Contents/Resources") : path.join(output, "linux-unpacked/resources");
   const executable = target === "darwin" ? path.join(app, "Contents/MacOS/Aya") : path.join(output, "linux-unpacked/aya");
-  // Compare the staged bytes before signing changes their content. Merely
-  // recording a fresh hash would bless accidentally bundled stale binaries.
-  exports.verifyBuildReceipt(path.join(resources, "app.asar.unpacked/dist-electron"), receipt);
+  // The afterPack hook checked the exact staged build before signing.
   if (target === "darwin") {
     await require("./sign-macos.cjs").signStagedAdHoc(app);
     run("codesign", ["--verify", "--deep", "--strict", app]);

@@ -45,6 +45,9 @@ export function TeamRoleMenuItems({
         return (
           <button
             key={`${team}/${role}`}
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item"
             disabled={mine}
             onClick={() => {
@@ -58,6 +61,9 @@ export function TeamRoleMenuItems({
       })}
       {current && (
         <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
           className="aya-context-menu-item"
           onClick={() => {
             onAssign(current.team, current.role, null);
@@ -95,7 +101,7 @@ export function TeamAssignPrompt({
       >
         <div className="aya-modal-title">Assign team roles?</div>
         <div className="aya-modal-hint">
-          {project.name} defines the team {team.name} ({roles}) in .aya/teams/. No pane plays its roles yet.
+          {project.name} has the team {team.name} ({roles}). No pane plays its roles yet.
         </div>
         <div className="aya-modal-actions">
           <button className="aya-modal-btn" onClick={onDismiss}>
