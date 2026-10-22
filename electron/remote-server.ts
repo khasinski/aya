@@ -39,6 +39,39 @@ function sendJson(socket: net.Socket, value: unknown): void {
   socket.write(frame);
 }
 
+/** Retains at most one bounded, incomplete request frame per socket. Once the
+ * peer crosses the limit it is latched closed and later chunks are ignored. */
+export class RemoteRequestFrameBuffer {
+  private pending = "";
+  private closed = false;
+
+  get bufferedBytes(): number { return Buffer.byteLength(this.pending, "utf8"); }
+
+  push(chunk: Buffer | string): { frames: string[]; tooLarge: boolean } {
+    if (this.closed) return { frames: [], tooLarge: true };
+    let input = this.pending + (typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+    this.pending = "";
+    const frames: string[] = [];
+    while (true) {
+      const index = input.indexOf("\n");
+      if (index < 0) break;
+      const frame = input.slice(0, index);
+      if (Buffer.byteLength(frame, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+        this.closed = true;
+        return { frames, tooLarge: true };
+      }
+      frames.push(frame.trim());
+      input = input.slice(index + 1);
+    }
+    if (Buffer.byteLength(input, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+      this.closed = true;
+      return { frames, tooLarge: true };
+    }
+    this.pending = input;
+    return { frames, tooLarge: false };
+  }
+}
+
 // Terminal output includes ANSI control sequences by design. JSON.stringify
 // safely frames those bytes; applying printable here would corrupt PTY data.
 function sendTerminalJson(socket: net.Socket, value: unknown): void {
@@ -213,27 +246,10 @@ export function startRemoteServerOn(
         socket.end();
       });
 
-    let buffer = "";
+    const requestBuffer = new RemoteRequestFrameBuffer();
     socket.on("data", (chunk) => {
-      buffer += chunk;
-      while (true) {
-        const idx = buffer.indexOf("\n");
-        if (idx < 0) {
-          if (Buffer.byteLength(buffer, "utf8") > REMOTE_MAX_FRAME_BYTES) {
-            // Do not leave an oversized partial frame attached to a readable
-            // socket: a same-user client could keep appending forever.
-            buffer = "";
-            socket.destroy();
-          }
-          return;
-        }
-        if (Buffer.byteLength(buffer.slice(0, idx), "utf8") > REMOTE_MAX_FRAME_BYTES) {
-          buffer = "";
-          socket.destroy();
-          return;
-        }
-        const line = buffer.slice(0, idx).trim();
-        buffer = buffer.slice(idx + 1);
+      const { frames, tooLarge } = requestBuffer.push(chunk);
+      for (const line of frames) {
         if (!line) continue;
         try {
           void handleCommand(socket, options, JSON.parse(line), terminalSession);
@@ -241,6 +257,11 @@ export function startRemoteServerOn(
           const message = err instanceof Error ? err.message : String(err);
           sendJson(socket, remoteError("bad_json", message));
         }
+      }
+      if (tooLarge) {
+        // Destroy (rather than half-close) so no later reads can refill a
+        // buffer whose partial contents have already been discarded.
+        socket.destroy();
       }
     });
     socket.on("end", () => socket.end());
