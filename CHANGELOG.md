@@ -25,6 +25,8 @@ terminal processes that survive host crashes and updates.
 - **Pane state and CLI.** Add custom screen rules, inspect decisions with
   `aya pane state --explain`, and wait for panes with `aya pane wait`
   (#232, #242, #247).
+- **Remote terminals.** Remote panes run on the host, reconnect after dropped
+  connections and reattach after host restarts (#269, #270, #271).
 - **Aya Web.** A phone-sized layout and waiting-agent banners; host-changing
   actions stay in the desktop app (#264, #265, #272).
 - **Accessibility.** Keyboard navigation for Settings, consent dialogs and
