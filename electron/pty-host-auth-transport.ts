@@ -8,7 +8,7 @@ import {HostRedemptionServer} from "./pty-host-auth-redemption";
 export const HOST_AUTH_PENDING_CONNECTIONS = 32;
 export interface AuthenticatedHostSocket {peer: HostAuthPeer; buffered: string}
 export type AcceptedHostSocket=AuthenticatedHostSocket|{transferred:true};
-export type HostAuthRefusalReason = "connection-limit" | "peer-identity-unavailable" | "opening-frame-rejected" | "handover-redeem-refused" | "client-proof-missing-or-invalid" | "principal-busy";
+export type HostAuthRefusalReason = "connection-limit" | "peer-identity-unavailable" | "opening-frame-rejected" | "redemption-malformed" | "redemption-expired" | "redemption-stale-or-unknown-attempt" | "redemption-already-redeemed" | "redemption-other" | "ordinary-proof-not-sent" | "ticket-not-adopted" | "wrong-capability" | "principal-busy";
 export interface HostAuthRefusal {
   peerPid: number | null;
   peerStartIdentity: string | null;
@@ -143,22 +143,33 @@ export class HostSocketAuthenticator {
     socket.on("error", () => {});
     try {
       peer = this.readPeer(socket);
-      reason="opening-frame-rejected";
+      reason="ordinary-proof-not-sent";
       const first=await openingFrame(socket,deadline);
       let request:{type?:unknown}|null;
       try { request=JSON.parse(first.line) as {type?:unknown}|null; }
       catch { throw new HostAuthError(); }
       if(this.transfer&&request?.type==="pty-transfer-redeem"){
-        reason="handover-redeem-refused";
+        const redemption=new HostRedemptionServer(this.transfer,this.ownPeer,peer,()=>performance.now(),this.instance);
+        reason="redemption-malformed";
         if(first.buffered||performance.now()>=deadline)throw new HostAuthError();
-        const response=new HostRedemptionServer(this.transfer,this.ownPeer,peer,()=>performance.now(),this.instance).receive(first.line);
+        let response:string;
+        try { response=redemption.receive(first.line); }
+        catch { reason=`redemption-${redemption.refusalReason}` as HostAuthRefusalReason; throw new HostAuthError(); }
         if(performance.now()>=deadline)throw new HostAuthError();
         socket.end(response+"\n",()=>socket.destroy());
         const closing=setTimeout(()=>socket.destroy(),1000);closing.unref();socket.once("close",()=>clearTimeout(closing));
         return {transferred:true}; // stays in the pending budget until close
       }
-      reason="client-proof-missing-or-invalid";
-      const result = await handshake(socket, new HostAuthServer(this.key, this.ownPeer, peer, this.instance), peer, true, this.authorize,first.line+"\n"+first.buffered,deadline);
+      const session=new HostAuthServer(this.key,this.ownPeer,peer,this.instance);
+      reason="ordinary-proof-not-sent";
+      let result:AuthenticatedHostSocket;
+      try { result=await handshake(socket,session,peer,true,this.authorize,first.line+"\n"+first.buffered,deadline); }
+      catch(error) {
+        if(error instanceof HostPrincipalBusyError)throw error;
+        reason=this.transfer?.phase==="active"&&session.refusalStage!=="hello-not-accepted"?"ticket-not-adopted":
+          session.refusalStage==="proof-invalid"?"wrong-capability":"ordinary-proof-not-sent";
+        throw error;
+      }
       if(performance.now()>=deadline)throw new HostAuthError();
       this.pending.delete(socket);return result;
     } catch(error) {

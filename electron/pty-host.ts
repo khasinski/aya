@@ -635,7 +635,7 @@ void (async()=>{
   });
   ownAuthPeer={pid:process.pid,startIdentity:ownStart};authTransfer=new HostAuthTransfer(capability);
   socketAuthenticator=new HostSocketAuthenticator(capability,ownAuthPeer,peer=>principal.authorize(peer),undefined,authTransfer,{
-    handoverAttempt:()=>plannedCoreAttempt??plannedTransferAnnouncement,
+    handoverAttempt:()=>plannedCoreAttempt??plannedTransferAnnouncement??authTransfer.diagnosticAttempt,
     refused:details=>ptyLog.append("host-auth-refused",{...details}),
   });
   capability.fill(0);
