@@ -18,6 +18,7 @@ const MODULE = join(process.cwd(), "dist-electron", "remote-server.js");
 const { startRemoteServer, startRemoteServerOn } = await import(MODULE);
 const { REMOTE_MAX_FRAME_BYTES } = await import("../dist-electron/remote-protocol.js");
 const { RemoteRequestFrameBuffer } = await import("../dist-electron/remote-server.js");
+const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
 test.after(() => rmSync(AYA_HOME, { recursive: true, force: true }));
 
 const EMPTY_SNAPSHOT = {
@@ -102,6 +103,26 @@ test("a command that is not an object gets bad_request", async (t) => {
   for (const reply of replies(messages)) {
     assert.deepEqual([reply.type, reply.code], ["error", "bad_request"]);
   }
+});
+
+test("a changed identity on repeated session open gets an error and the socket keeps serving", async (t) => {
+  const terminalSessions = new RemotePtySessions({
+    listProjects: async () => [], listPresets: async () => [], spawn: async () => {},
+    write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  const { socket } = start(t, { terminalSessions });
+  const messages = await talk(socket, [
+    JSON.stringify({ type: "session:open", protocol: 2, id: "open-1", clientId: "client-a" }),
+    JSON.stringify({ type: "session:open", protocol: 2, id: "open-2", clientId: "client-b" }),
+    JSON.stringify({ type: "pty:list", protocol: 2, id: "list-1" }),
+  ], (items) => items.some((item) => item.id === "open-2") && items.some((item) => item.id === "list-1"));
+  assert.equal(messages.find((item) => item.id === "open-1")?.type, "session:ready");
+  const rejected = messages.find((item) => item.id === "open-2");
+  assert.ok(rejected, JSON.stringify(messages));
+  assert.equal(rejected?.type, "error");
+  assert.equal(rejected?.code, "command_failed");
+  assert.match(rejected?.message, /different client identity/);
+  assert.equal(messages.find((item) => item.id === "list-1")?.type, "pty:list-result");
 });
 
 test("request buffering stays capped and latches closed after an oversized frame", () => {
