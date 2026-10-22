@@ -1928,19 +1928,23 @@ export function SettingsModal({
               icon="mic"
               title="Microphone"
               control={(
-                <button
-                  className="aya-modal-btn"
-                  onClick={handleMicAction}
-                  disabled={micBusy}
-                >
-                  {micBusy
-                    ? "Working..."
-                    : micStatus === "not-determined"
-                      ? "Allow…"
-                      : micStatus === "granted"
-                        ? "Manage"
-                        : "Open System Settings"}
-                </button>
+                isWeb ? (
+                  <span className="aya-modal-hint">Available in the desktop app.</span>
+                ) : (
+                  <button
+                    className="aya-modal-btn"
+                    onClick={handleMicAction}
+                    disabled={micBusy}
+                  >
+                    {micBusy
+                      ? "Working..."
+                      : micStatus === "not-determined"
+                        ? "Allow…"
+                        : micStatus === "granted"
+                          ? "Manage"
+                          : "Open System Settings"}
+                  </button>
+                )
               )}
             >
               Aya never records. Used only by terminal tools you run (e.g. a
@@ -2248,23 +2252,27 @@ export function SettingsModal({
                     icon="restart_alt"
                     title="PTY host"
                     control={(
-                      <button
-                        className="aya-modal-btn"
-                        onClick={() => {
-                          if (
-                            confirm(
-                              "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
-                            )
-                          ) {
-                            void Promise.resolve(onRestartPtyHost()).then(async (failure) => {
-                              if (diagnostics || failure) await refreshDiagnostics();
-                              if (failure) setDiagnosticsError(failure);
-                            });
-                          }
-                        }}
-                      >
-                        Restart
-                      </button>
+                      isWeb ? (
+                        <span className="aya-modal-hint">Available in the desktop app.</span>
+                      ) : (
+                        <button
+                          className="aya-modal-btn"
+                          onClick={() => {
+                            if (
+                              confirm(
+                                "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
+                              )
+                            ) {
+                              void Promise.resolve(onRestartPtyHost()).then(async (failure) => {
+                                if (diagnostics || failure) await refreshDiagnostics();
+                                if (failure) setDiagnosticsError(failure);
+                              });
+                            }
+                          }}
+                        >
+                          Restart
+                        </button>
+                      )
                     )}
                   >
                     Restarts the background terminal host. Use after an update if
@@ -2308,13 +2316,17 @@ export function SettingsModal({
                                 </div>
                               ))}
                               {diagnostics.ptyHost.otherHosts.length > 0 && (
-                                <button
-                                  className="aya-modal-btn"
-                                  type="button"
-                                  onClick={() => void stopOtherHosts()}
-                                >
-                                  Stop other hosts
-                                </button>
+                                isWeb ? (
+                                  <span className="aya-modal-hint">Available in the desktop app.</span>
+                                ) : (
+                                  <button
+                                    className="aya-modal-btn"
+                                    type="button"
+                                    onClick={() => void stopOtherHosts()}
+                                  >
+                                    Stop other hosts
+                                  </button>
+                                )
                               )}
                             </div>
                           )}
