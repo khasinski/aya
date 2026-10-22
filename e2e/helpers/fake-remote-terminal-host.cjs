@@ -8,7 +8,15 @@ const hostScript = process.env.AYA_REMOTE_TEST_PTY_HOST;
 const stateFile = process.env.AYA_REMOTE_TEST_STATE;
 const mode = process.env.AYA_REMOTE_TEST_MODE;
 const project = { slug: "e2e-proj", name: "e2e", directory: projectDir, tabs: [] };
-const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "cat" };
+const configuredPresets = (() => {
+  try {
+    const value = JSON.parse(process.env.AYA_REMOTE_TEST_PRESETS || "[]");
+    return Array.isArray(value) && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+})();
+const presets = configuredPresets || [{ id: "shell", name: "Shell", icon: "$", color: "", command: "cat" }];
 fs.mkdirSync(path.join(home, "projects"), { recursive: true, mode: 0o700 });
 fs.writeFileSync(path.join(home, "projects", "e2e-proj.json"), JSON.stringify(project), { mode: 0o600 });
 
@@ -32,7 +40,7 @@ if (mode === "v2") {
   host = new PtyHostClient(hostScript);
   sessions = new RemotePtySessions({
     listProjects: async () => [project],
-    listPresets: async () => [preset],
+    listPresets: async () => presets,
     ensureCapacity: async () => {
       const status = await host.hostStatus();
       if (status.ptyCount >= MAX_PTY_PANES) throw new Error(`Aya can run at most ${MAX_PTY_PANES} terminals at once.`);
@@ -65,7 +73,7 @@ const stopServer = startRemoteServerOn(socket, {
   getSnapshot: async () => ({
     projects: [project],
     projectState: { version: 1, order: [project.slug], open: [project.slug], recent: [project.slug] },
-    presets: [preset],
+    presets,
   }),
   createProject: async (name, directory) => ({ slug: name, name, directory, tabs: [] }),
   ...(sessions ? { terminalSessions: sessions } : {}),

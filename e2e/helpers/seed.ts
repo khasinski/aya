@@ -353,7 +353,11 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     throw new Error(`seed: launchEnv HOME ${opts.launchEnv.HOME} is outside the seeded root`);
   }
   let launchEnv: Record<string, string> = { HOME: home, ...opts.launchEnv };
-  if (opts.remoteTerminalHost) launchEnv.AYA_REMOTE_SOCKET = join(root, "remote-terminal.sock");
+  // Remote-project specs that do not opt into the v2 fixture represent an old
+  // host. Give the v2 probe a real v1 server so it can select the documented
+  // direct-SSH fallback instead of connecting to the local Aya's own socket.
+  const remoteTerminalHost = opts.remoteTerminalHost ?? (opts.remoteProject ? "v1" : undefined);
+  if (remoteTerminalHost) launchEnv.AYA_REMOTE_SOCKET = join(root, "remote-terminal.sock");
   const prependPath = (bin: string) => (launchEnv = { ...launchEnv, PATH: `${bin}:${launchEnv.PATH ?? process.env.PATH}` });
   const homeFiles = { ...opts.homeFiles };
   // A login shell stand-in: runs the -c script, ignores -l and -i.

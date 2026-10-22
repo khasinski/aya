@@ -250,7 +250,8 @@ export const test = base.extend<{
 
   app: async ({ seeded, seedOptions }, use) => {
     let remoteTerminalHost: ReturnType<typeof spawn> | null = null;
-    if (seedOptions.remoteTerminalHost) {
+    const remoteHostMode = seedOptions.remoteTerminalHost ?? (seedOptions.remoteProject ? "v1" : undefined);
+    if (remoteHostMode) {
       const remoteHome = join(seeded.root, "remote-terminal-host-home");
       const remoteSocket = seeded.launchEnv?.AYA_REMOTE_SOCKET;
       if (!remoteSocket) throw new Error("remote terminal host fixture is missing AYA_REMOTE_SOCKET");
@@ -258,10 +259,11 @@ export const test = base.extend<{
         ...appEnv(seeded, process.env, false),
         AYA_HOME: remoteHome,
         AYA_REMOTE_SOCKET: remoteSocket,
-        AYA_REMOTE_TEST_MODE: seedOptions.remoteTerminalHost,
+        AYA_REMOTE_TEST_MODE: remoteHostMode,
         AYA_REMOTE_TEST_PROJECT: seeded.projectDir,
         AYA_REMOTE_TEST_PTY_HOST: PTY_HOST_SCRIPT,
         AYA_REMOTE_TEST_STATE: join(seeded.root, "remote-terminal-state.json"),
+        AYA_REMOTE_TEST_PRESETS: JSON.stringify(seedOptions.presetList ?? []),
       };
       remoteTerminalHost = spawn(process.execPath, [join(APP_ROOT, "e2e/helpers/fake-remote-terminal-host.cjs")], {
         cwd: APP_ROOT,
