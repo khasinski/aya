@@ -379,6 +379,7 @@ function TopBarImpl({
               onClick={() => !isRenaming && onSelectProject(p.slug)}
               onFocus={() => setFocusedProjectSlug(p.slug)}
               onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
                 if (e.key === "Delete") {
                   e.preventDefault();
                   onCloseProject(p.slug);

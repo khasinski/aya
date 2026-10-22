@@ -45,6 +45,8 @@ let windowAnswer = async () => {};
 const socket = join(root, "aya.sock");
 const stop = startControlServerOn(socket, {
   getWindow: () => null,
+  // The real test runner may itself descend from a Codex daemon.
+  processTable: async (pid) => new Map([[pid, { ppid: 1, command: "aya-cli-test" }]]),
   openProject: () => {},
   listProjects: async () => PROJECTS,
   team: { teamHome },

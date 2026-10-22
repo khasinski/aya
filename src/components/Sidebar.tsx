@@ -301,6 +301,7 @@ function SidebarImpl({
         onClick={() => onSelect(t.id)}
         onFocus={() => setFocusedTerminalId(t.id)}
         onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
           if (e.key === "Delete") {
             e.preventDefault();
             onClose(t.id);

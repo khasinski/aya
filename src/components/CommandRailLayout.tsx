@@ -4,7 +4,7 @@ import { useDragReorder } from "../hooks/useDragReorder";
 import type { ProjectConfig, TeamSummary, UsageAccount } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { unreadTotal } from "../team-view";
-import { averageUsagePct } from "./UsageChip";
+import { averageUsagePct, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 
 interface ProjectAttention {
@@ -305,11 +305,14 @@ function CommandRailLayoutImpl({
           </button>
         </div>
       </nav>
-      {body ?? (
-        <div
+      {body ? (
+        <main aria-label="Terminal workspace"><h1 className="aya-visually-hidden">Aya</h1>{body}</main>
+      ) : (
+        <main aria-label="Terminal workspace"
           className="aya-main aya-cr-main"
           style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
         >
+          <h1 className="aya-visually-hidden">Aya</h1>
           {sidebar}
           <div className="aya-cr-stage">
             <header className="aya-cr-crumbs">
@@ -331,7 +334,7 @@ function CommandRailLayoutImpl({
             </header>
             {panes}
           </div>
-        </div>
+        </main>
       )}
       {projectMenu && (
         <div
@@ -494,17 +497,20 @@ export function CommandRailProjects({
 export function CommandRailUsage({
   claude = [],
   codex = [],
+  antigravity = [],
 }: {
   claude?: UsageAccount[];
   codex?: UsageAccount[];
+  antigravity?: UsageAccount[];
 }) {
   const rows = [
     { label: "Claude", accounts: claude, color: CLAUDE_BRAND_COLOR },
     { label: "Codex", accounts: codex, color: CODEX_BRAND_COLOR },
   ].filter((row) => row.accounts.length > 0);
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && antigravity.length === 0) return null;
   return (
     <div className="aya-cr-usage">
+      {antigravity.length > 0 && <UsageChip accounts={antigravity} label="Antigravity" accent="#4285f4" showHarnessName quotaGroups />}
       {rows.map((row) => {
         const { pct, ring } = averageUsagePct(row.accounts);
         const shown = Math.max(0, Math.min(100, Math.round(pct)));

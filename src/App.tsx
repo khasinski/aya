@@ -1167,6 +1167,7 @@ export function App() {
             }
             projectId={activeProjectId ?? undefined}
             projectRemote={Boolean(activeProject?.remote)}
+            projectRemoteHost={activeProject?.remote?.label}
             onCreateWorktrees={createWorktreesForProject}
             onStartWorktrees={(projectId, preset, checkouts, prompt) => {
               for (const checkout of checkouts) {
@@ -1216,7 +1217,7 @@ export function App() {
             }
             footer={
               commandRail ? (
-                <CommandRailUsage claude={usageAccounts} codex={codexUsageAccounts} />
+                <CommandRailUsage claude={usageAccounts} codex={codexUsageAccounts} antigravity={antigravityUsageAccounts} />
               ) : undefined
             }
           />

@@ -1108,7 +1108,7 @@ export class PtyHostClient {
   async paneBusy(ptyId: string): Promise<boolean> {
     try {
       const value = await this.request({ id: 0, type: "snapshot", ptyId });
-      if (value === "disconnected") return false;
+      if (value === null || value === "starting" || value === "disconnected") return false;
       const problem = vtSnapshotValidationError(value);
       if (problem) { logInvalidSnapshotOnce(ptyId, problem); return false; }
       invalidSnapshotLogged.delete(ptyId);

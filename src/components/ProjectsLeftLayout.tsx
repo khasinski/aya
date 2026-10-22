@@ -536,6 +536,7 @@ function ProjectsLeftLayoutImpl({
                 onClick={() => !isRenaming && onSelectTerminal(t.id)}
                 onFocus={() => setFocusedTerminalId(t.id)}
                 onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
                   if (e.key === "Delete") {
                     e.preventDefault();
                     onCloseTerminal(t.id);
@@ -856,6 +857,7 @@ function ProjectsLeftLayoutImpl({
                   onClick={() => !isRenaming && onSelectProject(p.slug)}
                   onFocus={() => setFocusedProjectSlug(p.slug)}
                   onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === "Delete") {
                       e.preventDefault();
                       onCloseProject(p.slug);
@@ -995,7 +997,7 @@ function ProjectsLeftLayoutImpl({
             {commandRail ? "Open project" : "New project"}
           </button>
           {commandRail && (
-            <CommandRailUsage claude={usageAccounts} codex={codexUsageAccounts} />
+            <CommandRailUsage claude={usageAccounts} codex={codexUsageAccounts} antigravity={antigravityUsageAccounts} />
           )}
           <div
             className="aya-projectrail-resize"
@@ -1139,10 +1141,11 @@ function ProjectsLeftLayoutImpl({
       <>
         <div className="aya-cr aya-cr--b" style={{ gridTemplateColumns: `${railWidth}px 1fr` }}>
           {railNode}
-          <div className="aya-cr-b-main">
+          <main aria-label="Terminal workspace" className="aya-cr-b-main">
+            <h1 className="aya-visually-hidden">Aya</h1>
             {topbarNode}
             {body}
-          </div>
+          </main>
         </div>
         {menusNode}
       </>
@@ -1151,13 +1154,14 @@ function ProjectsLeftLayoutImpl({
   return (
     <>
       {topbarNode}
-      <div
+      <main aria-label="Terminal workspace"
         className="aya-main aya-main--alt"
         style={{ gridTemplateColumns: `${railWidth}px 1fr` }}
       >
+        <h1 className="aya-visually-hidden">Aya</h1>
         {railNode}
         {body}
-      </div>
+      </main>
       {menusNode}
     </>
   );

@@ -4,7 +4,8 @@ import { test, expect } from './fixtures';
 
 test.use({ seedOptions: { fakeHome: true, fakeBins: ['agy'] } });
 
-test('Antigravity ring shows the most-used limit with separate model pools', async ({ app, window, seeded }) => {
+for (const layout of ['classic', 'projects-left', 'command-rail', 'command-rail-left']) {
+test(`Antigravity ring (${layout}) shows the most-used limit with separate model pools`, async ({ app, window, seeded }) => {
   const end = new Date(Date.now() + 86400_000).toISOString();
   const bucket = (window: string, remaining_fraction: number) => ({ window, remaining_fraction, reset_time: end });
   const data = { status: 'SUCCESS', command: { name: 'usage', data: { groups: [
@@ -18,6 +19,10 @@ test('Antigravity ring shows the most-used limit with separate model pools', asy
     const presets = await window.aya.listPresets();
     await window.aya.savePresets([...presets, { id: 'antigravity', name: 'Antigravity', icon: 'a', color: '', agent: 'antigravity', command: 'agy' }]);
   });
+  await window.evaluate((layout) => {
+    localStorage.setItem('aya:layout-mode', layout.endsWith('left') ? 'projects-left' : 'classic');
+    localStorage.setItem('aya:chrome-style', layout.startsWith('command-rail') ? 'command-rail' : 'classic');
+  }, layout);
   await window.reload();
   const chip = window.getByRole('button', { name: 'Antigravity usage, account-wide' });
   await expect(chip).toContainText('90%', { timeout: 15_000 });
@@ -33,3 +38,5 @@ test('Antigravity ring shows the most-used limit with separate model pools', asy
   await expect(menu).toContainText('resets');
   await expect(menu).not.toContainText('2 accounts');
 });
+
+}
