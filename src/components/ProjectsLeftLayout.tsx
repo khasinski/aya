@@ -261,15 +261,23 @@ function ProjectsLeftLayoutImpl({
   useLayoutEffect(() => {
     if (menu || !restoreTerminalFocusId) return;
     const id = restoreTerminalFocusId;
-    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>('.aya-topbar--alt .aya-termtab-list [role="tab"][data-terminal-id]')]
-      .find((item) => item.dataset.terminalId === id)?.focus());
+    const opener = terminalMenuOpenerRef.current;
+    const target = opener?.isConnected && opener.dataset.terminalId === id
+      ? opener
+      : [...document.querySelectorAll<HTMLElement>('.aya-topbar--alt .aya-termtab-list [role="tab"][data-terminal-id]')]
+        .find((item) => item.dataset.terminalId === id);
+    target?.focus();
     setRestoreTerminalFocusId(null);
   }, [menu, restoreTerminalFocusId, terminals]);
   useLayoutEffect(() => {
     if (projectMenu || !restoreProjectFocusSlug) return;
     const slug = restoreProjectFocusSlug;
-    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>(".aya-projectrail-list .aya-railtab[data-project-slug]")]
-      .find((item) => item.dataset.projectSlug === slug)?.focus());
+    const opener = projectMenuOpenerRef.current;
+    const target = opener?.isConnected && opener.dataset.projectSlug === slug
+      ? opener
+      : [...document.querySelectorAll<HTMLElement>(".aya-projectrail-list .aya-railtab[data-project-slug]")]
+        .find((item) => item.dataset.projectSlug === slug);
+    target?.focus();
     setRestoreProjectFocusSlug(null);
   }, [projectMenu, restoreProjectFocusSlug, projects]);
 

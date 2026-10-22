@@ -14,7 +14,9 @@ async function focusAppContents(app: ElectronApplication) {
     window.webContents.focus();
     return window.isVisible();
   });
-  expect(visible).toBe(false);
+  // CI runs Electron under Xvfb with a visible window so keyboard events have
+  // an active native window. Local e2e runs must remain hidden.
+  if (!process.env.CI) expect(visible).toBe(false);
 }
 
 async function dragProjectAfter(window: import("@playwright/test").Page) {
@@ -204,8 +206,9 @@ test.describe("keyboard access to project and terminal lists", () => {
     await expect(window.locator('.aya-project-tablist [role="tab"]')).toHaveCount(1);
   });
 
-  test("projects-left project list and terminal tabs are keyboard-operable", async ({ window }) => {
+  test("projects-left project list and terminal tabs are keyboard-operable", async ({ app, window }) => {
     await reloadInProjectsLeftLayout(window);
+    await focusAppContents(app);
     await waitForTerminalFocus(window);
     const projects = window.getByRole("list", { name: "Projects" }).getByRole("listitem");
     await expect(projects).toHaveCount(2);
