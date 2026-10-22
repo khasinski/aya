@@ -166,8 +166,12 @@ export class HostSocketAuthenticator {
       try { result=await handshake(socket,session,peer,true,this.authorize,first.line+"\n"+first.buffered,deadline); }
       catch(error) {
         if(error instanceof HostPrincipalBusyError)throw error;
-        reason=this.transfer?.phase==="active"&&session.refusalStage!=="hello-not-accepted"?"ticket-not-adopted":
-          session.refusalStage==="proof-invalid"?"wrong-capability":"ordinary-proof-not-sent";
+        // A rejected proof is evidence of a bad capability even during a
+        // handover. Only a valid hello that waits for redemption without
+        // submitting proof is classified as a ticket the successor has not
+        // adopted yet.
+        reason=session.refusalStage==="proof-invalid"?"wrong-capability":
+          this.transfer?.phase==="active"&&session.refusalStage==="awaiting-proof"?"ticket-not-adopted":"ordinary-proof-not-sent";
         throw error;
       }
       if(performance.now()>=deadline)throw new HostAuthError();
