@@ -116,7 +116,10 @@ test('same-user ancestor ABA is outside the identity guarantee but never bypasse
   try{
    for(const parent of [active,replacement]){fs.mkdirSync(parent,{mode:0o700});fs.mkdirSync(path.join(parent,'screen-rules'),{mode:0o700});}
    fs.writeFileSync(path.join(directory,'claude.json'),bytes(envelope('claude',[rule('original')])),{mode:0o600});
-   fs.writeFileSync(path.join(replacement,'screen-rules','claude.json'),bytes(envelope('claude',[rule('replacement')])),{mode:safe?0o600:0o644});
+   const replacementFile=path.join(replacement,'screen-rules','claude.json');
+   fs.writeFileSync(replacementFile,bytes(envelope('claude',[rule('replacement')])),{mode:safe?0o600:0o644});
+   // Creation modes are filtered by umask; force the unsafe replacement's mode explicitly.
+   if(!safe)fs.chmodSync(replacementFile,0o644);
    fs.opendirSync=(name,...args)=>{if(name===directory&&!swapped){fs.renameSync(active,parked);fs.renameSync(replacement,active);swapped=true;}return opendir(name,...args);};
    fs.lstatSync=(name,...args)=>{const stat=lstat(name,...args);if(name===path.join(directory,'claude.json'))restore();return stat;};
    if(safe)assert.equal(readUserScreenRules(directory,builtin).sets.claude[0].id,'replacement','trusted same-user replacement has no extra rule authority');
