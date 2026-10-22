@@ -41,4 +41,5 @@ test("closing the only project tab drops to the empty state", async ({ window })
   await expect(window.locator(".aya-topbar .aya-tab")).toHaveCount(0);
   // the empty state offers to open a directory
   await expect(window.getByText("Open directory")).toBeVisible();
+  await expect(window.getByRole("main", { name: "Terminal workspace" })).toHaveCount(1);
 });

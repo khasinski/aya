@@ -14,7 +14,7 @@ export function EmptyState({
   onDismissNoHarnessHint,
 }: Props) {
   return (
-    <main className="aya-empty">
+    <div className="aya-empty">
       <div className="aya-empty-mark" aria-hidden="true">
         <span />
       </div>
@@ -45,17 +45,17 @@ export function EmptyState({
           </button>
         </div>
       )}
-    </main>
+    </div>
   );
 }
 
 export function LoadingState() {
   return (
-    <main className="aya-empty aya-empty--loading" aria-busy="true">
+    <div className="aya-empty aya-empty--loading" aria-busy="true">
       <div className="aya-empty-mark" aria-hidden="true">
         <span />
       </div>
       <h1>Opening Aya...</h1>
-    </main>
+    </div>
   );
 }

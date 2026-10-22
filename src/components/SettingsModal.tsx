@@ -329,6 +329,7 @@ export function SettingsModal({
   initialTab = "general",
 }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const consentOpenerRef = useRef<HTMLElement | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [draft, setDraft] = useState<DraftPreset[]>(() => presets.map(toDraft));
   const [activePresetKey, setActivePresetKey] = useState<string | null>(null);
@@ -522,7 +523,7 @@ export function SettingsModal({
   // disabling removes both. The Aya process itself never reads a token or hits
   // the endpoint — that only happens later in the script, run by Claude Code.
   const enableUsageHook = async () => {
-    setShowUsageConsent(false);
+    closeConsent(() => setShowUsageConsent(false));
     setUsageHookBusy(true);
     try {
       setUsageHook(await window.aya.installUsageHook());
@@ -545,7 +546,7 @@ export function SettingsModal({
   // The generated script only reports into the current Aya pane and no-ops in any
   // Claude session run outside Aya.
   const enableStatusHook = async () => {
-    setShowStatusConsent(false);
+    closeConsent(() => setShowStatusConsent(false));
     setStatusHookBusy(true);
     try {
       setStatusHook(await window.aya.installStatusHook());
@@ -702,6 +703,19 @@ export function SettingsModal({
       !existingIds.has(h.id),
   );
 
+  const closeConsent = (close: () => void) => {
+    const opener = consentOpenerRef.current;
+    close();
+    window.requestAnimationFrame(() => {
+      if (opener?.isConnected && !opener.hasAttribute("disabled")) {
+        opener.focus();
+      } else {
+        dialogRef.current?.focus();
+      }
+      consentOpenerRef.current = null;
+    });
+  };
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -713,38 +727,46 @@ export function SettingsModal({
       "textarea:not([disabled])",
       '[tabindex]:not([tabindex="-1"])',
     ].join(",");
+    const topmostDialog = () =>
+      dialog.querySelector<HTMLElement>(".aya-settings-consent-dialog") ?? dialog;
     const focusable = () =>
-      [...dialog.querySelectorAll<HTMLElement>(focusableSelector)].filter(
+      [...topmostDialog().querySelectorAll<HTMLElement>(focusableSelector)].filter(
         (element) => element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0,
       );
-    (focusable()[0] ?? dialog).focus();
+    (focusable()[0] ?? topmostDialog()).focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        if (showUsageConsent) {
+          closeConsent(() => setShowUsageConsent(false));
+        } else if (showStatusConsent) {
+          closeConsent(() => setShowStatusConsent(false));
+        } else {
+          onClose();
+        }
         return;
       }
       if (e.key !== "Tab") return;
       const items = focusable();
       if (!items.length) {
         e.preventDefault();
-        dialog.focus();
+        topmostDialog().focus();
         return;
       }
       const first = items[0];
       const last = items[items.length - 1];
       const active = document.activeElement;
-      if (e.shiftKey && (active === first || !dialog.contains(active))) {
+      if (e.shiftKey && (active === first || !topmostDialog().contains(active))) {
         e.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+      } else if (!e.shiftKey && (active === last || !topmostDialog().contains(active))) {
         e.preventDefault();
         first.focus();
       }
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [onClose, showStatusConsent, showUsageConsent]);
 
   // Small wrappers that also mark a slice as dirty whenever the user edits its
   // draft, the same way the theme setters call setThemesDirty(true). The dirty
@@ -1097,7 +1119,11 @@ export function SettingsModal({
             }}
           >
             <div
-              className="aya-modal"
+              className="aya-modal aya-settings-consent-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Enable the usage chip?"
+              tabIndex={-1}
               style={{ maxWidth: 460 }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -1125,7 +1151,7 @@ export function SettingsModal({
               >
                 <button
                   className="aya-modal-btn"
-                  onClick={() => setShowUsageConsent(false)}
+                  onClick={() => closeConsent(() => setShowUsageConsent(false))}
                 >
                   Cancel
                 </button>
@@ -1153,7 +1179,11 @@ export function SettingsModal({
             }}
           >
             <div
-              className="aya-modal"
+              className="aya-modal aya-settings-consent-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Enable automatic status?"
+              tabIndex={-1}
               style={{ maxWidth: 460 }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -1188,7 +1218,7 @@ export function SettingsModal({
               >
                 <button
                   className="aya-modal-btn"
-                  onClick={() => setShowStatusConsent(false)}
+                  onClick={() => closeConsent(() => setShowStatusConsent(false))}
                 >
                   Cancel
                 </button>
@@ -1202,7 +1232,7 @@ export function SettingsModal({
             </div>
           </div>
         )}
-        <div className="aya-settings-chrome">
+        <div className="aya-settings-chrome" inert={showUsageConsent || showStatusConsent}>
           <div className="aya-settings-toolbar" role="tablist" aria-label="Settings">
             {tabItems.map((item) => (
               <button
@@ -1717,7 +1747,10 @@ export function SettingsModal({
               onClick={
                 usageHook?.installed
                   ? disableUsageHook
-                  : () => setShowUsageConsent(true)
+                  : (event) => {
+                      consentOpenerRef.current = event.currentTarget;
+                      setShowUsageConsent(true);
+                    }
               }
               disabled={usageHookBusy || !usageHook}
             >
@@ -1742,7 +1775,10 @@ export function SettingsModal({
               onClick={
                 statusHook?.installed
                   ? disableStatusHook
-                  : () => setShowStatusConsent(true)
+                  : (event) => {
+                      consentOpenerRef.current = event.currentTarget;
+                      setShowStatusConsent(true);
+                    }
               }
               disabled={statusHookBusy || !statusHook}
             >
@@ -2699,7 +2735,7 @@ export function SettingsModal({
           </div>
         </div>
 
-        <div className="aya-modal-actions aya-settings-actions">
+        <div className="aya-modal-actions aya-settings-actions" inert={showUsageConsent || showStatusConsent}>
           {activeTab === "presets" ? (
             <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>
               Reset presets to defaults

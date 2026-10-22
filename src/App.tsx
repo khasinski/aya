@@ -1197,7 +1197,11 @@ export function App() {
               showUsageHarnessName={showUsageHarnessName}
             />
             {body ? (
-              <main className="aya-main" aria-label="Terminal workspace">
+              <main
+                className="aya-main"
+                aria-label="Terminal workspace"
+                style={{ gridTemplateColumns: "1fr" }}
+              >
                 <h1 className="aya-visually-hidden">Aya</h1>
                 {body}
               </main>
