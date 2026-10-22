@@ -51,8 +51,8 @@ Usage:
                                      Rename a pane's tab
   aya pane close target [--force] [--project slug]
                                      Close a pane and stop its process; only
-                                     an idle, shell or exited pane without
-                                     --force
+                                     an idle agent or exited pane of this
+                                     project, in no team role, without --force
   aya team whoami                    Print this pane's team role and protocol
   aya team show [team] [--json]      Print the whole team as Aya runs it: every
                                      role, the lead, cadence and protocol (no
