@@ -613,10 +613,12 @@ export function appEnv(
   if (env.OPENCODE_CONFIG_DIR) env.OPENCODE_CONFIG_DIR = join(home, ".config", "opencode");
   if (e2eFlags) {
     env.AYA_E2E_PTY_SHUTDOWN = "1";
-    if (!base.CI) env.AYA_E2E_HEADLESS = "1";
   }
   Object.assign(env, seeded.launchEnv);
   if (e2eFlags) {
+    // Keep local Electron windows hidden even when a seed supplies other
+    // launch variables. CI uses xvfb; local runs must never raise app windows.
+    if (!base.CI) env.AYA_E2E_HEADLESS = "1";
     env.AYA_E2E_RUN = "1";
     env.AYA_E2E_OPEN_EXTERNAL_LOG = join(seeded.root, "e2e-open-external.log");
     env.AYA_E2E_GIT_PUBLISH_STATUS_LOG = join(seeded.root, "e2e-git-publish-status.log");

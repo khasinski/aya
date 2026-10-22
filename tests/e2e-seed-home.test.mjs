@@ -92,6 +92,17 @@ test("appEnv: config dirs the runner never set stay unset", () => {
   }
 });
 
+test("appEnv: a seed cannot disable hidden local e2e windows", () => {
+  const { seedEnv, appEnv } = seedModule();
+  const seeded = seedEnv({ launchEnv: { AYA_E2E_HEADLESS: "0" } });
+  try {
+    const env = appEnv(seeded, { PATH: "/usr/bin" });
+    assert.equal(env.AYA_E2E_HEADLESS, "1");
+  } finally {
+    rmSync(seeded.root, { recursive: true, force: true });
+  }
+});
+
 const listTs = (dir) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? listTs(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],

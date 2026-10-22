@@ -16,10 +16,10 @@ import {
   findProject,
   findProjectSlugForSession,
   mergeGitInfo,
+  resumePanesForProjects,
   samePollPayload,
   sameProjectBadges,
   sameSessionRecords,
-  sessionDir,
   uniquePresetId,
   type MissingDirEntry,
   type NewProjectModalState,
@@ -88,7 +88,6 @@ import {
 import {
   WAITING_ON,
   type Snippet,
-  getPreset,
   type Preset,
   type ProjectCollectionState,
   type ProjectConfig,
@@ -734,12 +733,7 @@ export function App() {
       ? (remotePresetsByProject[activeProjectId] ?? presets)
       : presets;
   const resumePanes = useMemo(
-    () =>
-      Object.values(terminals).map((t) => {
-        const project = findProject(projects, t.projectSlug);
-        const list = project?.remote ? (remotePresetsByProject[t.projectSlug] ?? presets) : presets;
-        return { id: t.id, preset: getPreset(list, t.presetId), cwd: sessionDir(project, t) };
-      }),
+    () => resumePanesForProjects(projects, terminals, presets, remotePresetsByProject),
     [terminals, projects, presets, remotePresetsByProject],
   );
   // Once two panes of an agent have shared a folder, neither may ever "continue
@@ -1028,6 +1022,39 @@ export function App() {
     splitPaneRight: () => splitActivePane("right"),
     splitPaneBelow: () => splitActivePane("below"),
   });
+
+  useEffect(() => {
+    const onTerminalRegionKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.key !== "Tab" || chromeBlocked) return;
+      const active = document.activeElement as HTMLElement | null;
+      const terminalInput = active?.matches(".xterm-helper-textarea") ?? false;
+      if (event.shiftKey) {
+        if (terminalInput) return;
+        const pane = isSplit
+          ? document.querySelector<HTMLElement>(".aya-pane--active-split")
+          : activeTabId
+            ? document.querySelector<HTMLElement>(`[data-testid="terminal-pane"][data-terminal-id="${CSS.escape(activeTabId)}"]`)
+            : null;
+        const textarea = pane?.querySelector<HTMLElement>(".xterm-helper-textarea");
+        if (!textarea) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        textarea.focus();
+        return;
+      }
+      if (!terminalInput) return;
+      const selector = layoutMode === "projects-left"
+        ? '.aya-termtab[role="tab"][aria-selected="true"]'
+        : '.aya-sidebar-row[role="listitem"][aria-current="true"]';
+      const nextRegion = document.querySelector<HTMLElement>(selector);
+      if (!nextRegion) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      nextRegion.focus();
+    };
+    document.addEventListener("keydown", onTerminalRegionKeyDown, true);
+    return () => document.removeEventListener("keydown", onTerminalRegionKeyDown, true);
+  }, [activeTabId, chromeBlocked, isSplit, layoutMode]);
 
   useDoubleShiftSearch({
     enabled: !chromeBlocked,

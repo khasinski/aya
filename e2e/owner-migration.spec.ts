@@ -82,7 +82,7 @@ for (const action of ["restart", "close pane", "close project"]) test(`a real in
   });
   const row = second.window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');
   const told = new Promise<string>(resolve => second.window.once("dialog", dialog => { resolve(dialog.message()); void dialog.accept(); }));
-  if (action === "close project") await second.window.getByTitle("Close project", { exact: true }).click();
+  if (action === "close project") await second.window.getByTitle(/^Close project /).click();
   else {
     await row.click({ button: "right" });
     await second.window.locator(".aya-context-menu-item", { hasText: action === "restart" ? "Restart terminal" : "Close terminal" }).click();

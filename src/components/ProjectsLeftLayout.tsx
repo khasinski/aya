@@ -3,7 +3,7 @@ import {
   MENU_VIEWPORT_EDGE_PX,
   MENU_ANCHOR_GAP_PX,
 } from "../ui-constants";
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR, GROK_BRAND_COLOR } from "../colors";
 import {
   getPreset,
@@ -16,6 +16,7 @@ import {
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { useDragReorder } from "../hooks/useDragReorder";
+import { handleMenuNavigation, handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
 import { TerminalStatusDot } from "./TerminalStatusDot";
 import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
@@ -156,6 +157,28 @@ function ProjectsLeftLayoutImpl({
   const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || [];
   const roles = paneRoles(activeTeams);
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
+  const [focusedProjectSlug, setFocusedProjectSlug] = useState<string | null>(null);
+  const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
+  const pendingRovingProjectFocus = useRef<HTMLElement | null>(null);
+  const pendingRovingTerminalFocus = useRef<HTMLElement | null>(null);
+  const rovingProjectSlug = projects.some((project) => project.slug === focusedProjectSlug)
+    ? focusedProjectSlug
+    : activeProjectId;
+  const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
+    ? focusedTerminalId
+    : activeTerminalId;
+  useLayoutEffect(() => {
+    const target = pendingRovingProjectFocus.current;
+    if (!target) return;
+    pendingRovingProjectFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedProjectSlug]);
+  useLayoutEffect(() => {
+    const target = pendingRovingTerminalFocus.current;
+    if (!target) return;
+    pendingRovingTerminalFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedTerminalId]);
   const [projectDraft, setProjectDraft] = useState("");
   const projectInputRef = useRef<HTMLInputElement>(null);
   const {
@@ -196,6 +219,9 @@ function ProjectsLeftLayoutImpl({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [termDraft, setTermDraft] = useState("");
   const termInputRef = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (renamingId) termInputRef.current?.select();
+  }, [renamingId]);
   const {
     dragId,
     dropTarget: termDrop,
@@ -204,6 +230,10 @@ function ProjectsLeftLayoutImpl({
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(
     null,
   );
+  const terminalMenuRef = useRef<HTMLDivElement>(null);
+  const terminalMenuOpenerRef = useRef<HTMLElement | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const projectMenuOpenerRef = useRef<HTMLElement | null>(null);
   // Right-click menu on a project rail tab (multi-window move). The
   // other-windows list is fetched when the menu opens, so labels are current.
   const [projectMenu, setProjectMenu] = useState<{
@@ -212,12 +242,92 @@ function ProjectsLeftLayoutImpl({
     slug: string;
     windows: Array<{ id: number; activeProject: string | null }>;
   } | null>(null);
+  const [focusProjectAfterMove, setFocusProjectAfterMove] = useState<{ slug: string; index: number } | null>(null);
+  const [focusTerminalAfterMove, setFocusTerminalAfterMove] = useState<{ id: string; index: number } | null>(null);
+  const [restoreTerminalFocusId, setRestoreTerminalFocusId] = useState<string | null>(null);
+  const [restoreProjectFocusSlug, setRestoreProjectFocusSlug] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (!focusProjectAfterMove || projects.findIndex((project) => project.slug === focusProjectAfterMove.slug) !== focusProjectAfterMove.index) return;
+    const slug = focusProjectAfterMove.slug;
+    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>(".aya-projectrail-list .aya-railtab[data-project-slug]")]
+      .find((item) => item.dataset.projectSlug === slug)?.focus());
+    setFocusProjectAfterMove(null);
+  }, [focusProjectAfterMove, projects]);
+  useLayoutEffect(() => {
+    if (!focusTerminalAfterMove || terminals.findIndex((terminal) => terminal.id === focusTerminalAfterMove.id) !== focusTerminalAfterMove.index) return;
+    const id = focusTerminalAfterMove.id;
+    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>('.aya-topbar--alt .aya-termtab-list [role="tab"][data-terminal-id]')]
+      .find((item) => item.dataset.terminalId === id)?.focus());
+    setFocusTerminalAfterMove(null);
+  }, [focusTerminalAfterMove, terminals]);
+  useLayoutEffect(() => {
+    if (menu || !restoreTerminalFocusId) return;
+    const id = restoreTerminalFocusId;
+    const opener = terminalMenuOpenerRef.current;
+    const target = opener?.isConnected && opener.dataset.terminalId === id
+      ? opener
+      : [...document.querySelectorAll<HTMLElement>('.aya-topbar--alt .aya-termtab-list [role="tab"][data-terminal-id]')]
+        .find((item) => item.dataset.terminalId === id);
+    target?.focus();
+    setRestoreTerminalFocusId(null);
+  }, [menu, restoreTerminalFocusId, terminals]);
+  useLayoutEffect(() => {
+    if (projectMenu || !restoreProjectFocusSlug) return;
+    const slug = restoreProjectFocusSlug;
+    const opener = projectMenuOpenerRef.current;
+    const target = opener?.isConnected && opener.dataset.projectSlug === slug
+      ? opener
+      : [...document.querySelectorAll<HTMLElement>(".aya-projectrail-list .aya-railtab[data-project-slug]")]
+        .find((item) => item.dataset.projectSlug === slug);
+    target?.focus();
+    setRestoreProjectFocusSlug(null);
+  }, [projectMenu, restoreProjectFocusSlug, projects]);
+
+  const closeTerminalMenu = useCallback((restoreFocus = true) => {
+    const opener = terminalMenuOpenerRef.current;
+    const terminalId = opener?.dataset.terminalId;
+    setRestoreTerminalFocusId(restoreFocus ? terminalId ?? null : null);
+    setMenu(null);
+  }, []);
+  const closeProjectMenu = useCallback((restoreFocus = true) => {
+    const opener = projectMenuOpenerRef.current;
+    const projectSlug = opener?.dataset.projectSlug;
+    setRestoreProjectFocusSlug(restoreFocus ? projectSlug ?? null : null);
+    setProjectMenu(null);
+  }, []);
+  const openProjectContextMenu = (
+    slug: string,
+    opener: HTMLElement,
+    x: number,
+    y: number,
+  ) => {
+    projectMenuOpenerRef.current = opener;
+    if (!onMoveProjectToWindow) {
+      setProjectMenu({ x, y, slug, windows: [] });
+      return;
+    }
+    void window.aya.listOtherWindows().then((windows) => {
+      setProjectMenu({ x, y, slug, windows });
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (projectMenu) projectMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [projectMenu]);
+  useLayoutEffect(() => {
+    if (menu) terminalMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [menu]);
 
   useEffect(() => {
     if (!projectMenu) return;
-    const close = () => setProjectMenu(null);
+    const close = () => closeProjectMenu(false);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setProjectMenu(null);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeProjectMenu();
+      }
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
@@ -225,7 +335,7 @@ function ProjectsLeftLayoutImpl({
       window.removeEventListener("mousedown", close);
       window.removeEventListener("keydown", onKey);
     };
-  }, [projectMenu]);
+  }, [projectMenu, closeProjectMenu]);
   const [showLauncher, setShowLauncher] = useState(false);
   // Viewport coords for the launcher dropdown. The menu is position:fixed so it
   // can escape the tab strip's overflow:hidden clip; that means we must anchor
@@ -266,9 +376,13 @@ function ProjectsLeftLayoutImpl({
 
   useEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
+    const close = () => closeTerminalMenu(false);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTerminalMenu();
+      }
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
@@ -276,7 +390,7 @@ function ProjectsLeftLayoutImpl({
       window.removeEventListener("mousedown", close);
       window.removeEventListener("keydown", onKey);
     };
-  }, [menu]);
+  }, [menu, closeTerminalMenu]);
 
   useEffect(() => {
     if (!showLauncher) return;
@@ -328,7 +442,6 @@ function ProjectsLeftLayoutImpl({
   const startTermRename = (t: TerminalState) => {
     setRenamingId(t.id);
     setTermDraft(t.name);
-    setTimeout(() => termInputRef.current?.select(), 0);
   };
   const commitTermRename = () => {
     if (renamingId) {
@@ -382,6 +495,7 @@ function ProjectsLeftLayoutImpl({
           onToggleFullScreen={onToggleFullScreenWindow}
         />
         <div className="aya-tabs aya-termtabs" ref={tabsRef}>
+          <div className="aya-termtab-list" role="tablist" aria-label="Terminals">
           {terminals.map((t) => {
             const isActive = t.id === activeTerminalId;
             const preset = getPreset(presets, t.presetId);
@@ -398,6 +512,9 @@ function ProjectsLeftLayoutImpl({
             return (
               <div
                 key={t.id}
+                role="tab"
+                aria-selected={isActive}
+                tabIndex={rovingTerminalId === t.id ? 0 : -1}
                 data-testid="termtab"
                 data-terminal-id={t.id}
                 data-terminal-name={t.name}
@@ -408,8 +525,28 @@ function ProjectsLeftLayoutImpl({
                 draggable={!isRenaming}
                 {...termDragHandlers(t.id)}
                 onClick={() => !isRenaming && onSelectTerminal(t.id)}
+                onFocus={() => setFocusedTerminalId(t.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Delete") {
+                    e.preventDefault();
+                    onCloseTerminal(t.id);
+                    return;
+                  }
+                  if (isContextMenuKey(e.nativeEvent)) {
+                    e.preventDefault();
+                    terminalMenuOpenerRef.current = e.currentTarget;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setMenu({ x: rect.left, y: rect.bottom, id: t.id });
+                    return;
+                  }
+                  handleRovingItemKeyDown(e, (target) => {
+                    pendingRovingTerminalFocus.current = target;
+                    setFocusedTerminalId(target.dataset.terminalId ?? null);
+                  });
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
+                  terminalMenuOpenerRef.current = e.currentTarget;
                   setMenu({ x: e.clientX, y: e.clientY, id: t.id });
                 }}
                 title={`${t.name} — ${t.cwd}${summary ? ` · ${summary}` : ""}`}
@@ -464,19 +601,24 @@ function ProjectsLeftLayoutImpl({
                   {roles[t.id] && <TeamRoleChip role={roles[t.id]} />}
                 </span>
                 {t.bell && <span className="aya-bell aya-bell--alert" />}
-                <span
+                <button
+                  type="button"
                   className="aya-tab-close"
+                  aria-hidden="true"
+                  tabIndex={-1}
                   onClick={(e) => {
                     e.stopPropagation();
                     onCloseTerminal(t.id);
                   }}
-                  title="Close terminal"
+                  aria-label={`Close terminal ${t.name}`}
+                  title={`Close terminal ${t.name}`}
                 >
                   ×
-                </span>
+                </button>
               </div>
             );
           })}
+          </div>
           <div className="aya-termtab-launcher" ref={launcherRef}>
             <div
               className="aya-tab-new"
@@ -659,7 +801,7 @@ function ProjectsLeftLayoutImpl({
               )}
             </div>
           </div>
-          <div className="aya-projectrail-list">
+          <div className="aya-projectrail-list" role="list" aria-label="Projects">
             {projects.map((p) => {
               const isActive = p.slug === activeProjectId;
               const badge = projectBadges[p.slug];
@@ -681,6 +823,10 @@ function ProjectsLeftLayoutImpl({
               return (
                 <div
                   key={p.slug}
+                  role="listitem"
+                  data-project-slug={p.slug}
+                  aria-current={isActive ? "true" : undefined}
+                  tabIndex={rovingProjectSlug === p.slug ? 0 : -1}
                   data-testid="railtab"
                   className={`aya-railtab ${isActive ? "aya-railtab--active" : ""} ${
                     isDragging ? "aya-railtab--dragging" : ""
@@ -688,15 +834,31 @@ function ProjectsLeftLayoutImpl({
                   draggable={!isRenaming}
                   {...projectDragHandlers(p.slug)}
                   onClick={() => !isRenaming && onSelectProject(p.slug)}
+                  onFocus={() => setFocusedProjectSlug(p.slug)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Delete") {
+                      e.preventDefault();
+                      onCloseProject(p.slug);
+                      return;
+                    }
+                    if (isContextMenuKey(e.nativeEvent)) {
+                      if (isRemote) return;
+                      e.preventDefault();
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      openProjectContextMenu(p.slug, e.currentTarget, rect.right, rect.top);
+                      return;
+                    }
+                    handleRovingItemKeyDown(e, (target) => {
+                      pendingRovingProjectFocus.current = target;
+                      setFocusedProjectSlug(target.dataset.projectSlug ?? null);
+                    });
+                  }}
                   onContextMenu={(e) => {
                     // Remote projects can't be adopted by directory (it lives
                     // on the remote host) - no move menu for them yet.
-                    if (isRemote || !onMoveProjectToWindow) return;
+                    if (isRemote) return;
                     e.preventDefault();
-                    const at = { x: e.clientX, y: e.clientY };
-                    void window.aya.listOtherWindows().then((windows) => {
-                      setProjectMenu({ ...at, slug: p.slug, windows });
-                    });
+                    openProjectContextMenu(p.slug, e.currentTarget, e.clientX, e.clientY);
                   }}
                   title={
                     isRenaming
@@ -756,16 +918,20 @@ function ProjectsLeftLayoutImpl({
                       title={`${badge.count} monitored session${badge.count > 1 ? "s" : ""}: ${badge.level}`}
                     />
                   )}
-                  <span
+                  <button
+                    type="button"
                     className="aya-railtab-close"
+                    aria-hidden="true"
+                    tabIndex={-1}
                     onClick={(e) => {
                       e.stopPropagation();
                       onCloseProject(p.slug);
                     }}
-                    title="Close project"
+                    aria-label={`Close project ${p.name}`}
+                    title={`Close project ${p.name}`}
                   >
                     ×
-                  </span>
+                  </button>
                 </div>
               );
             })}
@@ -790,28 +956,41 @@ function ProjectsLeftLayoutImpl({
         </nav>
         {body}
       </main>
-      {projectMenu && onMoveProjectToWindow && (
+      {projectMenu && (
         <div
+          ref={projectMenuRef}
+          role="menu"
           className="aya-context-menu"
           style={{ left: projectMenu.x, top: projectMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={handleMenuNavigation}
         >
-          <button
-            className="aya-context-menu-item"
-            onClick={() => {
-              onMoveProjectToWindow(projectMenu.slug, "new");
-              setProjectMenu(null);
-            }}
-          >
-            Move to New Window
-          </button>
-          {projectMenu.windows.map((w) => (
-            <button
+          {(() => {
+            const index = projects.findIndex((project) => project.slug === projectMenu.slug);
+            return <>
+              <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
+                const slug = projectMenu.slug;
+                setFocusProjectAfterMove({ slug, index: index - 1 });
+                onReorderProjects(moveItem(projects.map((project) => project.slug), index, -1));
+                closeProjectMenu(false);
+              }}>Move left</button>
+              <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= projects.length - 1} className="aya-context-menu-item" onClick={() => {
+                const slug = projectMenu.slug;
+                setFocusProjectAfterMove({ slug, index: index + 1 });
+                onReorderProjects(moveItem(projects.map((project) => project.slug), index, 1));
+                closeProjectMenu(false);
+              }}>Move right</button>
+              <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item aya-context-menu-item--danger" onClick={() => { onCloseProject(projectMenu.slug); closeProjectMenu(); }}>Close project</button>
+            </>;
+          })()}
+          {onMoveProjectToWindow && <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item" onClick={() => { onMoveProjectToWindow(projectMenu.slug, "new"); closeProjectMenu(); }}>Move to New Window</button>}
+          {onMoveProjectToWindow && projectMenu.windows.map((w) => (
+            <button type="button" role="menuitem" tabIndex={-1}
               key={w.id}
               className="aya-context-menu-item"
               onClick={() => {
                 onMoveProjectToWindow(projectMenu.slug, w.id);
-                setProjectMenu(null);
+                closeProjectMenu();
               }}
             >
               Move to Window: {w.activeProject ?? "(empty)"}
@@ -821,27 +1000,55 @@ function ProjectsLeftLayoutImpl({
       )}
       {menu && (
         <div
+          ref={terminalMenuRef}
+          role="menu"
           className="aya-context-menu"
           style={{ left: menu.x, top: menu.y }}
           onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={handleMenuNavigation}
         >
+          {(() => {
+            const index = terminals.findIndex((terminal) => terminal.id === menu.id);
+            return <>
+              <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
+                const id = menu.id;
+                setFocusTerminalAfterMove({ id, index: index - 1 });
+                onReorderTerminals(moveItem(terminals.map((terminal) => terminal.id), index, -1));
+                closeTerminalMenu(false);
+              }}>Move left</button>
+              <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= terminals.length - 1} className="aya-context-menu-item" onClick={() => {
+                const id = menu.id;
+                setFocusTerminalAfterMove({ id, index: index + 1 });
+                onReorderTerminals(moveItem(terminals.map((terminal) => terminal.id), index, 1));
+                closeTerminalMenu(false);
+              }}>Move right</button>
+            </>;
+          })()}
           <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item"
             onClick={() => {
               const terminal = terminals.find((t) => t.id === menu.id);
               if (terminal) startTermRename(terminal);
-              setMenu(null);
+              // The rename input is the next focus target; restoring focus to
+              // the tab here would blur it and commit the unchanged name.
+              closeTerminalMenu(false);
             }}
           >
             Rename terminal
           </button>
           <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item"
             disabled={!!terminals.find(t=>t.id===menu.id)?.recoveryBlocked}
             title={terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? terminals.find(t=>t.id===menu.id)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
             onClick={() => {
               onRestartTerminal(menu.id);
-              setMenu(null);
+              closeTerminalMenu();
             }}
           >
             Restart terminal{terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? " - host recovering" : ""}
@@ -854,14 +1061,17 @@ function ProjectsLeftLayoutImpl({
               teams={activeTeams}
               current={roles[menu.id]}
               onAssign={onAssignTeamRole}
-              onDone={() => setMenu(null)}
+              onDone={() => closeTerminalMenu()}
             />
           )}
           <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item aya-context-menu-item--danger"
             onClick={() => {
               onCloseTerminal(menu.id);
-              setMenu(null);
+              closeTerminalMenu();
             }}
           >
             Close terminal

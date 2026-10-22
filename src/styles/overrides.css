@@ -1638,6 +1638,10 @@
   line-height: 1;
   flex-shrink: 0;
   -webkit-app-region: no-drag;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
 }
 .aya-tab:hover .aya-tab-close { opacity: 1; }
 .aya-tab:hover .aya-tab-bell { opacity: 0; }

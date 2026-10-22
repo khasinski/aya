@@ -60,9 +60,8 @@ test("round-trip: detach, reattach, no phantom window target remains", async ({
   // "Move to New Window" - no phantom entry for the closed source window
   // (the reported bug: a hidden/dead window kept showing up as a target).
   await win2.locator(".aya-tab").first().click({ button: "right" });
-  const menuItems = win2.locator(".aya-context-menu-item");
-  await expect(menuItems).toHaveCount(1);
-  await expect(menuItems.first()).toContainText("Move to New Window");
+  const moveToNewWindow = win2.getByRole("menuitem", { name: "Move to New Window", exact: true });
+  await expect(moveToNewWindow).toHaveCount(1);
   await win2.keyboard.press("Escape");
 
   // And the app is down to exactly one live window.
