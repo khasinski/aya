@@ -32,6 +32,8 @@ terminal processes that survive host crashes and updates.
 
 ### Fixes
 
+- Include shared runtime modules in packaged applications and unpacked CLI
+  helpers, fixing startup failures caused by a missing `shared/printable.cjs`.
 - A native PTY owner keeps terminal processes alive while Aya replaces or
   recovers its JavaScript terminal host, including after a manual app update.
   Supports up to 128 panes, with a shared recovery message at the limit
