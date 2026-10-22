@@ -104,6 +104,44 @@ async function startServedApp(options: { tabs?: WorkingTab[] } = {}): Promise<{
     // Boot seeds a shell tab into a tabless project and persists it; without
     // this the write path rejects after render.
     "projects:update": undefined,
+    "app:cli-status": { installed: false, message: "Not installed" },
+    "usage-hook:status": { installed: false },
+    "status-hook:status": { installed: false, codex: { conflict: false } },
+    "updates:status": { phase: "idle", supported: true, currentVersion: "test", message: "Up to date" },
+    "web:status": {
+      enabled: true,
+      running: true,
+      port: 8787,
+      host: "127.0.0.1",
+      user: USER,
+      generatedPassword: "never-render-this-in-web-settings",
+      urls: ["http://127.0.0.1:8787"],
+      addresses: [],
+      clients: 1,
+      error: null,
+    },
+    "harness:search": [],
+    "env:github-cli-available": true,
+    "mic:status": "not-determined",
+    "mic:request": "granted",
+    "intelligence:ollama-status": { available: false, model: "" },
+    "intelligence:pull-ollama-model": { installed: true, model: "" },
+    "pty-host:restart": { ok: true },
+    "pty-host:stop-others": { ok: true },
+    "app:diagnostics": {
+      generatedAt: new Date(0).toISOString(),
+      app: { version: "test", mode: "development", platform: "darwin", arch: "arm64", pid: 1, cwd: "/tmp" },
+      paths: { ayaHome: "/tmp/aya", controlSocket: "/tmp/control", remoteSocket: "/tmp/remote", ptyHostSocket: "/tmp/pty", controlSocketExists: false, remoteSocketExists: false, ptyHostSocketExists: false },
+      shell: { shell: null, pathEntries: [] },
+      cli: { installed: false, path: null, installDir: null, installable: false },
+      cliAdoption: [],
+      ptyHost: { expected: { version: "test", scriptHash: "test" }, actual: null, ptyCount: 0, stale: false, pid: null, socket: { exists: false, pid: null }, otherHosts: [{ pid: 2, startTime: "test", version: "test" }], warnings: ["Another terminal host is running."] },
+      presets: [],
+      projects: { total: 1, open: 1, recent: 1, remote: 0 },
+      usage: { claudeAccounts: 0, codexAccounts: 0, hookInstalled: false, hookScriptPath: "" },
+      userScreenRules: { available: true, directory: "/tmp/screen-rules", sets: [] },
+    },
+    "theme:omarchy-status": null,
   };
   const invocations: Array<{ channel: string; args: unknown[] }> = [];
   for (const [channel, value] of Object.entries(handlers)) {
@@ -343,6 +381,73 @@ test("waiting panes show a selectable banner and update the web tab title", asyn
     });
     await expect(page.locator(".aya-web-waiting-banner")).toHaveCount(0);
     await expect(page).toHaveTitle("Aya");
+  } finally {
+    await browser?.close();
+    await stop();
+  }
+});
+
+test("Settings in Aya Web replaces desktop-only controls with clear availability text", async () => {
+  const { base, invocations, stop } = await startServedApp();
+  let browser: Browser | undefined;
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      localStorage.setItem("aya:intelligence", JSON.stringify({ provider: "ollama" }));
+    });
+    await page.goto(base);
+    const login = await page.request.post(`${base}/api/login`, {
+      data: { user: USER, password: PASSWORD },
+    });
+    expect(login.ok()).toBeTruthy();
+    await page.reload();
+    await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: "Settings" }).click();
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect(settings).toBeVisible();
+    await expect(settings.getByRole("button", { name: "Allow…", exact: true })).toHaveCount(0);
+    const microphoneRow = settings.locator(".aya-settings-general-row").filter({ hasText: "Microphone" });
+    await expect(microphoneRow.getByText("Available in the desktop app.")).toBeVisible();
+    await expect(settings.getByText("Aya Web server settings are available in the desktop app.")).toBeVisible();
+    await expect(settings.getByText("never-render-this-in-web-settings")).toHaveCount(0);
+
+    await settings.getByRole("tab", { name: "Intelligence" }).click();
+    await expect(settings.getByRole("button", { name: "Refresh", exact: true })).toBeVisible();
+    await expect(settings.getByRole("button", { name: "Download model", exact: true })).toHaveCount(0);
+    await expect(settings.getByText("Available in the desktop app.").last()).toBeVisible();
+
+    await settings.getByRole("tab", { name: "Machines" }).click();
+    await expect(settings.getByText("Machine settings are available in the desktop app.")).toBeVisible();
+    await expect(settings.getByRole("button", { name: "Add", exact: true })).toHaveCount(0);
+    expect(await page.locator('[data-testid="machines-toggle"]').count()).toBe(0);
+
+    await settings.getByRole("tab", { name: "Updates" }).click();
+    await expect(settings.getByRole("button", { name: "Check" })).toBeVisible();
+    await expect(settings.getByRole("button", { name: "Restart to update" })).toHaveCount(0);
+    await expect(settings.getByText("Available in the desktop app.")).toBeVisible();
+    await expect(settings).not.toContainText("Not available in Aya Web");
+
+    await settings.getByRole("tab", { name: "Diagnostics" }).click();
+    await settings.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(settings.getByRole("button", { name: "Restart", exact: true })).toHaveCount(0);
+    await expect(settings.getByRole("button", { name: "Stop other hosts", exact: true })).toHaveCount(0);
+    const ptyHostRow = settings.locator(".aya-settings-general-row").filter({ hasText: "PTY host" });
+    await expect(ptyHostRow.getByText("Available in the desktop app.")).toBeVisible();
+    const diagnosticsWarning = settings.locator(".aya-settings-diagnostics-warnings");
+    await expect(diagnosticsWarning.getByText("Available in the desktop app.")).toBeVisible();
+    await expect(settings.getByText("Another terminal host is running.").first()).toBeVisible();
+
+    const desktopOnlyChannels = new Set([
+      "machines:status", "machines:setup", "machines:command", "machines:configure", "machines:discover",
+      "web:configure", "web:regenerate-password", "updates:install", "app:install-cli",
+      "intelligence:pull-ollama-model",
+      "mic:request", "pty-host:restart", "pty-host:stop-others",
+      "usage-hook:install", "usage-hook:uninstall", "status-hook:install", "status-hook:uninstall",
+    ]);
+    expect(invocations.filter((call) => desktopOnlyChannels.has(call.channel))).toEqual([]);
+    expect(invocations.some((call) => call.channel === "intelligence:ollama-status")).toBe(true);
+    expect(invocations.some((call) => call.channel === "mic:status")).toBe(true);
   } finally {
     await browser?.close();
     await stop();

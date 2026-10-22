@@ -330,6 +330,7 @@ export function SettingsModal({
 }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const consentOpenerRef = useRef<HTMLElement | null>(null);
+  const isWeb = window.aya.isWeb === true;
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [draft, setDraft] = useState<DraftPreset[]>(() => presets.map(toDraft));
   const [activePresetKey, setActivePresetKey] = useState<string | null>(null);
@@ -1412,7 +1413,9 @@ export function SettingsModal({
           <SettingsRow
             icon="terminal"
             title="aya command-line tool"
-            control={(
+            control={isWeb ? (
+              <span className="aya-modal-hint">Available in the desktop app.</span>
+            ) : (
               <button
               className="aya-modal-btn"
               onClick={installCli}
@@ -1568,7 +1571,9 @@ export function SettingsModal({
                 <span className="aya-settings-experimental">Experimental</span>
               </>
             }
-            control={(
+            control={isWeb ? (
+              <span className="aya-modal-hint">Available in the desktop app.</span>
+            ) : (
               <div className="aya-settings-segmented" aria-label="Aya Web">
                 {([
                   [true, "On"],
@@ -1591,18 +1596,22 @@ export function SettingsModal({
               </div>
             )}
           >
-            Use Aya from a browser, behind a user and password. Signing in
-            gives full shell access to this machine. A new setup listens on
-            this computer only: from another one, use an SSH tunnel, or choose
-            a network below. There is no TLS, so on a network the password and
-            your terminals travel unencrypted; choose only one you trust
-            (Tailscale, WireGuard or your own LAN).
+            {isWeb ? (
+              "Aya Web server settings can only be changed from the desktop app."
+            ) : (
+              <>Use Aya from a browser, behind a user and password. Signing in
+                gives full shell access to this machine. A new setup listens on
+                this computer only: from another one, use an SSH tunnel, or choose
+                a network below. There is no TLS, so on a network the password and
+                your terminals travel unencrypted; choose only one you trust
+                (Tailscale, WireGuard or your own LAN).</>
+            )}
             {(ayaWebError ?? ayaWeb?.error) && (
               <div style={{ color: "#f85149", marginTop: 6 }}>
                 {ayaWebError ?? ayaWeb?.error}
               </div>
             )}
-            {ayaWeb && (
+            {ayaWeb && !isWeb && (
               <label
                 style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}
               >
@@ -1623,7 +1632,7 @@ export function SettingsModal({
               </label>
             )}
             {/* role=status: read out when it appears after a change, not on every open of Settings. */}
-            {ayaWeb && allNetworksWarning(ayaWeb) && (
+            {ayaWeb && !isWeb && allNetworksWarning(ayaWeb) && (
               <div role="status" style={{ marginTop: 6 }}>
                 <strong>Warning:</strong> {allNetworksWarning(ayaWeb)}{" "}
                 <button
@@ -1636,7 +1645,11 @@ export function SettingsModal({
                 </button>
               </div>
             )}
-            {ayaWeb?.enabled && (
+            {isWeb ? (
+              <div className="aya-modal-hint" role="status">
+                Aya Web server settings are available in the desktop app.
+              </div>
+            ) : ayaWeb?.enabled && (
               <div
                 style={{
                   display: "flex",
@@ -1747,7 +1760,9 @@ export function SettingsModal({
           <SettingsRow
             icon="donut_large"
             title="Claude usage chip"
-            control={(
+            control={isWeb ? (
+              <span className="aya-modal-hint">Available in the desktop app.</span>
+            ) : (
               <button
               className="aya-modal-btn"
               onClick={
@@ -1775,7 +1790,9 @@ export function SettingsModal({
           <SettingsRow
             icon="sensors"
             title="Automatic status"
-            control={(
+            control={isWeb ? (
+              <span className="aya-modal-hint">Available in the desktop app.</span>
+            ) : (
               <button
               className="aya-modal-btn"
               onClick={
@@ -1911,19 +1928,23 @@ export function SettingsModal({
               icon="mic"
               title="Microphone"
               control={(
-                <button
-                  className="aya-modal-btn"
-                  onClick={handleMicAction}
-                  disabled={micBusy}
-                >
-                  {micBusy
-                    ? "Working..."
-                    : micStatus === "not-determined"
-                      ? "Allow…"
-                      : micStatus === "granted"
-                        ? "Manage"
-                        : "Open System Settings"}
-                </button>
+                isWeb ? (
+                  <span className="aya-modal-hint">Available in the desktop app.</span>
+                ) : (
+                  <button
+                    className="aya-modal-btn"
+                    onClick={handleMicAction}
+                    disabled={micBusy}
+                  >
+                    {micBusy
+                      ? "Working..."
+                      : micStatus === "not-determined"
+                        ? "Allow…"
+                        : micStatus === "granted"
+                          ? "Manage"
+                          : "Open System Settings"}
+                  </button>
+                )
               )}
             >
               Aya never records. Used only by terminal tools you run (e.g. a
@@ -2035,17 +2056,21 @@ export function SettingsModal({
                         >
                           {ollamaBusy ? "Working..." : "Refresh"}
                         </button>
-                        <button
-                          className="aya-modal-btn"
-                          onClick={pullOllamaModel}
-                          disabled={
-                            ollamaBusy ||
-                            !ollamaStatus?.installed ||
-                            !ayaIntelligence.ollamaModel.trim()
-                          }
-                        >
-                          {ollamaBusy ? "Downloading..." : "Download model"}
-                        </button>
+                        {window.aya.isWeb ? (
+                          <span className="aya-modal-hint">Available in the desktop app.</span>
+                        ) : (
+                          <button
+                            className="aya-modal-btn"
+                            onClick={pullOllamaModel}
+                            disabled={
+                              ollamaBusy ||
+                              !ollamaStatus?.installed ||
+                              !ayaIntelligence.ollamaModel.trim()
+                            }
+                          >
+                            {ollamaBusy ? "Downloading..." : "Download model"}
+                          </button>
+                        )}
                       </div>
                       <div className="aya-intelligence-status">
                         {!ollamaStatus
@@ -2139,7 +2164,9 @@ export function SettingsModal({
             {activeTab === "updates" && (
               <section className="aya-settings-pane">
                 <SettingsHeader icon="system_update" title="Updates">
-                  App version checks and restart-to-update controls.
+                  {isWeb
+                    ? "Check for updates here; install them from the desktop app."
+                    : "App version checks and restart-to-update controls."}
                 </SettingsHeader>
                 <div className="aya-settings-general">
                   <SettingsRow
@@ -2161,13 +2188,17 @@ export function SettingsModal({
                             ? "Checking..."
                             : "Check"}
                         </button>
-                        <button
-                          className="aya-modal-btn"
-                          onClick={installUpdate}
-                          disabled={updateStatus?.phase !== "downloaded"}
-                        >
-                          Restart to update
-                        </button>
+                        {isWeb ? (
+                          <span className="aya-modal-hint">Available in the desktop app.</span>
+                        ) : (
+                          <button
+                            className="aya-modal-btn"
+                            onClick={installUpdate}
+                            disabled={updateStatus?.phase !== "downloaded"}
+                          >
+                            Restart to update
+                          </button>
+                        )}
                       </div>
                     )}
                   >
@@ -2199,9 +2230,15 @@ export function SettingsModal({
             {activeTab === "machines" && (
               <section className="aya-settings-pane">
                 <SettingsHeader icon="dns" title="Machines">
-                  Your model servers: Ollama or an OpenAI-compatible API. Their state shows in the status bar; Aya never loads or unloads a model.
+                  {isWeb
+                    ? "Machine servers are configured from the desktop app."
+                    : "Your model servers: Ollama or an OpenAI-compatible API. Their state shows in the status bar; Aya never loads or unloads a model."}
                 </SettingsHeader>
-                <MachinesSettings />
+                {isWeb ? (
+                  <div className="aya-modal-hint">Machine settings are available in the desktop app.</div>
+                ) : (
+                  <MachinesSettings />
+                )}
               </section>
             )}
 
@@ -2215,23 +2252,27 @@ export function SettingsModal({
                     icon="restart_alt"
                     title="PTY host"
                     control={(
-                      <button
-                        className="aya-modal-btn"
-                        onClick={() => {
-                          if (
-                            confirm(
-                              "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
-                            )
-                          ) {
-                            void Promise.resolve(onRestartPtyHost()).then(async (failure) => {
-                              if (diagnostics || failure) await refreshDiagnostics();
-                              if (failure) setDiagnosticsError(failure);
-                            });
-                          }
-                        }}
-                      >
-                        Restart
-                      </button>
+                      isWeb ? (
+                        <span className="aya-modal-hint">Available in the desktop app.</span>
+                      ) : (
+                        <button
+                          className="aya-modal-btn"
+                          onClick={() => {
+                            if (
+                              confirm(
+                                "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
+                              )
+                            ) {
+                              void Promise.resolve(onRestartPtyHost()).then(async (failure) => {
+                                if (diagnostics || failure) await refreshDiagnostics();
+                                if (failure) setDiagnosticsError(failure);
+                              });
+                            }
+                          }}
+                        >
+                          Restart
+                        </button>
+                      )
                     )}
                   >
                     Restarts the background terminal host. Use after an update if
@@ -2275,13 +2316,17 @@ export function SettingsModal({
                                 </div>
                               ))}
                               {diagnostics.ptyHost.otherHosts.length > 0 && (
-                                <button
-                                  className="aya-modal-btn"
-                                  type="button"
-                                  onClick={() => void stopOtherHosts()}
-                                >
-                                  Stop other hosts
-                                </button>
+                                isWeb ? (
+                                  <span className="aya-modal-hint">Available in the desktop app.</span>
+                                ) : (
+                                  <button
+                                    className="aya-modal-btn"
+                                    type="button"
+                                    onClick={() => void stopOtherHosts()}
+                                  >
+                                    Stop other hosts
+                                  </button>
+                                )
                               )}
                             </div>
                           )}

@@ -86,6 +86,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     handoverDisplay:async()=>null,
     acknowledgeHandoverDisplay:async()=>{},
     isDev: transport.hello.isDev,
+    isWeb: true,
     platform: transport.hello.platform as NodeJS.Platform,
 
     ptySpawn: inv("pty:spawn"),
