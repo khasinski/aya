@@ -560,7 +560,9 @@ function SidebarImpl({
             onClick={() => {
               const terminal = terminals.find((t) => t.id === menu.terminalId);
               if (terminal) startRename(terminal);
-              closeMenu();
+              // The rename input is the next focus target; do not restore focus
+              // to the row while it is opening or its blur handler commits it.
+              closeMenu(false);
             }}
           >
             Rename terminal
