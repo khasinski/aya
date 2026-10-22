@@ -22,6 +22,8 @@ type CancelReconnect = () => void;
 export interface RemoteTerminalManagerDeps {
   connect: (sshTarget: string) => TerminalConnection;
   sendEvent: (event: PtyEvent) => void;
+  /** Electron webContents ids that will receive the next broadcast event. */
+  outputSinks?: () => number[];
   schedule?: (callback: () => void, delayMs: number) => CancelReconnect;
 }
 
@@ -42,7 +44,7 @@ interface ManagedTerminal {
   established: boolean;
   reconnectEnabled: boolean;
   outputDeliverySequence: number;
-  pendingOutputDelivery?: { id: string; client: TerminalConnection };
+  pendingOutputDelivery?: { id: string; client: TerminalConnection; awaiting: Set<number> };
 }
 
 /** Main-process lifecycle for a local view of a host-owned PTY. Detaching a
@@ -56,13 +58,26 @@ export class RemoteTerminalManager {
 
   has(ptyId: string): boolean { return this.terminals.has(ptyId); }
 
-  acknowledgeOutput(ptyId: string, deliveryId: string): boolean {
+  acknowledgeOutput(ptyId: string, deliveryId: string, sinkId: number): boolean {
     const terminal = this.terminals.get(ptyId);
-    if (!terminal || terminal.pendingOutputDelivery?.id !== deliveryId) return false;
-    const { client } = terminal.pendingOutputDelivery;
-    terminal.pendingOutputDelivery = undefined;
-    client.resumeOutput?.();
+    const pending = terminal?.pendingOutputDelivery;
+    if (!pending || pending.id !== deliveryId || !pending.awaiting.delete(sinkId)) return false;
+    if (pending.awaiting.size === 0) {
+      terminal!.pendingOutputDelivery = undefined;
+      pending.client.resumeOutput?.();
+    }
     return true;
+  }
+
+  forgetOutputSink(sinkId: number): void {
+    for (const terminal of this.terminals.values()) {
+      const pending = terminal.pendingOutputDelivery;
+      if (!pending || !pending.awaiting.delete(sinkId)) continue;
+      if (pending.awaiting.size === 0) {
+        terminal.pendingOutputDelivery = undefined;
+        pending.client.resumeOutput?.();
+      }
+    }
   }
 
   dropBridgeForTests(ptyId: string): boolean {
@@ -108,9 +123,10 @@ export class RemoteTerminalManager {
         if (event.terminalId !== terminal.remoteTerminalId) return;
         terminal.outputOffset = Math.max(terminal.outputOffset, event.offset + Buffer.byteLength(event.data, "utf8"));
         const source = terminal.client;
-        if (source?.pauseOutput) {
+        const awaiting = new Set(this.deps.outputSinks?.() ?? []);
+        if (source?.pauseOutput && awaiting.size > 0) {
           const id = `${request.ptyId}:${++terminal.outputDeliverySequence}`;
-          terminal.pendingOutputDelivery = { id, client: source };
+          terminal.pendingOutputDelivery = { id, client: source, awaiting };
           source.pauseOutput();
           this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: event.data, remoteDeliveryId: id });
         } else {

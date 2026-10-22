@@ -156,7 +156,8 @@ test("the window owner follows focus, supports live getter/setter access and fil
 });
 
 test("closing uses captured webContents, removes the window first and trims its slice after host/watcher cleanup", async () => {
-  const s = setup();
+  const closedSinks = [];
+  const s = setup({ onWindowClosed: (id) => closedSinks.push(id) });
   const first = s.windows.createWindow(initial);
   const second = s.windows.createWindow(initial);
   s.projects.projectStateForWindow(disk, first.id);
@@ -170,11 +171,13 @@ test("closing uses captured webContents, removes the window first and trims its 
   };
   s.log.length = 0;
   second.close();
+  assert.deepEqual(closedSinks, [second.contents.id]);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(s.log, [
     ["detach", 2], ["stop-watch", 2], ["save-projects", { ...disk, open: ["a", "b"], recent: ["c"] }],
   ]);
   first.close();
+  assert.deepEqual(closedSinks, [second.contents.id, first.contents.id]);
   assert.equal(s.windows.mainWindow, null);
 });
 

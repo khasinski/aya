@@ -20,7 +20,7 @@ export interface PtyIpcDeps {
     detach: (ptyId: string) => Promise<boolean>;
     end: (ptyId: string) => Promise<boolean>;
     reconnect: (ptyId: string) => Promise<boolean>;
-    acknowledgeOutput: (ptyId: string, deliveryId: string) => boolean;
+    acknowledgeOutput: (ptyId: string, deliveryId: string, sinkId: number) => boolean;
   };
   gate: ReturnType<typeof createSpawnGate>;
   /** Shared-dir command, the agent brief, Aya Dev's own CLI first. */
@@ -89,8 +89,8 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     deps.confirmRestartPane(requireString(ptyId, "pty:confirm-restart.ptyId")),
   );
   ipcMain.handle("pty:remote-reconnect", (_e, ptyId: unknown) => deps.remote?.reconnect(requireString(ptyId, "pty:remote-reconnect.ptyId")) ?? false);
-  ipcMain.on?.("pty:remote-output-ack", (_event, ptyId: unknown, deliveryId: unknown) => {
-    if (typeof ptyId === "string" && typeof deliveryId === "string") deps.remote?.acknowledgeOutput(ptyId, deliveryId);
+  ipcMain.on?.("pty:remote-output-ack", (event, ptyId: unknown, deliveryId: unknown) => {
+    if (typeof ptyId === "string" && typeof deliveryId === "string") deps.remote?.acknowledgeOutput(ptyId, deliveryId, event.sender.id);
   });
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown, action?: unknown) => {
     const id = requireString(ptyId, "pty:kill.ptyId");

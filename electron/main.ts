@@ -73,7 +73,7 @@ import { RemotePtySessions } from "./remote-pty-sessions";
 import { RemoteTerminalClient } from "./remote-client";
 import { RemoteTerminalManager } from "./remote-terminal-manager";
 import { createRemoteTerminalOnSpawned } from "./remote-terminal-project";
-import { restoreRemoteTerminalSessions } from "./remote-session-restore";
+import { initializeRemoteSessionsOnStartup } from "./remote-session-restore";
 import { headCommit, workingTreeState } from "./git";
 import {
   AYA_HOME,
@@ -314,6 +314,8 @@ const externalShell = {
   openPath: (filePath: string): Promise<string> => shell.openPath(filePath),
 };
 
+let forgetRemoteOutputSink: (webContentsId: number) => void = () => {};
+
 const windows = createAyaWindows({
   BrowserWindow,
   ptyHost,
@@ -332,6 +334,7 @@ const windows = createAyaWindows({
   openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
   claimBootWindow: windowProjects.claimBootWindow,
   releaseWindowSlices: windowProjects.releaseWindowSlices,
+  onWindowClosed: (webContentsId) => forgetRemoteOutputSink(webContentsId),
   quitting: () => appQuitting,
 });
 const { ayaWindows, focusedAyaWindow, eachAyaWindow, createWindow, openNewWindow, createWindowOnce, windowForOpen, isAyaFullScreen, setAyaFullScreen, toggleAyaFullScreen } = windows;
@@ -608,7 +611,9 @@ function registerIpc(): TeamRunner {
   const remoteTerminalManager = new RemoteTerminalManager({
     connect: (target) => RemoteTerminalClient.open(target),
     sendEvent: broadcastPtyEvent,
+    outputSinks: () => [...ayaWindows].filter((win) => !win.isDestroyed()).map((win) => win.webContents.id),
   });
+  forgetRemoteOutputSink = (webContentsId) => remoteTerminalManager.forgetOutputSink(webContentsId);
   if (process.env.AYA_E2E_RUN === "1") {
     ipcMain.handle("e2e:remote-drop-bridge", (_event, ptyId: unknown) => {
       if (typeof ptyId !== "string" || ptyId.length > 256) return false;
@@ -695,7 +700,7 @@ function registerIpc(): TeamRunner {
     },
     onController: (terminalId, controlled) => broadcastPtyEvent({ type: "remote-control", ptyId: terminalId, controlled }),
   });
-  remotePtySessions.setReady(restoreRemoteTerminalSessions({
+  void initializeRemoteSessionsOnStartup({
     sessions: remotePtySessions,
     listProjects,
     getPid: (terminalId) => ptyHost.getPid(terminalId),
@@ -706,7 +711,7 @@ function registerIpc(): TeamRunner {
       catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
     },
     attach: () => ptyHost.attachWebContents(remotePtySessions!),
-  }).then(() => {}));
+  });
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
@@ -717,7 +722,7 @@ function registerIpc(): TeamRunner {
       detach: (ptyId) => remoteTerminalManager.detach(ptyId),
       end: (ptyId) => remoteTerminalManager.end(ptyId),
       reconnect: (ptyId) => remoteTerminalManager.reconnectNow(ptyId),
-      acknowledgeOutput: (ptyId, deliveryId) => remoteTerminalManager.acknowledgeOutput(ptyId, deliveryId),
+      acknowledgeOutput: (ptyId, deliveryId, sinkId) => remoteTerminalManager.acknowledgeOutput(ptyId, deliveryId, sinkId),
     },
     prepareSpawn,
     sendSpawn,

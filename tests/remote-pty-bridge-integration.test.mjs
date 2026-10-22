@@ -19,8 +19,10 @@ process.env.AYA_REMOTE_SOCKET = join(home, "remote.sock");
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
 const { startRemoteServerOn } = await import("../dist-electron/remote-server.js");
 const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
+const { initializeRemoteSessionsOnStartup } = await import("../dist-electron/remote-session-restore.js");
 const { RemoteTerminalClient } = await import("../dist-electron/remote-client.js");
 const { MAX_PTY_PANES } = await import("../dist-electron/pty-pane-limits.js");
+const { ownerProcessStartIdentity } = await import("../dist-electron/pty-owner-client.js");
 const { createProject, listProjects, updateProjectFromLatest } = await import("../dist-electron/config.js");
 const { createRemoteTerminalOnSpawned } = await import("../dist-electron/remote-terminal-project.js");
 const { waitFor } = await import("./helpers/pty-host.mjs");
@@ -124,7 +126,6 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     for (const client of clients) await client.detach().catch(() => {});
     try { await host.shutdown(); } catch {}
     host.dispose();
-    rmSync(root, { recursive: true, force: true });
   });
 
   const exerciseAbruptDisconnect = async (kind) => {
@@ -284,4 +285,96 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
       await Promise.all(batch.map((id) => host.kill(id).catch(() => {})));
     }
   }
+});
+
+test("main startup wiring restores a saved remote tab from the surviving PTY host", { timeout: 30_000 }, async (t) => {
+  const terminalId = "remote-session-main-relaunch";
+  const host = new PtyHostClient(hostScript);
+  let stopServer = () => {};
+  let client;
+  t.after(async () => {
+    stopServer();
+    await client?.detach().catch(() => {});
+    try { await host.kill(terminalId); } catch {}
+    try { await host.shutdown(); } catch {}
+    host.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const startupProject = {
+    slug: "project", name: "Project", directory: projectDir,
+    tabs: [],
+  };
+  const preset = { id: "test", name: "Test", icon: "$", color: "", command: "cat" };
+  const makeRegistry = () => new RemotePtySessions({
+    listProjects: async () => [startupProject],
+    listPresets: async () => [preset],
+    ensureCapacity: async () => {},
+    newId: () => terminalId,
+    spawn: (id, selectedProject, selectedPreset, cols, rows) => host.spawn({
+      ptyId: id, projectSlug: selectedProject.slug, presetId: selectedPreset.id,
+      command: selectedPreset.command, cwd: selectedProject.directory, cols, rows,
+    }),
+    onSpawned: async (id, selectedProject, selectedPreset) => {
+      if (!selectedProject.tabs.some(tab => tab.id === id)) selectedProject.tabs.push({ id, presetId: selectedPreset.id, name: `Remote ${selectedPreset.name}`, remoteTerminal: true });
+    },
+    write: (id, data) => host.write(id, data),
+    resize: (id, cols, rows) => host.resize(id, cols, rows),
+    exit: (id) => host.kill(id),
+  });
+  const startServer = (sessions) => startRemoteServerOn(process.env.AYA_REMOTE_SOCKET, {
+    appVersion: "test",
+    host: { id: "test-host", name: "Test host", platform: process.platform, user: "test" },
+    getSnapshot: async () => ({ projects: [startupProject], projectState: { version: 1, order: [startupProject.slug], open: [startupProject.slug], recent: [startupProject.slug] }, presets: [preset] }),
+    createProject: async (name, directory) => ({ slug: name, name, directory, tabs: [] }),
+    terminalSessions: sessions,
+  });
+  let oldMainSessions = makeRegistry();
+  host.attachWebContents(oldMainSessions);
+  stopServer = startServer(oldMainSessions);
+  const firstBridge = spawn(ayaCli, ["remote", "--stdio"], { env: { ...process.env, AYA_REMOTE_SOCKET: process.env.AYA_REMOTE_SOCKET }, stdio: ["pipe", "pipe", "pipe"] });
+  client = new RemoteTerminalClient(firstBridge);
+  const beforeEvents = [];
+  client.on("output", event => { if (event.terminalId === terminalId) beforeEvents.push(event); });
+  const spawned = await client.spawnTerminal(startupProject.slug, preset.id, 80, 24);
+  assert.equal(spawned.terminalId, terminalId);
+  const originalPid = await host.getPid(terminalId);
+  assert.ok(originalPid > 1);
+  await client.attach(terminalId, 0);
+  await client.write(terminalId, "BEFORE_MAIN_RELAUNCH\n");
+  await waitFor(() => beforeEvents.map(event => event.data).join("").includes("BEFORE_MAIN_RELAUNCH"), 5_000);
+  const lastOffset = Math.max(...beforeEvents.map(event => event.offset + Buffer.byteLength(event.data, "utf8")));
+
+  // The production main startup function initializes a fresh session registry
+  // from saved tabs and the surviving PTY host, then marks it ready for attach.
+  stopServer();
+  client.destroy();
+  host.detachWebContents(oldMainSessions);
+  const restored = makeRegistry();
+  await initializeRemoteSessionsOnStartup({
+    sessions: restored,
+    listProjects: async () => [startupProject],
+    getPid: (id) => host.getPid(id),
+    getOutput: (id) => host.getRemoteOutput(id),
+    processStartIdentity: ownerProcessStartIdentity,
+    isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error?.code !== "ESRCH"; } },
+    attach: () => host.attachWebContents(restored),
+  });
+  stopServer = startServer(restored);
+  assert.equal(await host.getPid(terminalId), originalPid);
+  await host.write(terminalId, "DURING_MAIN_RELAUNCH\n");
+  const outputAfterRestart = await host.getRemoteOutput(terminalId);
+
+  const secondBridge = spawn(ayaCli, ["remote", "--stdio"], { env: { ...process.env, AYA_REMOTE_SOCKET: process.env.AYA_REMOTE_SOCKET }, stdio: ["pipe", "pipe", "pipe"] });
+  client = new RemoteTerminalClient(secondBridge);
+  const replay = [];
+  client.on("output", event => { if (event.terminalId === terminalId) replay.push(event); });
+  const attached = await client.attach(terminalId, lastOffset);
+  assert.equal(attached.truncated, false);
+  await waitFor(() => replay.reduce((size, event) => size + Buffer.byteLength(event.data, "utf8"), 0) >= outputAfterRestart.endOffset - lastOffset, 5_000);
+  const replayBytes = Buffer.from(replay.map(event => event.data).join(""), "utf8");
+  const expectedBytes = Buffer.from(outputAfterRestart.output, "utf8").subarray(lastOffset);
+  assert.deepEqual(replayBytes.subarray(0, expectedBytes.length), expectedBytes);
+  assert.equal(await host.getPid(terminalId), originalPid);
+  await client.write(terminalId, "AFTER_MAIN_RELAUNCH\n");
+  await waitFor(() => replay.map(event => event.data).join("").includes("AFTER_MAIN_RELAUNCH"), 5_000);
 });

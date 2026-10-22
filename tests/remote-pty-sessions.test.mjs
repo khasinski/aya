@@ -139,7 +139,7 @@ test("remote session restore deduplicates and caps records with bounded host-pro
 
 test("Aya main restores remote sessions before accepting remote connections on every startup", () => {
   const source = readFileSync(new URL("../electron/main.ts", import.meta.url), "utf8");
-  assert.match(source, /remotePtySessions\.setReady\(restoreRemoteTerminalSessions\(\{/);
+  assert.match(source, /initializeRemoteSessionsOnStartup\(\{/);
   assert.match(source, /getPid: \(terminalId\) => ptyHost\.getPid\(terminalId\)/);
   assert.match(source, /getOutput: \(terminalId\) => ptyHost\.getRemoteOutput\(terminalId\)/);
   assert.match(source, /attach: \(\) => ptyHost\.attachWebContents\(remotePtySessions!\)/);

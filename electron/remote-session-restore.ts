@@ -14,6 +14,15 @@ export interface RemoteSessionRestoreDeps {
   attach: () => void;
 }
 
+/** Wire the host-owned PTYs into a newly-created main-process session registry
+ * before remote commands are accepted. Kept as the production startup entry
+ * point so the restart integration test exercises the same readiness path. */
+export function initializeRemoteSessionsOnStartup(deps: RemoteSessionRestoreDeps): Promise<void> {
+  const ready = restoreRemoteTerminalSessions(deps).then(() => {});
+  deps.sessions.setReady(ready);
+  return ready;
+}
+
 /** Rebuild remote stream state from project tabs and the PTY host that remains
  * alive when only Aya's main process is replaced. Transcript bytes stay in the
  * host's bounded output ring, not in project settings or a second disk log. */

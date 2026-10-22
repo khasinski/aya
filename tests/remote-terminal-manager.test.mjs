@@ -152,17 +152,37 @@ test("remote output pauses its bridge until the renderer acknowledges delivery",
     resumeOutput() { this.outputPaused = false; },
   });
   const events = [];
-  const manager = new RemoteTerminalManager({ connect: () => client, sendEvent: event => events.push(event) });
+  const manager = new RemoteTerminalManager({ connect: () => client, outputSinks: () => [101], sendEvent: event => events.push(event) });
   await manager.spawn(request, "devbox", "remote-repo");
   client.emit("output", { terminalId: request.ptyId, offset: 0, data: "render this" });
   const delivered = events.find(event => event.type === "data");
   assert.equal(delivered.chunk, "render this");
   assert.equal(typeof delivered.remoteDeliveryId, "string");
   assert.equal(client.outputPaused, true);
-  assert.equal(manager.acknowledgeOutput(request.ptyId, "stale-delivery"), false);
-  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId), true);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, "stale-delivery", 101), false);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId, 202), false);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId, 101), true);
   assert.equal(client.outputPaused, false);
   assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId), false);
+});
+
+test("remote output waits for every renderer sink and drops closed windows", async () => {
+  const client = Object.assign(new FakeTerminalClient(), {
+    outputPaused: false,
+    pauseOutput() { this.outputPaused = true; },
+    resumeOutput() { this.outputPaused = false; },
+  });
+  const events = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, outputSinks: () => [11, 22], sendEvent: event => events.push(event) });
+  await manager.spawn(request, "devbox", "remote-repo");
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "bounded frame" });
+  const delivered = events.find(event => event.type === "data");
+  assert.ok(delivered.remoteDeliveryId);
+  assert.equal(client.outputPaused, true);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId, 11), true);
+  assert.equal(client.outputPaused, true, "fast window cannot resume delivery while the second window is stalled");
+  manager.forgetOutputSink(22);
+  assert.equal(client.outputPaused, false, "closing the stalled window releases its outstanding acknowledgement");
 });
 
 test("restarting a pane after its remote process exits starts a fresh host terminal", async () => {
