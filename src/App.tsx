@@ -16,10 +16,10 @@ import {
   findProject,
   findProjectSlugForSession,
   mergeGitInfo,
+  resumePanesForProjects,
   samePollPayload,
   sameProjectBadges,
   sameSessionRecords,
-  sessionDir,
   uniquePresetId,
   type MissingDirEntry,
   type NewProjectModalState,
@@ -88,7 +88,6 @@ import {
 import {
   WAITING_ON,
   type Snippet,
-  getPreset,
   type Preset,
   type ProjectCollectionState,
   type ProjectConfig,
@@ -734,12 +733,7 @@ export function App() {
       ? (remotePresetsByProject[activeProjectId] ?? presets)
       : presets;
   const resumePanes = useMemo(
-    () =>
-      Object.values(terminals).map((t) => {
-        const project = findProject(projects, t.projectSlug);
-        const list = project?.remote ? (remotePresetsByProject[t.projectSlug] ?? presets) : presets;
-        return { id: t.id, preset: getPreset(list, t.presetId), cwd: sessionDir(project, t) };
-      }),
+    () => resumePanesForProjects(projects, terminals, presets, remotePresetsByProject),
     [terminals, projects, presets, remotePresetsByProject],
   );
   // Once two panes of an agent have shared a folder, neither may ever "continue
