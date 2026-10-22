@@ -28,7 +28,7 @@ import { appendFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
-import { getOrCreateProject, listProjects, listProjectState, saveProjectState } from "./config";
+import { getOrCreateProject, listProjects, listProjectState, saveProjectState, updateProjectFromLatest } from "./config";
 import { bundledAyaCliPath } from "./cli-path";
 import { isShellCommand, withCliFirst } from "./pane-command";
 import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
@@ -69,6 +69,8 @@ import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
+import { RemotePtySessions } from "./remote-pty-sessions";
+import { createRemoteTerminalOnSpawned } from "./remote-terminal-project";
 import { headCommit, workingTreeState } from "./git";
 import {
   AYA_HOME,
@@ -98,9 +100,11 @@ import { refreshStatusCodexHookScript } from "./status-hook-codex";
 import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
 import { paneReadText } from "./pane-render";
 import { PtyHostClient, waitForExit } from "./pty-host-client";
+import { MAX_PTY_PANES } from "./pty-pane-limits";
 import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
+import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { createPtyHostHealth, probeSocketPid } from "./pty-host-health";
 import { HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
@@ -167,6 +171,7 @@ const builtinRuleSet: ScreenRuleSet = builtinState.available ? builtinState.rule
   sets: { generic: [], claude: [], codex: [], opencode: [], grok: [], antigravity: [] },
 };
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
+let remotePtySessions: RemotePtySessions | null = null;
 const userRulePolicyInstance=crypto.randomBytes(16).toString("hex");
 const hostRuleEpoch=(epoch:number)=>`${userRulePolicyInstance}:${epoch}`;
 const userRuleProvider = new UserRuleProvider(path.join(AYA_HOME, "screen-rules"), builtinRuleSet, {
@@ -602,6 +607,68 @@ function registerIpc(): TeamRunner {
       .catch(() => {});
     return true;
   };
+  const onRemoteTerminalSpawned = createRemoteTerminalOnSpawned({
+    updateProjectFromLatest,
+    openProject: (directory) => openFromOutside(directory),
+    broadcastProjects: () => {
+      for (const win of ayaWindows) {
+        if (!win.isDestroyed()) win.webContents.send("config:changed", { slice: "projects" });
+      }
+      ayaWeb.broadcast("config:changed", { slice: "projects" });
+    },
+    stopTerminal: (terminalId) => ptyHost.kill(terminalId),
+  });
+  remotePtySessions = new RemotePtySessions({
+    listProjects: () => listProjects(),
+    listPresets: () => listPresets(),
+    ensureCapacity: async () => {
+      const status = await ptyHost.hostStatus();
+      if (status.ptyCount >= MAX_PTY_PANES) {
+        throw new Error(`Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then try again.`);
+      }
+    },
+    spawn: async (terminalId, selectedProject, preset, cols, rows) => {
+      const project = (await listProjects()).find((item) => item.slug === selectedProject.slug);
+      if (!project || project.remote) throw new Error("The selected host project is unavailable.");
+      const request: SpawnRequest = {
+        ptyId: terminalId,
+        projectSlug: project.slug,
+        presetId: preset.id,
+        agent: presetAgent(preset),
+        ...(preset.configDir ? { agentConfigDir: preset.configDir } : {}),
+        command: preset.command,
+        cwd: project.directory,
+        cols,
+        rows,
+      };
+      const sent = await spawnGate.spawn(terminalId, () => prepareSpawn(request), (prepared) => sendSpawn(prepared));
+      if (sent !== true) throw new Error("The remote terminal could not be started.");
+      try {
+        const pid = await ptyHost.getPid(terminalId);
+        const startIdentity = typeof pid === "number" ? ownerProcessStartIdentity(pid) : null;
+        return typeof pid === "number" && startIdentity ? { pid, startIdentity } : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    onSpawned: onRemoteTerminalSpawned,
+    write: (terminalId, data) => ptyHost.write(terminalId, data),
+    resize: (terminalId, cols, rows) => ptyHost.resize(terminalId, cols, rows),
+    exit: (terminalId) => ptyHost.kill(terminalId),
+    isRunning: async (identity) => {
+      if (!identity) return null;
+      try {
+        process.kill(identity.pid, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+        return null;
+      }
+      const currentIdentity = ownerProcessStartIdentity(identity.pid);
+      if (!currentIdentity) return null;
+      return currentIdentity === identity.startIdentity;
+    },
+  });
+  ptyHost.attachWebContents(remotePtySessions);
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
@@ -1006,6 +1073,7 @@ app.whenReady().then(async () => {
     // for an existing project, so this must return the existing one rather than
     // fail on the "already exists" guard.
     createProject: (name, directory) => getOrCreateProject(name, directory),
+    terminalSessions: remotePtySessions ?? undefined,
   });
   ayaWeb.start();
   installApplicationMenu(applicationMenuDeps);

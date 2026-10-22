@@ -1,9 +1,10 @@
 # Aya Remote Sessions Spec
 
-Status: draft, exploratory. Phase 1 transport skeleton exists on the
-`remote-stdio-bridge` branch: `aya remote --stdio` bridges to a host-local
-`aya-remote.sock`, and the running Aya app serves a read-only `hello` +
-workspace snapshot.
+Status: host-side terminal-session transport is implemented; remote client UI
+and workspace rendering remain future work. The existing v1 `hello`, snapshot,
+directory, and project commands remain available on the owner-only
+`aya-remote.sock`. A client can opt into terminal protocol v2 on the same
+connection.
 
 ## Goal
 
@@ -105,14 +106,16 @@ User flow:
    - `Username`, pre-filled with the current local OS username.
    - `Hostname`, empty or selectable from previously seen machines.
 3. User enters the hostname and confirms.
-4. Aya automatically tries SSH for that pair:
+4. Aya opens the SSH bridge for that pair:
 
    ```bash
    ssh username@hostname aya remote
    ```
 
-5. If the remote machine has Aya running and remote access enabled, the
-   command sets up the bridge/pairing automatically.
+5. The remote machine must have Aya running and `aya remote` available to SSH
+   sessions. The SSH login is the user's explicit action and authenticates the
+   connection; the SSH bridge does not require a separate Aya enable setting
+   or pairing token.
 6. The remote host is saved for future use.
 
 This gives users the right mental model: connect to a machine, not configure
@@ -162,25 +165,28 @@ Later LAN pairing can add:
 - Client revoke/disconnect UI.
 - Connected-client list on the host.
 
-Remote access must be disabled by default.
+These LAN controls apply only to a future LAN listener. The SSH bridge does not
+open a listener or require a separate remote-access setting.
 
-### Enabling Remote On A Host
+### SSH Bridge Host Readiness
 
-When the user enables remote access on a machine, Aya should run a host
-readiness check before declaring the machine connectable.
+The SSH bridge needs Aya running on the host, an SSH login, and `aya remote`
+available in the non-interactive SSH environment. The user's SSH login is the
+explicit action that authorizes access and supplies authentication. Aya may
+check host readiness before connecting, but there is no separate host-side
+"enable remote" action for the SSH bridge.
 
 Checks:
 
 - `aya remote` CLI is installed and available to SSH sessions.
 - Remote Aya app is running and can be reached through its local socket/API.
-- Remote access is enabled in Aya settings.
 - An SSH server is installed.
 - The SSH server appears to be running/listening.
 - The current user can be reached over SSH, or Aya can at least show the
   expected `username@hostname` value for another machine to try.
 
-If no SSH server is found, Aya should not silently enable remote. It should
-show a clear setup prompt:
+If no SSH server is found, Aya should show a clear setup prompt before trying
+to connect:
 
 - macOS: suggest enabling `Remote Login` in System Settings.
 - Linux: suggest installing and starting OpenSSH server, using the distro's
@@ -188,8 +194,9 @@ show a clear setup prompt:
 - Windows: suggest installing/enabling OpenSSH Server from Windows Optional
   Features or PowerShell.
 
-The prompt should explain that Aya uses SSH for authentication and encryption,
-and that Aya does not need a public TCP listener when the SSH bridge is used.
+The prompt should explain that Aya uses the user's SSH login for authentication
+and encryption, and that Aya does not need a public TCP listener when the SSH
+bridge is used.
 
 Suggested wording:
 
@@ -197,7 +204,7 @@ Suggested wording:
 SSH server not detected
 
 Aya remote connections use SSH. Install or enable an SSH server on this
-machine, then try enabling remote access again.
+machine, then try the SSH connection again.
 ```
 
 When possible, include a copyable command or system setting shortcut, but avoid
@@ -230,7 +237,7 @@ Stored fields:
 - Display name, defaulting to hostname.
 - Last successful connection time.
 - Last connection status/error.
-- Remote host id/fingerprint after first successful pairing.
+- Remote host id/fingerprint after the first successful SSH connection.
 
 Connect UI behavior:
 
@@ -238,7 +245,8 @@ Connect UI behavior:
 - Recently connected machines appear as selectable rows.
 - Selecting a saved machine fills username + hostname.
 - Failed machines remain visible with the last error until removed.
-- Users can remove saved machines and revoke trusted pairing data.
+- Users can remove saved machines. SSH trust and host-key records remain
+  managed by the user's SSH configuration.
 
 Saved machines should not store SSH passwords. Authentication should rely on
 the user's SSH setup: keys, ssh-agent, host aliases, and platform prompts.
@@ -297,6 +305,45 @@ Command stream:
 WebSocket is the natural transport for terminal output and events. HTTP or RPC
 over the same socket can handle commands.
 
+### Host-Owned Terminal Stream (Protocol v2)
+
+The host serves a long-lived newline-delimited JSON stream over the existing
+owner-only Unix socket. `aya remote --stdio` forwards stdin and stdout between
+that socket and its caller; the client can close the bridge without sending a
+terminal-exit command. V1 hello/snapshot and filesystem/project requests keep
+their existing protocol version and behavior. A client explicitly opens
+terminal protocol v2 before using terminal commands; unsupported versions
+receive a protocol-mismatch response.
+
+V2 supports `pty:spawn`, `pty:attach`, `pty:write`, `pty:resize`, `pty:exit`,
+and `pty:list`. Spawn selects a host project and saved preset; the host creates
+a normal project tab and starts it through its ordinary PTY host. Detaching
+only removes the stream subscription. A terminal ends only when its process
+exits or a client explicitly requests `pty:exit`.
+An explicit close is reported as killed when the host does not have an actual
+process exit code; Aya does not invent a successful exit code for a signal stop.
+
+Each terminal retains at most 1 MiB of replay output in at most seventeen
+64 KiB blocks, so tiny writes cannot create an unbounded chunk list. An
+oversized event is copied only as its retained suffix. The host reports byte
+offsets and whether the requested offset predates retained output; output
+older than the retained window is then unavailable. Frames are newline
+delimited, terminal data is JSON-escaped without stripping ANSI bytes, and
+output is split into frames with at most 256 KiB of raw data. Every v2 write,
+including command replies and replay, is disconnected before it would queue
+more than 2 MiB for a slow reader. The operating system pipe supplies
+backpressure between SSH, the stdio bridge, and the host socket. Remote session
+metadata is capped at the shared 128-pane limit. When full, an exited session
+or a confirmed spawn-failure record can be discarded; running and uncertain
+sessions are retained, and a full set of those refuses another remote spawn.
+Each session can allocate up to seventeen 64 KiB blocks, so the worst-case
+replay allocation across 128 retained sessions is about 136 MiB; replay bytes
+per session remain capped at 1 MiB.
+
+Terminal access remains limited to the existing owner-only local socket and
+the explicitly invoked SSH stdio bridge. The host opens no TCP listener; a
+client cannot connect over the network directly to the terminal service.
+
 ## Terminal Rendering
 
 Send raw PTY bytes from the host and render them locally with xterm.js.
@@ -331,9 +378,15 @@ Later:
 
 ## Security Requirements
 
-Remote PTY control is equivalent to shell access. Treat it as high risk.
+Remote PTY control is equivalent to shell access. Treat it as high risk. For
+the SSH bridge, the user explicitly connects with an SSH login; SSH
+authentication and host-key verification are the access controls. The bridge
+uses the host's owner-only local socket and does not expose a network listener.
 
-Requirements:
+### Future LAN Listener Requirements
+
+These requirements apply only to a future LAN listener. They are not steps or
+settings required to use the SSH bridge:
 
 - Disabled by default.
 - Localhost-only by default.

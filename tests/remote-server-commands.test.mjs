@@ -16,6 +16,8 @@ process.env.AYA_HOME = AYA_HOME;
 const require = createRequire(import.meta.url);
 const MODULE = join(process.cwd(), "dist-electron", "remote-server.js");
 const { startRemoteServer, startRemoteServerOn } = await import(MODULE);
+const { REMOTE_MAX_FRAME_BYTES } = await import("../dist-electron/remote-protocol.js");
+const { RemoteRequestFrameBuffer } = await import("../dist-electron/remote-server.js");
 test.after(() => rmSync(AYA_HOME, { recursive: true, force: true }));
 
 const EMPTY_SNAPSHOT = {
@@ -100,6 +102,55 @@ test("a command that is not an object gets bad_request", async (t) => {
   for (const reply of replies(messages)) {
     assert.deepEqual([reply.type, reply.code], ["error", "bad_request"]);
   }
+});
+
+test("request buffering stays capped and latches closed after an oversized frame", () => {
+  const requestBuffer = new RemoteRequestFrameBuffer();
+  const withinLimit = requestBuffer.push("x".repeat(REMOTE_MAX_FRAME_BYTES));
+  assert.equal(withinLimit.tooLarge, false);
+  assert.equal(requestBuffer.bufferedBytes, REMOTE_MAX_FRAME_BYTES);
+  const overLimit = requestBuffer.push("y");
+  assert.equal(overLimit.tooLarge, true);
+  assert.equal(requestBuffer.bufferedBytes, 0);
+  for (let index = 0; index < 32; index += 1) {
+    assert.equal(requestBuffer.push("z".repeat(64 * 1024)).tooLarge, true);
+    assert.equal(requestBuffer.bufferedBytes, 0);
+  }
+});
+
+test("the server processes a valid frame then drops an oversized suffix and continued input", async (t) => {
+  const { dir, socket } = start(t);
+  const client = net.createConnection(socket);
+  const messages = [];
+  let buffer = "";
+  client.setEncoding("utf8");
+  const closed = new Promise((resolve) => client.on("close", resolve));
+  // The queued post-limit writes may receive the expected reset/EPIPE as the
+  // server destroys the stream.
+  client.on("error", () => {});
+  client.on("data", (chunk) => {
+    buffer += chunk;
+    while (buffer.includes("\n")) {
+      const index = buffer.indexOf("\n");
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (line) messages.push(JSON.parse(line));
+    }
+  });
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  const madePath = join(dir, "made-before-oversized-suffix");
+  client.write(`${JSON.stringify({ type: "fs:mkdir", id: "valid", path: madePath })}\n${"x".repeat(REMOTE_MAX_FRAME_BYTES + 1)}`);
+  // Queue more hostile input before the peer can observe the close. The
+  // server must destroy the socket on the first over-limit frame, not append
+  // these chunks to its retained request buffer.
+  for (let index = 0; index < 32; index += 1) client.write("y".repeat(64 * 1024));
+  await closed;
+  assert.equal(existsSync(madePath), true, "the valid frame before the suffix was handled");
+  assert.equal(client.destroyed, true);
+  assert.equal(client.writable, false);
 });
 
 test("fs:mkdir makes the whole path and answers with it; without a path it fails with the reason", async (t) => {

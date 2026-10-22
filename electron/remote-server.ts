@@ -8,24 +8,74 @@ import { printable } from "./printable";
 import { REMOTE_SOCKET_PATH } from "./paths";
 import {
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_MAX_FRAME_BYTES,
   remoteError,
   remoteHello,
   remoteSnapshot,
+  parseRemoteTerminalRequest,
+  REMOTE_TERMINAL_PROTOCOL_VERSION,
   type RemoteHostInfo,
   type RemoteSnapshot,
 } from "./remote-protocol";
+import type { RemotePtySessions } from "./remote-pty-sessions";
+import { writeRemoteTerminalFrame } from "./remote-terminal-stream";
 
 export interface RemoteServerOptions {
   appVersion: string;
   getSnapshot: () => Promise<RemoteSnapshot>;
   createProject: (name: string, directory: string) => Promise<ProjectConfig>;
   host?: RemoteHostInfo;
+  terminalSessions?: RemotePtySessions;
 }
 
 // The stream is JSON for the other Aya, but `aya remote --stdio` run by hand prints it to a terminal: printable keeps
 // the JSON and its data and leaves nothing there to act on, as on the control socket (control.ts printableReply).
 function sendJson(socket: net.Socket, value: unknown): void {
-  socket.write(`${printable(JSON.stringify(value))}\n`);
+  const frame = `${printable(JSON.stringify(value))}\n`;
+  if (Buffer.byteLength(frame, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+    socket.end(`${JSON.stringify(remoteError("frame_too_large", "Remote response exceeded the frame size limit."))}\n`);
+    return;
+  }
+  socket.write(frame);
+}
+
+/** Retains at most one bounded, incomplete request frame per socket. Once the
+ * peer crosses the limit it is latched closed and later chunks are ignored. */
+export class RemoteRequestFrameBuffer {
+  private pending = "";
+  private closed = false;
+
+  get bufferedBytes(): number { return Buffer.byteLength(this.pending, "utf8"); }
+
+  push(chunk: Buffer | string): { frames: string[]; tooLarge: boolean } {
+    if (this.closed) return { frames: [], tooLarge: true };
+    let input = this.pending + (typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+    this.pending = "";
+    const frames: string[] = [];
+    while (true) {
+      const index = input.indexOf("\n");
+      if (index < 0) break;
+      const frame = input.slice(0, index);
+      if (Buffer.byteLength(frame, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+        this.closed = true;
+        return { frames, tooLarge: true };
+      }
+      frames.push(frame.trim());
+      input = input.slice(index + 1);
+    }
+    if (Buffer.byteLength(input, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+      this.closed = true;
+      return { frames, tooLarge: true };
+    }
+    this.pending = input;
+    return { frames, tooLarge: false };
+  }
+}
+
+// Terminal output includes ANSI control sequences by design. JSON.stringify
+// safely frames those bytes; applying printable here would corrupt PTY data.
+function sendTerminalJson(socket: net.Socket, value: unknown): void {
+  writeRemoteTerminalFrame(socket, value);
 }
 
 function defaultHostInfo(): RemoteHostInfo {
@@ -72,6 +122,7 @@ async function handleCommand(
   socket: net.Socket,
   options: RemoteServerOptions,
   raw: unknown,
+  terminalSession: { protocol: number | null },
 ): Promise<void> {
   if (!isRecord(raw)) {
     sendJson(socket, remoteError("bad_request", "Remote command must be an object."));
@@ -79,6 +130,37 @@ async function handleCommand(
   }
   const id = optionalString(raw.id);
   const type = optionalString(raw.type);
+  if (type === "session:open") {
+    const request = parseRemoteTerminalRequest(raw);
+    if (!request || request.type !== "session:open") {
+      sendTerminalJson(socket, remoteError("bad_request", "Remote terminal session request is invalid."));
+      return;
+    }
+    const requested = request.protocol;
+    if (!Number.isSafeInteger(requested) || requested !== REMOTE_TERMINAL_PROTOCOL_VERSION) {
+      sendTerminalJson(socket, remoteError("protocol_mismatch", `Remote terminal protocol ${String(requested)} is not supported; use version ${REMOTE_TERMINAL_PROTOCOL_VERSION}.`, id));
+      return;
+    }
+    if (!options.terminalSessions) {
+      sendTerminalJson(socket, remoteError("terminal_unavailable", "Remote terminals are not available on this Aya.", id));
+      return;
+    }
+    terminalSession.protocol = REMOTE_TERMINAL_PROTOCOL_VERSION;
+    sendTerminalJson(socket, { type: "session:ready", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: request.id });
+    return;
+  }
+  if (typeof type === "string" && type.startsWith("pty:") && (terminalSession.protocol !== null || raw.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION)) {
+    if (terminalSession.protocol !== REMOTE_TERMINAL_PROTOCOL_VERSION) {
+      sendTerminalJson(socket, remoteError("protocol_required", "Open a supported remote terminal session before using terminal commands.", id));
+      return;
+    }
+    if (raw.protocol !== REMOTE_TERMINAL_PROTOCOL_VERSION) {
+      sendTerminalJson(socket, remoteError("protocol_mismatch", `Remote terminal protocol ${String(raw.protocol)} is not supported; use version ${REMOTE_TERMINAL_PROTOCOL_VERSION}.`, id));
+      return;
+    }
+    await options.terminalSessions!.handle(socket, raw, sendTerminalJson);
+    return;
+  }
   try {
     if (type === "fs:list") {
       const result = await listDirectories(optionalString(raw.path));
@@ -143,6 +225,14 @@ export function startRemoteServerOn(
 
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");
+    const terminalSession = { protocol: null as number | null };
+    // A remote client can disappear while PTY output is being forwarded.
+    // Consume socket write errors and drop its subscriptions; a dead reader
+    // must not turn into an uncaught EPIPE in the host process.
+    socket.on("error", () => {
+      options.terminalSessions?.detach(socket);
+      socket.destroy();
+    });
     sendJson(
       socket,
       remoteHello(options.host ?? defaultHostInfo(), options.appVersion),
@@ -156,22 +246,26 @@ export function startRemoteServerOn(
         socket.end();
       });
 
-    let buffer = "";
+    const requestBuffer = new RemoteRequestFrameBuffer();
     socket.on("data", (chunk) => {
-      buffer += chunk;
-      while (buffer.includes("\n")) {
-        const idx = buffer.indexOf("\n");
-        const line = buffer.slice(0, idx).trim();
-        buffer = buffer.slice(idx + 1);
+      const { frames, tooLarge } = requestBuffer.push(chunk);
+      for (const line of frames) {
         if (!line) continue;
         try {
-          void handleCommand(socket, options, JSON.parse(line));
+          void handleCommand(socket, options, JSON.parse(line), terminalSession);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           sendJson(socket, remoteError("bad_json", message));
         }
       }
+      if (tooLarge) {
+        // Destroy (rather than half-close) so no later reads can refill a
+        // buffer whose partial contents have already been discarded.
+        socket.destroy();
+      }
     });
+    socket.on("end", () => socket.end());
+    socket.on("close", () => options.terminalSessions?.detach(socket));
   });
 
   listenOwnerOnly(server, socketPath);

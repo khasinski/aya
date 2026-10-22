@@ -376,9 +376,30 @@ const oneSaveAtATime = oneAtATime();
 
 export function updateProject(project: ProjectConfig): Promise<void> {
   return oneSaveAtATime(project.slug, async () => {
-    await ensureDir();
-    await writeFileAtomic(path.join(PROJECTS_DIR, `${project.slug}.json`), JSON.stringify(toDisk(project), null, 2) + "\n");
+    await writeProjectFile(project);
   });
+}
+
+/** Mutate the latest saved project while holding the same per-project save
+ * queue used by updateProject, so additive writes cannot replace newer tabs or
+ * metadata with a stale caller snapshot. */
+export function updateProjectFromLatest(
+  slug: string,
+  update: (project: ProjectConfig) => ProjectConfig,
+): Promise<ProjectConfig> {
+  return oneSaveAtATime(slug, async () => {
+    const current = (await listProjects()).find((project) => project.slug === slug);
+    if (!current) throw new Error(`Project "${slug}" is no longer available.`);
+    const next = update(current);
+    if (next.slug !== slug) throw new Error("A project update cannot change its identity.");
+    await writeProjectFile(next);
+    return next;
+  });
+}
+
+async function writeProjectFile(project: ProjectConfig): Promise<void> {
+  await ensureDir();
+  await writeFileAtomic(path.join(PROJECTS_DIR, `${project.slug}.json`), JSON.stringify(toDisk(project), null, 2) + "\n");
 }
 
 function toDisk(project: ProjectConfig): unknown {

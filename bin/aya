@@ -566,9 +566,9 @@ remote_stdio() {
       "$path_length" "$path_limit" "$([ -n "${AYA_REMOTE_SOCKET:-}" ] && echo AYA_REMOTE_SOCKET || echo AYA_HOME)"
     exit 1
   fi
-  node - "$socket" <<'NODE'
+  bridge_script=$(cat <<'NODE'
 const net = require("node:net");
-const socketPath = process.argv[2];
+const socketPath = process.argv[1];
 
 function write(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -614,6 +614,8 @@ client.on("error", (err) => {
   });
 });
 NODE
+)
+  exec node -e "$bridge_script" "$socket"
 }
 
 check_open_wait_seconds() {
