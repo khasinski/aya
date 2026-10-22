@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
+const { restoreRemoteTerminalSessions } = await import("../dist-electron/remote-session-restore.js");
 const { REMOTE_TERMINAL_REPLAY_MAX_BYTES } = await import("../dist-electron/remote-protocol.js");
 const { MAX_PTY_PANES } = await import("../dist-electron/pty-pane-limits.js");
 const { REMOTE_TERMINAL_SOCKET_QUEUE_MAX_BYTES, writeRemoteTerminalFrame } = await import("../dist-electron/remote-terminal-stream.js");
@@ -33,6 +34,64 @@ test("remote terminal attach reports truncation and replays no more than the byt
   assert.equal(outputs[0].offset, 17);
   assert.equal(outputs.reduce((sum, output) => sum + Buffer.byteLength(output.data, "utf8"), 0), REMOTE_TERMINAL_REPLAY_MAX_BYTES);
   assert.equal(outputs.map((output) => output.data).join(""), "x".repeat(REMOTE_TERMINAL_REPLAY_MAX_BYTES));
+});
+
+test("main-process restoration rebuilds a live session at the host output offset and retains ended tabs", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project], listPresets: async () => [preset],
+    spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  sessions.restoreTerminal({ terminalId: "live-after-main-restart", project: "repo", preset: "shell", output: "base", endOffset: 4, running: true, processIdentity: { pid: 100, startIdentity: "start" } });
+  sessions.restoreTerminal({ terminalId: "ended-after-main-restart", project: "repo", preset: "shell", output: "done", endOffset: 4, running: false });
+  // An event that was already included in the snapshot is ignored, while the
+  // first byte after its high-water mark is appended once.
+  sessions.onPtyEvent({ type: "data", ptyId: "live-after-main-restart", chunk: "base", streamOffset: 0 });
+  sessions.onPtyEvent({ type: "data", ptyId: "live-after-main-restart", chunk: "gap", streamOffset: 4 });
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const replay = [];
+  await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach-live", terminalId: "live-after-main-restart", offset: 4 }, (_socket, message) => replay.push(message));
+  assert.equal(replay.find(message => message.type === "pty:attached").endOffset, 7);
+  assert.equal(replay.filter(message => message.type === "pty:output").map(message => message.data).join(""), "gap");
+  const ended = [];
+  await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach-ended", terminalId: "ended-after-main-restart", offset: 0 }, (_socket, message) => ended.push(message));
+  assert.equal(ended.some(message => message.type === "pty:output" && message.data === "done"), true);
+  assert.equal(ended.some(message => message.type === "pty:exited"), true);
+});
+
+test("remote session restore discovers durable tabs, marks dead PTYs exited, and catches up across subscription", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [
+    { id: "restored-live", presetId: "shell", name: "Remote Shell", remoteTerminal: true },
+    { id: "restored-dead", presetId: "shell", name: "Remote Shell 2", remoteTerminal: true },
+    { id: "ordinary", presetId: "shell", name: "Shell" },
+  ] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({ listProjects: async () => [project], listPresets: async () => [preset], spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {} });
+  const outputCalls = new Map();
+  let attached = 0;
+  const count = await restoreRemoteTerminalSessions({
+    sessions,
+    listProjects: async () => [project],
+    getPid: async (id) => id === "restored-live" ? 321 : null,
+    getOutput: async (id) => {
+      if (id === "restored-dead") return { output: "ended", endOffset: 5 };
+      const call = (outputCalls.get(id) ?? 0) + 1; outputCalls.set(id, call);
+      return call === 1 ? { output: "base", endOffset: 4 } : { output: "basegap", endOffset: 7 };
+    },
+    processStartIdentity: (pid) => pid === 321 ? "process-start" : null,
+    isAlive: () => true,
+    attach: () => { attached += 1; sessions.onPtyEvent({ type: "data", ptyId: "restored-live", chunk: "gap", streamOffset: 4 }); },
+  });
+  assert.equal(count, 2);
+  assert.equal(attached, 1);
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const listed = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "list" }, (_socket, message) => listed.push(message));
+  assert.deepEqual(listed[0].terminals.map(item => [item.terminalId, item.state]), [["restored-live", "running"], ["restored-dead", "exited"]]);
+  const replay = [];
+  await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach", terminalId: "restored-live", offset: 4 }, (_socket, message) => replay.push(message));
+  assert.equal(replay.filter(message => message.type === "pty:output").map(message => message.data).join(""), "gap");
 });
 
 test("one socket controls the host while other sockets can only observe until it disconnects", async () => {

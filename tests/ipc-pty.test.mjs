@@ -52,6 +52,7 @@ test("registers exactly the terminal and host channels", () => {
     "pty:confirm-restart",
     "pty:cwd",
     "pty:kill",
+    "pty:remote-reconnect",
     "pty:resize",
     "pty:search",
     "pty:spawn",

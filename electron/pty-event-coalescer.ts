@@ -79,11 +79,12 @@ export function createPtyDataCoalescer(
       if (event.reset !== undefined) {flush();send({...event});return;}
       const key = JSON.stringify([event.ptyId, !!event.replay, event.reset, event.replayToken]);
       const queued = pending.get(key);
-      if (queued) {
+      if (queued && (queued.streamOffset === undefined || event.streamOffset === undefined || queued.streamOffset + Buffer.byteLength(queued.chunk, "utf8") === event.streamOffset)) {
         queued.chunk += event.chunk;
         if (queued.chunk.length >= maxPendingChars) flush();
         return;
       }
+      if (queued) flush();
       // Clone: the queued event mutates (chunk grows) and the caller's event
       // object must stay untouched.
       pending.set(key, { ...event });
@@ -112,7 +113,8 @@ export function coalesceAdjacentData(events: PtyEvent[]): PtyEvent[] {
       tail.ptyId === event.ptyId &&
       !tail.replay === !event.replay &&
       tail.reset === event.reset &&
-      tail.replayToken === event.replayToken
+      tail.replayToken === event.replayToken &&
+      (tail.streamOffset === undefined || event.streamOffset === undefined || tail.streamOffset + Buffer.byteLength(tail.chunk, "utf8") === event.streamOffset)
     ) {
       tail.chunk += event.chunk;
       continue;

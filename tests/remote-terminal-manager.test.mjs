@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
-const { RemoteTerminalManager, isUnsupportedV2 } = await import("../dist-electron/remote-terminal-manager.js");
+const { RemoteTerminalManager, RemoteReconnectBackoff, isUnsupportedV2 } = await import("../dist-electron/remote-terminal-manager.js");
 
 class FakeTerminalClient extends EventEmitter {
   calls = [];
@@ -10,6 +10,8 @@ class FakeTerminalClient extends EventEmitter {
   failSpawn = null;
   failAttach = null;
   outputDuringSpawn = null;
+  attachOutput = null;
+  attachEndOffset = 0;
   async spawnTerminal(project, preset, cols, rows, terminalId) {
     this.calls.push(["spawn", project, preset, cols, rows, terminalId]);
     if (this.failSpawn) throw this.failSpawn;
@@ -19,7 +21,8 @@ class FakeTerminalClient extends EventEmitter {
   async attach(terminalId, offset) {
     this.calls.push(["attach", terminalId, offset]);
     if (this.failAttach) throw this.failAttach;
-    return { terminalId, fromOffset: 0, endOffset: 0, truncated: false, readOnly: this.readOnly };
+    if (this.attachOutput) this.emit("output", { terminalId, offset, data: this.attachOutput });
+    return { terminalId, fromOffset: offset, endOffset: this.attachEndOffset, truncated: false, readOnly: this.readOnly };
   }
   async write(terminalId, data) { this.calls.push(["write", terminalId, data]); return true; }
   async resize(terminalId, cols, rows) { this.calls.push(["resize", terminalId, cols, rows]); }
@@ -139,4 +142,54 @@ test("restarting a pane after its remote process exits starts a fresh host termi
     ["attach", "tab-uuid", 0],
   ]);
   assert.equal(clients[0].calls.at(-1)[0], "detach");
+});
+
+test("remote reconnect backs off, resumes at the last offset, and replays the gap once", async () => {
+  const delays = [];
+  const events = [];
+  const clients = [];
+  const manager = new RemoteTerminalManager({
+    connect: () => {
+      const client = new FakeTerminalClient();
+      if (clients.length === 1) client.failAttach = new Error("host still unavailable");
+      if (clients.length === 2) { client.attachOutput = "gap"; client.attachEndOffset = 8; }
+      clients.push(client);
+      return client;
+    },
+    sendEvent: (event) => events.push(event),
+    schedule: (callback, delayMs) => {
+      const task = { callback, delayMs, cancelled: false };
+      delays.push(task);
+      return () => { task.cancelled = true; };
+    },
+  });
+  assert.equal(await manager.spawn(request, "devbox", "remote-repo", "Dev box"), "remote");
+  clients[0].emit("output", { terminalId: request.ptyId, offset: 0, data: "start" });
+  clients[0].emit("error", new Error("bridge lost"));
+  assert.deepEqual(events.at(-1), { type: "remote-connection", ptyId: request.ptyId, host: "Dev box", connected: false, retryInMs: 1_000 });
+  await assert.rejects(manager.write(request.ptyId, "must not leak"), /disconnected/i);
+
+  const run = async () => {
+    const task = delays.find(item => !item.cancelled && !item.ran);
+    assert.ok(task);
+    task.ran = true;
+    task.callback();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  assert.equal(delays[0].delayMs, 1_000);
+  await run();
+  assert.equal(delays[1].delayMs, 2_000);
+  await run();
+  assert.deepEqual(clients[2].calls[0], ["attach", request.ptyId, 5]);
+  assert.equal(events.filter(event => event.type === "data" && event.chunk === "gap").length, 1);
+  assert.deepEqual(events.at(-1), { type: "remote-connection", ptyId: request.ptyId, host: "Dev box", connected: true });
+  assert.equal(await manager.write(request.ptyId, "after reconnect"), true);
+});
+
+test("remote reconnect backoff resets after success and then repeats its last delay", () => {
+  const backoff = new RemoteReconnectBackoff();
+  assert.deepEqual(Array.from({ length: 8 }, () => backoff.next()), [1_000, 2_000, 5_000, 10_000, 30_000, 30_000, 30_000, 30_000]);
+  backoff.reset();
+  assert.equal(backoff.next(), 1_000);
 });

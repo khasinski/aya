@@ -124,6 +124,19 @@ test("coalesceAdjacentData passes through short batches", () => {
   assert.deepEqual(coalesceAdjacentData([]), []);
 });
 
+test("stream offsets survive only contiguous output coalescing", () => {
+  const contiguous = coalesceAdjacentData([
+    { type: "data", ptyId: "a", chunk: "é", streamOffset: 0 },
+    { type: "data", ptyId: "a", chunk: "x", streamOffset: 2 },
+  ]);
+  assert.deepEqual(contiguous, [{ type: "data", ptyId: "a", chunk: "éx", streamOffset: 0 }]);
+  const gap = coalesceAdjacentData([
+    { type: "data", ptyId: "a", chunk: "a", streamOffset: 0 },
+    { type: "data", ptyId: "a", chunk: "b", streamOffset: 2 },
+  ]);
+  assert.equal(gap.length, 2);
+});
+
 
 test('checkpoint replay reset and empty fences preserve live order',()=>{
  const events=[],c=createPtyDataCoalescer(e=>events.push(e),()=>{});

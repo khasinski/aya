@@ -59,6 +59,8 @@ const api: AyaApi = {
   ptyResize: (ptyId, cols, rows) =>
     ipcRenderer.invoke("pty:resize", ptyId, cols, rows),
   ptyKill: (ptyId, action) => ipcRenderer.invoke("pty:kill", ptyId, action),
+  ptyRemoteReconnect: (ptyId) => ipcRenderer.invoke("pty:remote-reconnect", ptyId),
+  e2eDropRemoteBridge: (ptyId) => ipcRenderer.invoke("e2e:remote-drop-bridge", ptyId),
   ptyBuffer: (ptyId) => ipcRenderer.invoke("pty:buffer", ptyId),
   ptyCwd: (ptyId) => ipcRenderer.invoke("pty:cwd", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),

@@ -49,6 +49,17 @@ interface Session {
   clients: Set<net.Socket>;
 }
 
+export interface RestoredRemoteTerminal {
+  terminalId: string;
+  project: string;
+  preset: string;
+  output: string;
+  endOffset: number;
+  processIdentity?: RemoteTerminalProcessIdentity;
+  /** null means the host could not prove liveness; keep the record visible and non-writable. */
+  running: boolean | null;
+}
+
 export type RemoteTerminalWriter = (socket: net.Socket, message: unknown) => void;
 
 /** Per-main-process remote terminal registry. It owns only stream attachments
@@ -60,8 +71,43 @@ export class RemotePtySessions implements PtyEventSink {
   private readonly clientSockets = new Map<string, Set<net.Socket>>();
   /** One remote Aya process controls the host at a time, across every terminal. */
   private controllerClientId?: string;
+  private ready: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: RemoteTerminalSessionDeps) {}
+
+  setReady(ready: Promise<void>): void { this.ready = ready; }
+
+  /** Rebuilds the in-memory registry from durable project-tab markers and the
+   * long-lived PTY host's output ring after main alone has restarted. */
+  restoreTerminal(value: RestoredRemoteTerminal): void {
+    if (this.sessions.has(value.terminalId) || !Number.isSafeInteger(value.endOffset) || value.endOffset < 0) return;
+    const session: Session = {
+      terminalId: value.terminalId,
+      project: value.project,
+      preset: value.preset,
+      state: value.running === true ? "running" : value.running === false ? "exited" : "uncertain",
+      totalBytes: value.endOffset,
+      retainedBytes: 0,
+      chunks: [],
+      clients: new Set(),
+      ...(value.processIdentity ? { processIdentity: value.processIdentity } : {}),
+      ...(value.running === null ? { failureReason: "Aya cannot confirm whether this terminal is still running." } : {}),
+    };
+    this.sessions.set(value.terminalId, session);
+    const bytes = Buffer.from(value.output, "utf8");
+    this.appendReplay(session, Math.max(0, value.endOffset - bytes.length), bytes);
+  }
+
+  /** Catch up a snapshot raced with newly delivered host output. */
+  syncRestoredOutput(terminalId: string, output: string, endOffset: number): void {
+    const session = this.sessions.get(terminalId);
+    if (!session || !Number.isSafeInteger(endOffset) || endOffset <= session.totalBytes) return;
+    session.totalBytes = endOffset;
+    session.chunks = [];
+    session.retainedBytes = 0;
+    const bytes = Buffer.from(output, "utf8");
+    this.appendReplay(session, Math.max(0, endOffset - bytes.length), bytes);
+  }
 
   isDestroyed(): boolean { return false; }
   send(_channel: "pty:event", event: PtyEvent): void { this.onPtyEvent(event); }
@@ -107,8 +153,12 @@ export class RemotePtySessions implements PtyEventSink {
       if (event.replay) return;
       const bytes = Buffer.from(event.chunk, "utf8");
       if (bytes.length === 0) return;
-      const offset = session.totalBytes;
-      session.totalBytes += bytes.length;
+      const offset = event.streamOffset ?? session.totalBytes;
+      // Events already represented by the restored host snapshot are discarded;
+      // later events continue from the same absolute byte offset.
+      if (offset < session.totalBytes) return;
+      if (offset > session.totalBytes) session.totalBytes = offset;
+      session.totalBytes = offset + bytes.length;
       this.appendReplay(session, offset, bytes);
       for (const socket of [...session.clients]) this.writeOutput(socket, event.ptyId, offset, bytes);
       return;
@@ -143,6 +193,7 @@ export class RemotePtySessions implements PtyEventSink {
   }
 
   async handle(socket: net.Socket, raw: unknown, writer: RemoteTerminalWriter): Promise<void> {
+    await this.ready;
     const request = parseRemoteTerminalRequest(raw);
     if (!request || request.type === "session:open") {
       const requestId = isRecord(raw) && typeof raw.id === "string" && raw.id.length <= 128 ? raw.id : undefined;
@@ -197,7 +248,7 @@ export class RemotePtySessions implements PtyEventSink {
             fromOffset += 1;
           }
           const identity = this.clientIdFor(socket);
-          const readOnly = this.controllerClientId !== undefined && this.controllerClientId !== identity;
+          const readOnly = session.state !== "running" || this.controllerClientId !== undefined && this.controllerClientId !== identity;
           if (!readOnly && this.controllerClientId !== identity) this.controllerClientId = identity;
           if (!readOnly) this.deps.onController?.(session.terminalId, true);
           session.clients.add(socket);

@@ -73,6 +73,7 @@ import { RemotePtySessions } from "./remote-pty-sessions";
 import { RemoteTerminalClient } from "./remote-client";
 import { RemoteTerminalManager } from "./remote-terminal-manager";
 import { createRemoteTerminalOnSpawned } from "./remote-terminal-project";
+import { restoreRemoteTerminalSessions } from "./remote-session-restore";
 import { headCommit, workingTreeState } from "./git";
 import {
   AYA_HOME,
@@ -607,10 +608,16 @@ function registerIpc(): TeamRunner {
     connect: (target) => RemoteTerminalClient.open(target),
     sendEvent: broadcastPtyEvent,
   });
+  if (process.env.AYA_E2E_RUN === "1") {
+    ipcMain.handle("e2e:remote-drop-bridge", (_event, ptyId: unknown) => {
+      if (typeof ptyId !== "string" || ptyId.length > 256) return false;
+      return remoteTerminalManager.dropBridgeForTests(ptyId);
+    });
+  }
   const sendSpawn = async (spawn: SpawnRequest) => {
     const project = spawn.projectSlug ? (await listProjects()).find((item) => item.slug === spawn.projectSlug) : undefined;
     if (project?.remote) {
-      const mode = await remoteTerminalManager.spawn(spawn, project.remote.sshTarget, project.slug);
+      const mode = await remoteTerminalManager.spawn(spawn, project.remote.sshTarget, project.slug, project.remote.label);
       if (mode === "remote") return true;
       // Old hosts cannot detach PTYs from SSH. Preserve the previous behavior,
       // but tell the user that closing this terminal will end the session.
@@ -687,7 +694,18 @@ function registerIpc(): TeamRunner {
     },
     onController: (terminalId, controlled) => broadcastPtyEvent({ type: "remote-control", ptyId: terminalId, controlled }),
   });
-  ptyHost.attachWebContents(remotePtySessions);
+  remotePtySessions.setReady(restoreRemoteTerminalSessions({
+    sessions: remotePtySessions,
+    listProjects,
+    getPid: (terminalId) => ptyHost.getPid(terminalId),
+    getOutput: (terminalId) => ptyHost.getRemoteOutput(terminalId),
+    processStartIdentity: ownerProcessStartIdentity,
+    isAlive: (pid) => {
+      try { process.kill(pid, 0); return true; }
+      catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+    },
+    attach: () => ptyHost.attachWebContents(remotePtySessions!),
+  }).then(() => {}));
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
@@ -697,6 +715,7 @@ function registerIpc(): TeamRunner {
       resize: (ptyId, cols, rows) => remoteTerminalManager.resize(ptyId, cols, rows),
       detach: (ptyId) => remoteTerminalManager.detach(ptyId),
       end: (ptyId) => remoteTerminalManager.end(ptyId),
+      reconnect: (ptyId) => remoteTerminalManager.reconnectNow(ptyId),
     },
     prepareSpawn,
     sendSpawn,

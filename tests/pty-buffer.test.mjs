@@ -10,6 +10,7 @@ import {
   __testClearOutputBuffers,
   OUTPUT_BUFFER_MAX,
   getBufferedOutput,
+  getBufferedRemoteOutput,
   getBufferedReplayOutput,
   searchPtyOutputs,
 } from "../dist-electron/pty.js";
@@ -19,6 +20,14 @@ import { consumeReplayModes, initialReplayModeTracker, legacyReplayModeTracker, 
 
 // Per-chunk size (bytes) used to overflow the rolling buffer in the trim test.
 const BUFFER_TEST_CHUNK_SIZE_BYTES = 30000;
+
+test("remote output snapshots retain absolute UTF-8 offsets", () => {
+  __testClearOutputBuffers();
+  assert.equal(__testAppendToOutputBuffer("remote-offset", "Aé"), 0);
+  assert.equal(__testAppendToOutputBuffer("remote-offset", "Z"), 3);
+  assert.deepEqual(getBufferedRemoteOutput("remote-offset"), { output: "AéZ", endOffset: 4 });
+  __testClearOutputBuffers();
+});
 
 // The buffer is private to pty.ts. To exercise it we expose getBufferedOutput
 // and rely on the public spawnPty path elsewhere. For unit testing the trim,

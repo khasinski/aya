@@ -99,6 +99,55 @@ test.describe("remote terminal v2 client", () => {
     await window.getByTestId("terminal-context-end-remote").click();
     await expect.poll(() => isAlive(restartedPid!)).toBe(false);
   });
+
+  test("reconnects after a bridge drop and host main restart without replacing the PTY", async ({ window, seeded }) => {
+    mkdirSync(SHOTS, { recursive: true });
+    await expect(window.locator('[data-testid="terminal-pane"][data-terminal-id="tab-left"]')).toBeVisible({ timeout: 20_000 });
+    await window.getByRole("button", { name: "$ Shell", exact: true }).click();
+    const pane = window.locator('[data-testid="terminal-pane"][data-terminal-name="Shell"]');
+    await expect(pane).toBeVisible({ timeout: 20_000 });
+    const terminalId = await pane.getAttribute("data-terminal-id");
+    expect(terminalId).toBeTruthy();
+    const hostMainPid = Number(readFileSync(join(seeded.root, "remote-terminal-main.pid"), "utf8"));
+    expect(hostMainPid).toBeGreaterThan(1);
+    await expect.poll(() => readRemoteState(seeded.root).find(item => item.terminalId === terminalId)?.pid, { timeout: 10_000 }).toBeGreaterThan(1);
+    const originalPid = readRemoteState(seeded.root).find(item => item.terminalId === terminalId)?.pid;
+    expect(originalPid).toBeGreaterThan(1);
+
+    await pane.locator(".xterm-screen").click();
+    await window.keyboard.type("BEFORE_BRIDGE_DROP");
+    await window.keyboard.press("Enter");
+    await expect.poll(async () => occurrences(await pane.locator(".xterm-rows").innerText(), "BEFORE_BRIDGE_DROP")).toBe(2);
+
+    expect(await window.evaluate(id => window.aya.e2eDropRemoteBridge(id), terminalId)).toBe(true);
+    await expect(pane.getByTestId("terminal-history-notice")).toContainText("Disconnected from fakehost", { timeout: 10_000 });
+    await expect(pane.getByTestId("remote-reconnect-now")).toBeVisible();
+    await expect(window.evaluate(({ id }) => window.aya.ptyWrite(id, "MUST_NOT_BE_SENT\n"), { id: terminalId })).rejects.toThrow(/disconnected/i);
+    await window.screenshot({ path: join(SHOTS, "remote-disconnected.png") });
+
+    process.kill(hostMainPid, "SIGUSR1");
+    await expect.poll(async () => occurrences(await pane.locator(".xterm-rows").innerText(), "GAP_FROM_HOST"), { timeout: 20_000 }).toBe(2);
+    await expect(pane.getByTestId("remote-reconnect-now")).toHaveCount(0, { timeout: 20_000 });
+    expect(readRemoteState(seeded.root).find(item => item.terminalId === terminalId)?.pid).toBe(originalPid);
+
+    process.kill(hostMainPid, "SIGUSR2");
+    await expect(pane.getByTestId("terminal-history-notice")).toContainText("Disconnected from fakehost", { timeout: 10_000 });
+    await expect.poll(async () => window.evaluate(id => window.aya.ptyWrite(id, "").then(() => true, () => false), terminalId), { timeout: 20_000 }).toBe(true);
+    expect(readRemoteState(seeded.root).find(item => item.terminalId === terminalId)?.pid).toBe(originalPid);
+    await pane.locator(".xterm-screen").click();
+    await window.keyboard.type("AFTER_HOST_MAIN_RESTART");
+    await window.keyboard.press("Enter");
+    await expect.poll(async () => occurrences(await pane.locator(".xterm-rows").innerText(), "AFTER_HOST_MAIN_RESTART"), { timeout: 10_000 }).toBe(2);
+    await window.screenshot({ path: join(SHOTS, "remote-reconnected.png") });
+
+    // Interrupt the bridge again to prove the visible manual action reconnects
+    // immediately instead of waiting for the next automatic backoff.
+    expect(await window.evaluate(id => window.aya.e2eDropRemoteBridge(id), terminalId)).toBe(true);
+    await expect(pane.getByTestId("remote-reconnect-now")).toBeVisible({ timeout: 10_000 });
+    await pane.getByTestId("remote-reconnect-now").click();
+    await expect(pane.getByTestId("remote-reconnect-now")).toHaveCount(0, { timeout: 10_000 });
+    expect(readRemoteState(seeded.root).find(item => item.terminalId === terminalId)?.pid).toBe(originalPid);
+  });
 });
 
 test.describe("remote terminal v1 fallback", () => {

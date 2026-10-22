@@ -129,6 +129,13 @@ export function applyPtyEvent(
     if (!t || (t.remoteControlled === event.controlled && t.remoteReadOnly === (event.readOnly ?? false))) return prev;
     return { ...prev, [event.ptyId]: { ...t, remoteControlled: event.controlled, remoteReadOnly: event.readOnly ?? false } };
   }
+  if (event.type === "remote-connection") {
+    const t = prev[event.ptyId];
+    if (!t) return prev;
+    if (event.connected) return { ...prev, [event.ptyId]: { ...t, disconnected: undefined, disconnectedReason: undefined, remoteReconnectDelayMs: undefined, stopped: false, status: "running" } };
+    const reason = `Disconnected from ${event.host}`;
+    return { ...prev, [event.ptyId]: { ...t, disconnected: true, disconnectedReason: reason, remoteReconnectDelayMs: event.retryInMs, stopped: false, bell: false, status: "error" } };
+  }
   if (event.type === "disconnected") {
     const t = prev[event.ptyId];
     if (!t || (t.disconnected && t.disconnectedReason === event.reason && t.recoveryRetryable === event.retryable && t.recoveryBlocked === event.recoveryBlocked)) return prev;

@@ -212,6 +212,7 @@ function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
       a.stopped === b.stopped &&
       a.disconnected === b.disconnected &&
       a.disconnectedReason === b.disconnectedReason &&
+      a.remoteReconnectDelayMs === b.remoteReconnectDelayMs &&
       a.recoveryGeneration === b.recoveryGeneration &&
       a.recoveryNotice === b.recoveryNotice &&
       a.recoveryScreenUnknown === b.recoveryScreenUnknown &&
@@ -899,8 +900,16 @@ function TerminalViewComponent({
       } else if (event.type === "remote-control") {
         remoteReadOnlyRef.current = !!event.readOnly;
         term.options.disableStdin = disconnectedRef.current || remoteReadOnlyRef.current || handoverInputPausedRef.current;
-        if (event.readOnly) setHistoryNotice("Another Aya controls this host. You can watch, but not type.");
-        else setHistoryNotice((notice) => notice === "Another Aya controls this host. You can watch, but not type." ? null : notice);
+      } else if (event.type === "remote-connection") {
+        if (event.connected) {
+          disconnectedRef.current = false;
+          term.options.disableStdin = remoteReadOnlyRef.current || handoverInputPausedRef.current;
+          setHistoryNotice(null);
+        } else {
+          disconnectedRef.current = true;
+          term.options.disableStdin = true;
+          setHistoryNotice(`Disconnected from ${event.host}`);
+        }
       } else if(event.type === "recovered") {
         displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
         // Also queue RIS behind already-buffered parser writes: an old async
@@ -1653,7 +1662,7 @@ function TerminalViewComponent({
         }}
       >
         {attachmentNotice && <div data-testid="prompt-attachment-notice" className={`aya-prompt-attachment-notice ${attachmentNotice.error ? "aya-prompt-attachment-notice--error" : ""}`} role={attachmentNotice.error ? "alert" : "status"}>{attachmentNotice.text}{copiedAttachmentPath && <button type="button" onClick={() => void copyAttachmentPath()}>Copy path</button>}</div>}
-        {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}{terminal.recoveryRetryable&&<button type="button" data-testid="terminal-recovery-retry" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.retryPtyHostRecovery().catch(error=>setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`));}}>Try again</button>}</div>}
+        {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}{terminal.disconnected&&terminal.remoteHost&&<button type="button" data-testid="remote-reconnect-now" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.ptyRemoteReconnect(terminal.id).catch(()=>{});}}>Reconnect now</button>}{terminal.recoveryRetryable&&<button type="button" data-testid="terminal-recovery-retry" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.retryPtyHostRecovery().catch(error=>setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`));}}>Try again</button>}</div>}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
           <div className="aya-terminal-restoring" aria-live="polite">

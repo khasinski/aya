@@ -238,7 +238,7 @@ async function handleCommand(
 export function startRemoteServerOn(
   socketPath: string,
   options: RemoteServerOptions,
-): () => void {
+): () => Promise<void> {
   fs.mkdirSync(path.dirname(socketPath), { recursive: true });
   try {
     fs.rmSync(socketPath, { force: true });
@@ -247,6 +247,7 @@ export function startRemoteServerOn(
   }
 
   const server = net.createServer((socket) => {
+    sockets.add(socket);
     socket.setEncoding("utf8");
     const terminalSession = { protocol: null as number | null };
     // A remote client can disappear while PTY output is being forwarded.
@@ -298,22 +299,37 @@ export function startRemoteServerOn(
       }
     });
     socket.on("end", () => socket.end());
-    socket.on("close", () => options.terminalSessions?.detach(socket));
+    socket.on("close", () => {
+      sockets.delete(socket);
+      options.terminalSessions?.detach(socket);
+    });
   });
+
+  // A main-process restart must sever bridges from the old registry. Merely
+  // closing the listener leaves accepted Unix sockets alive, so clients would
+  // keep talking to stale in-memory session state after the replacement starts.
+  const sockets = new Set<net.Socket>();
 
   listenOwnerOnly(server, socketPath);
 
+  let stopped: Promise<void> | undefined;
   return () => {
-    server.close();
+    if (stopped) return stopped;
+    stopped = new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
     try {
       fs.rmSync(socketPath, { force: true });
     } catch {
       // best effort
     }
+    return stopped;
   };
 }
 
-export function startRemoteServer(options: RemoteServerOptions): () => void {
+export function startRemoteServer(options: RemoteServerOptions): () => Promise<void> {
   // startRemoteServerOn is intentionally usable from plain Node. Load the
   // Electron lifecycle only in the packaged-app wrapper.
   const { app } = require("electron") as typeof import("electron");

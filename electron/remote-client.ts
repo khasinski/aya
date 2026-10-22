@@ -79,6 +79,10 @@ export class RemoteTerminalClient extends EventEmitter {
     bridge.once("close", (code, signal) => this.fail(new Error(`Remote terminal bridge closed (${signal ?? code ?? "unknown"}).`)));
   }
 
+  /** E2E-only bridge interruption. The IPC exposing this is registered only
+   * when AYA_E2E_RUN is set; production UI has no route to this method. */
+  killBridgeForTests(): void { this.bridge.kill("SIGKILL"); }
+
   static open(sshTarget: string): RemoteTerminalClient {
     const target = requireSshTarget(sshTarget);
     const bridge = spawn("ssh", sshArgs(target, ["aya remote --stdio"]), { stdio: ["pipe", "pipe", "pipe"] });

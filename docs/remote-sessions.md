@@ -413,7 +413,9 @@ On disconnect:
 - Orange highlight remains, with a disconnected badge.
 - Terminal panes show last known buffered output.
 - Input is disabled.
-- Aya attempts reconnect if configured.
+- Aya retries after 1, 2, 5, 10, and 30 seconds, then every 30 seconds. A successful connection resets the schedule. The pane also offers `Reconnect now`.
+- The pane reconnects by its stable host terminal id and last received byte offset; replay fills the gap without restarting the process.
+- If the host's Aya main process restarts while its terminal host remains alive, it rebuilds the session list and output replay from the saved remote-tab markers and the terminal host's bounded output buffer. Terminals whose processes ended are reported as exited.
 
 On reconnect:
 

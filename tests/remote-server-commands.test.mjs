@@ -317,6 +317,23 @@ test("a stale socket file is replaced on start, and stop removes the socket", as
   assert.equal(existsSync(socket), false);
 });
 
+test("stopping the remote server closes accepted bridges before a replacement starts", async (t) => {
+  const { socket, stop } = start(t);
+  const client = net.createConnection(socket);
+  t.after(() => client.destroy());
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  await new Promise((resolve, reject) => {
+    client.once("data", resolve);
+    client.once("error", reject);
+  });
+  const closed = new Promise((resolve) => client.once("close", resolve));
+  await stop();
+  await closed;
+});
+
 test("startRemoteServer listens in AYA_HOME and stops when Aya quits", async (t) => {
   const electronId = createRequire(MODULE).resolve("electron");
   const saved = require.cache[electronId];
