@@ -106,6 +106,12 @@ test("a name absent from the scoped project does not leak in from another", () =
   assert.match(r.error, /no pane named "deploy"/);
 });
 
+test("an unknown project is named as such, not as a missing pane", () => {
+  const r = resolvePaneTarget(PROJECTS, { name: "build", projectSlug: "gamma" });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'no project "gamma"; projects: alpha, beta');
+});
+
 test("neither name nor id is an error", () => {
   const r = resolvePaneTarget(PROJECTS, {});
   assert.equal(r.ok, false);

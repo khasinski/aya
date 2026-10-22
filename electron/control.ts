@@ -551,13 +551,17 @@ async function handleRequest(
   }
   if (request.type === "pane-rename") {
     if (!options.listProjects || !options.changePane) throw new Error("pane control is not available");
-    const resolved = resolvePaneTarget(await options.listProjects(), { name: request.target, projectSlug: request.projectSlug });
+    const projects = await options.listProjects();
+    const resolved = resolvePaneTarget(projects, { name: request.target, projectSlug: request.projectSlug });
     if (!resolved.ok) throw new Error(resolved.error);
     const { projectSlug, terminalId, name } = resolved.match;
     // A tab name is one line in the tab bar and in pane list.
     const newName = oneLine(request.name);
     if (!newName) throw new Error("the name has no visible characters; nothing was renamed");
     if (newName.length > PANE_NAME_MAX_CHARS) throw new Error(`the name is ${newName.length} characters, the most is ${PANE_NAME_MAX_CHARS}; nothing was renamed`);
+    // Pane commands target by name, so two panes of one project with one name need an id from then on.
+    const taken = projects.find((p) => p.slug === projectSlug)!.tabs.find((t) => t.id !== terminalId && t.name.trim().toLowerCase() === newName.toLowerCase());
+    if (taken) throw new Error(`pane ${taken.id} in project ${projectSlug} is already named ${taken.name}; nothing was renamed`);
     await options.changePane(projectSlug, terminalId, { rename: newName }).catch((err: unknown) => {
       throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be renamed") : err;
     });
