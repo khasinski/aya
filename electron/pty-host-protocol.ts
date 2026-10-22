@@ -125,20 +125,38 @@ export function asSearchResult(value: unknown): BufferSearchHit[] {
   return Array.isArray(value) ? (value as BufferSearchHit[]) : [];
 }
 
+/** Return a safe, field-specific reason when a host screen DTO is malformed. */
+export function vtSnapshotValidationError(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "snapshot is not an object";
+  const s = value as VtSnapshot;
+  if (typeof s.generation !== "string") return "generation is not a string";
+  if (s.revision !== undefined && !validVtSnapshotFence({ generation: s.generation, revision: s.revision })) return "revision is invalid";
+  if (typeof s.shell !== "boolean") return "shell flag is not boolean";
+  if (s.recoveryUnknown !== undefined && typeof s.recoveryUnknown !== "boolean") return "recoveryUnknown is not boolean";
+  if (typeof s.composerSeen !== "boolean") return "composerSeen is not boolean";
+  if (typeof s.openedAt !== "number" || !Number.isFinite(s.openedAt)) return "openedAt is not finite";
+  if (!(s.lastOutputAt === null || (typeof s.lastOutputAt === "number" && Number.isFinite(s.lastOutputAt)))) return "lastOutputAt is not finite or null";
+  if (!Number.isInteger(s.cols) || s.cols < 1) return "cols is not a positive integer";
+  if (!Array.isArray(s.rows)) return "rows is not an array";
+  for (let y = 0; y < s.rows.length; y++) if (typeof s.rows[y] !== "string") return `rows[${y}] is not a string`;
+  if (!Array.isArray(s.cells)) return "cells is not an array";
+  if (s.cells.length !== s.rows.length) return `cells/rows length mismatch (${s.cells.length}/${s.rows.length})`;
+  for (let y = 0; y < s.cells.length; y++) {
+    const row = s.cells[y];
+    if (!Array.isArray(row)) return `cells[${y}] is not an array`;
+    for (let x = 0; x < row.length; x++) {
+      const c = row[x];
+      if (!Array.isArray(c) || c.length !== 4) return `cells[${y}][${x}] is not a four-field cell`;
+      if (!Number.isInteger(c[0]) || c[0] < 0 || c[0] >= s.cols) return `cells[${y}][${x}].column is outside 0..${s.cols - 1}`;
+      if (typeof c[1] !== "string") return `cells[${y}][${x}].text is not a string`;
+      if (typeof c[2] !== "number" || !Number.isFinite(c[2])) return `cells[${y}][${x}].dim is not finite`;
+      if (typeof c[3] !== "number" || !Number.isFinite(c[3])) return `cells[${y}][${x}].inverse is not finite`;
+    }
+  }
+  return null;
+}
+
 /** A malformed mirror is unknown, never permission to type into a dialog. */
 export function asVtSnapshot(value: unknown): VtSnapshot | null {
-  if (!value || typeof value !== "object") return null;
-  const s = value as VtSnapshot;
-  if (typeof s.generation !== "string" || typeof s.shell !== "boolean" ||
-      (s.revision !== undefined && !validVtSnapshotFence({generation:s.generation,revision:s.revision})) ||
-      (s.recoveryUnknown !== undefined && typeof s.recoveryUnknown !== "boolean") ||
-      typeof s.composerSeen !== "boolean" || typeof s.openedAt !== "number" ||
-      !(s.lastOutputAt === null || typeof s.lastOutputAt === "number") ||
-      !Number.isInteger(s.cols) || s.cols < 1 ||
-      !Array.isArray(s.rows) || !s.rows.every((r) => typeof r === "string") ||
-      !Array.isArray(s.cells) || s.cells.length !== s.rows.length ||
-      !s.cells.every((row) => Array.isArray(row) && row.every((c) =>
-        Array.isArray(c) && c.length === 4 && Number.isInteger(c[0]) && c[0] >= 0 && c[0] < s.cols &&
-        typeof c[1] === "string" && typeof c[2] === "number" && typeof c[3] === "number"))) return null;
-  return s;
+  return vtSnapshotValidationError(value) === null ? value as VtSnapshot : null;
 }
