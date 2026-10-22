@@ -89,6 +89,8 @@ test.describe("keyboard access to project and terminal lists", () => {
 
   test("keyboard context-menu shortcuts focus the menu and restore the row", async ({ window }) => {
     const row = window.getByRole("list", { name: "Terminals" }).getByRole("listitem").first();
+    await window.bringToFront();
+    await expect.poll(() => window.evaluate(() => document.hasFocus())).toBe(true);
     await row.focus();
     await expect(row).toBeFocused();
     await window.keyboard.press("Shift+F10");
@@ -217,6 +219,8 @@ test.describe("keyboard access to project and terminal lists", () => {
       });
     });
 
+    await window.bringToFront();
+    await expect.poll(() => window.evaluate(() => document.hasFocus())).toBe(true);
     const terminalInput = window.locator('.aya-pane[style*="display: flex"] .xterm-helper-textarea').first();
     await terminalInput.focus();
     await window.keyboard.press("Tab");
