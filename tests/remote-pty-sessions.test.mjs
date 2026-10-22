@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
 const { restoreRemoteTerminalSessions } = await import("../dist-electron/remote-session-restore.js");
@@ -92,6 +93,56 @@ test("remote session restore discovers durable tabs, marks dead PTYs exited, and
   const replay = [];
   await sessions.handle(socket, { type: "pty:attach", protocol: 2, id: "attach", terminalId: "restored-live", offset: 4 }, (_socket, message) => replay.push(message));
   assert.equal(replay.filter(message => message.type === "pty:output").map(message => message.data).join(""), "gap");
+});
+
+test("remote session restore deduplicates and caps records with bounded host-probe concurrency", async () => {
+  const tabs = Array.from({ length: MAX_PTY_PANES + 30 }, (_, index) => ({
+    id: `remote-${index}`, presetId: "shell", name: `Remote ${index}`, remoteTerminal: true,
+  }));
+  tabs.push({ ...tabs[0] });
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project], listPresets: async () => [preset],
+    spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  let active = 0;
+  let maxActive = 0;
+  let pidCalls = 0;
+  let outputCalls = 0;
+  const probe = async (kind) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    if (kind === "pid") pidCalls += 1;
+    else outputCalls += 1;
+    await new Promise(resolve => setImmediate(resolve));
+    active -= 1;
+  };
+  const count = await restoreRemoteTerminalSessions({
+    sessions,
+    listProjects: async () => [project],
+    getPid: async () => { await probe("pid"); return null; },
+    getOutput: async () => { await probe("output"); return { output: "", endOffset: 0 }; },
+    processStartIdentity: () => null,
+    isAlive: () => false,
+    attach: () => {},
+  });
+  assert.equal(count, MAX_PTY_PANES);
+  assert.equal(pidCalls, MAX_PTY_PANES);
+  assert.equal(outputCalls, MAX_PTY_PANES * 2);
+  assert.ok(maxActive <= 4, `host probes in flight: ${maxActive}`);
+  const socket = { destroyed: false, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const messages = [];
+  await sessions.handle(socket, { type: "pty:list", protocol: 2, id: "bounded-list" }, (_socket, message) => messages.push(message));
+  assert.equal(messages[0].terminals.length, MAX_PTY_PANES);
+});
+
+test("Aya main restores remote sessions before accepting remote connections on every startup", () => {
+  const source = readFileSync(new URL("../electron/main.ts", import.meta.url), "utf8");
+  assert.match(source, /remotePtySessions\.setReady\(restoreRemoteTerminalSessions\(\{/);
+  assert.match(source, /getPid: \(terminalId\) => ptyHost\.getPid\(terminalId\)/);
+  assert.match(source, /getOutput: \(terminalId\) => ptyHost\.getRemoteOutput\(terminalId\)/);
+  assert.match(source, /attach: \(\) => ptyHost\.attachWebContents\(remotePtySessions!\)/);
 });
 
 test("one socket controls the host while other sockets can only observe until it disconnects", async () => {

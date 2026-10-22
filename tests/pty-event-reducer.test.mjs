@@ -95,6 +95,13 @@ test("remote disconnect is informational and clears waiting presentation until r
   assert.equal(reconnected.t1.remoteReconnectDelayMs, undefined);
 });
 
+test("truncated remote replay marks the visible terminal history incomplete", () => {
+  const prev = { t1: termState("t1") };
+  const next = applyPtyEvent(prev, { type: "remote-replay-truncated", ptyId: "t1" });
+  assert.equal(next.t1.remoteReplayTruncated, true);
+  assert.equal(applyPtyEvent(next, { type: "remote-replay-truncated", ptyId: "t1" }), next);
+});
+
 test("spawn-failed clears any stale bell from a prior waiting state", () => {
   const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
   const next = applyPtyEvent(prev, {

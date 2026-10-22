@@ -49,6 +49,16 @@ test("replay and live chunks of the same pty stay separate events", () => {
   assert.deepEqual(sent, [data("a", "R1R2", true), data("a", "L1")]);
 });
 
+test("remote frames with separate renderer acknowledgements are never merged", () => {
+  const out = [];
+  const scheduler = manualScheduler();
+  const coalescer = createPtyDataCoalescer(event => out.push(event), scheduler.schedule);
+  coalescer.push({ type: "data", ptyId: "remote", chunk: "one", remoteDeliveryId: "remote:1" });
+  coalescer.push({ type: "data", ptyId: "remote", chunk: "two", remoteDeliveryId: "remote:2" });
+  coalescer.flush();
+  assert.deepEqual(out.map(event => [event.chunk, event.remoteDeliveryId]), [["one", "remote:1"], ["two", "remote:2"]]);
+});
+
 test("a non-data event flushes pending data first (exit can't overtake output)", () => {
   const sent = [];
   const s = manualScheduler();

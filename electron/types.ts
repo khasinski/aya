@@ -327,7 +327,7 @@ export type SpawnFailureReason =
   | "spawn-prepare-failed";
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string; replayModeUnknown?: true; streamOffset?: number }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string; replayModeUnknown?: true; streamOffset?: number; remoteDeliveryId?: string }
   | { type: "exit"; ptyId: string; exitCode: number; ownerExit?: {generation:number;event:number} }
   | {
       type: "spawn-failed";
@@ -341,6 +341,7 @@ export type PtyEvent =
   | { type: "host-connection"; ptyId:string;connected:boolean;reason:string }
   | { type: "remote-control"; ptyId: string; controlled: boolean; readOnly?: boolean }
   | { type: "remote-connection"; ptyId: string; host: string; connected: boolean; retryInMs?: number }
+  | { type: "remote-replay-truncated"; ptyId: string }
   | { type: "disconnected"; ptyId: string; reason?:string;recoveryBlocked?:boolean;retryable?:boolean }
   | {type:"recovery-unavailable";ptyId:string;reason:string}
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}

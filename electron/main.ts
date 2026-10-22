@@ -91,6 +91,7 @@ import {
   AGENT_BRIEF_FILES_FILE,
 } from "./paths";
 import { createPtyLog } from "./pty-log";
+import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
 import { watchOmarchyTheme } from "./omarchy";
 import { openExternalUrl } from "./navigation";
@@ -716,6 +717,7 @@ function registerIpc(): TeamRunner {
       detach: (ptyId) => remoteTerminalManager.detach(ptyId),
       end: (ptyId) => remoteTerminalManager.end(ptyId),
       reconnect: (ptyId) => remoteTerminalManager.reconnectNow(ptyId),
+      acknowledgeOutput: (ptyId, deliveryId) => remoteTerminalManager.acknowledgeOutput(ptyId, deliveryId),
     },
     prepareSpawn,
     sendSpawn,
@@ -902,11 +904,16 @@ function broadcastStatus(update: ControlStatusUpdate): void {
   for (const sink of statusSinks()) sink.webContents.send("control:status", update);
 }
 
-function broadcastPtyEvent(event: PtyEvent): void {
+function deliverPtyEvent(event: PtyEvent): void {
   for (const win of ayaWindows) {
     if (!win.isDestroyed()) win.webContents.send("pty:event", event);
   }
   ayaWeb.broadcast("pty:event", event);
+}
+
+const ptyEventBroadcaster = createPtyDataCoalescer(deliverPtyEvent);
+function broadcastPtyEvent(event: PtyEvent): void {
+  ptyEventBroadcaster.push(event);
 }
 
 // Triggered when a second `Aya` launch happens while we're already running

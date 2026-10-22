@@ -2,7 +2,8 @@ import type { SpawnRequest, PtyEvent } from "./types";
 import { RemoteTerminalClient } from "./remote-client";
 
 type TerminalConnection = Pick<RemoteTerminalClient,
-  "on" | "off" | "spawnTerminal" | "attach" | "write" | "resize" | "exit" | "detach"> & { killBridgeForTests?: () => void };
+  "on" | "off" | "spawnTerminal" | "attach" | "write" | "resize" | "exit" | "detach"> &
+  Pick<Partial<RemoteTerminalClient>, "pauseOutput" | "resumeOutput" | "destroy"> & { killBridgeForTests?: () => void };
 
 export const REMOTE_RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
 
@@ -40,6 +41,8 @@ interface ManagedTerminal {
   connecting: boolean;
   established: boolean;
   reconnectEnabled: boolean;
+  outputDeliverySequence: number;
+  pendingOutputDelivery?: { id: string; client: TerminalConnection };
 }
 
 /** Main-process lifecycle for a local view of a host-owned PTY. Detaching a
@@ -52,6 +55,15 @@ export class RemoteTerminalManager {
   constructor(private readonly deps: RemoteTerminalManagerDeps) {}
 
   has(ptyId: string): boolean { return this.terminals.has(ptyId); }
+
+  acknowledgeOutput(ptyId: string, deliveryId: string): boolean {
+    const terminal = this.terminals.get(ptyId);
+    if (!terminal || terminal.pendingOutputDelivery?.id !== deliveryId) return false;
+    const { client } = terminal.pendingOutputDelivery;
+    terminal.pendingOutputDelivery = undefined;
+    client.resumeOutput?.();
+    return true;
+  }
 
   dropBridgeForTests(ptyId: string): boolean {
     const client = this.terminals.get(ptyId)?.client;
@@ -91,10 +103,19 @@ export class RemoteTerminalManager {
       connecting: false,
       established: existing?.established ?? false,
       reconnectEnabled: false,
+      outputDeliverySequence: existing?.outputDeliverySequence ?? 0,
       onOutput: (event) => {
         if (event.terminalId !== terminal.remoteTerminalId) return;
         terminal.outputOffset = Math.max(terminal.outputOffset, event.offset + Buffer.byteLength(event.data, "utf8"));
-        this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: event.data });
+        const source = terminal.client;
+        if (source?.pauseOutput) {
+          const id = `${request.ptyId}:${++terminal.outputDeliverySequence}`;
+          terminal.pendingOutputDelivery = { id, client: source };
+          source.pauseOutput();
+          this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: event.data, remoteDeliveryId: id });
+        } else {
+          this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: event.data });
+        }
       },
       onExit: (event) => {
         if (event.terminalId !== terminal.remoteTerminalId) return;
@@ -204,6 +225,7 @@ export class RemoteTerminalManager {
     const client = terminal.client;
     if (!client) throw new Error("The remote terminal is disconnected.");
     const attached = await client.attach(terminal.remoteTerminalId, terminal.outputOffset);
+    if (attached.truncated) this.deps.sendEvent({ type: "remote-replay-truncated", ptyId });
     terminal.readOnly = attached.readOnly;
     terminal.outputOffset = Math.max(terminal.outputOffset, attached.endOffset);
     this.deps.sendEvent({ type: "remote-control", ptyId, controlled: false, readOnly: attached.readOnly });
@@ -214,6 +236,7 @@ export class RemoteTerminalManager {
     terminal.reconnectEnabled = false;
     const client = terminal.client;
     terminal.client = null;
+    terminal.pendingOutputDelivery = undefined;
     if (!client) return;
     client.off("output", terminal.onOutput);
     client.off("exit", terminal.onExit);
@@ -241,6 +264,7 @@ export class RemoteTerminalManager {
   private connectionLost(ptyId: string, terminal: ManagedTerminal, client: TerminalConnection): void {
     if (terminal.client !== client || terminal.exited) return;
     terminal.client = null;
+    terminal.pendingOutputDelivery = undefined;
     this.unbind(terminal, client);
     if (!terminal.established || !terminal.reconnectEnabled) return;
     this.scheduleReconnect(ptyId, terminal);

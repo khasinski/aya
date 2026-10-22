@@ -12,6 +12,7 @@ class FakeTerminalClient extends EventEmitter {
   outputDuringSpawn = null;
   attachOutput = null;
   attachEndOffset = 0;
+  attachTruncated = false;
   async spawnTerminal(project, preset, cols, rows, terminalId) {
     this.calls.push(["spawn", project, preset, cols, rows, terminalId]);
     if (this.failSpawn) throw this.failSpawn;
@@ -21,8 +22,8 @@ class FakeTerminalClient extends EventEmitter {
   async attach(terminalId, offset) {
     this.calls.push(["attach", terminalId, offset]);
     if (this.failAttach) throw this.failAttach;
-    if (this.attachOutput) this.emit("output", { terminalId, offset, data: this.attachOutput });
-    return { terminalId, fromOffset: offset, endOffset: this.attachEndOffset, truncated: false, readOnly: this.readOnly };
+    if (this.attachOutput) setImmediate(() => this.emit("output", { terminalId, offset, data: this.attachOutput }));
+    return { terminalId, fromOffset: this.attachTruncated ? Math.max(0, offset - 1) : offset, endOffset: this.attachEndOffset, truncated: this.attachTruncated, readOnly: this.readOnly };
   }
   async write(terminalId, data) { this.calls.push(["write", terminalId, data]); return true; }
   async resize(terminalId, cols, rows) { this.calls.push(["resize", terminalId, cols, rows]); }
@@ -124,6 +125,46 @@ test("an explicitly restarted pane creates a new session after an attach reports
   assert.deepEqual(clients[1].calls[0], ["spawn", "remote-repo", "codex", 90, 28, "tab-uuid"]);
 });
 
+test("a truncated remote replay resets the local display before replay bytes are delivered", async () => {
+  const client = new FakeTerminalClient();
+  client.attachTruncated = true;
+  client.attachOutput = "recent suffix";
+  client.attachEndOffset = 20;
+  const events = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, sendEvent: event => events.push(event) });
+
+  await manager.spawn({ ...request, attachOnly: true }, "devbox", "remote-repo");
+  assert.equal(events[0].type, "remote-replay-truncated");
+  assert.deepEqual(events[0], { type: "remote-replay-truncated", ptyId: request.ptyId });
+  await new Promise(resolve => setImmediate(resolve));
+  const replayIndex = events.findIndex(event => event.type === "data" && event.chunk === "recent suffix");
+  assert.ok(replayIndex > 0);
+  assert.ok(events.findIndex(event => event.type === "remote-replay-truncated") < replayIndex);
+  client.emit("output", { terminalId: request.ptyId, offset: 19, data: "recent suffix" });
+  assert.equal(events.at(-1).type, "data");
+  assert.equal(events.at(-1).chunk, "recent suffix");
+});
+
+test("remote output pauses its bridge until the renderer acknowledges delivery", async () => {
+  const client = Object.assign(new FakeTerminalClient(), {
+    outputPaused: false,
+    pauseOutput() { this.outputPaused = true; },
+    resumeOutput() { this.outputPaused = false; },
+  });
+  const events = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, sendEvent: event => events.push(event) });
+  await manager.spawn(request, "devbox", "remote-repo");
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "render this" });
+  const delivered = events.find(event => event.type === "data");
+  assert.equal(delivered.chunk, "render this");
+  assert.equal(typeof delivered.remoteDeliveryId, "string");
+  assert.equal(client.outputPaused, true);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, "stale-delivery"), false);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId), true);
+  assert.equal(client.outputPaused, false);
+  assert.equal(manager.acknowledgeOutput(request.ptyId, delivered.remoteDeliveryId), false);
+});
+
 test("restarting a pane after its remote process exits starts a fresh host terminal", async () => {
   const events = [];
   const clients = [];
@@ -183,7 +224,10 @@ test("remote reconnect backs off, resumes at the last offset, and replays the ga
   await run();
   assert.deepEqual(clients[2].calls[0], ["attach", request.ptyId, 5]);
   assert.equal(events.filter(event => event.type === "data" && event.chunk === "gap").length, 1);
-  assert.deepEqual(events.at(-1), { type: "remote-connection", ptyId: request.ptyId, host: "Dev box", connected: true });
+  const connectedIndex = events.findIndex(event => event.type === "remote-connection" && event.connected);
+  const replayIndex = events.findIndex(event => event.type === "data" && event.chunk === "gap");
+  assert.ok(connectedIndex >= 0);
+  assert.ok(replayIndex > connectedIndex, "replay is delivered after the client resumes reading");
   assert.equal(await manager.write(request.ptyId, "after reconnect"), true);
 });
 

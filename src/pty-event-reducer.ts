@@ -138,6 +138,11 @@ export function applyPtyEvent(
     const reason = `Disconnected from ${event.host}`;
     return { ...prev, [event.ptyId]: { ...t, disconnected: true, remoteDisconnected: true, disconnectedReason: reason, remoteReconnectDelayMs: event.retryInMs, stopped: false, bell: false, externalStatus: undefined, screenDialog: undefined, status: "running" } };
   }
+  if (event.type === "remote-replay-truncated") {
+    const t = prev[event.ptyId];
+    if (!t || t.remoteReplayTruncated) return prev;
+    return { ...prev, [event.ptyId]: { ...t, remoteReplayTruncated: true } };
+  }
   if (event.type === "disconnected") {
     const t = prev[event.ptyId];
     if (!t || (t.disconnected && t.disconnectedReason === event.reason && t.recoveryRetryable === event.retryable && t.recoveryBlocked === event.recoveryBlocked)) return prev;

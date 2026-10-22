@@ -322,7 +322,7 @@ export function useTerminalActions({
         // `stopped` (not a fake exitCode 0) marks the PTY as killed-by-restart:
         // shows idle + restartable via Shift+Enter, without masquerading as a
         // clean "done" finish in the project badges or event log.
-        next[id] = { ...t, status: "idle", stopped: true, disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined, bell: false };
+        next[id] = { ...t, status: "idle", stopped: true, disconnected: undefined, remoteDisconnected: undefined, remoteReplayTruncated: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined, bell: false };
       }
       return next;
     });
@@ -386,7 +386,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
-          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
+          disconnected: undefined, remoteDisconnected: undefined, remoteReplayTruncated: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
           restored: t.restored || hadSession,
         },
       };
@@ -476,7 +476,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
-          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
+          disconnected: undefined, remoteDisconnected: undefined, remoteReplayTruncated: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
           restored: cur.restored || hadSession,
         },
       };

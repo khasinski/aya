@@ -213,6 +213,8 @@ function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
       a.disconnected === b.disconnected &&
       a.disconnectedReason === b.disconnectedReason &&
       a.remoteReconnectDelayMs === b.remoteReconnectDelayMs &&
+      a.remoteDisconnected === b.remoteDisconnected &&
+      a.remoteReplayTruncated === b.remoteReplayTruncated &&
       a.recoveryGeneration === b.recoveryGeneration &&
       a.recoveryNotice === b.recoveryNotice &&
       a.recoveryScreenUnknown === b.recoveryScreenUnknown &&
@@ -910,6 +912,11 @@ function TerminalViewComponent({
           term.options.disableStdin = true;
           setHistoryNotice(`Disconnected from ${event.host}`);
         }
+      } else if (event.type === "remote-replay-truncated") {
+        term.reset();
+        term.write("\x1bc");
+        richInputRef.current = false;
+        setHistoryNotice("Earlier terminal output is no longer available; showing the most recent output.");
       } else if(event.type === "recovered") {
         displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
         // Also queue RIS behind already-buffered parser writes: an old async
@@ -1677,9 +1684,9 @@ function TerminalViewComponent({
               Reconnect now
             </button>
           </div>
-        ) : (historyNotice || terminal.recoveryNotice || terminal.recoveryScreenUnknown) ? (
+        ) : (historyNotice || terminal.recoveryNotice || terminal.recoveryScreenUnknown || terminal.remoteReplayTruncated) ? (
           <div data-testid="terminal-history-notice" role="status" style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 3, padding: "2px 8px", fontSize: 11, background: "var(--aya-term-bg)", pointerEvents: "none" }}>
-            {historyNotice ?? terminal.recoveryNotice}
+            {historyNotice ?? terminal.recoveryNotice ?? (terminal.remoteReplayTruncated ? "Earlier terminal output is no longer available; showing the most recent output." : "")}
             {terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}
             {terminal.recoveryRetryable && <button type="button" data-testid="terminal-recovery-retry" style={{ pointerEvents: "auto", marginLeft: 8 }} onClick={() => { void window.aya.retryPtyHostRecovery().catch(error => setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`)); }}>Try again</button>}
           </div>

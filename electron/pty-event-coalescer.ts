@@ -77,7 +77,7 @@ export function createPtyDataCoalescer(
       // A replay fence may arrive after live output collected during successor
       // startup. Preserve that order and never merge across display resets.
       if (event.reset !== undefined) {flush();send({...event});return;}
-      const key = JSON.stringify([event.ptyId, !!event.replay, event.reset, event.replayToken]);
+      const key = JSON.stringify([event.ptyId, !!event.replay, event.reset, event.replayToken, event.remoteDeliveryId]);
       const queued = pending.get(key);
       if (queued && (queued.streamOffset === undefined || event.streamOffset === undefined || queued.streamOffset + Buffer.byteLength(queued.chunk, "utf8") === event.streamOffset)) {
         queued.chunk += event.chunk;
@@ -114,6 +114,7 @@ export function coalesceAdjacentData(events: PtyEvent[]): PtyEvent[] {
       !tail.replay === !event.replay &&
       tail.reset === event.reset &&
       tail.replayToken === event.replayToken &&
+      tail.remoteDeliveryId === event.remoteDeliveryId &&
       (tail.streamOffset === undefined || event.streamOffset === undefined || tail.streamOffset + Buffer.byteLength(tail.chunk, "utf8") === event.streamOffset)
     ) {
       tail.chunk += event.chunk;

@@ -12,7 +12,7 @@ import type { SpawnRequest } from "../types";
 import { requirePositiveInt, requireString, validateSpawnRequest } from "../validation";
 
 export interface PtyIpcDeps {
-  ipcMain: Pick<IpcMain, "handle">;
+  ipcMain: Pick<IpcMain, "handle"> & Partial<Pick<IpcMain, "on">>;
   host: Pick<PtyHostClient, "write" | "resize" | "kill" | "getBuffer" | "getCwd" | "search" | "getSize">;
   remote?: {
     write: (ptyId: string, data: string) => Promise<boolean | undefined>;
@@ -20,6 +20,7 @@ export interface PtyIpcDeps {
     detach: (ptyId: string) => Promise<boolean>;
     end: (ptyId: string) => Promise<boolean>;
     reconnect: (ptyId: string) => Promise<boolean>;
+    acknowledgeOutput: (ptyId: string, deliveryId: string) => boolean;
   };
   gate: ReturnType<typeof createSpawnGate>;
   /** Shared-dir command, the agent brief, Aya Dev's own CLI first. */
@@ -88,6 +89,9 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     deps.confirmRestartPane(requireString(ptyId, "pty:confirm-restart.ptyId")),
   );
   ipcMain.handle("pty:remote-reconnect", (_e, ptyId: unknown) => deps.remote?.reconnect(requireString(ptyId, "pty:remote-reconnect.ptyId")) ?? false);
+  ipcMain.on?.("pty:remote-output-ack", (_event, ptyId: unknown, deliveryId: unknown) => {
+    if (typeof ptyId === "string" && typeof deliveryId === "string") deps.remote?.acknowledgeOutput(ptyId, deliveryId);
+  });
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown, action?: unknown) => {
     const id = requireString(ptyId, "pty:kill.ptyId");
     if (action === "end-remote" && await deps.remote?.end(id)) return;

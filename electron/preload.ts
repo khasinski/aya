@@ -70,7 +70,12 @@ const api: AyaApi = {
   stopOtherPtyHosts: () => ipcRenderer.invoke("pty-host:stop-others"),
   confirmPaneRestart: (ptyId: string) => ipcRenderer.invoke("pty:confirm-restart", ptyId),
   onPtyEvent: (handler) => {
-    const listener = (_e: unknown, event: PtyEvent) => handler(event);
+    const listener = (_e: unknown, event: PtyEvent) => {
+      handler(event);
+      if (event.type === "data" && event.remoteDeliveryId) {
+        ipcRenderer.send("pty:remote-output-ack", event.ptyId, event.remoteDeliveryId);
+      }
+    };
     ipcRenderer.on("pty:event", listener);
     return () => ipcRenderer.removeListener("pty:event", listener);
   },
