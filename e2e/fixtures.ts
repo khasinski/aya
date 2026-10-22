@@ -183,6 +183,9 @@ export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
   // No AYA_DEV: load the built dist/index.html; no ELECTRON_RUN_AS_NODE, or
   // Electron starts as plain Node with no `app`. Both are dropped by appEnv.
   const env = appEnv(seeded);
+  if (!process.env.CI && env.AYA_E2E_HEADLESS !== "1") {
+    throw new Error("Local e2e must launch Aya with hidden windows");
+  }
 
   // The built main entry, not the app root: a bare directory arg reads as
   // "open this project". main.ts skips argv entries ending in "main.js".
@@ -318,6 +321,12 @@ export const test = base.extend<{
   window: async ({ app }, use) => {
     const win = await app.firstWindow();
     await win.waitForLoadState("domcontentloaded");
+    if (!process.env.CI) {
+      const visible = await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()),
+      );
+      if (visible) throw new Error("A local e2e window became visible");
+    }
     await use(win);
   },
 });
