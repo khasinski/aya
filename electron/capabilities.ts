@@ -135,6 +135,18 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: ["target and --project work as in pane read."],
   },
   {
+    command: "pane close",
+    usage: "aya pane close target [--force] [--project slug]",
+    summary: "Close a pane's tab and stop its process.",
+    example: "aya pane close reviewer",
+    notes: [
+      "target and --project work as in pane read.",
+      "Without --force only an idle agent pane or an exited pane of your own project closes. Refused: a shell pane (it may run a server or a migration), a busy, starting, held, unknown or waiting pane, a pane of another project, and a pane that plays a team role.",
+      "A pane cannot close itself, even with --force.",
+      "Only close a pane you opened or the user asked you to close.",
+    ],
+  },
+  {
     command: "team whoami",
     usage: "aya team whoami",
     summary: "Print this pane's team, role, who it sends to, what it must not do, and the protocol.",

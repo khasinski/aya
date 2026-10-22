@@ -944,7 +944,7 @@ export interface AyaApi {
   /** Main asks this window to add panes as tabs; answer with teamPanesOpened. */
   onTeamOpenPanes(handler: (request: TeamOpenPanesRequest) => void): () => void;
   teamPanesOpened(requestId: string, error: string | null): Promise<void>;
-  /** Main asks this window to change one of its tabs (aya pane rename); answer with teamPanesOpened. */
+  /** Main asks this window to change one of its tabs (aya pane rename / close); answer with teamPanesOpened. */
   onPaneChange(handler: (request: PaneChangeRequest) => void): () => void;
 
   usageHookStatus(): Promise<UsageHookStatus>;
@@ -1284,7 +1284,7 @@ export interface PaneChangeRequest {
   requestId: string;
   projectSlug: string;
   paneId: string;
-  change: { rename: string };
+  change: { rename: string } | { close: true };
 }
 
 /** The pane a role got: `preset` names a new session's preset, null an existing

@@ -27,6 +27,7 @@ import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
 import { callerProject, handleTeamAuthorRequest } from "./team-author";
+import { paneTeamRole } from "./team-files";
 import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
 import { oneLine, printable } from "./printable";
@@ -428,6 +429,10 @@ export class PaneInputChangedError extends Error {
 /** Longest tab name pane rename sets; a name is shown whole in the tab bar and in every pane list row. */
 const PANE_NAME_MAX_CHARS = 200;
 
+/** A pane in these states has no task in flight: pane close stops it without --force. Not `waiting` (the agent asked
+ *  the user something mid-task) and not `shell`: it names the preset, not what runs, so a dev server reads as shell. */
+const CLOSABLE_PANE_STATES = new Set<PaneStateResult["state"]>(["idle", "stopped"]);
+
 /** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
 const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);
 
@@ -437,7 +442,7 @@ const speaksAsPane = (request: ControlRequest): boolean =>
 
 /** Requests that act on the pane or project whose id they carry: a Codex daemon's id may be another project's pane.
  *  `status` too: a question is a team's signal, it holds the named pane's rounds. */
-const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status", "pane-new"]);
+const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status", "pane-new", "pane-close"]);
 
 async function daemonRefusal(caller: ControlCaller, options: ControlServerOptions, shareMs?: number): Promise<string | null> {
   if (!caller.terminalId || !caller.pid) return null;
@@ -592,6 +597,29 @@ async function handleRequest(
       throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be renamed") : err;
     });
     return { output: `renamed ${name} to ${newName}\n` };
+  }
+  if (request.type === "pane-close") {
+    if (!options.listProjects || !options.changePane || !options.paneState) throw new Error("pane control is not available");
+    const projects = await options.listProjects();
+    const resolved = resolvePaneTarget(projects, { name: request.target, projectSlug: request.projectSlug });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const { projectSlug, terminalId, name } = resolved.match;
+    // The CLI dies with its own pane, so the caller would never learn the result.
+    if (terminalId === caller.terminalId) throw new Error(`${name} is the pane running this command; close it from another pane or the tab bar; nothing was closed`);
+    if (!request.force) {
+      const refused = (why: string) => new Error(`${name} ${why}; pass --force to close it anyway; nothing was closed`);
+      const own = caller.terminalId ? projects.find((p) => p.tabs.some((t) => t.id === caller.terminalId)) : undefined;
+      if (own && own.slug !== projectSlug) throw refused(`is in project ${projectSlug}, not in this pane's project ${own.slug}`);
+      const project = projects.find((p) => p.slug === projectSlug);
+      const plays = project && options.team ? await paneTeamRole(options.team.teamHome, project, terminalId) : null;
+      if (plays) throw refused(`plays ${plays.role} in team ${plays.team}; closing it leaves the role without a pane`);
+      const { state } = await options.paneState(terminalId);
+      if (!CLOSABLE_PANE_STATES.has(state)) throw refused(`is ${state}; closing it stops what runs in it`);
+    }
+    await options.changePane(projectSlug, terminalId, { close: true }).catch((err: unknown) => {
+      throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be closed") : err;
+    });
+    return { output: `closed ${name}\n` };
   }
   if (request.type === "pane-state") {
     if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");
