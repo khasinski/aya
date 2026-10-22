@@ -141,9 +141,17 @@ function TopBarImpl({
   } | null>(null);
   const [focusProjectAfterMove, setFocusProjectAfterMove] = useState<{ slug: string; index: number } | null>(null);
   const [focusedProjectSlug, setFocusedProjectSlug] = useState<string | null>(null);
+  const pendingRovingProjectFocus = useRef<HTMLElement | null>(null);
   const rovingProjectSlug = projects.some((project) => project.slug === focusedProjectSlug)
     ? focusedProjectSlug
     : activeProjectId;
+
+  useLayoutEffect(() => {
+    const target = pendingRovingProjectFocus.current;
+    if (!target) return;
+    pendingRovingProjectFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedProjectSlug]);
 
   useLayoutEffect(() => {
     if (!focusProjectAfterMove || projects.findIndex((project) => project.slug === focusProjectAfterMove.slug) !== focusProjectAfterMove.index) return;
@@ -377,7 +385,10 @@ function TopBarImpl({
                   return;
                 }
                 if (!isRemote) openTabMenuFromKeyboard(e, p.slug);
-                handleRovingItemKeyDown(e);
+                handleRovingItemKeyDown(e, (target) => {
+                  pendingRovingProjectFocus.current = target;
+                  setFocusedProjectSlug(target.dataset.projectSlug ?? null);
+                });
               }}
               onContextMenu={(e) => {
                 // Remote projects can't be adopted by directory (it lives on

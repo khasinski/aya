@@ -4,6 +4,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
  * focus; Enter and Space activate the focused item. */
 export function handleRovingItemKeyDown(
   event: ReactKeyboardEvent<HTMLElement>,
+  onMoveFocus?: (target: HTMLElement) => void,
 ): void {
   if (event.target !== event.currentTarget) return;
   const current = event.currentTarget;
@@ -34,6 +35,10 @@ export function handleRovingItemKeyDown(
   if (targetIndex === null || !items[targetIndex]) return;
   event.preventDefault();
   const target = items[targetIndex];
+  if (onMoveFocus) {
+    onMoveFocus(target);
+    return;
+  }
   for (const item of items) item.tabIndex = -1;
   target.tabIndex = 0;
   target.focus();

@@ -159,12 +159,26 @@ function ProjectsLeftLayoutImpl({
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [focusedProjectSlug, setFocusedProjectSlug] = useState<string | null>(null);
   const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
+  const pendingRovingProjectFocus = useRef<HTMLElement | null>(null);
+  const pendingRovingTerminalFocus = useRef<HTMLElement | null>(null);
   const rovingProjectSlug = projects.some((project) => project.slug === focusedProjectSlug)
     ? focusedProjectSlug
     : activeProjectId;
   const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
     ? focusedTerminalId
     : activeTerminalId;
+  useLayoutEffect(() => {
+    const target = pendingRovingProjectFocus.current;
+    if (!target) return;
+    pendingRovingProjectFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedProjectSlug]);
+  useLayoutEffect(() => {
+    const target = pendingRovingTerminalFocus.current;
+    if (!target) return;
+    pendingRovingTerminalFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedTerminalId]);
   const [projectDraft, setProjectDraft] = useState("");
   const projectInputRef = useRef<HTMLInputElement>(null);
   const {
@@ -515,7 +529,10 @@ function ProjectsLeftLayoutImpl({
                     setMenu({ x: rect.left, y: rect.bottom, id: t.id });
                     return;
                   }
-                  handleRovingItemKeyDown(e);
+                  handleRovingItemKeyDown(e, (target) => {
+                    pendingRovingTerminalFocus.current = target;
+                    setFocusedTerminalId(target.dataset.terminalId ?? null);
+                  });
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -821,7 +838,10 @@ function ProjectsLeftLayoutImpl({
                       openProjectContextMenu(p.slug, e.currentTarget, rect.right, rect.top);
                       return;
                     }
-                    handleRovingItemKeyDown(e);
+                    handleRovingItemKeyDown(e, (target) => {
+                      pendingRovingProjectFocus.current = target;
+                      setFocusedProjectSlug(target.dataset.projectSlug ?? null);
+                    });
                   }}
                   onContextMenu={(e) => {
                     // Remote projects can't be adopted by directory (it lives

@@ -173,10 +173,17 @@ function SidebarImpl({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
+  const pendingRovingTerminalFocus = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
     ? focusedTerminalId
     : activeId;
+  useLayoutEffect(() => {
+    const target = pendingRovingTerminalFocus.current;
+    if (!target) return;
+    pendingRovingTerminalFocus.current = null;
+    if (target.isConnected) target.focus();
+  }, [focusedTerminalId]);
 
   // Worktrees are available for local repositories without an opt-in flag.
   const showWorktrees = worktrees.length > 0;
@@ -295,7 +302,10 @@ function SidebarImpl({
             setMenu({ x: rect.left, y: rect.bottom, terminalId: t.id });
             return;
           }
-          handleRovingItemKeyDown(e);
+          handleRovingItemKeyDown(e, (target) => {
+            pendingRovingTerminalFocus.current = target;
+            setFocusedTerminalId(target.dataset.terminalId ?? null);
+          });
         }}
         onContextMenu={(e) => {
           e.preventDefault();
