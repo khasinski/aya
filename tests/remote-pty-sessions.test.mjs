@@ -668,19 +668,20 @@ test("a non-reading v2 socket stays under the queue cap for replay and list repl
   assert.equal(replyAndReplay.frames.some((message) => message.type === "pty:output"), true);
 
   const manySessions = new RemotePtySessions({
-    listProjects: async () => [project],
-    listPresets: async () => [preset],
-    spawn: async (id) => manySessions.onPtyEvent({ type: "spawn-failed", ptyId: id, reason: "spawn-prepare-failed", detail: "x".repeat(3000) }),
+    listProjects: async () => [{ ...project, slug: "p".repeat(128) }],
+    listPresets: async () => [{ ...preset, id: "s".repeat(128) }],
+    spawn: async () => {},
     write: async () => true,
     resize: async () => {},
     exit: async () => {},
-    newId: (() => { let id = 0; return () => `list-target-${++id}`; })(),
+    newId: (() => { let id = 0; return () => `${String(++id).padStart(4, "0")}${"t".repeat(124)}`; })(),
   });
+  const seedSocket = slow();
   for (let index = 0; index < MAX_PTY_PANES; index += 1) {
-    await manySessions.handle(socket, { type: "pty:spawn", protocol: 2, id: `seed-${index}`, project: "repo", preset: "shell", cols: 80, rows: 24 }, () => {});
+    await manySessions.handle(seedSocket, { type: "pty:spawn", protocol: 2, id: `seed-${index}`, project: "p".repeat(128), preset: "s".repeat(128), cols: 80, rows: 24 }, () => {});
   }
   const listSocket = slow();
-  for (let index = 0; index < 10 && !listSocket.destroyed; index += 1) {
+  for (let index = 0; index < 100 && !listSocket.destroyed; index += 1) {
     await manySessions.handle(listSocket, { type: "pty:list", protocol: 2, id: `list-${index}` }, cappedWriter);
   }
   assert.equal(listSocket.destroyed, true);
