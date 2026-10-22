@@ -8,6 +8,7 @@ import { printable } from "./printable";
 import { REMOTE_SOCKET_PATH } from "./paths";
 import {
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_MAX_FRAME_BYTES,
   remoteError,
   remoteHello,
   remoteSnapshot,
@@ -30,7 +31,12 @@ export interface RemoteServerOptions {
 // The stream is JSON for the other Aya, but `aya remote --stdio` run by hand prints it to a terminal: printable keeps
 // the JSON and its data and leaves nothing there to act on, as on the control socket (control.ts printableReply).
 function sendJson(socket: net.Socket, value: unknown): void {
-  socket.write(`${printable(JSON.stringify(value))}\n`);
+  const frame = `${printable(JSON.stringify(value))}\n`;
+  if (Buffer.byteLength(frame, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+    socket.end(`${JSON.stringify(remoteError("frame_too_large", "Remote response exceeded the frame size limit."))}\n`);
+    return;
+  }
+  socket.write(frame);
 }
 
 // Terminal output includes ANSI control sequences by design. JSON.stringify
@@ -203,21 +209,23 @@ export function startRemoteServerOn(
     let buffer = "";
     socket.on("data", (chunk) => {
       buffer += chunk;
-      if (Buffer.byteLength(buffer, "utf8") > 2 * 1024 * 1024 && !buffer.includes("\n")) {
-        sendJson(socket, remoteError("frame_too_large", "Remote request exceeded the frame size limit."));
-        socket.destroy();
-        return;
-      }
-      while (buffer.includes("\n")) {
+      while (true) {
         const idx = buffer.indexOf("\n");
+        if (idx < 0) {
+          if (Buffer.byteLength(buffer, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+            sendJson(socket, remoteError("frame_too_large", "Remote request exceeded the frame size limit."));
+            socket.end();
+          }
+          return;
+        }
+        if (Buffer.byteLength(buffer.slice(0, idx), "utf8") > REMOTE_MAX_FRAME_BYTES) {
+          sendJson(socket, remoteError("frame_too_large", "Remote request exceeded the frame size limit."));
+          socket.end();
+          return;
+        }
         const line = buffer.slice(0, idx).trim();
         buffer = buffer.slice(idx + 1);
         if (!line) continue;
-        if (Buffer.byteLength(line, "utf8") > 2 * 1024 * 1024) {
-          sendJson(socket, remoteError("frame_too_large", "Remote request exceeded the frame size limit."));
-          socket.destroy();
-          return;
-        }
         try {
           void handleCommand(socket, options, JSON.parse(line), terminalSession);
         } catch (err) {

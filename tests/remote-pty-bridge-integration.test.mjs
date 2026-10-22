@@ -218,7 +218,10 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
   await observer.client.attach(gracefulSpawn.terminalId, 0);
   const gracefulExit = new Promise((resolve) => observer.client.once("exit", resolve));
   await observer.client.exit(gracefulSpawn.terminalId);
-  assert.equal((await gracefulExit).terminalId, gracefulSpawn.terminalId);
+  const gracefulExitEvent = await gracefulExit;
+  assert.equal(gracefulExitEvent.terminalId, gracefulSpawn.terminalId);
+  assert.equal(gracefulExitEvent.killed, true);
+  assert.equal(gracefulExitEvent.exitCode, undefined);
   await waitForAsync(async () => (await host.getPid(gracefulSpawn.terminalId)) === null, 5_000);
   assert.equal(await host.getPid(gracefulSpawn.terminalId), null);
 

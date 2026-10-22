@@ -1,6 +1,7 @@
 import type { Preset, ProjectCollectionState, ProjectConfig } from "./types";
 
 export const REMOTE_PROTOCOL_VERSION = 1;
+export const REMOTE_MAX_FRAME_BYTES = 2 * 1024 * 1024;
 /** The v1 hello/snapshot and one-shot directory/project verbs remain the
  * compatibility handshake. A client opts into this version on the same
  * connection before using the long-lived terminal stream. */
@@ -43,7 +44,8 @@ export type RemoteTerminalMessage =
   | { type: "pty:spawn-failed"; protocol: 2; terminalId: string; reason?: string; message: string }
   | { type: "pty:written"; protocol: 2; id: string; terminalId: string; accepted: boolean }
   | { type: "pty:resized"; protocol: 2; id: string; terminalId: string }
-  | { type: "pty:exited"; protocol: 2; terminalId: string; exitCode: number }
+  | { type: "pty:exited"; protocol: 2; terminalId: string; exitCode: number; killed?: never }
+  | { type: "pty:exited"; protocol: 2; terminalId: string; killed: true; exitCode?: never }
   | { type: "pty:list-result"; protocol: 2; id: string; terminals: Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed" | "uncertain"; offset: number; failureReason?: string }> }
   | { type: "pty:exit-result"; protocol: 2; id: string; terminalId: string };
 

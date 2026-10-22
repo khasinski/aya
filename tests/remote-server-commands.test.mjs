@@ -16,6 +16,7 @@ process.env.AYA_HOME = AYA_HOME;
 const require = createRequire(import.meta.url);
 const MODULE = join(process.cwd(), "dist-electron", "remote-server.js");
 const { startRemoteServer, startRemoteServerOn } = await import(MODULE);
+const { REMOTE_MAX_FRAME_BYTES } = await import("../dist-electron/remote-protocol.js");
 test.after(() => rmSync(AYA_HOME, { recursive: true, force: true }));
 
 const EMPTY_SNAPSHOT = {
@@ -100,6 +101,34 @@ test("a command that is not an object gets bad_request", async (t) => {
   for (const reply of replies(messages)) {
     assert.deepEqual([reply.type, reply.code], ["error", "bad_request"]);
   }
+});
+
+test("the server rejects a valid frame followed by an oversized partial frame in one chunk", async (t) => {
+  const { socket } = start(t);
+  const client = net.createConnection(socket);
+  const messages = [];
+  let buffer = "";
+  client.setEncoding("utf8");
+  const closed = new Promise((resolve, reject) => {
+    client.on("close", resolve);
+    client.on("error", reject);
+  });
+  client.on("data", (chunk) => {
+    buffer += chunk;
+    while (buffer.includes("\n")) {
+      const index = buffer.indexOf("\n");
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (line) messages.push(JSON.parse(line));
+    }
+  });
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  client.write(`${JSON.stringify({ type: "session:open", protocol: 2, id: "valid" })}\n${"x".repeat(REMOTE_MAX_FRAME_BYTES + 1)}`);
+  await closed;
+  assert.equal(messages.some((message) => message.type === "error" && message.code === "frame_too_large"), true);
 });
 
 test("fs:mkdir makes the whole path and answers with it; without a path it fails with the reason", async (t) => {

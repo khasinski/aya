@@ -14,6 +14,7 @@ import { PassThrough } from "node:stream";
 import { writeExecutable } from "./helpers/executable.mjs";
 
 const { RemoteTerminalClient } = await import("../dist-electron/remote-client.js");
+const { REMOTE_MAX_FRAME_BYTES } = await import("../dist-electron/remote-protocol.js");
 const { SSH_OPTIONS } = await import("../dist-electron/ssh.js");
 
 const root = mkdtempSync(join(tmpdir(), "aya-rc-more-"));
@@ -90,6 +91,25 @@ test("RemoteTerminalClient spawns SSH with the hardened non-interactive options"
   ]);
   client.bridge.kill("SIGKILL");
   return pendingAttach;
+});
+
+test("RemoteTerminalClient closes on an oversized complete bridge frame", async () => {
+  class FakeBridge extends EventEmitter {
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    exitCode = null;
+    signalCode = null;
+    killed = false;
+    kill() { this.killed = true; }
+  }
+  const bridge = new FakeBridge();
+  const client = new RemoteTerminalClient(bridge);
+  const request = client.attach("terminal", 0);
+  const rejected = assert.rejects(request, /frame over the 2 MiB limit/i);
+  bridge.stdout.write(`${JSON.stringify({ type: "snapshot", protocol: 1, snapshot: { projects: [], presets: [], projectState: { version: 1, order: [], open: [], recent: [] } } })}\n`);
+  bridge.stdout.write(`${JSON.stringify({ type: "untrusted", payload: "x".repeat(REMOTE_MAX_FRAME_BYTES) })}\n`);
+  await rejected;
+  assert.equal(bridge.killed, true);
 });
 
 const {

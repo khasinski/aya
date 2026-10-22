@@ -313,6 +313,8 @@ and `pty:list`. Spawn selects a host project and saved preset; the host creates
 a normal project tab and starts it through its ordinary PTY host. Detaching
 only removes the stream subscription. A terminal ends only when its process
 exits or a client explicitly requests `pty:exit`.
+An explicit close is reported as killed when the host does not have an actual
+process exit code; Aya does not invent a successful exit code for a signal stop.
 
 Each terminal retains at most 1 MiB of replay output in at most seventeen
 64 KiB blocks, so tiny writes cannot create an unbounded chunk list. An

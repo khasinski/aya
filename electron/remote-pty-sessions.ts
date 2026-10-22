@@ -38,6 +38,7 @@ interface Session {
   preset: string;
   state: "running" | "exited" | "failed" | "uncertain";
   exitCode?: number;
+  killed?: boolean;
   failureReason?: string;
   spawnFailed?: boolean;
   processIdentity?: RemoteTerminalProcessIdentity;
@@ -87,6 +88,7 @@ export class RemotePtySessions implements PtyEventSink {
       if (session.spawnFailed || session.state === "exited") return;
       session.state = "exited";
       session.exitCode = event.exitCode;
+      session.killed = false;
       const message: RemoteTerminalMessage = {
         type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION,
         terminalId: event.ptyId, exitCode: session.exitCode,
@@ -161,7 +163,9 @@ export class RemotePtySessions implements PtyEventSink {
             truncated: request.offset < oldest,
           });
           if (replay.length) this.writeOutput(socket, session.terminalId, fromOffset, replay, writer);
-          if (session.state === "exited") writer(socket, { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, exitCode: session.exitCode ?? 0 });
+          if (session.state === "exited") writer(socket, session.killed
+            ? { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, killed: true }
+            : { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, exitCode: session.exitCode ?? 0 });
           return;
         }
         case "pty:write": {
@@ -190,7 +194,7 @@ export class RemotePtySessions implements PtyEventSink {
                 throw new Error(session.failureReason, { cause: error });
               }
               session.state = "exited";
-              session.exitCode = 0;
+              session.killed = true;
               this.sendExit(session);
               writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
               return;
@@ -205,7 +209,7 @@ export class RemotePtySessions implements PtyEventSink {
           }
           if (session.state !== "exited" && !session.spawnFailed) {
             session.state = "exited";
-            session.exitCode = 0;
+            session.killed = true;
             this.sendExit(session);
           }
           writer(socket, { type: "pty:exit-result", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
@@ -299,7 +303,9 @@ export class RemotePtySessions implements PtyEventSink {
   }
 
   private sendExit(session: Session): void {
-    const ended: RemoteTerminalMessage = { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, exitCode: session.exitCode ?? 0 };
+    const ended: RemoteTerminalMessage = session.killed
+      ? { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, killed: true }
+      : { type: "pty:exited", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, terminalId: session.terminalId, exitCode: session.exitCode ?? 0 };
     for (const client of [...session.clients]) this.write(client, ended);
   }
 

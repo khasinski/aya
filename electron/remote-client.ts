@@ -11,7 +11,7 @@ import type {
   RemoteProjectCreateResult,
 } from "./types";
 import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
-import { REMOTE_PROTOCOL_VERSION, REMOTE_TERMINAL_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
+import { REMOTE_MAX_FRAME_BYTES, REMOTE_PROTOCOL_VERSION, REMOTE_TERMINAL_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 import { shellQuote } from "./pane-command";
 import { socketPathLimit } from "./socket-path";
 import { isSshTarget, requireSshTarget, sshArgs } from "./ssh";
@@ -53,7 +53,7 @@ export class RemoteTerminalClient extends EventEmitter {
   private buffer = "";
   private deferOutputEvents = false;
   private deferredOutputEvents: Array<{ terminalId: string; offset: number; data: string }> = [];
-  private deferredExitEvents: Array<{ terminalId: string; exitCode: number }> = [];
+  private deferredExitEvents: Array<{ terminalId: string; exitCode?: number; killed?: true }> = [];
   private outputFlushScheduled = false;
   private snapshotReceived = false;
   private opened = false;
@@ -77,13 +77,20 @@ export class RemoteTerminalClient extends EventEmitter {
 
   private onData(chunk: string): void {
     this.buffer += chunk;
-    if (Buffer.byteLength(this.buffer, "utf8") > REMOTE_BRIDGE_MAX_BUFFER_BYTES && !this.buffer.includes("\n")) {
-      this.fail(new Error("Remote terminal bridge sent an oversized frame."));
-      this.bridge.kill();
-      return;
-    }
-    while (this.buffer.includes("\n")) {
+    while (true) {
       const idx = this.buffer.indexOf("\n");
+      if (idx < 0) {
+        if (Buffer.byteLength(this.buffer, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+          this.fail(new Error("Remote terminal bridge sent a frame over the 2 MiB limit."));
+          this.bridge.kill();
+        }
+        return;
+      }
+      if (Buffer.byteLength(this.buffer.slice(0, idx), "utf8") > REMOTE_MAX_FRAME_BYTES) {
+        this.fail(new Error("Remote terminal bridge sent a frame over the 2 MiB limit."));
+        this.bridge.kill();
+        return;
+      }
       const line = this.buffer.slice(0, idx).trim();
       this.buffer = this.buffer.slice(idx + 1);
       if (!line) continue;
@@ -137,8 +144,10 @@ export class RemoteTerminalClient extends EventEmitter {
       return;
     }
     if (value.type === "pty:exited") {
-      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && Number.isInteger(value.exitCode)) {
-        const exit = { terminalId: value.terminalId, exitCode: value.exitCode as number };
+      const hasExitCode = Number.isInteger(value.exitCode);
+      const wasKilled = value.killed === true;
+      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && hasExitCode !== wasKilled) {
+        const exit = wasKilled ? { terminalId: value.terminalId, killed: true as const } : { terminalId: value.terminalId, exitCode: value.exitCode as number };
         if (this.deferOutputEvents) this.deferredExitEvents.push(exit);
         else this.emit("exit", exit);
       }
