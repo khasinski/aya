@@ -141,6 +141,7 @@ import {
   validateOllamaModelName,
 } from "./aya-intelligence";
 import { restartDialog } from "./native-ui-text";
+import { UPDATE_SPAWN_REFUSAL } from "./update-spawn";
 import type {
   ControlStatusUpdate,
   PtyEvent,
@@ -552,6 +553,10 @@ const updates = createUpdates({
   abortPlannedUpdate:()=>plannedUpdate.abort(),
 });
 
+function assertSpawnAllowed(): void {
+  if (updates.getUpdateStatus().preparingUpdate) throw new Error(UPDATE_SPAWN_REFUSAL);
+}
+
 function registerIpc(): TeamRunner {
   handoverDisplays.register(ipcMain);
   // Aya Web reuses these handlers over WebSocket - record every registration
@@ -621,7 +626,11 @@ function registerIpc(): TeamRunner {
     });
   }
   const sendSpawn = async (spawn: SpawnRequest) => {
+    assertSpawnAllowed();
     const project = spawn.projectSlug ? (await listProjects()).find((item) => item.slug === spawn.projectSlug) : undefined;
+    // listProjects may wait while an update handover starts. Do not let the
+    // remote route bypass the host's own update freeze after that await.
+    assertSpawnAllowed();
     if (project?.remote) {
       const mode = await remoteTerminalManager.spawn(spawn, project.remote.sshTarget, project.slug, project.remote.label);
       if (mode === "remote") return true;
@@ -724,6 +733,7 @@ function registerIpc(): TeamRunner {
       reconnect: (ptyId) => remoteTerminalManager.reconnectNow(ptyId),
       acknowledgeOutput: (ptyId, deliveryId, sinkId) => remoteTerminalManager.acknowledgeOutput(ptyId, deliveryId, sinkId),
     },
+    assertSpawnAllowed,
     prepareSpawn,
     sendSpawn,
     forgetBrief: (ptyId) => removePaneBrief(AYA_HOME, ptyId),
