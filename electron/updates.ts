@@ -58,6 +58,7 @@ export function createUpdates(deps: UpdatesDeps) {
   };
   let updateEventsConfigured = false;
   let updateCheckInFlight: Promise<UpdateStatus> | null = null;
+  let preparingUpdate = false;
   // True from the moment we hand off to ShipIt until we quit (#78). A second
   // install click must not spawn a second ShipIt - overlapping install requests
   // are a suspected cause of the silent-rollback failure.
@@ -81,11 +82,12 @@ export function createUpdates(deps: UpdatesDeps) {
 
   function updateStatusBase(): Pick<
     UpdateStatus,
-    "supported" | "currentVersion" | "rollbackNotice"
+    "supported" | "currentVersion" | "rollbackNotice" | "preparingUpdate"
   > {
     return {
       supported: updatesSupportedMessage() === "",
       currentVersion: app.getVersion(),
+      ...(preparingUpdate ? { preparingUpdate: true } : {}),
       // Merged into every status write so it survives the 12 s auto-check.
       ...(rollbackNotice ? { rollbackNotice } : {}),
     };
@@ -105,6 +107,14 @@ export function createUpdates(deps: UpdatesDeps) {
       win.webContents.send("updates:status", updateStatus);
     });
     return updateStatus;
+  }
+
+  function setPreparingUpdate(preparing: boolean): void {
+    if (preparingUpdate === preparing) return;
+    preparingUpdate = preparing;
+    const { preparingUpdate: _previous, ...current } = updateStatus;
+    updateStatus = { ...current, ...updateStatusBase() };
+    eachAyaWindow((win) => win.webContents.send("updates:status", updateStatus));
   }
 
   function getUpdateStatus(): UpdateStatus {
@@ -275,6 +285,7 @@ export function createUpdates(deps: UpdatesDeps) {
     relaunch: relaunchDeps,
     preparePlannedUpdate:deps.preparePlannedUpdate,
     abortPlannedUpdate:deps.abortPlannedUpdate,
+    setPreparingUpdate,
     ask: (text) => askRestart("Restart to update", text),
     latch: updateLatch,
     mark: markPendingUpdate,
@@ -314,6 +325,7 @@ export async function ordinaryQuitInstalls(deps: RelaunchDeps, downloaded: boole
 export interface UpdateInstallDeps {
   preparePlannedUpdate?:()=>Promise<boolean>;
   abortPlannedUpdate?:()=>Promise<void>;
+  setPreparingUpdate?:(preparing:boolean)=>void;
   status: () => { phase: string; downloadedVersion?: string | null };
   relaunch: RelaunchDeps;
   /** The native question before Restart to update stops work in panes. */
@@ -339,8 +351,16 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     if (status.phase !== "downloaded") throw new Error("No downloaded update is ready to install.");
     // One ShipIt at a time (#78): overlapping installs are a suspected cause of the silent rollback.
     if (deps.latch.installing) return;
-    if (!(await (deps.preparePlannedUpdate?deps.preparePlannedUpdate():confirmRestart(deps.relaunch, "Restarting to update", deps.ask)))) return;
-    if(deps.status().phase!=="downloaded"){await deps.abortPlannedUpdate?.();return;}
+    deps.setPreparingUpdate?.(true);
+    let prepared: boolean;
+    try {
+      prepared = await (deps.preparePlannedUpdate?deps.preparePlannedUpdate():confirmRestart(deps.relaunch, "Restarting to update", deps.ask));
+    } catch (error) {
+      deps.setPreparingUpdate?.(false);
+      throw error;
+    }
+    if (!prepared) { deps.setPreparingUpdate?.(false); return; }
+    if(deps.status().phase!=="downloaded") { await deps.abortPlannedUpdate?.(); deps.setPreparingUpdate?.(false); return; }
     if (deps.latch.installing) return;
     deps.latch.installing = true;
     try {
@@ -350,6 +370,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     } catch (err) {
       // A synchronous handoff failure is observable; the async ShipIt one is caught on the next launch.
       deps.latch.installing = false;
+      deps.setPreparingUpdate?.(false);
       await deps.abortPlannedUpdate?.().catch(()=>{});
       await deps.clearMark();
       deps.failed(`Couldn't start the update: ${err instanceof Error ? err.message : String(err)}`);
@@ -360,12 +381,14 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     const status = deps.status();
     if (!(await ordinaryQuitInstalls(deps.relaunch, status.phase === "downloaded"))) return deps.quit();
     deps.latch.installing = true;
+    deps.setPreparingUpdate?.(true);
     try {
       if (status.downloadedVersion) deps.markSync(status.downloadedVersion);
       deps.updater.autoRunAppAfterInstall = false;
       deps.updater.quitAndInstall(false, false);
     } catch {
       deps.latch.installing = false;
+      deps.setPreparingUpdate?.(false);
       await deps.clearMark();
       return deps.quit();
     }

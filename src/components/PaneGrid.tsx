@@ -44,6 +44,7 @@ interface Props {
   openSettings: (tab?: SettingsTab) => void;
   closeProject: (slug: string) => void;
   restartTerminal: (terminalId: string) => void;
+  onSpawnFailure: (terminalId: string) => void;
   restartTriggers: Record<string, number>;
   macOptionKeyMode: MacOptionKeyMode;
   anyOverlayOpen: boolean;
@@ -86,6 +87,7 @@ export function PaneGrid({
   openSettings,
   closeProject,
   restartTerminal,
+  onSpawnFailure,
   restartTriggers,
   macOptionKeyMode,
   anyOverlayOpen,
@@ -191,6 +193,7 @@ export function PaneGrid({
             onOpenSettings={openSettings}
             onCloseProject={closeProject}
             onRequestRestart={() => restartTerminal(terminal.id)}
+            onSpawnFailure={onSpawnFailure}
             restartTrigger={restartTriggers[terminal.id] ?? 0}
             macOptionKeyMode={macOptionKeyMode}
             isActivePane={isSplit && activeLeafId === leafId}
@@ -238,6 +241,7 @@ export function PaneGrid({
             onOpenSettings={openSettings}
             onCloseProject={closeProject}
             onRequestRestart={() => restartTerminal(t.id)}
+            onSpawnFailure={onSpawnFailure}
             restartTrigger={restartTriggers[t.id] ?? 0}
             macOptionKeyMode={macOptionKeyMode}
             enableWebgl={false}

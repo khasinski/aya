@@ -26,6 +26,7 @@ interface Props {
   onSelectProject: (slug: string) => void;
   onSelectTerminal: (slug: string, terminalId: string) => void;
   onRunPreset: (presetId: string) => void;
+  launchDisabled?: boolean;
   onClose: () => void;
 }
 
@@ -373,6 +374,7 @@ export function SearchModal({
   onSelectProject,
   onSelectTerminal,
   onRunPreset,
+  launchDisabled = false,
   onClose,
 }: Props) {
   // Input value drives the field; query is the debounced version used for
@@ -456,6 +458,7 @@ export function SearchModal({
 
   const select = (r: SearchResult) => {
     if (r.kind === "launcher" && r.presetId) {
+      if (launchDisabled) return;
       onRunPreset(r.presetId);
     } else if ((r.kind === "terminal" || r.kind === "event") && r.terminalId) {
       onSelectTerminal(r.projectSlug, r.terminalId);
@@ -507,6 +510,7 @@ export function SearchModal({
           spellCheck={false}
         />
         <div className="aya-search-list" ref={listRef}>
+          {launchDisabled && <div className="aya-search-empty" role="status">Aya is preparing to restart for an update.</div>}
           {results.length === 0 ? (
             <div className="aya-search-empty">No matches.</div>
           ) : (
@@ -518,6 +522,7 @@ export function SearchModal({
                 index={i}
                 onClick={() => select(r)}
                 onMouseEnter={() => setSelectedIndex(i)}
+                launchDisabled={launchDisabled}
               />
             ))
           )}
@@ -545,6 +550,7 @@ interface RowProps {
   index: number;
   onClick: () => void;
   onMouseEnter: () => void;
+  launchDisabled?: boolean;
 }
 
 function ResultRow({
@@ -553,11 +559,14 @@ function ResultRow({
   index,
   onClick,
   onMouseEnter,
+  launchDisabled = false,
 }: RowProps) {
+  const disabled = launchDisabled && result.kind === "launcher";
   return (
     <div
       data-idx={index}
-      className={`aya-search-row ${selected ? "aya-search-row--selected" : ""}`}
+      className={`aya-search-row ${selected ? "aya-search-row--selected" : ""}${disabled ? " is-disabled" : ""}`}
+      aria-disabled={disabled || undefined}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
     >

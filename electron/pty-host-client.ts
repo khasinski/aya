@@ -52,6 +52,7 @@ import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 import {authenticateHostSocket} from "./pty-host-auth-transport";
+import { userFacingSpawnError } from "./update-spawn";
 import {newHostAuthCapability} from "./pty-host-auth-transfer";
 import {HostAuthError,HostPrincipalBusyError,HOST_PRINCIPAL_BUSY_REASON,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
@@ -486,7 +487,7 @@ export class PtyHostClient {
         this.authRefusedPanes.set(req.ptyId,reason);this.sendToSinks([code==="PTY_HOST_PRINCIPAL_BUSY"?{type:"host-connection",ptyId:req.ptyId,connected:false,reason}:{type:"disconnected",ptyId:req.ptyId,reason}]);
         throw Object.assign(new Error("The terminal host is disconnected or recovering. This request was not sent."),{code});
       }
-      throw err;
+      throw userFacingSpawnError(err);
     }finally{if(replayExit){const left=(this.exitReplayFlights.get(req.ptyId)??1)-1;if(left)this.exitReplayFlights.set(req.ptyId,left);else this.exitReplayFlights.delete(req.ptyId);}}
   }
 

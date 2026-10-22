@@ -31,6 +31,7 @@ interface Props {
   onRename: (id: string, name: string) => void;
   /** Launch a preset. `cwd` targets a git worktree; omitted = the project dir. */
   onLaunch: (preset: Preset, cwd?: string) => void;
+  updatePreparing?: boolean;
   worktrees?: Worktree[];
   /** The project's own directory (the "main" worktree cwd). */
   projectDir?: string;
@@ -90,6 +91,7 @@ function SidebarImpl({
   onClose,
   onRename,
   onLaunch,
+  updatePreparing = false,
   worktrees = [],
   projectDir,
   projectId,
@@ -480,14 +482,15 @@ function SidebarImpl({
           </button>
         )}
         <div className="aya-mobile-pane-add" ref={mobileLauncherRef}>
-          <button type="button" aria-label="New terminal" title="New terminal" aria-haspopup="menu" aria-expanded={showMobileLauncher} onClick={() => setShowMobileLauncher((open) => !open)}>
+          <button type="button" aria-label="New terminal" title={updatePreparing ? "Aya is preparing to restart for an update." : "New terminal"} disabled={updatePreparing} aria-haspopup="menu" aria-expanded={showMobileLauncher} onClick={() => setShowMobileLauncher((open) => !open)}>
             <span aria-hidden="true">+</span>
           </button>
           {showMobileLauncher && (
             <div className="aya-recent-menu aya-mobile-pane-launch-menu" role="menu" aria-label="New terminal">
               <div className="aya-recent-menu-title">New terminal</div>
+              {updatePreparing && <div className="aya-search-secondary" role="status">Aya is preparing to restart for an update.</div>}
               {presets.map((preset) => (
-                <button key={preset.id} type="button" role="menuitem" className="aya-recent-menu-item" onClick={() => {
+                <button key={preset.id} type="button" role="menuitem" className="aya-recent-menu-item" disabled={updatePreparing} onClick={() => {
                   setShowMobileLauncher(false);
                   onLaunch(preset, showWorktrees && targetCwd ? targetCwd : undefined);
                 }}>
@@ -511,11 +514,13 @@ function SidebarImpl({
             "New terminal"
           )}
         </div>
+        {updatePreparing && <div className="aya-update-preparing" role="status">Aya is preparing to restart for an update.</div>}
         <div className="aya-launcher-row">
           {presets.map((p) => (
             <button
               key={p.id}
               className="aya-launcher-btn"
+              disabled={updatePreparing}
               onClick={() =>
                 onLaunch(p, showWorktrees && targetCwd ? targetCwd : undefined)
               }
