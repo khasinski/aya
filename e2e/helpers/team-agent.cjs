@@ -4,6 +4,7 @@ const { execFile, execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { resolveClaudeConfigDir } = require("./claude-config-dir.cjs");
 
 // The branch's own CLI: an older installed `aya` may come first on PATH.
 const aya = process.argv[2];
@@ -243,7 +244,7 @@ if ((mode.startsWith("ask") || (mode === "relaunch" && !relaunched)) && me === "
   if (id && mode !== "monitor-no-session") {
     // Match Claude's per-process session registry and transcript layout so Aya's real
     // watcher learns this pane's ID, including after a directory-wide --continue.
-    const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(process.env.HOME || require("node:os").homedir(), ".claude");
+    const configDir = resolveClaudeConfigDir(process.env, require("node:os").userInfo().homedir);
     const projects = path.join(configDir, "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"));
     fs.mkdirSync(path.join(configDir, "sessions"), { recursive: true });
     fs.writeFileSync(path.join(configDir, "sessions", `${process.pid}.json`), JSON.stringify({
