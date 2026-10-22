@@ -194,6 +194,10 @@ export class RemotePtySessions implements PtyEventSink {
 
   async handle(socket: net.Socket, raw: unknown, writer: RemoteTerminalWriter): Promise<void> {
     await this.ready;
+    // Readiness may resolve after the peer has already disconnected. Its
+    // close handler detached it before this continuation resumed, so a dead
+    // socket must not reclaim control or rejoin a terminal.
+    if (socket.destroyed || socket.writable === false) return;
     const request = parseRemoteTerminalRequest(raw);
     if (!request || request.type === "session:open") {
       const requestId = isRecord(raw) && typeof raw.id === "string" && raw.id.length <= 128 ? raw.id : undefined;

@@ -214,6 +214,36 @@ test("one socket controls the host while other sockets can only observe until it
   ]);
 });
 
+test("a socket closed during readiness cannot attach or take control afterward", async () => {
+  const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
+  const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
+  const sessions = new RemotePtySessions({
+    listProjects: async () => [project], listPresets: async () => [preset],
+    spawn: async () => {}, write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  sessions.restoreTerminal({ terminalId: "live", project: "repo", preset: "shell", output: "", endOffset: 0, running: true });
+  let ready;
+  sessions.setReady(new Promise((resolve) => { ready = resolve; }));
+  const dead = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  sessions.registerClient(dead, "disconnected-client");
+  const deadReplies = [];
+  const pendingAttach = sessions.handle(dead, { type: "pty:attach", protocol: 2, id: "late", terminalId: "live", offset: 0 }, (_socket, message) => deadReplies.push(message));
+
+  // The server's close handler runs while this request is suspended at ready.
+  sessions.detach(dead);
+  dead.destroyed = true;
+  dead.writable = false;
+  ready();
+  await pendingAttach;
+  assert.deepEqual(deadReplies, []);
+
+  const next = { destroyed: false, writable: true, writableLength: 0, write() { return true; }, destroy() { this.destroyed = true; } };
+  const nextReplies = [];
+  await sessions.handle(next, { type: "pty:attach", protocol: 2, id: "next", terminalId: "live", offset: 0 }, (_socket, message) => nextReplies.push(message));
+  assert.equal(nextReplies.find((message) => message.type === "pty:attached")?.readOnly, undefined);
+  assert.equal(sessions.sessions.get("live")?.clients.has(dead), false);
+});
+
 test("separate bridges from one Aya process share the same host control identity", async () => {
   const project = { slug: "repo", name: "Repo", directory: "/repo", tabs: [] };
   const preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "sh" };
