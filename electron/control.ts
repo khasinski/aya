@@ -428,6 +428,10 @@ export class PaneInputChangedError extends Error {
 /** Longest tab name pane rename sets; a name is shown whole in the tab bar and in every pane list row. */
 const PANE_NAME_MAX_CHARS = 200;
 
+/** A pane in these states has no task in flight: pane close stops it without --force. `waiting` is not one: the agent
+ *  asked the user something mid-task. */
+const CLOSABLE_PANE_STATES = new Set<PaneStateResult["state"]>(["idle", "shell", "stopped"]);
+
 /** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
 const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);
 
@@ -562,6 +566,22 @@ async function handleRequest(
       throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be renamed") : err;
     });
     return { output: `renamed ${name} to ${newName}\n` };
+  }
+  if (request.type === "pane-close") {
+    if (!options.listProjects || !options.changePane || !options.paneState) throw new Error("pane control is not available");
+    const resolved = resolvePaneTarget(await options.listProjects(), { name: request.target, projectSlug: request.projectSlug });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const { projectSlug, terminalId, name } = resolved.match;
+    if (!request.force) {
+      const { state } = await options.paneState(terminalId);
+      if (!CLOSABLE_PANE_STATES.has(state)) {
+        throw new Error(`${name} is ${state}; closing it stops its process mid-task; pass --force to close it anyway; nothing was closed`);
+      }
+    }
+    await options.changePane(projectSlug, terminalId, { close: true }).catch((err: unknown) => {
+      throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be closed") : err;
+    });
+    return { output: `closed ${name}\n` };
   }
   if (request.type === "pane-state") {
     if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");

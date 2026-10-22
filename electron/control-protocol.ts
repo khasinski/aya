@@ -78,6 +78,13 @@ export type ControlRequest =
       name: string;
       projectSlug?: string;
     }
+  // Close a pane's tab and stop its process; without `force` only a pane with no work in flight.
+  | {
+      type: "pane-close";
+      target: string;
+      force: boolean;
+      projectSlug?: string;
+    }
   | { type: "capabilities" }
   // aya machines: argv as typed after "machines".
   | { type: "machines"; argv: string[]; user?: string; token?: string }
@@ -237,6 +244,12 @@ export function parseControlRequest(value: unknown): ControlRequest {
     const name = optionalString(value.name)?.trim();
     if (!name) throw new Error("pane-rename requires name");
     return { type, target, name, projectSlug: optionalString(value.projectSlug) };
+  }
+  if (type === "pane-close") {
+    const target = optionalString(value.target);
+    if (!target) throw new Error("pane-close requires target");
+    if (typeof value.force !== "boolean") throw new Error("pane-close.force must be boolean");
+    return { type, target, force: value.force, projectSlug: optionalString(value.projectSlug) };
   }
   if (type === "pane-wait") {
     if (!Array.isArray(value.targets) || value.targets.length < 1 || value.targets.length > 64 || value.targets.some((v) => typeof v !== "string" || !v.trim())) throw new Error("pane-wait requires one or more targets");
