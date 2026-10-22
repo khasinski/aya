@@ -108,6 +108,8 @@ function SidebarImpl({
     y: number;
     terminalId: string;
   } | null>(null);
+  const mobileLauncherRef = useRef<HTMLDivElement>(null);
+  const [showMobileLauncher, setShowMobileLauncher] = useState(false);
 
   useEffect(() => {
     if (!menu) return;
@@ -122,6 +124,21 @@ function SidebarImpl({
       window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
+  useEffect(() => {
+    if (!showMobileLauncher) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!mobileLauncherRef.current?.contains(event.target as Node)) setShowMobileLauncher(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowMobileLauncher(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showMobileLauncher]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -370,6 +387,25 @@ function SidebarImpl({
             + New worktrees{projectRemote ? " · available for local projects" : "…"}
           </button>
         )}
+        <div className="aya-mobile-pane-add" ref={mobileLauncherRef}>
+          <button type="button" aria-label="New terminal" title="New terminal" aria-haspopup="menu" aria-expanded={showMobileLauncher} onClick={() => setShowMobileLauncher((open) => !open)}>
+            <span aria-hidden="true">+</span>
+          </button>
+          {showMobileLauncher && (
+            <div className="aya-recent-menu aya-mobile-pane-launch-menu" role="menu" aria-label="New terminal">
+              <div className="aya-recent-menu-title">New terminal</div>
+              {presets.map((preset) => (
+                <button key={preset.id} type="button" role="menuitem" className="aya-recent-menu-item" onClick={() => {
+                  setShowMobileLauncher(false);
+                  onLaunch(preset, showWorktrees && targetCwd ? targetCwd : undefined);
+                }}>
+                  <span className="aya-launcher-btn-icon" style={preset.color ? { color: preset.color } : undefined}>{preset.icon}</span>
+                  <span className="aya-recent-menu-name">{preset.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div className="aya-launcher">
         <div className="aya-launcher-label">

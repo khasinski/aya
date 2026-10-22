@@ -3,6 +3,9 @@
    app.css is NOT pristine any more - it has carried Aya-only tokens and rules
    for many releases, so only armillary.css is worth diffing. */
 
+.aya-mobile-status-actions,
+.aya-mobile-pane-add { display: none; }
+
 /* xterm.js host - fills the pane body. The design uses simulated React divs;
    we replace that with the real terminal canvas. */
 .aya-xterm-host {
@@ -1018,6 +1021,250 @@
 @media (max-width: 760px) {
   .aya-attention-content {
     grid-template-columns: 1fr;
+  }
+
+  /* Aya Web's phone layout keeps the pane list in reach and gives the active
+     terminal the rest of the visible viewport. */
+  html,
+  body,
+  #root {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+  .aya-app {
+    position: fixed;
+    top: var(--aya-visual-top, 0px);
+    left: 0;
+    width: 100%;
+    min-width: 0;
+    height: var(--aya-visual-height, 100dvh);
+    max-height: var(--aya-visual-height, 100dvh);
+    overflow: hidden;
+    grid-template-rows: 48px minmax(0, 1fr) 44px;
+  }
+  .aya-app button,
+  .aya-app [role="button"],
+  .aya-app input:not([type="checkbox"]),
+  .aya-app select,
+  .aya-app textarea {
+    min-height: 44px;
+  }
+  .aya-topbar {
+    min-width: 0;
+    overflow: hidden;
+  }
+  .aya-mac-window-controls { display: none; }
+  .aya-topbar .aya-iconbtn {
+    box-sizing: border-box;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .aya-topbar .aya-tab { min-height: 44px; }
+  .aya-topbar .aya-tabs {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .aya-topbar-right {
+    min-width: 44px;
+  }
+  .aya-main:not(.aya-main--alt) {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: 54px minmax(0, 1fr);
+  }
+  .aya-main--alt {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .aya-projectrail { display: none; }
+  .aya-topbar--alt .aya-termtabs { overflow-x: auto; }
+  .aya-topbar--alt .aya-termtab { min-height: 44px; }
+  .aya-sidebar {
+    box-sizing: border-box;
+    width: 100% !important;
+    max-width: 100%;
+    min-width: 0;
+    height: 54px;
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .aya-sidebar-header,
+  .aya-sidebar > .aya-launcher,
+  .aya-sidebar-resize,
+  .aya-worktree-add {
+    display: none !important;
+  }
+  .aya-sidebar-list {
+    box-sizing: border-box;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 6px;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .aya-sidebar-list::-webkit-scrollbar { display: none; }
+  .aya-worktree-group { display: contents; }
+  .aya-sidebar-row {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 112px;
+    max-width: 190px;
+    height: 44px;
+    min-height: 44px;
+    margin: 0 3px;
+    padding: 0 10px;
+    border-radius: 6px;
+    touch-action: manipulation;
+  }
+  .aya-sidebar-close { display: none; }
+  .aya-sidebar-row--active { box-shadow: inset 0 -2px 0 var(--accent); }
+  .aya-panes {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .aya-panes--split > .aya-pane:not(.aya-pane--active-split),
+  .aya-panes--split > .aya-pane-empty:not(.aya-pane-empty--active) {
+    display: none !important;
+  }
+  .aya-panes--split > .aya-pane--active-split,
+  .aya-panes--split > .aya-pane-empty--active {
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .aya-xterm-host,
+  .aya-xterm-frame,
+  .aya-xterm-frame .xterm {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .aya-statusbar {
+    box-sizing: border-box;
+    min-width: 0;
+    height: 44px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 8px;
+    padding: 0 8px;
+    overscroll-behavior-x: contain;
+  }
+  .aya-statusbar > :not(.aya-statusbar-popover-host) {
+    display: none !important;
+  }
+  .aya-statusbar-spacer { display: none !important; }
+  .aya-mobile-status-actions { display: block; }
+  .aya-mobile-status-actions-menu {
+    position: fixed;
+    right: 8px;
+    bottom: calc(44px + env(safe-area-inset-bottom, 0px) + 8px);
+    z-index: 1300;
+    width: min(240px, calc(100vw - 16px));
+    max-height: calc(var(--aya-visual-height, 100dvh) - 72px);
+    overflow-y: auto;
+  }
+  .aya-mobile-status-actions-menu button {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--fg-primary);
+    text-align: left;
+    font: inherit;
+  }
+  .aya-mobile-status-actions-menu button:hover { background: var(--bg-tertiary); }
+  .aya-mobile-status-actions-menu button:disabled { opacity: .45; }
+  .aya-mobile-pane-add {
+    position: relative;
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 50px;
+    min-width: 50px;
+  }
+  .aya-mobile-pane-add > button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--fg-primary);
+    font: inherit;
+    font-size: 24px;
+  }
+  .aya-mobile-pane-launch-menu {
+    position: fixed;
+    left: 8px;
+    right: auto;
+    bottom: calc(44px + env(safe-area-inset-bottom, 0px) + 8px);
+    width: min(280px, calc(100vw - 16px));
+    max-height: calc(var(--aya-visual-height, 100dvh) - 72px);
+    overflow-y: auto;
+    z-index: 1300;
+  }
+  .aya-statusbar-button,
+  .aya-statusbar-item > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .aya-statusbar-popover,
+  .aya-statusbar-popover--diff {
+    position: fixed;
+    right: 8px;
+    bottom: calc(100vh - var(--aya-visual-top, 0px) - var(--aya-visual-height, 100dvh) + 52px);
+    width: min(420px, calc(100vw - 16px));
+    max-height: min(680px, calc(var(--aya-visual-height, 100dvh) - 72px));
+  }
+  .aya-modal-backdrop {
+    top: var(--aya-visual-top, 0px);
+    bottom: auto;
+    height: var(--aya-visual-height, 100dvh);
+    box-sizing: border-box;
+    overflow-y: auto;
+    align-items: flex-start;
+    padding: max(env(safe-area-inset-top, 0px), 10px) 10px
+      max(env(safe-area-inset-bottom, 0px), 10px);
+  }
+  .aya-modal {
+    box-sizing: border-box;
+    width: min(440px, 100%);
+    max-width: 100%;
+    max-height: calc(var(--aya-visual-height, 100dvh) - 20px);
+    overflow: auto;
+  }
+  .aya-modal-btn,
+  .aya-settings-tab,
+  .aya-settings-actions button {
+    min-height: 44px;
+  }
+  .aya-modal--settings {
+    width: 100%;
+    max-height: calc(var(--aya-visual-height, 100dvh) - 20px);
   }
 }
 .aya-modal-title {

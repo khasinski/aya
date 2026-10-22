@@ -107,6 +107,30 @@ const WARM_PROJECT_TERMINAL_CACHE_SIZE = 4;
 
 
 export function App() {
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const updateVisibleHeight = () => {
+      document.documentElement.style.setProperty(
+        "--aya-visual-height",
+        `${Math.round(viewport.height)}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--aya-visual-top",
+        `${Math.round(viewport.offsetTop)}px`,
+      );
+    };
+    updateVisibleHeight();
+    viewport.addEventListener("resize", updateVisibleHeight);
+    viewport.addEventListener("scroll", updateVisibleHeight);
+    return () => {
+      viewport.removeEventListener("resize", updateVisibleHeight);
+      viewport.removeEventListener("scroll", updateVisibleHeight);
+      document.documentElement.style.removeProperty("--aya-visual-height");
+      document.documentElement.style.removeProperty("--aya-visual-top");
+    };
+  }, []);
+
   const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
   const [projectState, setProjectState] = useState<ProjectCollectionState>({
