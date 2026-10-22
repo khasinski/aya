@@ -816,6 +816,8 @@ export type PromptAttachmentResult =
 export interface AyaApi {
   /** True under `npm run dev` (AYA_DEV=1). */
   isDev: boolean;
+  /** True when this renderer is connected through Aya Web rather than Electron preload. */
+  isWeb?: boolean;
   platform: NodeJS.Platform;
 
   ptySpawn(req: SpawnRequest): Promise<void>;

@@ -651,6 +651,8 @@ export interface AyaApi {
    *  Aya.app. Use to show a "dev" indicator and keep the user's dogfooded
    *  state in ~/.aya/ from being touched. */
   isDev: boolean;
+  /** True when this renderer is connected through Aya Web rather than Electron preload. */
+  isWeb?: boolean;
   platform: NodeJS.Platform;
 
   // PTY lifecycle

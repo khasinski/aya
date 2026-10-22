@@ -685,7 +685,9 @@ function StatusBarImpl({
         </span>
       )}
       <div className="aya-statusbar-spacer" />
-      <MachinesStatus onManage={() => onOpenSettings("machines")} onOpenTerminal={onOpenMachineTerminal} />
+      {window.aya.isWeb !== true && (
+        <MachinesStatus onManage={() => onOpenSettings("machines")} onOpenTerminal={onOpenMachineTerminal} />
+      )}
       <button
         data-testid="snippet-toggle"
         className={`aya-statusbar-item aya-statusbar-button aya-pane-snippettoggle aya-statusbar-snippet ${

@@ -12,7 +12,9 @@ import {
   SESSION_TOKEN_BYTES,
   WEB_ALLOWED_CHANNELS,
   WEB_BRIDGE_INVOKE_CHANNELS,
+  WEB_DENIED_CHANNELS,
   WEB_OVERRIDE_CHANNELS,
+  dispatchWebInvoke,
 } from "../dist-electron/web-server.js";
 import { captureIpcHandlers } from "../dist-electron/ipc/web-capture.js";
 
@@ -186,8 +188,46 @@ test("web allowlist exactly tracks bridge invokes plus existing overrides", () =
   const expectedAllowed = [...new Set([
     ...bridgeCalls,
     ...WEB_OVERRIDE_CHANNELS,
-  ])].sort();
+  ])].filter((channel) => !WEB_DENIED_CHANNELS.has(channel)).sort();
   assert.deepEqual([...WEB_ALLOWED_CHANNELS].sort(), expectedAllowed);
+});
+
+test("desktop-only channels are denied while browser-safe settings saves stay available", async () => {
+  const denied = [
+    "machines:status",
+    "machines:setup",
+    "machines:command",
+    "machines:configure",
+    "machines:discover",
+    "web:configure",
+    "web:regenerate-password",
+    "updates:install",
+    "app:install-cli",
+    "usage-hook:install",
+    "usage-hook:uninstall",
+    "status-hook:install",
+    "status-hook:uninstall",
+  ];
+  const allowed = ["presets:save", "themes:save", "snippets:save", "env:create-dir"];
+  const handlers = new Map();
+  const ipcMain = { handle(channel, handler) { handlers.set(channel, handler); } };
+  captureIpcHandlers(ipcMain);
+  let calls = 0;
+  for (const channel of [...denied, ...allowed]) {
+    ipcMain.handle(channel, async () => { calls += 1; return `handled:${channel}`; });
+  }
+
+  for (const channel of denied) {
+    assert.equal(WEB_DENIED_CHANNELS.has(channel), true, `${channel} must remain explicitly denied`);
+    await assert.rejects(dispatchWebInvoke(channel, []), { message: "Not available in Aya Web" });
+  }
+  assert.equal(calls, 0, "denied calls must not reach captured desktop handlers");
+
+  for (const channel of allowed) {
+    assert.equal(WEB_DENIED_CHANNELS.has(channel), false, `${channel} must remain usable in Aya Web`);
+    assert.equal(await dispatchWebInvoke(channel, []), `handled:${channel}`);
+  }
+  assert.equal(calls, allowed.length);
 });
 
 test("raw Aya Web invokes cannot register or use prompt-attachment authority", async () => {

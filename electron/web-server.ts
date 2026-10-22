@@ -41,7 +41,20 @@ const SESSION_COOKIE = "aya_web_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOGIN_BODY_MAX_BYTES = 4096;
 const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
-const WEB_DENIED_CHANNELS = new Set([
+export const WEB_DENIED_CHANNELS = new Set([
+  "machines:status",
+  "machines:setup",
+  "machines:command",
+  "machines:configure",
+  "machines:discover",
+  "web:configure",
+  "web:regenerate-password",
+  "updates:install",
+  "app:install-cli",
+  "usage-hook:install",
+  "usage-hook:uninstall",
+  "status-hook:install",
+  "status-hook:uninstall",
   "prompt-attachments:register-drop",
   "prompt-attachments:register-paste",
   "prompt-attachments:drop",
@@ -209,7 +222,7 @@ export const WEB_OVERRIDE_CHANNELS = Object.keys(CHANNEL_OVERRIDES).sort();
 export const WEB_ALLOWED_CHANNELS = new Set([
   ...WEB_BRIDGE_INVOKE_CHANNELS,
   ...WEB_OVERRIDE_CHANNELS,
-]);
+].filter((channel) => !WEB_DENIED_CHANNELS.has(channel)));
 
 export async function dispatchWebInvoke(
   channel: string,
