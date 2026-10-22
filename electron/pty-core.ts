@@ -11,7 +11,7 @@ import * as path from "node:path";
 import type * as PtyModule from "node-pty";
 import { OwnerPty } from "./pty-owner-adapter";
 import {MAX_CHECKPOINT_BYTES,MAX_VT_SNAPSHOT_BYTES} from "./vt-checkpoint-schema";
-import {MAX_PTY_PANES} from "./pty-pane-limits";
+import {MAX_PTY_PANES, paneLimitFailureMessage} from "./pty-pane-limits";
 import type { VtCheckpoint } from "./vt-checkpoint";
 import { validatePaneCoreCheckpoint, validateCoreHandoverPart, checkpointGeneration, type CoreHandoverPart, type EndedCoreCheckpoint, type PaneCoreCheckpoint } from "./pty-core-checkpoint";
 import { currentOwnerRuntime, getOwnerRuntime } from "./pty-owner-runtime";
@@ -765,8 +765,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
         return;
       }
       if ((err as {code?:string})?.code === "OWNER_REJECTED" && (err as Error).message === "Pane limit reached") {
-        reportSpawnFailure(sink, req.ptyId, "pane-limit-reached",
-          `Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then restart this tab.`);
+        reportSpawnFailure(sink, req.ptyId, "pane-limit-reached", paneLimitFailureMessage());
         return;
       }
       reportSpawnFailure(
