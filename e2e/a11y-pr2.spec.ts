@@ -137,7 +137,9 @@ test.describe("keyboard access to project and terminal lists", () => {
 
     const rows = window.getByRole("list", { name: "Terminals" }).getByRole("listitem");
     await expect(rows).toHaveCount(2);
-    const firstRow = window.locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]');
+    const firstRow = rows.first();
+    const firstName = await firstRow.getAttribute("data-terminal-name");
+    const secondName = await rows.nth(1).getAttribute("data-terminal-name");
     await firstRow.focus();
     await window.keyboard.press("Shift+F10");
     const terminalMenu = window.getByRole("menu");
@@ -155,8 +157,8 @@ test.describe("keyboard access to project and terminal lists", () => {
     await moveDown.focus();
     await moveDown.evaluate((item) => item.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
     await expect.poll(() => window.getByTestId("sidebar-terminal").evaluateAll((items) => items.map((item) => item.getAttribute("data-terminal-name"))))
-      .toEqual(["shell 2", "shell 1"]);
-    await expect(firstRow).toBeFocused();
+      .toEqual([secondName, firstName]);
+    await expect(window.locator('[data-testid="sidebar-terminal"][data-terminal-name="' + firstName + '"]')).toBeFocused();
   });
 
   test("Delete closes a focused item without a second tab stop on the close button", async ({ window }) => {

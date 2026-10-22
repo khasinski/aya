@@ -137,11 +137,9 @@ function SidebarImpl({
     setMenu(null);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!menu) return;
-    const id = window.requestAnimationFrame(() =>
-      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus(),
-    );
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
     const close = () => closeMenu(false);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -153,7 +151,6 @@ function SidebarImpl({
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
     return () => {
-      window.cancelAnimationFrame(id);
       window.removeEventListener("mousedown", close);
       window.removeEventListener("keydown", onKey);
     };

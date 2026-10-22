@@ -148,8 +148,8 @@ function TopBarImpl({
   useLayoutEffect(() => {
     if (!focusProjectAfterMove || projects.findIndex((project) => project.slug === focusProjectAfterMove.slug) !== focusProjectAfterMove.index) return;
     const slug = focusProjectAfterMove.slug;
-    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>('.aya-project-tablist [role="tab"][data-project-slug]')]
-      .find((item) => item.dataset.projectSlug === slug)?.focus());
+    [...document.querySelectorAll<HTMLElement>('.aya-project-tablist [role="tab"][data-project-slug]')]
+      .find((item) => item.dataset.projectSlug === slug)?.focus();
     setFocusProjectAfterMove(null);
   }, [focusProjectAfterMove, projects]);
 
@@ -162,11 +162,9 @@ function TopBarImpl({
     });
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!tabMenu) return;
-    const id = window.requestAnimationFrame(() =>
-      tabMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus(),
-    );
+    tabMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
     const close = () => closeTabMenu(false);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -178,7 +176,6 @@ function TopBarImpl({
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
     return () => {
-      window.cancelAnimationFrame(id);
       window.removeEventListener("mousedown", close);
       window.removeEventListener("keydown", onKey);
     };
