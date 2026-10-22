@@ -104,7 +104,7 @@ import { refreshStatusCodexHookScript } from "./status-hook-codex";
 import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
 import { paneReadText } from "./pane-render";
 import { PtyHostClient, waitForExit } from "./pty-host-client";
-import { MAX_PTY_PANES } from "./pty-pane-limits";
+import { MAX_PTY_PANES, paneLimitFailureMessage } from "./pty-pane-limits";
 import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
@@ -655,7 +655,7 @@ function registerIpc(): TeamRunner {
     ensureCapacity: async () => {
       const status = await ptyHost.hostStatus();
       if (status.ptyCount >= MAX_PTY_PANES) {
-        throw new Error(`Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then try again.`);
+        throw new Error(paneLimitFailureMessage());
       }
     },
     spawn: async (terminalId, selectedProject, preset, cols, rows) => {
