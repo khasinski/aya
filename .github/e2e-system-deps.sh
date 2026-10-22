@@ -17,9 +17,14 @@ case "${1:?prepare or install}" in
       /etc/apt/sources.list.d/*vscode*
     # Some Azure mirror connections trickled packages for the whole job's
     # 20-minute budget. Use Ubuntu's archive and bound stalled connections.
-    for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+    # Newer hosted images use mirror+file: URLs rather than direct sources.
+    for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
+      /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt; do
       if [[ -f "$source" ]]; then
-        sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' "$source"
+        sudo sed -i \
+          -e 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+          -e 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g' \
+          -e 's|http://security.ubuntu.com|https://security.ubuntu.com|g' "$source"
       fi
     done
     printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "30";' \
