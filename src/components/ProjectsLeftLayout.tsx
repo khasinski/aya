@@ -385,6 +385,7 @@ function ProjectsLeftLayoutImpl({
           {terminals.map((t) => {
             const isActive = t.id === activeTerminalId;
             const preset = getPreset(presets, t.presetId);
+            const remoteHost = t.remoteHost ?? projects.find((project) => project.slug === t.projectSlug)?.remote?.label;
             const isRenaming = renamingId === t.id;
             const isDragging = dragId === t.id;
             const summary = terminalSummaries[t.id]?.trim();
@@ -448,6 +449,12 @@ function ProjectsLeftLayoutImpl({
                         startTermRename(t);
                       }}
                     >
+                      {remoteHost && (
+                        <span className="aya-tab-remote-chip" title={`Remote: ${remoteHost}`} aria-label={`Remote: ${remoteHost}`}>
+                          <span aria-hidden="true" style={{ fontFamily: "Material Symbols Outlined" }}>lan</span>
+                          Remote: {remoteHost}
+                        </span>
+                      )}
                       {t.name}
                     </span>
                   )}
@@ -726,8 +733,9 @@ function ProjectsLeftLayoutImpl({
                         }}
                       >
                         {isRemote && (
-                          <span className="aya-tab-remote-chip" title={displayPath}>
-                            SSH
+                          <span className="aya-tab-remote-chip" title={`Remote: ${p.remote?.label ?? "host"}`} aria-label={`Remote: ${p.remote?.label ?? "host"}`}>
+                            <span aria-hidden="true" style={{ fontFamily: "Material Symbols Outlined" }}>lan</span>
+                            Remote: {p.remote?.label ?? "host"}
                           </span>
                         )}
                         {p.name}

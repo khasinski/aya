@@ -68,6 +68,7 @@ export interface AyaWindowsDeps {
   openExternalUrl: (url: string) => Promise<void>;
   claimBootWindow: (windowId: number) => void;
   releaseWindowSlices: (windowId: number) => Promise<void>;
+  onWindowClosed?: (webContentsId: number) => void;
   quitting: () => boolean;
   loadMacOsWindowHack?: () => { apply(handle: Buffer): void };
 }
@@ -255,6 +256,7 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
       // not linger in the registry (it would show up as a phantom "Move to
       // window…" target).
       ayaWindows.delete(win);
+      deps.onWindowClosed?.(windowWebContents.id);
       // Keep the module-level ref in sync so second-instance handlers don't
       // try to focus a destroyed window.
       if (mainWindow === win) {

@@ -21,6 +21,7 @@ export type PtyHostRequest =
   | { id: number; type: "shutdown"; target?:{pid:number;startTime:string;ownerInstance:string|null} }
   | { id: number; type: "search"; query: string }
   | { id: number; type: "buffer"; ptyId: string }
+  | { id: number; type: "remote-output"; ptyId: string }
   // Live cwd of a PTY's child. Added after 0.7.8: a host from an older build
   // answers "unknown request", which the client turns back into null.
   | { id: number; type: "cwd"; ptyId: string }

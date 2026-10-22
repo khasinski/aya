@@ -91,6 +91,8 @@ export function createWebAya(transport: WebTransport): AyaApi {
 
     ptySpawn: inv("pty:spawn"),
     ptyWrite: inv("pty:write"),
+    ptyRemoteReconnect: async () => false,
+    e2eDropRemoteBridge: async () => false,
     ptyResize: inv("pty:resize"),
     ptyKill: inv("pty:kill"),
     ptyBuffer: inv("pty:buffer"),

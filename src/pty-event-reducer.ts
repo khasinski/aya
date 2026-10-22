@@ -62,8 +62,10 @@ export function isTerminalDone(
 export function deriveLifecycleStatus(t: {
   spawnFailure?: TerminalState["spawnFailure"];
   disconnected?: boolean;
+  remoteDisconnected?: boolean;
   exitCode: number | null;
 }): TerminalStatus {
+  if (t.remoteDisconnected) return "running";
   if (t.spawnFailure || t.disconnected) return "error";
   return t.exitCode === null || t.exitCode === 0 ? "idle" : "error";
 }
@@ -123,6 +125,23 @@ export function applyPtyEvent(
       return {...prev,[event.ptyId]:{...t,disconnected:undefined,disconnectedReason:undefined,status:"running",stopped:false}};
     }
     return {...prev,[event.ptyId]:{...t,disconnected:true,disconnectedReason:event.reason,status:"error",stopped:false,bell:false}};
+  }
+  if (event.type === "remote-control") {
+    const t = prev[event.ptyId];
+    if (!t || (t.remoteControlled === event.controlled && t.remoteReadOnly === (event.readOnly ?? false))) return prev;
+    return { ...prev, [event.ptyId]: { ...t, remoteControlled: event.controlled, remoteReadOnly: event.readOnly ?? false } };
+  }
+  if (event.type === "remote-connection") {
+    const t = prev[event.ptyId];
+    if (!t) return prev;
+    if (event.connected) return { ...prev, [event.ptyId]: { ...t, disconnected: undefined, remoteDisconnected: undefined, disconnectedReason: undefined, remoteReconnectDelayMs: undefined, stopped: false, status: "running" } };
+    const reason = `Disconnected from ${event.host}`;
+    return { ...prev, [event.ptyId]: { ...t, disconnected: true, remoteDisconnected: true, disconnectedReason: reason, remoteReconnectDelayMs: event.retryInMs, stopped: false, bell: false, externalStatus: undefined, screenDialog: undefined, status: "running" } };
+  }
+  if (event.type === "remote-replay-truncated") {
+    const t = prev[event.ptyId];
+    if (!t || t.remoteReplayTruncated) return prev;
+    return { ...prev, [event.ptyId]: { ...t, remoteReplayTruncated: true } };
   }
   if (event.type === "disconnected") {
     const t = prev[event.ptyId];

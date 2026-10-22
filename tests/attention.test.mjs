@@ -8,6 +8,7 @@ import {
   attentionFor,
   attentionRows,
   isActionableLevel,
+  projectBadgeLevel,
 } from "../dist-test/attention.js";
 
 const project = (over = {}) => ({
@@ -86,6 +87,19 @@ test("a plain shell sitting idle is idle, never done", () => {
 
 test("a busy running terminal wants no attention at all", () => {
   assert.equal(attentionFor(project(), termState("t1")), null);
+});
+
+test("a disconnected remote terminal is informational, not an error, wait, or badge", () => {
+  const terminal = termState("t1", {
+    status: "error",
+    bell: true,
+    remoteDisconnected: true,
+    disconnected: true,
+    spawnFailure: { reason: "node-pty-spawn-error", detail: "old connection" },
+  });
+  assert.equal(attentionFor(project(), terminal), null);
+  assert.equal(projectBadgeLevel(terminal), null);
+  assert.deepEqual(attentionRows([project()], { t1: terminal }), []);
 });
 
 test("a stopped terminal explains how to restart it", () => {

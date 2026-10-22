@@ -1699,12 +1699,18 @@
   border: 1px solid color-mix(in oklab, var(--status-waiting) 55%, var(--border));
   border-radius: 3px;
   color: var(--status-waiting);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 9px;
-  font-weight: 700;
+  font-weight: 500;
+  gap: 2px;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   line-height: 1;
   vertical-align: 1px;
 }
+.aya-tab-remote-chip > span { font-size: 12px; flex: 0 0 auto; }
 .aya-tab-path {
   display: block;
   min-width: 0;
@@ -1901,6 +1907,22 @@
   font-size: 18px;
   line-height: 1;
 }
+.aya-pane--remote .aya-pane-active { background: var(--status-waiting); }
+.aya-pane-remote-label,
+.aya-pane-remote-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--status-waiting);
+  border: 1px solid color-mix(in oklab, var(--status-waiting) 42%, var(--border));
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.aya-pane-remote-label span { font-size: 13px; }
+.aya-pane-remote-control { margin-left: auto; }
 .aya-topbar-right {
   flex-shrink: 0;
 }

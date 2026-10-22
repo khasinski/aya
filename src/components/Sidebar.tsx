@@ -35,6 +35,7 @@ interface Props {
   projectDir?: string;
   projectId?: string;
   projectRemote?: boolean;
+  projectRemoteHost?: string;
   onCreateWorktrees?: (req: { directory: string; slug: string; count: number; base: string }) => Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
   onStartWorktrees?: (projectId: string, preset: Preset, checkouts: { path: string; branch: string }[], prompt: string) => void;
   /** Remove a worktree. Never offered for the main checkout. */
@@ -83,6 +84,7 @@ function SidebarImpl({
   projectDir,
   projectId,
   projectRemote = false,
+  projectRemoteHost,
   onCreateWorktrees,
   onStartWorktrees,
   onRemoveWorktree,
@@ -230,6 +232,7 @@ function SidebarImpl({
         : "aya-sidebar-row--drop-after"
       : "";
     const isRenamingRow = renamingId === t.id;
+    const remoteHost = t.remoteHost ?? (projectRemote ? projectRemoteHost : undefined);
     return (
       <div
         key={t.id}
@@ -284,6 +287,12 @@ function SidebarImpl({
               }}
               title="Double-click to rename"
             >
+              {remoteHost && (
+                <span className="aya-tab-remote-chip" title={`Remote: ${remoteHost}`} aria-label={`Remote: ${remoteHost}`}>
+                  <span aria-hidden="true" style={{ fontFamily: "Material Symbols Outlined" }}>lan</span>
+                  Remote: {remoteHost}
+                </span>
+              )}
               {t.name}
             </span>
           )}

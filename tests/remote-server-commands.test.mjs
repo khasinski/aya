@@ -16,6 +16,9 @@ process.env.AYA_HOME = AYA_HOME;
 const require = createRequire(import.meta.url);
 const MODULE = join(process.cwd(), "dist-electron", "remote-server.js");
 const { startRemoteServer, startRemoteServerOn } = await import(MODULE);
+const { REMOTE_MAX_FRAME_BYTES } = await import("../dist-electron/remote-protocol.js");
+const { RemoteRequestFrameBuffer } = await import("../dist-electron/remote-server.js");
+const { RemotePtySessions } = await import("../dist-electron/remote-pty-sessions.js");
 test.after(() => rmSync(AYA_HOME, { recursive: true, force: true }));
 
 const EMPTY_SNAPSHOT = {
@@ -100,6 +103,75 @@ test("a command that is not an object gets bad_request", async (t) => {
   for (const reply of replies(messages)) {
     assert.deepEqual([reply.type, reply.code], ["error", "bad_request"]);
   }
+});
+
+test("a changed identity on repeated session open gets an error and the socket keeps serving", async (t) => {
+  const terminalSessions = new RemotePtySessions({
+    listProjects: async () => [], listPresets: async () => [], spawn: async () => {},
+    write: async () => true, resize: async () => {}, exit: async () => {},
+  });
+  const { socket } = start(t, { terminalSessions });
+  const messages = await talk(socket, [
+    JSON.stringify({ type: "session:open", protocol: 2, id: "open-1", clientId: "client-a" }),
+    JSON.stringify({ type: "session:open", protocol: 2, id: "open-2", clientId: "client-b" }),
+    JSON.stringify({ type: "pty:list", protocol: 2, id: "list-1" }),
+  ], (items) => items.some((item) => item.id === "open-2") && items.some((item) => item.id === "list-1"));
+  assert.equal(messages.find((item) => item.id === "open-1")?.type, "session:ready");
+  const rejected = messages.find((item) => item.id === "open-2");
+  assert.ok(rejected, JSON.stringify(messages));
+  assert.equal(rejected?.type, "error");
+  assert.equal(rejected?.code, "command_failed");
+  assert.match(rejected?.message, /different client identity/);
+  assert.equal(messages.find((item) => item.id === "list-1")?.type, "pty:list-result");
+});
+
+test("request buffering stays capped and latches closed after an oversized frame", () => {
+  const requestBuffer = new RemoteRequestFrameBuffer();
+  const withinLimit = requestBuffer.push("x".repeat(REMOTE_MAX_FRAME_BYTES));
+  assert.equal(withinLimit.tooLarge, false);
+  assert.equal(requestBuffer.bufferedBytes, REMOTE_MAX_FRAME_BYTES);
+  const overLimit = requestBuffer.push("y");
+  assert.equal(overLimit.tooLarge, true);
+  assert.equal(requestBuffer.bufferedBytes, 0);
+  for (let index = 0; index < 32; index += 1) {
+    assert.equal(requestBuffer.push("z".repeat(64 * 1024)).tooLarge, true);
+    assert.equal(requestBuffer.bufferedBytes, 0);
+  }
+});
+
+test("the server processes a valid frame then drops an oversized suffix and continued input", async (t) => {
+  const { dir, socket } = start(t);
+  const client = net.createConnection(socket);
+  const messages = [];
+  let buffer = "";
+  client.setEncoding("utf8");
+  const closed = new Promise((resolve) => client.on("close", resolve));
+  // The queued post-limit writes may receive the expected reset/EPIPE as the
+  // server destroys the stream.
+  client.on("error", () => {});
+  client.on("data", (chunk) => {
+    buffer += chunk;
+    while (buffer.includes("\n")) {
+      const index = buffer.indexOf("\n");
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (line) messages.push(JSON.parse(line));
+    }
+  });
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  const madePath = join(dir, "made-before-oversized-suffix");
+  client.write(`${JSON.stringify({ type: "fs:mkdir", id: "valid", path: madePath })}\n${"x".repeat(REMOTE_MAX_FRAME_BYTES + 1)}`);
+  // Queue more hostile input before the peer can observe the close. The
+  // server must destroy the socket on the first over-limit frame, not append
+  // these chunks to its retained request buffer.
+  for (let index = 0; index < 32; index += 1) client.write("y".repeat(64 * 1024));
+  await closed;
+  assert.equal(existsSync(madePath), true, "the valid frame before the suffix was handled");
+  assert.equal(client.destroyed, true);
+  assert.equal(client.writable, false);
 });
 
 test("fs:mkdir makes the whole path and answers with it; without a path it fails with the reason", async (t) => {
@@ -243,6 +315,23 @@ test("a stale socket file is replaced on start, and stop removes the socket", as
   stop();
   stopped = true;
   assert.equal(existsSync(socket), false);
+});
+
+test("stopping the remote server closes accepted bridges before a replacement starts", async (t) => {
+  const { socket, stop } = start(t);
+  const client = net.createConnection(socket);
+  t.after(() => client.destroy());
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  await new Promise((resolve, reject) => {
+    client.once("data", resolve);
+    client.once("error", reject);
+  });
+  const closed = new Promise((resolve) => client.once("close", resolve));
+  await stop();
+  await closed;
 });
 
 test("startRemoteServer listens in AYA_HOME and stops when Aya quits", async (t) => {

@@ -83,6 +83,9 @@ export const OUTPUT_BUFFER_MAX = 1_000_000; // ~1MB of recent bytes per terminal
 interface OutputBuffer {
   chunks: string[];
   total: number;
+  /** UTF-8 byte position after the last output byte. Kept in the long-lived
+   * PTY host so a successor main process can rebuild remote stream offsets. */
+  byteEnd: number;
   /** Monotonic append counter; invalidates searchCache below. (`total` alone
    *  is not a safe key: cap eviction can shrink and regrow it to the same
    *  value with different content.) */
@@ -102,7 +105,7 @@ const outputBuffers = new Map<string, OutputBuffer>();
 function restoreOutputBuffer(value: PaneCoreCheckpoint["output"], legacyCurrentModes?: ReplayModeState): OutputBuffer {
   const legacyModes = value.replayModes ? undefined : legacyCurrentModes
     ? legacyReplayModeTracker(legacyCurrentModes, value.chunks.join("")) : undefined;
-  return { chunks: [...value.chunks], total: value.total, version: value.version, end: value.end,
+  return { chunks: [...value.chunks], total: value.total, byteEnd: Buffer.byteLength(value.chunks.join(""), "utf8"), version: value.version, end: value.end,
     replayModes: value.replayModes ? validateReplayModeTracker(value.replayModes) :
       legacyModes ?? initialReplayModeTracker(),
     replayModesKnown: value.replayModes !== undefined || (legacyCurrentModes !== undefined && legacyModes !== null) };
@@ -221,7 +224,7 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
     let endedBytes=0;
     for(const [id,pane] of restoredPanes){
       if(pane.exitCode===undefined||ptys.has(id))continue;
-      const output=outputBuffers.get(id)??{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true};
+      const output=outputBuffers.get(id)??{chunks:[],total:0,byteEnd:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true};
       const nativeExit=pendingOwnerExits.get(id);
       const outputDto={chunks:output.chunks,total:output.total,version:output.version,end:output.end,...(output.replayModesKnown?{replayModes:structuredClone(output.replayModes)}:{})};
       const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,...(nativeExit?{ownerExit:{generation:nativeExit.generation,event:nativeExit.event}}:{}),output:outputDto};
@@ -251,7 +254,7 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
         if(!handoverGated||epoch!==handoverEpoch)throw new Error("Terminal handover was cancelled");
         const vt: VtCheckpoint = await checkpointVtPane(id);
         if (ptys.get(id) !== child || !spawnRequests.has(id) || !launches.has(id)) throw new Error("The pane changed during handover");
-        const output = outputBuffers.get(id) ?? {chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true};
+        const output = outputBuffers.get(id) ?? {chunks: [], total: 0, byteEnd:0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true};
         const dto: PaneCoreCheckpoint = {
           format: 1, id, adapter, request: spawnRequests.get(id)!, launch: launches.get(id)!, spawnedAt: spawnTimes.get(id)!,
           output: {chunks: [...output.chunks], total: output.total, version: output.version, end: output.end, replayModes: structuredClone(output.replayModes)},
@@ -392,7 +395,7 @@ export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Pr
   try{child=await OwnerPty.attach({pane:actual,process:pane.launch.command,readBytes:0,decoderCarry:""});}
   catch(error){closeVtPane(pane.id);throw error;}
   ptys.set(pane.id,child);launches.set(pane.id,pane.launch);spawnRequests.set(pane.id,pane.request);spawnTimes.set(pane.id,pane.spawnedAt);
-  outputBuffers.set(pane.id,{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true});
+  outputBuffers.set(pane.id,{chunks:[],total:0,byteEnd:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true});
   restoredPanes.set(pane.id,{generation:snapshotOf(mirror).generation,attached:false});
   if(!actual.exited){child.resize(Math.max(2,actual.cols-1),actual.rows);child.resize(actual.cols,actual.rows);}
   installChildObservers(pane.request,child,sink,()=>{});
@@ -420,24 +423,27 @@ export interface PtyEventSink {
   sendPtyEvent(event: PtyEvent): void;
 }
 
-function appendToOutputBuffer(ptyId: string, chunk: string): void {
+function appendToOutputBuffer(ptyId: string, chunk: string): number {
   let buffer = outputBuffers.get(ptyId);
   if (!buffer) {
-    buffer = { chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true };
+    buffer = { chunks: [], total: 0, byteEnd: 0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true };
     outputBuffers.set(ptyId, buffer);
   }
+  const streamOffset = buffer.byteEnd;
   buffer.chunks.push(chunk);
   buffer.total += chunk.length;
+  buffer.byteEnd += Buffer.byteLength(chunk, "utf8");
   buffer.version += 1;
   buffer.end += chunk.length;
   while (buffer.total > OUTPUT_BUFFER_MAX && buffer.chunks.length > 1) {
     const removed = buffer.chunks.shift();
     if (removed) { buffer.total -= removed.length; consumeReplayModes(buffer.replayModes, removed); }
   }
+  return streamOffset;
 }
 
-export function __testAppendToOutputBuffer(ptyId: string, chunk: string): void {
-  appendToOutputBuffer(ptyId, chunk);
+export function __testAppendToOutputBuffer(ptyId: string, chunk: string): number {
+  return appendToOutputBuffer(ptyId, chunk);
 }
 
 export function __testClearOutputBuffers(): void {
@@ -455,6 +461,11 @@ export function __testPendingWrites(ptyId: string): [number, number] {
 export function getBufferedOutput(ptyId: string): string {
   const buffer = outputBuffers.get(ptyId);
   return buffer ? buffer.chunks.join("") : "";
+}
+/** A single consistent snapshot for remote-session recovery after main relaunch. */
+export function getBufferedRemoteOutput(ptyId: string): { output: string; endOffset: number } | null {
+  const buffer = outputBuffers.get(ptyId);
+  return buffer ? { output: buffer.chunks.join(""), endOffset: buffer.byteEnd } : null;
 }
 /** Full replay begins with the mode state at the first retained byte. */
 export function getBufferedReplayOutput(ptyId: string): string {
@@ -905,12 +916,12 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       } else if (carry) {
         oscCarryBuffers.delete(req.ptyId);
       }
-      appendToOutputBuffer(req.ptyId, extracted.cleaned);
+      const streamOffset = appendToOutputBuffer(req.ptyId, extracted.cleaned);
       // Same bytes the renderer's xterm will draw, so the mirror matches what
       // the user sees.
       writeVtPane(req.ptyId, extracted.cleaned);
       if (sink.isDestroyed()) return;
-      sink.sendPtyEvent({ type: "data", ptyId: req.ptyId, chunk: extracted.cleaned });
+      sink.sendPtyEvent({ type: "data", ptyId: req.ptyId, chunk: extracted.cleaned, streamOffset });
       for (const event of extracted.events) {
         const status = parseAyaOscStatus(event);
         if (status) {

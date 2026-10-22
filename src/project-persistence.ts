@@ -18,6 +18,7 @@ export function hydrateProjectTerminalStates(
       bell: false,
       exitCode: null,
       restored: true,
+      ...(project.remote ? { remoteHost: project.remote.label } : {}),
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
       ...(tab.sharedDir ? { sharedDir: true as const } : {}),
       ...(tab.teamLaunch ? { teamLaunch: true } : {}),

@@ -177,6 +177,8 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       return undefined as never;
     },
     ptyWrite: noopAsync,
+    ptyRemoteReconnect: async () => false,
+    e2eDropRemoteBridge: async () => false,
     ptyResize: noopAsync,
     ptyKill: noopAsync,
     ptyBuffer: noopAsync,

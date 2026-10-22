@@ -12,8 +12,16 @@ import type { SpawnRequest } from "../types";
 import { requirePositiveInt, requireString, validateSpawnRequest } from "../validation";
 
 export interface PtyIpcDeps {
-  ipcMain: Pick<IpcMain, "handle">;
+  ipcMain: Pick<IpcMain, "handle"> & Partial<Pick<IpcMain, "on">>;
   host: Pick<PtyHostClient, "write" | "resize" | "kill" | "getBuffer" | "getCwd" | "search" | "getSize">;
+  remote?: {
+    write: (ptyId: string, data: string) => Promise<boolean | undefined>;
+    resize: (ptyId: string, cols: number, rows: number) => Promise<boolean>;
+    detach: (ptyId: string) => Promise<boolean>;
+    end: (ptyId: string) => Promise<boolean>;
+    reconnect: (ptyId: string) => Promise<boolean>;
+    acknowledgeOutput: (ptyId: string, deliveryId: string, sinkId: number) => boolean;
+  };
   gate: ReturnType<typeof createSpawnGate>;
   /** Shared-dir command, the agent brief, Aya Dev's own CLI first. */
   prepareSpawn: (req: SpawnRequest) => Promise<SpawnRequest>;
@@ -62,23 +70,36 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     return withPaneInputLock(id, async () => {
       await gate.afterSpawn(id);
       await deps.noteTyping(id, text);
+      const remoteResult = await deps.remote?.write(id, text);
+      if (remoteResult !== undefined) return remoteResult;
       return host.write(id, text);
     });
   });
   ipcMain.handle(
     "pty:resize",
-    async (_e, ptyId: unknown, cols: unknown, rows: unknown) =>
-      host.resize(
-        requireString(ptyId, "pty:resize.ptyId"),
-        requirePositiveInt(cols, "pty:resize.cols"),
-        requirePositiveInt(rows, "pty:resize.rows"),
-      ),
+    async (_e, ptyId: unknown, cols: unknown, rows: unknown) => {
+      const id = requireString(ptyId, "pty:resize.ptyId");
+      const c = requirePositiveInt(cols, "pty:resize.cols");
+      const r = requirePositiveInt(rows, "pty:resize.rows");
+      if (await deps.remote?.resize(id, c, r)) return;
+      return host.resize(id, c, r);
+    },
   );
   ipcMain.handle("pty:confirm-restart", async (_e, ptyId: unknown) =>
     deps.confirmRestartPane(requireString(ptyId, "pty:confirm-restart.ptyId")),
   );
-  ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
+  ipcMain.handle("pty:remote-reconnect", (_e, ptyId: unknown) => deps.remote?.reconnect(requireString(ptyId, "pty:remote-reconnect.ptyId")) ?? false);
+  ipcMain.on?.("pty:remote-output-ack", (event, ptyId: unknown, deliveryId: unknown) => {
+    if (typeof ptyId === "string" && typeof deliveryId === "string") deps.remote?.acknowledgeOutput(ptyId, deliveryId, event.sender.id);
+  });
+  ipcMain.handle("pty:kill", async (_e, ptyId: unknown, action?: unknown) => {
     const id = requireString(ptyId, "pty:kill.ptyId");
+    if (action === "end-remote" && await deps.remote?.end(id)) return;
+    if (action !== "end-remote" && await deps.remote?.detach(id)) {
+      deps.forgetDisplay?.(id);
+      await deps.forgetBrief(id).catch(() => {});
+      return;
+    }
     await closePane(gate, id, {
       // An ended restored pane still owns replay/outcome state and its idle
       // owner hold, even though it no longer has a live PTY size.

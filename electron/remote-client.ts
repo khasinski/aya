@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type {
   Preset,
@@ -10,10 +11,10 @@ import type {
   RemoteProjectCreateResult,
 } from "./types";
 import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
-import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
+import { REMOTE_MAX_FRAME_BYTES, REMOTE_PROTOCOL_VERSION, REMOTE_TERMINAL_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 import { shellQuote } from "./pane-command";
 import { socketPathLimit } from "./socket-path";
-import { isSshTarget, requireSshTarget } from "./ssh";
+import { isSshTarget, requireSshTarget, sshArgs } from "./ssh";
 
 export interface RemoteTimeouts {
   bridgeMs: number;
@@ -26,6 +27,279 @@ export const REMOTE_TIMEOUTS: RemoteTimeouts = { bridgeMs: 15_000, sshKillMs: 25
 const REMOTE_BRIDGE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 // The bridge's grace after client.end() for stdout to flush before it exits.
 const EXIT_FLUSH_DELAY_MS = 250;
+// Every bridge opened by this Aya process shares one host-control identity.
+// A separate Aya process gets a different id and observes read-only.
+const REMOTE_TERMINAL_CLIENT_ID = randomUUID();
+
+export interface RemoteTerminalAttachResult {
+  terminalId: string;
+  fromOffset: number;
+  endOffset: number;
+  truncated: boolean;
+  readOnly: boolean;
+}
+
+interface PendingTerminalRequest {
+  expected: string[];
+  resolve: (message: Record<string, unknown>) => void;
+  reject: (error: Error) => void;
+}
+
+/** Multiplexes v2 terminal requests over the existing line-framed
+ * aya remote --stdio bridge. The underlying bridge can be ssh, a local test
+ * child, or another Duplex-compatible process. */
+export class RemoteTerminalClient extends EventEmitter {
+  private readonly pending = new Map<string, PendingTerminalRequest>();
+  private readonly ready: Promise<void>;
+  private readyResolve!: () => void;
+  private readyReject!: (error: Error) => void;
+  private nextId = 1;
+  private buffer = "";
+  private deferOutputEvents = false;
+  private deferredOutputEvents: Array<{ terminalId: string; offset: number; data: string }> = [];
+  private deferredExitEvents: Array<{ terminalId: string; exitCode?: number; killed?: true }> = [];
+  private outputFlushScheduled = false;
+  private snapshotReceived = false;
+  private opened = false;
+  private closed = false;
+  private outputPaused = false;
+
+  constructor(private readonly bridge: ChildProcess) {
+    super();
+    if (!bridge.stdin || !bridge.stdout) throw new Error("Remote terminal bridge needs piped stdin and stdout.");
+    bridge.stdout.setEncoding("utf8");
+    this.ready = new Promise<void>((resolve, reject) => { this.readyResolve = resolve; this.readyReject = reject; });
+    bridge.stdout.on("data", (chunk: string) => this.onData(chunk));
+    // Killing an SSH/bridge process while it is writing can reset either pipe
+    // before ChildProcess emits its close event (notably on Linux). Consume
+    // those stream errors here so abrupt disconnects become ordinary client
+    // errors instead of unhandled stream exceptions.
+    bridge.stdout.on("error", (error) => this.fail(error));
+    bridge.stderr?.on("error", (error) => this.fail(error));
+    bridge.once("error", (error) => this.fail(error));
+    bridge.once("close", (code, signal) => this.fail(new Error(`Remote terminal bridge closed (${signal ?? code ?? "unknown"}).`)));
+  }
+
+  /** E2E-only bridge interruption. The IPC exposing this is registered only
+   * when AYA_E2E_RUN is set; production UI has no route to this method. */
+  killBridgeForTests(): void { this.bridge.kill("SIGKILL"); }
+
+  /** Backpressure from the renderer is propagated through the bridge and SSH
+   *  stream so its bounded host-side output ring can absorb a slow consumer. */
+  pauseOutput(): void {
+    this.outputPaused = true;
+    this.bridge.stdout?.pause();
+  }
+
+  resumeOutput(): void {
+    if (this.closed || !this.outputPaused) return;
+    this.outputPaused = false;
+    this.consumeBuffer();
+    if (!this.outputPaused) this.bridge.stdout?.resume();
+  }
+
+  destroy(): void {
+    this.closed = true;
+    this.bridge.kill("SIGKILL");
+  }
+
+  static open(sshTarget: string): RemoteTerminalClient {
+    const target = requireSshTarget(sshTarget);
+    const bridge = spawn("ssh", sshArgs(target, ["aya remote --stdio"]), { stdio: ["pipe", "pipe", "pipe"] });
+    return new RemoteTerminalClient(bridge);
+  }
+
+  private onData(chunk: string): void {
+    this.buffer += chunk;
+    this.consumeBuffer();
+  }
+
+  private consumeBuffer(): void {
+    while (true) {
+      const idx = this.buffer.indexOf("\n");
+      if (idx < 0) {
+        if (Buffer.byteLength(this.buffer, "utf8") > REMOTE_MAX_FRAME_BYTES) {
+          this.fail(new Error("Remote terminal bridge sent a frame over the 2 MiB limit."));
+          this.bridge.kill();
+        }
+        return;
+      }
+      if (Buffer.byteLength(this.buffer.slice(0, idx), "utf8") > REMOTE_MAX_FRAME_BYTES) {
+        this.fail(new Error("Remote terminal bridge sent a frame over the 2 MiB limit."));
+        this.bridge.kill();
+        return;
+      }
+      const line = this.buffer.slice(0, idx).trim();
+      this.buffer = this.buffer.slice(idx + 1);
+      if (!line) continue;
+      let value: unknown;
+      try { value = JSON.parse(line); }
+      catch { this.fail(new Error("Remote Aya returned invalid JSON.")); continue; }
+      if (!isRecord(value)) { this.fail(new Error("Remote Aya returned an invalid message.")); continue; }
+      this.onMessage(value);
+      if (this.outputPaused) return;
+    }
+  }
+
+  private onMessage(value: Record<string, unknown>): void {
+    if (value.type === "hello") {
+      if (value.protocol !== REMOTE_PROTOCOL_VERSION) {
+        this.fail(new Error(`Remote Aya uses protocol ${String(value.protocol)}; this client supports ${REMOTE_PROTOCOL_VERSION}.`));
+        return;
+      }
+      return;
+    }
+    if (value.type === "snapshot") {
+      if (value.protocol !== REMOTE_PROTOCOL_VERSION) { this.fail(new Error("Remote Aya sent an incompatible snapshot.")); return; }
+      if (!this.snapshotReceived) {
+        this.snapshotReceived = true;
+        this.send({ type: "session:open", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: this.id(), clientId: REMOTE_TERMINAL_CLIENT_ID });
+      }
+      return;
+    }
+    if (value.type === "error") {
+      const id = typeof value.id === "string" ? value.id : "";
+      if (id && this.pending.has(id)) this.rejectPending(id, new Error(typeof value.message === "string" ? value.message : "Remote Aya rejected the request."));
+      else if (!this.opened) {
+        const message = value.code === "read_only" || value.code === "terminal_unavailable"
+          ? "Remote Aya does not support terminal protocol version 2; update Aya on the host."
+          : typeof value.message === "string" ? value.message : "Remote Aya rejected the terminal session.";
+        this.fail(new Error(message));
+      }
+      return;
+    }
+    if (value.type === "session:ready") {
+      if (value.protocol !== REMOTE_TERMINAL_PROTOCOL_VERSION) { this.fail(new Error("Remote Aya did not accept terminal protocol version 2.")); return; }
+      this.opened = true;
+      this.readyResolve();
+      return;
+    }
+    if (value.type === "pty:output") {
+      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && Number.isSafeInteger(value.offset) && typeof value.data === "string") {
+        const output = { terminalId: value.terminalId, offset: value.offset as number, data: value.data };
+        if (this.deferOutputEvents) this.deferredOutputEvents.push(output);
+        else this.emit("output", output);
+      }
+      return;
+    }
+    if (value.type === "pty:exited") {
+      const hasExitCode = Number.isInteger(value.exitCode);
+      const wasKilled = value.killed === true;
+      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && hasExitCode !== wasKilled) {
+        const exit = wasKilled ? { terminalId: value.terminalId, killed: true as const } : { terminalId: value.terminalId, exitCode: value.exitCode as number };
+        if (this.deferOutputEvents) this.deferredExitEvents.push(exit);
+        else this.emit("exit", exit);
+      }
+      return;
+    }
+    if (value.type === "pty:spawn-failed") {
+      if (value.protocol === REMOTE_TERMINAL_PROTOCOL_VERSION && typeof value.terminalId === "string" && typeof value.message === "string") {
+        this.emit("spawn-failed", { terminalId: value.terminalId, reason: typeof value.reason === "string" ? value.reason : undefined, message: value.message });
+      }
+      return;
+    }
+    const id = typeof value.id === "string" ? value.id : "";
+    if (id && this.pending.has(id)) {
+      const pending = this.pending.get(id)!;
+      if (pending.expected.includes(String(value.type))) {
+        this.pending.delete(id);
+        if (value.type === "pty:attached") this.deferOutputForAwaitContinuation();
+        pending.resolve(value);
+      }
+    }
+  }
+
+  async spawnTerminal(project: string, preset: string, cols: number, rows: number, terminalId?: string): Promise<{ terminalId: string }> {
+    const response = await this.request("pty:spawn", ["pty:spawned"], { project, preset, cols, rows, ...(terminalId ? { terminalId } : {}) });
+    if (typeof response.terminalId !== "string") throw new Error("Remote Aya returned an invalid terminal id.");
+    return { terminalId: response.terminalId };
+  }
+
+  async attach(terminalId: string, offset: number): Promise<RemoteTerminalAttachResult> {
+    const response = await this.request("pty:attach", ["pty:attached"], { terminalId, offset });
+    if (typeof response.terminalId !== "string" || !Number.isSafeInteger(response.fromOffset) || !Number.isSafeInteger(response.endOffset) || typeof response.truncated !== "boolean") throw new Error("Remote Aya returned an invalid attach response.");
+    return { terminalId: response.terminalId, fromOffset: response.fromOffset as number, endOffset: response.endOffset as number, truncated: response.truncated, readOnly: response.readOnly === true };
+  }
+
+  async write(terminalId: string, data: string): Promise<boolean> {
+    const response = await this.request("pty:write", ["pty:written"], { terminalId, data });
+    if (typeof response.accepted !== "boolean") throw new Error("Remote Aya returned an invalid write response.");
+    return response.accepted;
+  }
+
+  async resize(terminalId: string, cols: number, rows: number): Promise<void> {
+    await this.request("pty:resize", ["pty:resized"], { terminalId, cols, rows });
+  }
+
+  async exit(terminalId: string): Promise<void> {
+    await this.request("pty:exit", ["pty:exit-result"], { terminalId });
+  }
+
+  async list(): Promise<Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed" | "uncertain"; offset: number; failureReason?: string }>> {
+    const response = await this.request("pty:list", ["pty:list-result"], {});
+    if (!Array.isArray(response.terminals)) throw new Error("Remote Aya returned an invalid terminal list.");
+    return response.terminals as Array<{ terminalId: string; project: string; preset: string; state: "running" | "exited" | "failed" | "uncertain"; offset: number; failureReason?: string }>;
+  }
+
+  /** Close only the bridge stream. The host does not receive a kill request. */
+  detach(): Promise<void> {
+    this.closed = true;
+    this.pending.forEach((pending) => pending.reject(new Error("Remote terminal bridge detached.")));
+    this.pending.clear();
+    this.bridge.stdin?.end();
+    if (this.bridge.exitCode !== null || this.bridge.signalCode !== null) return Promise.resolve();
+    return new Promise((resolve) => this.bridge.once("close", () => resolve()));
+  }
+
+  private async request(type: string, expected: string[], data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    await this.ready;
+    if (this.closed) throw new Error("Remote terminal bridge is closed.");
+    const id = this.id();
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { expected, resolve, reject });
+      this.send({ type, protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, ...data });
+    });
+  }
+
+  private id(): string { return `remote-${this.nextId++}`; }
+
+  private deferOutputForAwaitContinuation(): void {
+    this.deferOutputEvents = true;
+    if (this.outputFlushScheduled) return;
+    this.outputFlushScheduled = true;
+    // The attached response and replay may be in the same stdout data event.
+    // Let the attach() promise continuation register its output listener first.
+    setImmediate(() => {
+      this.outputFlushScheduled = false;
+      this.deferOutputEvents = false;
+      for (const event of this.deferredOutputEvents.splice(0)) this.emit("output", event);
+      for (const event of this.deferredExitEvents.splice(0)) this.emit("exit", event);
+    });
+  }
+
+  private send(value: unknown): void {
+    if (!this.bridge.stdin || this.bridge.stdin.destroyed) { this.fail(new Error("Remote terminal bridge is closed.")); return; }
+    this.bridge.stdin.write(`${JSON.stringify(value)}\n`);
+  }
+
+  private rejectPending(id: string, error: Error): void {
+    const pending = this.pending.get(id);
+    if (!pending) return;
+    this.pending.delete(id);
+    pending.reject(error);
+  }
+
+  private fail(error: Error): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (!this.opened) this.readyReject(error);
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+    // Preserve the first failure notification for consumers such as the remote
+    // terminal manager, even though the client is closed before listeners run.
+    if (this.listenerCount("error") > 0) this.emit("error", error);
+  }
+}
 
 function seconds(ms: number): string {
   return `${ms / 1000}s`;
@@ -58,8 +332,9 @@ function finish(code) {
   setTimeout(() => process.exit(code), ${EXIT_FLUSH_DELAY_MS});
 }
 client.setEncoding("utf8");
+process.stdout.on("drain", () => client.resume());
 client.on("data", (chunk) => {
-  process.stdout.write(chunk);
+  if (!process.stdout.write(chunk)) client.pause();
   buffer += chunk;
   while (buffer.includes("\\n")) {
     const idx = buffer.indexOf("\\n");
