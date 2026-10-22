@@ -574,7 +574,7 @@ function start(): void {
       const {buffered}=result;
       if(hostShutdownStarted||socket.destroyed){socket.destroy();return;}
       attachAuthenticatedClient(socket,buffered);socket.resume();
-    }).catch(()=>{ptyLog.append("host-auth-refused",{});});
+    }).catch(()=>{});
   });
 
   listenOwnerOnly(server, PTY_HOST_SOCKET_PATH, () => {
@@ -634,7 +634,10 @@ void (async()=>{
     return "unknown";
   });
   ownAuthPeer={pid:process.pid,startIdentity:ownStart};authTransfer=new HostAuthTransfer(capability);
-  socketAuthenticator=new HostSocketAuthenticator(capability,ownAuthPeer,peer=>principal.authorize(peer),undefined,authTransfer);
+  socketAuthenticator=new HostSocketAuthenticator(capability,ownAuthPeer,peer=>principal.authorize(peer),undefined,authTransfer,{
+    handoverAttempt:()=>plannedCoreAttempt??plannedTransferAnnouncement??authTransfer.diagnosticAttempt,
+    refused:details=>ptyLog.append("host-auth-refused",{...details}),
+  });
   capability.fill(0);
   const recovery=process.env.AYA_PTY_RECOVERY_FD === "4" ? await readRecoveryBootstrap(4) : null;
   delete process.env.AYA_PTY_RECOVERY_FD;

@@ -11,10 +11,12 @@ export function validAuthTransferDeadline(purpose:unknown,deadline:unknown,wall?
   return purpose==="planned-update"&&typeof deadline==="number"&&Number.isSafeInteger(deadline)&&(wall===undefined||(deadline>wall&&deadline-wall<=AUTH_TRANSFER_WINDOW_MS));
 }
 export type AuthTransferPurpose="ordinary-quit"|"planned-update";
+export type AuthRedemptionFailure = "malformed" | "expired" | "stale-or-unknown-attempt" | "already-redeemed" | "other";
 export interface AuthTransferReservation {attempt:string;purpose:AuthTransferPurpose;deadline:number|null}
 type Phase="reserved"|"active"|"claimed"|"owned"|"sealed";
 interface Attempt extends AuthTransferReservation {
   phase:Phase;issuer:HostAuthPeer;nonce:Buffer;expires:number|null;activateBy:number;
+  expired?:boolean;
   recipient?:HostAuthPeer;continuity?:string;completedReceipt?:string;
 }
 export class HostAuthTransferError extends Error {
@@ -35,16 +37,35 @@ export class HostAuthTransfer {
     if(!Buffer.isBuffer(capability)||capability.length!==32)refuse();
     this.capability=Buffer.from(capability);
   }
-  private seal(attempt:Attempt):void{attempt.phase="sealed";attempt.nonce.fill(0);}
+  private seal(attempt:Attempt,expired=false):void{attempt.phase="sealed";attempt.expired=expired;attempt.nonce.fill(0);}
   private expire():void{
     const a=this.attempt;if(!a)return;
     const now=this.clock.monotonic(),wallExpired=a.deadline!==null&&this.clock.wall()>=a.deadline;
-    if((a.phase==="reserved"&&(wallExpired||(a.expires!==null&&now>=a.expires)||now>=a.activateBy))||(a.phase==="active"&&(wallExpired||(a.expires!==null&&now>=a.expires))))this.seal(a);
+    if((a.phase==="reserved"&&(wallExpired||(a.expires!==null&&now>=a.expires)||now>=a.activateBy))||(a.phase==="active"&&(wallExpired||(a.expires!==null&&now>=a.expires))))this.seal(a,true);
   }
   get phase():Phase|"empty"{this.expire();return this.attempt?.phase??"empty";}
+  /** A correlation id only; never returns the capability or one-use nonce. */
+  get diagnosticAttempt():string|null{return this.attempt?.attempt??null;}
   matchesActiveReservation(attempt:string,purpose:AuthTransferPurpose,deadline:number|null):boolean{
     this.expire();const a=this.attempt;
     return !!a&&a.phase==="active"&&a.attempt===attempt&&a.purpose===purpose&&a.deadline===deadline;
+  }
+  /** Classifies a failed redemption from validated host state only. Callers
+   * must not include request fields in diagnostics; this returns a fixed code. */
+  redemptionFailure(attempt:unknown,purpose:unknown,deadline:unknown):AuthRedemptionFailure|null {
+    this.expire();
+    if(!hex(attempt)||(purpose!=="ordinary-quit"&&purpose!=="planned-update")||
+      (purpose==="ordinary-quit"?deadline!==null:typeof deadline!=="number"||!Number.isSafeInteger(deadline)))return "malformed";
+    const current=this.attempt;
+    if(current?.attempt===attempt&&(current.phase==="claimed"||current.phase==="owned"))return "already-redeemed";
+    if(purpose==="planned-update"){
+      if((deadline as number)<=this.clock.wall())return "expired";
+      if((deadline as number)-this.clock.wall()>AUTH_TRANSFER_WINDOW_MS)return "malformed";
+    }
+    if(!current||current.attempt!==attempt)return "stale-or-unknown-attempt";
+    if(current.phase==="sealed")return current.expired?"expired":"stale-or-unknown-attempt";
+    if(current.phase!=="active"||current.purpose!==purpose||current.deadline!==deadline)return "stale-or-unknown-attempt";
+    return null;
   }
   refuseActiveRedemption():never{this.expire();if(this.attempt?.phase==="active")this.seal(this.attempt);return refuse();}
   reservedBy(issuer:HostAuthPeer,attempt:string,purpose?:AuthTransferPurpose,deadline?:number|null,nonce?:string):AuthTransferReservation{

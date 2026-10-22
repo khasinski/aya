@@ -9,12 +9,28 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const {HostSocketAuthenticator,HostAuthPrincipal,authenticateHostSocket,HOST_AUTH_PENDING_CONNECTIONS}=require('../dist-electron/pty-host-auth-transport.js');
 const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
+const {HostAuthTransfer}=require('../dist-electron/pty-host-auth-transfer.js');
 const key=Buffer.alloc(32,9),host={pid:101,startIdentity:'1:2'},client={pid:202,startIdentity:'3:4'};
 async function until(check){const deadline=Date.now()+2000;while(!check()){assert.ok(Date.now()<deadline,'bounded condition');await new Promise(r=>setTimeout(r,5));}}
+async function sendInvalidProof(socket){
+ let text='';socket.setEncoding('utf8');socket.on('data',chunk=>{text+=chunk;});
+ const waiting=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('auth challenge timeout')),1000);const check=()=>{const line=text.split('\n').find(value=>value.startsWith('{'));if(line){clearTimeout(timer);resolve(line);}};socket.on('data',check);socket.once('close',()=>{clearTimeout(timer);reject(Error('closed before auth challenge'));});});
+ socket.write(JSON.stringify({type:'pty-auth-hello',version:1,nonce:'1'.repeat(64)})+'\n');
+ const challenge=await waiting;
+ assert.equal(JSON.parse(challenge).type,'pty-auth-challenge');
+ const closed=once(socket,'close');socket.write(JSON.stringify({type:'pty-auth-proof',proof:'f'.repeat(64)})+'\n');await closed;
+}
+async function sendValidHelloWithoutProof(socket){
+ let text='';socket.setEncoding('utf8');socket.on('data',chunk=>{text+=chunk;});socket.resume();
+ const waiting=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('auth challenge timeout')),1000);const check=()=>{const line=text.split('\n').find(value=>value.startsWith('{'));if(line){clearTimeout(timer);resolve(line);}};socket.on('data',check);socket.once('close',()=>{clearTimeout(timer);reject(Error('closed before auth challenge'));});});
+ socket.write(JSON.stringify({type:'pty-auth-hello',version:1,nonce:'1'.repeat(64)})+'\n');
+ const challenge=await waiting;assert.equal(JSON.parse(challenge).type,'pty-auth-challenge');
+ await once(socket,'close');
+}
 async function fixture(fn,options={}){
  await fs.mkdir('test-results',{recursive:true});const dir=await fs.mkdtemp(path.resolve('test-results/auth-wire-'));
  const socketPath=path.join(dir,'sock'),sockets=new Set(),received=[],failures=[],accepted=[];
- const auth=new HostSocketAuthenticator(key,options.ownPeer??host,options.authorize??(()=>{}),options.realPeer?undefined:options.readPeer??(()=>client));
+ const auth=new HostSocketAuthenticator(key,options.ownPeer??host,options.authorize??(()=>{}),options.realPeer?undefined:options.readPeer??(()=>client),options.transfer,options.diagnostics);
  const server=net.createServer(socket=>{
   sockets.add(socket);socket.once('close',()=>sockets.delete(socket));
   void auth.accept(socket).then(result=>{
@@ -53,6 +69,30 @@ test('wrong capability and a failed kernel identity probe neither authenticate n
  await fixture(async({connect,received,accepted})=>{
   const socket=await connect();socket.resume();await once(socket,'close');assert.deepEqual(received,[]);assert.deepEqual(accepted,[]);
  },{readPeer:()=>{throw new Error('kernel identity unavailable');}});
+});
+test('auth refusal reason codes come from the host proof stage and transfer state, not client payloads',{timeout:25000},async()=>{
+ const attempt='a'.repeat(64),nonce='b'.repeat(64),base={type:'pty-transfer-redeem',version:1,attempt,purpose:'ordinary-quit',deadline:null,nonce,clientNonce:'c'.repeat(64),hostPid:host.pid,hostStartIdentity:host.startIdentity};
+ const makeTransfer=()=>{const transfer=new HostAuthTransfer(key),reservation=transfer.reserve(host,'ordinary-quit',nonce,null);transfer.activate(host,reservation.attempt);return {transfer,attempt:reservation.attempt};};
+ const cases=[
+  ['ordinary-proof-not-sent',async({connect})=>{const socket=await connect();const closed=once(socket,'close');socket.destroy();await closed;},{ }],
+  ['ticket-not-adopted',async({connect})=>{const socket=await connect();await sendValidHelloWithoutProof(socket);},'active'],
+  ['wrong-capability',async({connect})=>{const socket=await connect();await sendInvalidProof(socket);},'active'],
+  ['wrong-capability',async({connect})=>{const socket=await connect();await sendInvalidProof(socket);},{}],
+  ['redemption-malformed',async({connect})=>{const socket=await connect();socket.resume();const closed=once(socket,'close');socket.write(JSON.stringify({type:'pty-transfer-redeem'})+'\n');await closed;},{ }],
+  ['redemption-expired',async({connect})=>{const socket=await connect();socket.resume();const closed=once(socket,'close');socket.write(JSON.stringify({...base,purpose:'planned-update',deadline:Date.now()-1000})+'\n');await closed;},{ }],
+  ['redemption-stale-or-unknown-attempt',async({connect})=>{const socket=await connect();socket.resume();const closed=once(socket,'close');socket.write(JSON.stringify({...base,attempt:'d'.repeat(64)})+'\n');await closed;},'active'],
+  ['redemption-stale-or-unknown-attempt',async({connect,transfer,transferAttempt})=>{transfer.cancel(host,transferAttempt);const socket=await connect();socket.resume();const closed=once(socket,'close');socket.write(JSON.stringify({...base,attempt:transferAttempt})+'\n');await closed;},'active'],
+  ['redemption-already-redeemed',async({connect,transfer,transferAttempt})=>{transfer.redeem(transferAttempt,nonce,client);const socket=await connect();socket.resume();const closed=once(socket,'close');socket.write(JSON.stringify({...base,attempt:transferAttempt})+'\n');await closed;},'active'],
+  ['redemption-other',async({connect,transferAttempt})=>{const socket=await connect();socket.resume();const closed=once(socket,'close');socket.write(JSON.stringify({...base,attempt:transferAttempt,nonce:'e'.repeat(64)})+'\n');await closed;},'active'],
+ ];
+ for(const [reason,exercise,state] of cases){
+  const refusals=[],stateTransfer=state==='active'?makeTransfer():reason.startsWith('redemption-')?{transfer:new HostAuthTransfer(key),attempt:null}:null;
+  await fixture(async({connect,transfer})=>{
+   await exercise({connect,transfer:stateTransfer?.transfer??transfer,transferAttempt:stateTransfer?.attempt});
+   await until(()=>refusals.length===1);
+   assert.deepEqual(refusals,[{peerPid:client.pid,peerStartIdentity:client.startIdentity,handoverAttempt:stateTransfer?.attempt??null,reason}]);
+  },{transfer:stateTransfer?.transfer,diagnostics:{handoverAttempt:()=>stateTransfer?.transfer.diagnosticAttempt??null,refused:details=>refusals.push(details)}});
+ }
 });
 test('oversized unterminated handshake is rejected before dispatch',()=>fixture(async({connect,received,accepted})=>{
  const socket=await connect(),closed=once(socket,'close');socket.resume();socket.write('x'.repeat(1025));await closed;
