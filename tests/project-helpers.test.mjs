@@ -13,6 +13,7 @@ import {
   normalizeLocalPath,
   pathContainsProject,
   remoteTerminalCommand,
+  resumePanesForProjects,
   samePollPayload,
   sameProjectBadges,
   sameSessionRecords,
@@ -169,6 +170,123 @@ test("terminalSpawn forwards the shared-directory alternative and local peer cwd
   });
   assert.deepEqual(terminalSpawn(null, preset(), terminal({ restored: true, sharedDir: true }), panes, "/home/me"), {
     command: "claude",
+  });
+});
+
+test("restored launch isolates directory-wide sessions across hydration and saved-tab states", async (t) => {
+  const cliCases = [
+    { id: "claude", command: "claude", directoryResume: true },
+    { id: "opencode", command: "opencode", directoryResume: true },
+    { id: "codex", command: "codex", directoryResume: true },
+    // Grok resumes only an explicit session id; it has no directory-wide continue form.
+    { id: "grok", command: "grok", directoryResume: false },
+  ];
+  const hydrationCases = [
+    { name: "launching pane hydrates first", ids: ["launch"] },
+    { name: "sibling hydrates first", ids: ["sibling"] },
+    { name: "both hydrate", ids: ["launch", "sibling"] },
+  ];
+  const autoResumeCases = [
+    { name: "default", value: undefined, enabled: true },
+    { name: "enabled", value: true, enabled: true },
+    { name: "disabled", value: false, enabled: false },
+  ];
+
+  for (const cli of cliCases) {
+    for (const hydration of hydrationCases) {
+      for (const savedSibling of [false, true]) {
+        for (const sameDirectory of [false, true]) {
+          for (const autoResume of autoResumeCases) {
+            await t.test(
+              `${cli.id}, ${hydration.name}, sibling ${savedSibling ? "saved" : "live only"}, ` +
+                `${sameDirectory ? "same" : "different"} directory, autoResume ${autoResume.name}`,
+              () => {
+                const targetPreset = preset({
+                  id: cli.id,
+                  command: cli.command,
+                  ...(autoResume.value === undefined ? {} : { autoResume: autoResume.value }),
+                });
+                const targetDir = "/src/work";
+                const siblingDir = sameDirectory ? targetDir : "/src/other";
+                const targetTab = { id: "launch", presetId: cli.id, name: "Launch", cwd: targetDir };
+                const siblingTab = { id: "sibling", presetId: cli.id, name: "Sibling", cwd: siblingDir };
+                const saved = project("work", targetDir, {
+                  tabs: [targetTab, ...(savedSibling ? [siblingTab] : [])],
+                });
+                const hydrated = Object.fromEntries(hydration.ids.map((id) => [
+                  id,
+                  terminal({
+                    id,
+                    projectSlug: "work",
+                    presetId: cli.id,
+                    cwd: id === "launch" ? targetDir : siblingDir,
+                    restored: true,
+                    exitCode: null,
+                  }),
+                ]));
+                const panes = resumePanesForProjects([saved], hydrated, [targetPreset], {});
+                const spawn = terminalSpawn(
+                  saved,
+                  targetPreset,
+                  terminal({
+                    id: "launch",
+                    projectSlug: "work",
+                    presetId: cli.id,
+                    cwd: targetDir,
+                    restored: true,
+                  }),
+                  panes,
+                  "/home/me",
+                );
+                const siblingIsKnown = savedSibling || hydration.ids.includes("sibling");
+                const siblingSharesDirectory = siblingIsKnown && sameDirectory;
+                const shouldAvoidContinue = cli.directoryResume && autoResume.enabled && siblingSharesDirectory;
+
+                assert.equal(panes.some((pane) => pane.id === "sibling"), siblingIsKnown);
+                assert.equal(
+                  spawn.sharedDirCommand !== undefined,
+                  cli.directoryResume && autoResume.enabled && siblingIsKnown,
+                );
+                if (shouldAvoidContinue) {
+                  assert.equal(spawn.command.includes("--continue") || spawn.command.includes("resume --last"), true);
+                  assert.equal(spawn.sharedDirCommand, cli.command);
+                  assert.ok(spawn.peerCwds?.includes(siblingDir));
+                }
+                if (!cli.directoryResume || !autoResume.enabled) {
+                  assert.equal(spawn.sharedDirCommand, undefined);
+                }
+              },
+            );
+          }
+        }
+      }
+    }
+  }
+
+  await t.test("a closed terminal record left in memory is not a sibling", () => {
+    const targetPreset = preset();
+    const saved = project("work", "/src/work", {
+      tabs: [{ id: "launch", presetId: "claude", name: "Launch" }],
+    });
+    const panes = resumePanesForProjects([saved], {
+      closed: terminal({
+        id: "closed",
+        projectSlug: "work",
+        presetId: "claude",
+        cwd: "/src/work",
+        restored: true,
+        exitCode: 0,
+      }),
+    }, [targetPreset], {});
+    assert.deepEqual(panes.map((pane) => pane.id), ["launch"]);
+    const spawn = terminalSpawn(
+      saved,
+      targetPreset,
+      terminal({ id: "launch", projectSlug: "work", presetId: "claude", restored: true }),
+      panes,
+      "/home/me",
+    );
+    assert.deepEqual(spawn, { command: "claude --continue" });
   });
 });
 

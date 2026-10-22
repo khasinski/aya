@@ -86,7 +86,8 @@ test.describe("claude preset with the brief on", () => {
     expect(flag).toBeGreaterThanOrEqual(0);
     expect(args.lastIndexOf("--append-system-prompt")).toBe(flag);
     expect(args[flag + 1]).toContain("aya capabilities");
-    expect(args.slice(flag + 2)).toHaveLength(2);
+    const spawnTrace = readFileSync(join(seeded.ayaHome, "pty-events.log"), "utf8");
+    expect(args.slice(flag + 2), `PTY spawn trace:\n${spawnTrace}`).toHaveLength(2);
     expect(args[flag + 2]).toBe("--session-id");
     // User rc files run after us and may append more, so only presence is promised.
     expect(pathEntries).toContain(REPO_BIN);

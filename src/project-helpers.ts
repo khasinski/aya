@@ -3,6 +3,7 @@ import type { ProjectBadgeLevel } from "./attention";
 import { PRESET_ID_SHELL } from "./preset-ids";
 import { sameArrayItems, sameRecordValues } from "./stable-identity";
 import {
+  getPreset,
   presetSlug,
   slugifyName,
   type MonitoredSession,
@@ -145,6 +146,47 @@ export function sessionDir(project: ProjectConfig | null, terminal: TerminalStat
   return project?.remote
     ? `${project.remote.sshTarget}:${project.remote.directory}`
     : terminal.cwd;
+}
+
+/** Saved tabs are available before their renderer terminal states finish
+ * hydrating. Include them so the first restored pane cannot resume the latest
+ * session before its sibling appears in the live state map. Live, not-yet-saved
+ * tabs also count; stale terminal records for exited/closed tabs do not. */
+export function resumePanesForProjects(
+  projects: ProjectConfig[],
+  terminals: Record<string, TerminalState>,
+  presets: Preset[],
+  remotePresetsByProject: Record<string, Preset[]>,
+): Array<{ id: string; preset: Preset; cwd: string }> {
+  const panes = new Map<string, { id: string; preset: Preset; cwd: string }>();
+  for (const project of projects) {
+    const list = project.remote ? (remotePresetsByProject[project.slug] ?? presets) : presets;
+    for (const tab of project.tabs) {
+      const terminal = terminals[tab.id];
+      panes.set(tab.id, {
+        id: tab.id,
+        preset: getPreset(list, tab.presetId),
+        cwd: project.remote
+          ? `${project.remote.sshTarget}:${project.remote.directory}`
+          : (terminal?.projectSlug === project.slug ? terminal.cwd : tab.cwd ?? project.directory),
+      });
+    }
+  }
+  // A new pane is visible in terminal state before its project update finishes.
+  // Count it while live, but don't let a stale exited terminal record resurrect
+  // a closed sibling after its tab has been removed from the project.
+  for (const terminal of Object.values(terminals)) {
+    if (terminal.exitCode !== null || panes.has(terminal.id)) continue;
+    const project = findProject(projects, terminal.projectSlug);
+    if (!project) continue;
+    const list = project.remote ? (remotePresetsByProject[project.slug] ?? presets) : presets;
+    panes.set(terminal.id, {
+      id: terminal.id,
+      preset: getPreset(list, terminal.presetId),
+      cwd: sessionDir(project, terminal),
+    });
+  }
+  return [...panes.values()];
 }
 
 export function terminalSpawn(
