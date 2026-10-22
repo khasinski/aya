@@ -144,7 +144,10 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     const originalPid = await host.getPid(terminalId);
     assert.ok(originalPid > 1);
     if (kind === "bridge") {
-      await waitFor(() => received.map((event) => event.data).join("").includes("REMOTE-OUTPUT-79"), 10_000);
+      // Coverage on macOS can stretch the short PTY writes well past their
+      // nominal 4 seconds; keep this bounded without turning a slow runner
+      // into a false bridge failure.
+      await waitFor(() => received.map((event) => event.data).join("").includes("REMOTE-OUTPUT-79"), 30_000);
       assert.equal(await first.client.write(terminalId, "REMOTE-INPUT-PROBE\n"), true);
       await waitFor(() => received.map((event) => event.data).join("").includes("REMOTE-INPUT-PROBE"), 5_000);
       const initialSize = await host.getSize(terminalId);

@@ -112,6 +112,24 @@ test("RemoteTerminalClient closes on an oversized complete bridge frame", async 
   assert.equal(bridge.killed, true);
 });
 
+test("an abrupt stdout pipe reset rejects requests without an unhandled stream error", async () => {
+  class FakeBridge extends EventEmitter {
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    exitCode = null;
+    signalCode = null;
+    kill() {}
+  }
+  const bridge = new FakeBridge();
+  const client = new RemoteTerminalClient(bridge);
+  const pending = client.attach("terminal", 0);
+  const rejected = assert.rejects(pending, /ECONNRESET/);
+  bridge.stdout.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+  await rejected;
+  bridge.stderr.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+});
+
 const {
   checkRemoteHealth,
   createRemoteDirectory,

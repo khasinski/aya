@@ -65,6 +65,12 @@ export class RemoteTerminalClient extends EventEmitter {
     bridge.stdout.setEncoding("utf8");
     this.ready = new Promise<void>((resolve, reject) => { this.readyResolve = resolve; this.readyReject = reject; });
     bridge.stdout.on("data", (chunk: string) => this.onData(chunk));
+    // Killing an SSH/bridge process while it is writing can reset either pipe
+    // before ChildProcess emits its close event (notably on Linux). Consume
+    // those stream errors here so abrupt disconnects become ordinary client
+    // errors instead of unhandled stream exceptions.
+    bridge.stdout.on("error", (error) => this.fail(error));
+    bridge.stderr?.on("error", (error) => this.fail(error));
     bridge.once("error", (error) => this.fail(error));
     bridge.once("close", (code, signal) => this.fail(new Error(`Remote terminal bridge closed (${signal ?? code ?? "unknown"}).`)));
   }
@@ -251,6 +257,8 @@ export class RemoteTerminalClient extends EventEmitter {
   }
 
   private fail(error: Error): void {
+    if (this.closed) return;
+    this.closed = true;
     if (!this.opened) this.readyReject(error);
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
