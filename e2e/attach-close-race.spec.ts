@@ -40,9 +40,9 @@ for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${
   await expect(pane).toBeAttached();await expect(pane).toBeHidden();
   await app.evaluate(()=>(globalThis as unknown as {releaseDisplay:()=>void}).releaseDisplay());
   await window.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
-  await window.locator(`.aya-sidebar-row[data-terminal-id="${id}"]`).getByTitle('Close terminal',{exact:true}).click();
+  await window.locator(`.aya-sidebar-row[data-terminal-id="${id}"]`).getByTitle(/^Close terminal /).click();
  }else if(action==='pane')await fireShortcut(app,'close-tab');
- else await window.getByTitle('Close project',{exact:true}).click();
+ else await window.getByTitle(/^Close project /).click();
  await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {killSeen:boolean}).killSeen)).toBe(true);
  if(action==='project')await expect.poll(()=>alerts.join('\n')).toContain('test refusal keeps the existing live pane');
  if(action!=='hidden-pane')await app.evaluate(()=>(globalThis as unknown as {releaseDisplay:()=>void}).releaseDisplay());
