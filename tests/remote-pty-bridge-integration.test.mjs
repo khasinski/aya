@@ -10,6 +10,7 @@ const home = join(root, "aya-home");
 const projectDir = join(root, "project");
 mkdirSync(home, { recursive: true });
 mkdirSync(projectDir, { recursive: true });
+const stopOutputFile = join(root, "stop-remote-output");
 process.env.AYA_HOME = home;
 process.env.HOME = home;
 process.env.SHELL = "/bin/sh";
@@ -27,7 +28,7 @@ const { waitFor } = await import("./helpers/pty-host.mjs");
 const hostScript = resolve("dist-electron/pty-host.js");
 const ayaCli = resolve("bin/aya");
 const project = { slug: "project", name: "Project", directory: projectDir, tabs: [] };
-const command = "i=0; while [ $i -lt 80 ]; do printf 'REMOTE-OUTPUT-%02d\\n' $i; i=$((i+1)); sleep 0.05; done; IFS= read -r trigger; printf 'POST-DISCONNECT-%s\\n' \"$trigger\"; exec cat";
+const command = `(i=0; while [ $i -lt 80 ] && [ ! -e '${stopOutputFile}' ]; do printf 'REMOTE-OUTPUT-%02d\\n' $i; i=$((i+1)); sleep 0.05; done) & IFS= read -r trigger; : > '${stopOutputFile}'; wait; printf 'POST-DISCONNECT-%s\\n' "$trigger"; exec cat`;
 const bridgeParentScript = `
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
@@ -127,6 +128,7 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
   });
 
   const exerciseAbruptDisconnect = async (kind) => {
+    rmSync(stopOutputFile, { force: true });
     const terminalId = `remote-session-${nextTerminalId + 1}`;
     const first = makeClient(kind);
     const received = [];
@@ -171,10 +173,31 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     // This input is sent only after the bridge (and, for ssh-parent, its child)
     // is gone. The shell prints a unique marker only after consuming it.
     const eventCountAtDisconnect = localEvents.length;
-    assert.equal(await host.write(terminalId, "after-kill\n"), true);
-    await waitFor(() => localEvents.slice(eventCountAtDisconnect)
-      .filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay)
-      .map((event) => event.chunk).join("").includes("POST-DISCONNECT-after-kill"), 10_000);
+    const writeAccepted = await host.write(terminalId, "after-kill\n");
+    assert.equal(writeAccepted, true);
+    try {
+      await waitFor(() => localEvents.slice(eventCountAtDisconnect)
+        .filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay)
+        .map((event) => event.chunk).join("").includes("POST-DISCONNECT-after-kill"), 10_000);
+    } catch {
+      const [pidAfterWrite, sizeAfterWrite, paneStateAfterWrite, bufferAfterWrite] = await Promise.all([
+        host.getPid(terminalId).catch((error) => `error: ${error.message}`),
+        host.getSize(terminalId).catch((error) => `error: ${error.message}`),
+        host.paneState(terminalId).catch((error) => `error: ${error.message}`),
+        host.getBuffer(terminalId).catch((error) => `error: ${error.message}`),
+      ]);
+      const recentEvents = localEvents.slice(eventCountAtDisconnect)
+        .filter((event) => event.ptyId === terminalId)
+        .slice(-12)
+        .map((event) => event.type === "data"
+          ? { type: event.type, replay: Boolean(event.replay), chunk: event.chunk.slice(-240) }
+          : event);
+      assert.fail(`${kind} bridge did not deliver the post-disconnect marker; ` +
+        `host.write accepted=${writeAccepted}; pid=${JSON.stringify(pidAfterWrite)}; ` +
+        `size=${JSON.stringify(sizeAfterWrite)}; paneState=${JSON.stringify(paneStateAfterWrite)}; ` +
+        `hostBufferTail=${JSON.stringify(String(bufferAfterWrite).slice(-800))}; ` +
+        `lastHostEvents=${JSON.stringify(recentEvents)}`);
+    }
     assert.equal(await host.getPid(terminalId), originalPid);
     const hostBytes = Buffer.from(localEvents
       .filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay)
