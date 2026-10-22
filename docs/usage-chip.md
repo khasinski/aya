@@ -1,6 +1,6 @@
 # Account-wide usage chip
 
-Aya can show **account-wide** Claude and Codex usage chips in the top-right of
+Aya can show **account-wide** Claude, Codex, Grok and Antigravity usage chips in the top-right of
 the window (5-hour + weekly limit, with reset times). The numbers are global to
 each account — they cover **all** sessions and devices for that account, not the
 current project or terminal.
@@ -131,3 +131,19 @@ Keychain — adjust the `TOKEN=` line accordingly.)
 Prefer not to touch the endpoint at all? Point the file at any other source —
 e.g. a `ccusage`-based script — as long as it emits the shape above. Aya doesn't
 care where the numbers come from.
+
+## Google Antigravity
+
+With an Antigravity preset configured, Aya runs the official CLI's built-in
+`agy -p /usage --output-format json --print-timeout 15s` command. Sign in through
+`agy` first. The command refreshes quota data without a model turn; Aya does not
+read Google credentials or call Google endpoints directly.
+
+The ring shows the highest percentage **used** among the returned quota limits.
+The popover splits Gemini and Claude/GPT into quota groups, showing each group's
+weekly and five-hour windows and reset times. These are shared model pools, not
+separate accounts. Polls are coalesced and cached for one minute across windows;
+on a temporary failure the previous snapshot remains and eventually dims as stale.
+With no CLI, no login, or an unsupported response, no new percentage is invented.
+
+Reference: https://www.antigravity.google/docs/cli/commands/usage

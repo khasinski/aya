@@ -15,6 +15,21 @@ case "${1:?prepare or install}" in
       /etc/apt/sources.list.d/*chrome* \
       /etc/apt/sources.list.d/*microsoft* \
       /etc/apt/sources.list.d/*vscode*
+    # Some Azure mirror connections trickled packages for the whole job's
+    # 20-minute budget. Use Ubuntu's archive and bound stalled connections.
+    # Newer hosted images use mirror+file: URLs rather than direct sources.
+    for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
+      /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt; do
+      if [[ -f "$source" ]]; then
+        sudo sed -i \
+          -e 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+          -e 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g' \
+          -e 's|http://security.ubuntu.com|https://security.ubuntu.com|g' "$source"
+      fi
+    done
+    printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "30";' \
+      'Acquire::https::Timeout "30";' 'Acquire::ForceIPv4 "true";' |
+      sudo tee /etc/apt/apt.conf.d/99aya-ci-network >/dev/null
     mkdir -p "$cache_dir"
     package_manifest > "$RUNNER_TEMP/e2e-packages-before.tsv"
     echo "image=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
@@ -30,9 +45,10 @@ case "${1:?prepare or install}" in
       diff -u "$cache_dir/packages.tsv" "$RUNNER_TEMP/e2e-packages-restored.tsv"
       echo "Electron system dependencies restored from cache"
     else
-      # Preserve Playwright's complete, version-matched package list, including
-      # Firefox/WebKit dependencies and fonts, rather than hand-maintaining it.
-      npx playwright install-deps
+      # Every spec uses Electron or Chromium. Ask Playwright for Chromium's
+      # version-matched dependencies and fonts; the unused Firefox/WebKit
+      # packages made cold shards exceed the job timeout on slow apt mirrors.
+      npx playwright install-deps chromium
       sudo apt-get install -y xvfb
       package_manifest > "$cache_dir/packages.tsv"
       mapfile -t changed_packages < <(

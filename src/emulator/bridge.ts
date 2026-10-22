@@ -241,6 +241,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     // usage + intelligence
     getUsage: async () => (scenario.usage ?? []) as never,
     getCodexUsage: async () => (scenario.codexUsage ?? []) as never,
+    getAntigravityUsage: async () => [],
     getGrokUsage: async () => (scenario.grokUsage ?? null) as never,
     teamStart: async () => ({ started: true, delivered: [], held: [], task: null }),
     teamPause: noopAsync,

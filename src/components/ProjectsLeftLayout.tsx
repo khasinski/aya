@@ -87,6 +87,7 @@ interface Props {
   onCloseWindow: () => void;
   usageAccounts?: UsageAccount[];
   codexUsageAccounts?: UsageAccount[];
+  antigravityUsageAccounts?: UsageAccount[];
   grokUsage?: GrokUsage | null;
   showUsageHarnessName: boolean;
 
@@ -147,6 +148,7 @@ function ProjectsLeftLayoutImpl({
   onCloseWindow,
   usageAccounts = [],
   codexUsageAccounts = [],
+  antigravityUsageAccounts = [],
   grokUsage = null,
   showUsageHarnessName,
   body,
@@ -548,6 +550,15 @@ function ProjectsLeftLayoutImpl({
               label="Codex"
               accent={CODEX_BRAND_COLOR}
               showHarnessName={showUsageHarnessName}
+            />
+          )}
+          {antigravityUsageAccounts.length > 0 && (
+            <UsageChip
+              accounts={antigravityUsageAccounts}
+              label="Antigravity"
+              accent="#4285f4"
+              showHarnessName={showUsageHarnessName}
+              quotaGroups
             />
           )}
           {grokUsage && (
