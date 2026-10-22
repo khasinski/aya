@@ -5,11 +5,12 @@ import path from 'node:path';
 import {fork} from 'node:child_process';
 import {isolateHome} from './helpers/isolate-home.mjs';
 fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/crash-core-'));isolateHome(root);
+const {HOST_EVENT_TIMEOUT_MS}=await import('./helpers/pty-host.mjs');
 const {parseRecoveryBootstrap}=await import('../dist-electron/pty-recovery-bootstrap.js');
 const {MAX_PTY_PANES}=await import('../dist-electron/pty-pane-limits.js');
 const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-async function wait(f){const end=Date.now()+7000;while(!f()){if(Date.now()>end)throw Error('crash fixture timeout');await sleep(2);}}
+async function wait(f){const end=Date.now()+HOST_EVENT_TIMEOUT_MS;while(!f()){if(Date.now()>end)throw Error(`crash fixture event timeout after ${HOST_EVENT_TIMEOUT_MS}ms`);await sleep(5);}}
 function start(mode,variant){
  const child=fork(new URL('./helpers/pty-crash-core.cjs',import.meta.url),[mode,variant],{execArgv:[],env:{...process.env,ELECTRON_RUN_AS_NODE:'1',AYA_PTY_OWNER_FD:'3'},stdio:['ignore','pipe','pipe','pipe','ipc']});
  child.stdio[3].on('error',()=>{});child.stdio[3].end(Buffer.alloc(32,mode==='next'&&variant==='wrong-secret'?18:17));
@@ -17,7 +18,7 @@ function start(mode,variant){
  const result=new Promise((resolve,reject)=>{child.once('message',resolve);child.once('exit',code=>{if(code)reject(Error(`fixture exit${code}: ${errors}`));});});
  return {child,result};
 }
-for(const variant of ['agent','shell','exit-ack','redraw-claude','redraw-codex','exit-gap','mismatch','wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes','owner-dies-retained'])test(`crash-only core attaches the same owner and child: ${variant}`,{timeout:20000},async()=>{
+for(const variant of ['agent','shell','exit-ack','redraw-claude','redraw-codex','exit-gap','mismatch','wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes','owner-dies-retained'])test(`crash-only core attaches the same owner and child: ${variant}`,{timeout:4*HOST_EVENT_TIMEOUT_MS},async()=>{
  fs.mkdirSync(process.env.AYA_HOME,{recursive:true});let old,next;
  try{
   old=start('old',variant);const bootstrap=await old.result;fs.writeFileSync(path.join(process.env.AYA_HOME,'bootstrap.json'),JSON.stringify(bootstrap));

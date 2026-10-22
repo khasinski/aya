@@ -1,24 +1,29 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const core=require('../../dist-electron/pty-core.js'),runtime=require('../../dist-electron/pty-owner-runtime.js');
+const {PTY_HOST_SOCKET_WAIT_TIMEOUT_MS}=require('../../dist-electron/pty-host-client.js');
 const {parseRecoveryBootstrap}=require('../../dist-electron/pty-recovery-bootstrap.js');
 const {vtSnapshot}=require('../../dist-electron/vt-mirror.js');
 const {snapshotHold,snapshotBusy}=require('../../dist-electron/vt-state.js');
 const {HOLD_RECOVERY_UNKNOWN,HOLD_SHELL}=require('../../dist-electron/pane-holds.js');
-const home=process.env.AYA_HOME,mode=process.argv[2],variant=process.argv[3];
+const home=process.env.AYA_HOME,mode=process.argv[2],variant=process.argv[3],readyTimeout=3*PTY_HOST_SOCKET_WAIT_TIMEOUT_MS;
 let output='',exit;const events=[];
+const occurrences=(text,value)=>text.split(value).length-1,redrawMarker='CRASH_CORE_REDRAW_DONE';
 const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='data')output+=e.chunk;if(e.type==='exit')exit=e.exitCode;}};
-const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate()){if(Date.now()>end)throw Error('crash core readiness timeout');await new Promise(r=>setTimeout(r,2));}};
+const wait=async (predicate,stage)=>{const end=Date.now()+readyTimeout;while(!await predicate()){if(Date.now()>end)throw Error(`crash core ${stage} timeout after ${readyTimeout}ms; pid=${core.getPtyPid('pane')??'none'}; exit=${exit??'none'}; redrawMarkers=${occurrences(output,redrawMarker)}; outputTail=${JSON.stringify(output.slice(-600))}; events=${JSON.stringify(events.slice(-8).map(event=>event.type))}`);await new Promise(r=>setTimeout(r,5));}};
 (async()=>{
  assert.equal(await core.acknowledgePtyExit('absent',1,1),'unavailable');
  if(mode==='old'){
   const redraw=variant.startsWith('redraw-');
   if(redraw)fs.copyFileSync(path.join(__dirname,'../fixtures/own-screens',variant==='redraw-codex'?'codex-skip.raw':'claude-idle.raw'),path.join(home,'redraw.raw'));
-  const trap=redraw?`trap 'cat "$HOME/redraw.raw"; touch "$HOME/redraw-fired"' WINCH; `:'';
-  const script=`stty -echo; ${trap}echo OLD_CONSUMED; while [ ! -f "$HOME/release" ]; do sleep .01; done; ${variant==='exit-gap'?'':"printf 'UNREAD_BEFORE_ATTACH\\n'; "}touch "$HOME/produced"; ${variant==='exit-gap'?'exit 23':`while :; do if IFS= read -r line; then case "$line" in quit) exit 23 ;; *) printf 'R:%s:%s\\n' "$$" "$line" ;; esac; fi; done`}`;
+  const trap=redraw?`trap 'cat "$HOME/redraw.raw"; printf "\\n${redrawMarker}\\n"' WINCH; `:'';
+  // Keep input unread until the test has let every recovery/resize redraw finish.
+  // Otherwise a second SIGWINCH can interrupt the shell read while CI is loaded.
+  const redrawInputGate=redraw?`while [ ! -f "$HOME/allow-read" ]; do if [ -f "$HOME/disable-winch" ] && [ ! -f "$HOME/winch-disabled" ]; then trap - WINCH; touch "$HOME/winch-disabled"; fi; sleep .01; done; printf 'READY_FOR_INPUT\\n'; `:'';
+  const script=`stty -echo; ${trap}echo OLD_CONSUMED; while [ ! -f "$HOME/release" ]; do sleep .01; done; ${variant==='exit-gap'?'':"printf 'UNREAD_BEFORE_ATTACH\\n'; "}touch "$HOME/produced"; ${variant==='exit-gap'?'exit 23':`${redrawInputGate}while :; do if IFS= read -r line; then case "$line" in quit) exit 23 ;; *) printf 'R:%s:%s\\n' "$$" "$line" ;; esac; fi; done`}`;
   const request={ptyId:'pane',command:script,cwd:home,cols:redraw?120:80,rows:redraw?40:24,agent:variant==='shell'?'custom':variant==='redraw-codex'?'codex':'claude'};
   const launch={command:script,cwd:home};
   await core.spawnPty(request,sink,{prepare:async()=>({argv:['/bin/sh','-c',script],env:{HOME:home,PATH:'/usr/bin:/bin'},command:script,launch,ownSessionId:null,spawnedAt:123})});
-  await wait(()=>output.includes('OLD_CONSUMED'));await core.freezePtyCore();
+  await wait(()=>output.includes('OLD_CONSUMED'),'old shell start');await core.freezePtyCore();
   const owner=await runtime.getOwnerRuntime(),pane=owner.record.panes[0];
   process.send({format:1,kind:'crash',owner:{pid:owner.record.pid,startTime:owner.record.startTime,instanceId:owner.record.instanceId,binaryHash:owner.record.binaryHash},panes:[{id:pane.id,generation:pane.generation,pid:pane.pid,startIdentity:pane.startIdentity,request,launch,spawnedAt:123}]});
  }else{
@@ -48,19 +53,21 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   }
   if(variant==='exit-gap')assert.equal(owner.disconnected.get('pane').exited,true,'native inventory already has exit before attaching master');
   await core.recoverPtyCorePane(bootstrap.panes[0],sink);
-  if(variant!=='exit-gap'){await wait(()=>output.includes('UNREAD_BEFORE_ATTACH'));assert.equal(output.split('UNREAD_BEFORE_ATTACH').length-1,1);}
+  if(variant!=='exit-gap'){await wait(()=>output.includes('UNREAD_BEFORE_ATTACH'),'recovered unread output');assert.equal(output.split('UNREAD_BEFORE_ATTACH').length-1,1);}
   assert.ok(!output.includes('OLD_CONSUMED'));
   if(variant!=='exit-gap'){
-   if(variant.startsWith('redraw-')){await wait(async()=>{try{return !(await vtSnapshot('pane')).recoveryUnknown;}catch(error){if(/not fully applied/.test(String(error)))return false;throw error;}});assert.equal(snapshotHold(await vtSnapshot('pane')).hold,null);assert.ok(fs.existsSync(path.join(home,'redraw-fired')));}
+   if(variant.startsWith('redraw-')){await wait(async()=>{try{return !(await vtSnapshot('pane')).recoveryUnknown;}catch(error){if(/not fully applied/.test(String(error)))return false;throw error;}},'screen redraw coverage');assert.equal(snapshotHold(await vtSnapshot('pane')).hold,null);await wait(()=>occurrences(output,redrawMarker)>=1,'redraw trap completion');}
    else {const snapshot=await vtSnapshot('pane');assert.equal(snapshot.recoveryUnknown,true);assert.equal(snapshotHold(snapshot).hold,variant==='shell'?HOLD_SHELL:HOLD_RECOVERY_UNKNOWN);assert.equal(snapshotBusy(snapshot),false);}
    assert.equal(core.getPtyPid('pane'),bootstrap.panes[0].pid);
    assert.deepEqual(await owner.client.list().then(panes=>[panes[0].cols,panes[0].rows]),[bootstrap.panes[0].request.cols,bootstrap.panes[0].request.rows]);
+   if(variant.startsWith('redraw-')){fs.writeFileSync(path.join(home,'disable-winch'),'go');await wait(()=>fs.existsSync(path.join(home,'winch-disabled')),'redraw trap retirement');}
    core.resizePty('pane',101,39);
    assert.deepEqual(await owner.client.list().then(panes=>[panes[0].cols,panes[0].rows]),[101,39]);
-   await core.writePty('pane','AFTER_RECOVERY\n');await wait(()=>output.includes(`R:${bootstrap.panes[0].pid}:AFTER_RECOVERY`));
+   if(variant.startsWith('redraw-')){fs.writeFileSync(path.join(home,'allow-read'),'go');await wait(()=>output.includes('READY_FOR_INPUT'),'shell ready for input');}
+   await core.writePty('pane','AFTER_RECOVERY\n');await wait(()=>output.includes(`R:${bootstrap.panes[0].pid}:AFTER_RECOVERY`),'post-recovery input response');
    await core.writePty('pane','quit\n');
   }
-  await wait(()=>core.getPtyPid('pane')===null);
+  await wait(()=>core.getPtyPid('pane')===null,'child exit');
   // The ended record stays pending until a real view asks for its replay.
   assert.equal(exit,undefined);await core.spawnPty({...bootstrap.panes[0].request,attachOnly:true},sink,{prepare:async()=>{throw Error('recovery must never prepare/spawn');}});
   assert.equal(exit,23);assert.equal(owner.record.pid,bootstrap.owner.pid);
