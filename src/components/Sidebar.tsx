@@ -175,6 +175,9 @@ function SidebarImpl({
   const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
   const pendingRovingTerminalFocus = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (renamingId) inputRef.current?.select();
+  }, [renamingId]);
   const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
     ? focusedTerminalId
     : activeId;
@@ -229,7 +232,6 @@ function SidebarImpl({
   const startRename = (t: TerminalState) => {
     setRenamingId(t.id);
     setDraft(t.name);
-    setTimeout(() => inputRef.current?.select(), 0);
   };
   const commit = () => {
     if (renamingId) {

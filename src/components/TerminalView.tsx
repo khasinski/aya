@@ -50,6 +50,7 @@ import {
   wasSpawned,
 } from "../spawnSession";
 import { SnippetBar } from "./SnippetBar";
+import { terminalFocusRetryStillOwned } from "../terminal-focus-retry";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
 // 80x24 a PTY gets before xterm has measured the pane (used at every spawn).
@@ -1324,12 +1325,15 @@ function TerminalViewComponent({
   const wantsFocus = isActive && !findOpen;
   useEffect(() => {
     if (!wantsFocus) return;
+    let expectedActiveElement = document.activeElement;
     const focusNow = () => {
+      if (!terminalFocusRetryStillOwned(expectedActiveElement, document.activeElement)) return;
       try {
         const term = xtermRef.current;
         const host = containerRef.current;
         if (term && host && host.clientWidth > 0 && host.clientHeight > 0) {
           term.focus();
+          expectedActiveElement = document.activeElement;
 
           // When we switch *to* this pane as the active one (split navigation or
           // click), reassert size to PTY (nudge if rich). Harnesses in other

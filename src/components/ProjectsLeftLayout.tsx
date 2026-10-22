@@ -219,6 +219,9 @@ function ProjectsLeftLayoutImpl({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [termDraft, setTermDraft] = useState("");
   const termInputRef = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (renamingId) termInputRef.current?.select();
+  }, [renamingId]);
   const {
     dragId,
     dropTarget: termDrop,
@@ -439,7 +442,6 @@ function ProjectsLeftLayoutImpl({
   const startTermRename = (t: TerminalState) => {
     setRenamingId(t.id);
     setTermDraft(t.name);
-    setTimeout(() => termInputRef.current?.select(), 0);
   };
   const commitTermRename = () => {
     if (renamingId) {
@@ -1030,7 +1032,9 @@ function ProjectsLeftLayoutImpl({
             onClick={() => {
               const terminal = terminals.find((t) => t.id === menu.id);
               if (terminal) startTermRename(terminal);
-              closeTerminalMenu();
+              // The rename input is the next focus target; restoring focus to
+              // the tab here would blur it and commit the unchanged name.
+              closeTerminalMenu(false);
             }}
           >
             Rename terminal

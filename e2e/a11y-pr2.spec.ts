@@ -134,6 +134,32 @@ test.describe("keyboard access to project and terminal lists", () => {
     await window.keyboard.press("Escape");
   });
 
+  test("classic terminal context-menu rename keeps focus and accepts typing", async ({ app, window }) => {
+    await focusAppContents(app);
+    await waitForTerminalFocus(window);
+    const row = window.getByRole("list", { name: "Terminals" }).getByRole("listitem").first();
+    await row.focus();
+    await expect(row).toBeFocused();
+    await window.keyboard.press("Shift+F10");
+    const menu = window.getByRole("menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Rename terminal" })).toBeFocused();
+    await window.keyboard.press("Enter");
+
+    const editor = window.locator(".aya-sidebar-rename");
+    await expect(editor).toBeFocused();
+    expect(await editor.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      return {
+        active: document.activeElement === input,
+        selected: input.selectionStart === 0 && input.selectionEnd === input.value.length,
+      };
+    })).toEqual({ active: true, selected: true });
+    await window.keyboard.type("renamed by keyboard");
+    await window.keyboard.press("Enter");
+    await expect(window.getByRole("listitem", { name: /renamed by keyboard/ })).toBeVisible();
+  });
+
   test("project tabs still reorder with a mouse drag", async ({ window }) => {
     const tabs = window.locator('.aya-project-tablist [role="tab"]');
     await expect(tabs).toHaveCount(2);
@@ -242,6 +268,35 @@ test.describe("keyboard access to project and terminal lists", () => {
     await window.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
     await expect(terminals.first()).toBeFocused();
+  });
+
+  test("projects-left terminal context-menu rename keeps focus and accepts typing", async ({ app, window }) => {
+    await reloadInProjectsLeftLayout(window);
+    await focusAppContents(app);
+    await waitForTerminalFocus(window);
+    const terminal = window.getByRole("tablist", { name: "Terminals" }).getByRole("tab").first();
+    await terminal.focus();
+    await expect(terminal).toBeFocused();
+    await window.keyboard.press("Shift+F10");
+    const menu = window.getByRole("menu");
+    await expect(menu).toBeVisible();
+    const rename = menu.getByRole("menuitem", { name: "Rename terminal" });
+    await rename.focus();
+    await expect(rename).toBeFocused();
+    await window.keyboard.press("Enter");
+
+    const editor = window.locator(".aya-tab-rename");
+    await expect(editor).toBeFocused();
+    expect(await editor.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      return {
+        active: document.activeElement === input,
+        selected: input.selectionStart === 0 && input.selectionEnd === input.value.length,
+      };
+    })).toEqual({ active: true, selected: true });
+    await window.keyboard.type("renamed by keyboard");
+    await window.keyboard.press("Enter");
+    await expect(terminal).toHaveAttribute("data-terminal-name", "renamed by keyboard");
   });
 
   test("Ctrl+Tab leaves the terminal, Ctrl+Shift+Tab returns, and Tab still reaches the PTY", async ({ app, window }) => {
