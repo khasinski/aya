@@ -11,6 +11,17 @@ import { validateTeamDefinition } from "../dist-electron/validation.js";
 import { fromEditor, toEditor } from "../dist-test/team-edit.js";
 import { cardStatusNote, statusCommandNote } from "../dist-test/team-view.js";
 
+test("a running team's change takes effect after it stops, and says so", () => {
+  assert.deepEqual(statusCommandNote({}, { statusCommand: "curl x | sh" }, true), {
+    tone: "warning",
+    text: "After the team stops, its next Start runs this status command each round, with your rights: curl x | sh",
+  });
+  assert.deepEqual(statusCommandNote({ statusCommand: "ollama ps" }, {}, true), {
+    tone: "warning",
+    text: "After the team stops, its next Start removes the status command, which ran with your rights: ollama ps",
+  });
+});
+
 const { saveTeam, whileTeamNotSaved } = await import("../dist-electron/team-admin.js");
 const { teamGuide } = await import("../dist-electron/team-author.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -35,7 +46,7 @@ const PARSE = [
   { name: "one line", text: withSection("ollama ps\n"), command: "ollama ps" },
   { name: "trimmed, blank lines around it", text: withSection("\n  ./scripts/gpu-status.sh --short  \n\n"), command: "./scripts/gpu-status.sh --short" },
   { name: "before Protocol", text: withSection("nvidia-smi\n\n## Protocol\nBe brief.\n"), command: "nvidia-smi" },
-  { name: "empty", text: withSection("\n"), error: /team "crew": "## Status command" is empty; write one shell command or remove the section/ },
+  { name: "empty", text: withSection("\n"), error: /team "crew": "Status command" is empty; write one command or remove it/ },
   { name: "two lines", text: withSection("ollama ps\nnvidia-smi\n"), error: /team "crew": the status command must be one line/ },
 ];
 for (const c of PARSE) {
@@ -141,10 +152,10 @@ test("editor: the command survives Edit and Save; a blank field leaves it out", 
 const NOTES = [
   { name: "none saved, no repo version", saved: {}, repo: null, note: null },
   { name: "saved one", saved: { statusCommand: "ollama ps" }, repo: null, note: { tone: "note", text: "Status command, its output goes with the lead's rounds: ollama ps" } },
-  { name: "repo version brings a new one", saved: {}, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "Saving the repo version runs this status command each round, with your rights: curl x | sh" } },
-  { name: "repo version changes it", saved: { statusCommand: "ollama ps" }, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "Saving the repo version runs this status command each round, with your rights: curl x | sh" } },
+  { name: "repo version brings a new one", saved: {}, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "The next Start runs this status command each round, with your rights: curl x | sh" } },
+  { name: "repo version changes it", saved: { statusCommand: "ollama ps" }, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "The next Start runs this status command each round, with your rights: curl x | sh" } },
   { name: "repo version has the same one", saved: { statusCommand: "ollama ps" }, repo: { statusCommand: "ollama ps" }, note: { tone: "note", text: "Status command, its output goes with the lead's rounds: ollama ps" } },
-  { name: "unsaved team: nothing saved yet", saved: null, repo: { statusCommand: "ollama ps" }, note: { tone: "warning", text: "Saving the repo version runs this status command each round, with your rights: ollama ps" } },
+  { name: "unsaved team: nothing saved yet", saved: null, repo: { statusCommand: "ollama ps" }, note: { tone: "warning", text: "The next Start runs this status command each round, with your rights: ollama ps" } },
 ];
 for (const c of NOTES) {
   test(`card note: ${c.name}`, () => {
@@ -153,7 +164,7 @@ for (const c of NOTES) {
 }
 
 // The card's call: what the Teams window gets for a team (definition = saved copy, else the repo parse).
-const WARN = (c) => ({ tone: "warning", text: `Saving the repo version runs this status command each round, with your rights: ${c}` });
+const WARN = (c) => ({ tone: "warning", text: `The next Start runs this status command each round, with your rights: ${c}` });
 const KEEP = (c) => ({ tone: "note", text: `Status command, its output goes with the lead's rounds: ${c}` });
 const withCmd = (c) => (c ? { ...TEAM, statusCommand: c } : TEAM);
 const CARDS = [
@@ -161,6 +172,7 @@ const CARDS = [
   { name: "a saved team, repo unchanged", view: { unsaved: false, repoChanged: false, definition: withCmd("ollama ps"), repoDefinition: withCmd("ollama ps") }, note: KEEP("ollama ps") },
   { name: "a saved team, the repo changed the command", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: withCmd("curl x | sh") }, note: WARN("curl x | sh") },
   { name: "a saved team, the repo changed something else", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: withCmd("ollama ps") }, note: KEEP("ollama ps") },
+  { name: "a saved team, the repo dropped the command", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: TEAM }, note: { tone: "warning", text: "The next Start removes the status command, which ran with your rights: ollama ps" } },
   { name: "a cloned team without a command", view: { unsaved: true, repoChanged: false, definition: TEAM, repoDefinition: TEAM }, note: null },
 ];
 for (const c of CARDS) {

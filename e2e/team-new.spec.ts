@@ -20,7 +20,7 @@ test("a team saved with aya team save shows in the open Teams window, saved and 
 
   const broken = aya(["save", "-"], file.replace("Must not: edit code\n", ""));
   expect(broken.status).toBe(1);
-  expect(broken.stderr).toBe('aya: team "ux-fix": role "reviewer" needs a "Must not:" line\n');
+  expect(broken.stderr).toBe('aya: team "ux-fix": role "reviewer" needs "Must not" filled in\n');
   expect(existsSync(join(seeded.projectDir, ".aya", "teams", "ux-fix.md"))).toBe(false);
 
   const saved = aya(["save", "-"], file);
@@ -30,7 +30,7 @@ test("a team saved with aya team save shows in the open Teams window, saved and 
   const card = dialog.getByTestId("team-ux-fix");
   await expect(card).toBeVisible();
   await expect(card.getByText("must not edit code")).toBeVisible();
-  await expect(card.getByText(/not saved in Aya yet/)).toHaveCount(0);
+  await expect(card.getByText(/saved in Aya/)).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Start", exact: true })).toBeVisible();
 
   const again = aya(["save", "-"], file);

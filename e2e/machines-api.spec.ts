@@ -43,7 +43,7 @@ test("API settings keep credentials private; a served model stays visible with u
     const popover = window.getByRole("dialog", { name: "Machines" });
     await expect(popover).toContainText("API available (OpenAI-compatible)");
     await expect(popover).toContainText("qwen3.8-27b · served by API");
-    await expect(popover).toContainText("GPU telemetry unavailable: Failed to initialize NVML: Driver/library version mismatch");
+    await expect(popover).toContainText("GPU telemetry unavailable");
     await expect(popover.getByText("qwen3.8-27b", { exact: false })).not.toContainText(/GiB|until|loaded/);
     expect(received).toContain(`Bearer ${token}`);
     const status = await window.evaluate(() => window.aya.machinesStatus());

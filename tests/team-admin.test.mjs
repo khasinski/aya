@@ -193,7 +193,7 @@ adminTest("a reassignment whose write fails leaves the pane counted as not havin
 
 adminTest("a pane from another project cannot take a role", async (t) => {
   await saveTeam(t.teamHome, t.project, TEAM);
-  await assert.rejects(assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-elsewhere"), /not in this project/);
+  await assert.rejects(assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-elsewhere"), /not open in this project/);
 });
 
 adminTest("each role's unread count comes with the team", async (t) => {

@@ -116,7 +116,7 @@ for (const shell of CLI_SHELLS) {
   });
 
   test(`team save prints the app's problem and exits 1 (${shell})`, shellOptions(shell), async () => {
-    const reply = { ok: false, error: 'team "ux-fix": role "a" needs a "Must not:" line' };
+    const reply = { ok: false, error: 'team "ux-fix": role "a" needs "Must not" filled in' };
     const { status, stdout, stderr } = await aya(["save", "t.md"], { shell, reply, files: { "t.md": FILE } });
     assert.equal(status, 1);
     assert.equal(stdout, "");

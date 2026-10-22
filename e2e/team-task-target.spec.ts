@@ -90,7 +90,7 @@ test.describe("a repo version that brings a status command the saved team lacks"
   test("the card warns, not in neutral text, before the user saves it", async ({ window }) => {
     const card = (await openTeams(window)).getByTestId("team-ux-review");
     const note = card.getByLabel("ux-review status command");
-    await expect(note).toHaveText(`Saving the repo version runs this status command each round, with your rights: ${STATUS_COMMAND}`);
+    await expect(note).toHaveText(`The next Start runs this status command each round, with your rights: ${STATUS_COMMAND}`);
     await expect(note).not.toHaveCSS("color", await neutralColor(window));
   });
 });

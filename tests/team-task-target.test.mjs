@@ -6,6 +6,22 @@ import * as view from "../dist-test/team-view.js";
 
 const taskPlaceholder = (...args) => view.taskPlaceholder(...args);
 
+test("a picked recipient the next Start no longer runs is none", () => {
+  const upcoming = { roles: [{ id: "tester" }] };
+  assert.equal(view.liveRecipient(upcoming, "tester"), "tester");
+  assert.equal(view.liveRecipient(upcoming, "reviewer"), "");
+  assert.equal(view.liveRecipient(null, "tester"), "");
+});
+
+test("the task's recipients are the roles the next Start runs: an edited project file's, for an idle team", () => {
+  const saved = { roles: [{ id: "reviewer" }], lead: "reviewer" };
+  const repo = { roles: [{ id: "tester" }], lead: "tester" };
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: repo, repoChanged: true, running: false }), repo);
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: repo, repoChanged: true, running: true }), saved);
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: repo, repoChanged: false, running: false }), saved);
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: null, repoChanged: true, running: false }), saved);
+});
+
 const { parseTeamFile } = await import("../dist-electron/team-definition.js");
 const { taskRecipient } = await import("../dist-electron/team-runner.js");
 const { registerTeamIpc } = await import("../dist-electron/ipc/team-ipc.js");
@@ -89,10 +105,10 @@ test("teams:start | the picked role goes on as `to`; no pick, no `to`; a pick wi
     await t.invoke("teams:start", "game", "ux-review", "do it", "");
     await t.invoke("teams:start", "game", "ux-review", "", "reviewer");
     assert.deepEqual(started, [
-      ["game", "ux-review", { text: "do it", to: "reviewer" }],
-      ["game", "ux-review", { text: "do it" }],
-      ["game", "ux-review", { text: "do it" }],
-      ["game", "ux-review", undefined],
+      ["game", "ux-review", { text: "do it", to: "reviewer" }, undefined, true],
+      ["game", "ux-review", { text: "do it" }, undefined, true],
+      ["game", "ux-review", { text: "do it" }, undefined, true],
+      ["game", "ux-review", undefined, undefined, true],
     ]);
     await assert.rejects(() => t.invoke("teams:start", "game", "ux-review", "do it", 5), { message: "Invalid IPC payload for teams:start.to: expected string." });
     assert.equal(started.length, 4);

@@ -49,6 +49,7 @@ export async function listTeams(
       const store = openTeamStore(teamHome, project.slug, name);
       const assignments = await store.assignments();
       const repo = await readText(teamFile(project, name));
+      const repoDefinition = repoParsed(name, repo);
       const saved = await store.savedDefinition();
       let definition: TeamDefinition | null = null;
       let error: string | null = null;
@@ -69,10 +70,11 @@ export async function listTeams(
         name,
         definition,
         error,
-        repoChanged: saved !== null && repo !== null && repo !== saved,
+        // Compared as Aya saves it: a file that differs only in layout is not a change.
+        repoChanged: saved !== null && repo !== null && (repoDefinition ? serializeTeam(repoDefinition) !== saved : repo !== saved),
         repoGone: saved !== null && repo === null,
         unsaved: saved === null && repo !== null,
-        repoDefinition: repoParsed(name, repo),
+        repoDefinition,
         ...state,
         agentAuthored: await store.agentAuthored(),
         assignments,
@@ -200,22 +202,84 @@ export async function saveTeam(
     const text = serializeTeam(team);
     if (create && (await fs.stat(file).then(() => true, () => false))) throw new TeamExistsError(team.name, file);
     await writeFileAtomic(file, text);
-    const store = openTeamStore(teamHome, project.slug, team.name);
-    if (byAgent) await store.markAgentAuthored();
-    const before = await store.savedDefinition();
-    await store.saveDefinition(text);
-    // A save in the window is the user's: it ends an earlier agent mark.
-    if (!byAgent) await store.clearAgentAuthored();
-    // A renamed or removed role would keep a pane no role id matches.
-    const roles = new Set(team.roles.map((r) => r.id));
-    const assignments = await store.assignments();
-    for (const [role, pane] of Object.entries(assignments)) {
-      if (!roles.has(role)) await store.releasePane(pane);
-    }
-    changed = before === null ? [] : rolesWhoseWhoamiChanged(parsedOrNull(team.name, before), team).filter((role) => role in assignments);
-    await store.noteRolesChanged(changed, new Date().toISOString());
+    changed = await recordSaved(teamHome, project, team, text, byAgent);
   });
   return changed;
+}
+
+/** Stores the snapshot Aya runs on, and what that changes for the panes: a role renamed or removed releases its pane,
+ *  and the roles whose whoami changed are returned (and noted) so they hear about it. */
+async function recordSaved(teamHome: string, project: ProjectConfig, team: TeamDefinition, text: string, byAgent: boolean): Promise<string[]> {
+  const store = openTeamStore(teamHome, project.slug, team.name);
+  if (byAgent) await store.markAgentAuthored();
+  const before = await store.savedDefinition();
+  await store.saveDefinition(text);
+  // A save in the window is the user's: it ends an earlier agent mark.
+  if (!byAgent) await store.clearAgentAuthored();
+  // A renamed or removed role would keep a pane no role id matches.
+  const roles = new Set(team.roles.map((r) => r.id));
+  const assignments = await store.assignments();
+  for (const [role, pane] of Object.entries(assignments)) {
+    if (!roles.has(role)) await store.releasePane(pane);
+  }
+  const changed = before === null ? [] : rolesWhoseWhoamiChanged(parsedOrNull(team.name, before), team).filter((role) => role in assignments);
+  await store.noteRolesChanged(changed, new Date().toISOString());
+  return changed;
+}
+
+/** A pane pick for a team Aya has never saved: its project file is saved so the pick has a team to belong to. A saved
+ *  team, running or not, keeps its copy; its project edits take effect at the next Start.
+ *  Resolves to the copy this call saved, or null when it saved nothing. */
+export function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfig, name: string): Promise<string | null> {
+  return adoptRepoFile(teamHome, project, name, true);
+}
+
+/** Undoes the save a pick made, when the pick was refused before any role took a pane. It clears the copy only while
+ *  that copy is still the one the pick saved: a save queued in between is the user's and stays. */
+export function forgetPickSave(teamHome: string, project: ProjectConfig, name: string, pickedText: string): Promise<void> {
+  const store = openTeamStore(teamHome, project.slug, name);
+  return oneSaveAtATime(teamFile(project, name), async () => {
+    if (Object.keys(await store.assignments()).length !== 0) return;
+    if ((await store.savedDefinition()) === pickedText) await store.clearDefinition();
+  });
+}
+
+/** Start team runs the project's team file as the user sees it: one not saved yet, or edited since its last save, is
+ *  saved first, so the user never saves it by hand. Its status command is the one the card named before the click
+ *  (the user's Start is the user's choice). Throws the file's own error when it does not parse or names a reserved role. */
+export async function adoptRepoTeam(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
+  await adoptRepoFile(teamHome, project, name, false);
+}
+
+/** Read and saved in the file's save queue, so the file it reads is the one after any save queued ahead of it.
+ *  Resolves to the copy this call saved, or null when it saved nothing. */
+async function adoptRepoFile(teamHome: string, project: ProjectConfig, name: string, onlyIfNew: boolean): Promise<string | null> {
+  const file = teamFile(project, name);
+  const store = openTeamStore(teamHome, project.slug, name);
+  return oneSaveAtATime(file, async () => {
+    if (onlyIfNew && (await store.savedDefinition()) !== null) return null;
+    const text = await readText(file);
+    if (text === null) return null;
+    let team: TeamDefinition;
+    try {
+      team = parseTeamFile(name, text);
+      refuseReservedRoles(team);
+    } catch (err) {
+      const reason = (err instanceof Error ? err.message : String(err)).replace(/^team "[^"]*": /, "");
+      throw new Error(`the team file in the project has a problem: ${reason}. Fix it, then Start again`);
+    }
+    // A pane pick saves the team without its status command: that command runs only with the user's Start.
+    const saved = onlyIfNew ? withoutStatusCommand(team) : team;
+    const next = serializeTeam(saved);
+    if ((await store.savedDefinition()) === next) return null;
+    await recordSaved(teamHome, project, saved, next, false);
+    return next;
+  });
+}
+
+function withoutStatusCommand(team: TeamDefinition): TeamDefinition {
+  const { statusCommand: _, ...rest } = team;
+  return rest;
 }
 
 /** A saved copy that no longer parses: every role counts as changed. */
@@ -254,7 +318,7 @@ export async function assignRole(
     return;
   }
   if (project.remote) throw new Error("teams work only on local panes");
-  if (!project.tabs.some((t) => t.id === paneId)) throw new Error(`pane ${paneId} is not in this project`);
+  if (!project.tabs.some((t) => t.id === paneId)) throw new Error("that pane is not open in this project");
   // One role in one team per pane: whoami and the tab chip must agree.
   await releasePaneEverywhere(teamHome, project, paneId);
   await store.assign(role, paneId);

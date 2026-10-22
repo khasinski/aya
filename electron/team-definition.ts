@@ -48,9 +48,9 @@ function parseSends(team: string, id: string, text: string): SendRoute[] {
   while (at < list.length) {
     re.lastIndex = at;
     const m = re.exec(list);
-    if (!m) throw new TeamFileError(team, `role "${id}": unbalanced parentheses in "Sends to:"`);
+    if (!m) throw new TeamFileError(team, `role "${id}": "Sends to" has unbalanced parentheses`);
     at = re.lastIndex;
-    if (routes.some((r) => r.to === m[1])) throw new TeamFileError(team, `role "${id}" lists "${m[1]}" twice in "Sends to:"`);
+    if (routes.some((r) => r.to === m[1])) throw new TeamFileError(team, `role "${id}" lists "${m[1]}" twice in "Sends to"`);
     routes.push({ to: m[1], what: (m[2] ?? "").trim() });
   }
   return routes;
@@ -70,7 +70,7 @@ function parseRole(team: string, id: string, body: string): TeamRole {
     else if (field[1] === SENDS_TO_FIELD) sendsTo = parseSends(team, id, field[2]);
     else mustNot = field[2].trim();
   }
-  if (!mustNot) throw new TeamFileError(team, `role "${id}" needs a "Must not:" line`);
+  if (!mustNot) throw new TeamFileError(team, `role "${id}" needs "Must not" filled in`);
   return { id, sendsTo, mustNot, responsibilities: rest.join("\n").trim() };
 }
 
@@ -84,7 +84,7 @@ function parseCadence(team: string, body: string): FileCadence {
   const match = body.trim().match(/^([a-z0-9-]+) every (\d+) min$/);
   const minutes = match ? Number(match[2]) : 0;
   if (!match || minutes < 1 || minutes > MAX_CADENCE_MINUTES) {
-    throw new TeamFileError(team, `cadence must read "<role> every <1-${MAX_CADENCE_MINUTES}> min"`);
+    throw new TeamFileError(team, `the round timer must be 1 to ${MAX_CADENCE_MINUTES} minutes`);
   }
   return { role: match[1], minutes };
 }
@@ -92,7 +92,7 @@ function parseCadence(team: string, body: string): FileCadence {
 /** Why a status command cannot be saved, or null. One line: it is one shell command, and its section ends at the line break. */
 export function statusCommandProblem(command: string): string | null {
   const text = command.trim();
-  if (!text) return `"${SECTION_MARKER}${STATUS_COMMAND_SECTION}" is empty; write one shell command or remove the section`;
+  if (!text) return `"${STATUS_COMMAND_SECTION}" is empty; write one command or remove it`;
   return text.includes("\n") ? "the status command must be one line; put a longer one in a script and name the script" : null;
 }
 
@@ -119,7 +119,7 @@ function parseStatusCommand(team: string, body: string): string {
 
 function parseLead(team: string, body: string): string {
   const lead = body.trim();
-  if (!ID_RE.test(lead)) throw new TeamFileError(team, 'lead must read "<role>", one role id');
+  if (!ID_RE.test(lead)) throw new TeamFileError(team, 'lead must be one role id');
   return lead;
 }
 
@@ -143,7 +143,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
     else if (heading === "Cadence") cadence = parseCadence(name, body);
     else if (heading === "Protocol") protocol = body.trim();
     else if (heading === STATUS_COMMAND_SECTION) statusCommand = parseStatusCommand(name, body);
-    else throw new TeamFileError(name, `unknown section "## ${heading}"`);
+    else throw new TeamFileError(name, `unknown part "${heading}"`);
   }
 
   const ids = roles.map((r) => r.id);
