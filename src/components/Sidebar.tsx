@@ -125,8 +125,8 @@ function SidebarImpl({
   useLayoutEffect(() => {
     if (menu || !restoreMenuFocusId) return;
     const id = restoreMenuFocusId;
-    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>(".aya-sidebar-row[data-terminal-id]")]
-      .find((row) => row.dataset.terminalId === id)?.focus());
+    [...document.querySelectorAll<HTMLElement>(".aya-sidebar-row[data-terminal-id]")]
+      .find((row) => row.dataset.terminalId === id)?.focus();
     setRestoreMenuFocusId(null);
   }, [menu, restoreMenuFocusId, terminals]);
   const menuRef = useRef<HTMLDivElement>(null);
