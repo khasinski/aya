@@ -28,7 +28,9 @@ test('failure evidence retains bounded process/file/proof metadata without capab
 
 test('real controls helper prints the original START_BLOCKED proof and still fails without creating a host',()=>{
  const home=process.env.AYA_HOME;fs.mkdirSync(path.join(home,'pty-hosts'),{recursive:true});
+ fs.chmodSync(path.join(home,'pty-hosts'),0o777);
  const file=path.join(home,'pty-hosts',`${process.pid}.json`);fs.writeFileSync(file,JSON.stringify({pid:process.pid,pgid:process.pid,startTime:'unverified fixture',nonce:'PRIVATE_RECORD_FIELD'}),{mode:0o644});
+ fs.chmodSync(file,0o644);
  try{
   const child=cp.spawnSync(process.execPath,['tests/helpers/pty-host-auth-controls.cjs','publish-planned'],{encoding:'utf8',timeout:10000,maxBuffer:262144,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});
   assert.equal(child.status,1,child.stderr);assert.match(child.stderr,/PTY_HOST_START_BLOCKED/);
@@ -36,4 +38,29 @@ test('real controls helper prints the original START_BLOCKED proof and still fai
   const evidence=JSON.parse(lines[0].slice(lines[0].indexOf(' ')+1));assert.equal(evidence.refusalProof.state,'unknown');assert.equal(evidence.records[0].pid,process.pid);assert.equal(evidence.records[0].stat.mode,0o644);
   assert.ok(!child.stderr.includes('PRIVATE_RECORD_FIELD'));assert.equal(fs.existsSync(path.join(home,'pty-host.sock')),false);assert.equal(fs.existsSync(path.join(home,'pty-owner/record.json')),false);assert.equal(fs.existsSync(path.join(home,'pty-host-auth/key')),false);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('controls helper retires a started host when its parent IPC channel is missing',{timeout:30000},async()=>{
+ const home=process.env.AYA_HOME;fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(home,{recursive:true,mode:0o700});
+ const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
+ let hostPid,hostStartIdentity;
+ try{
+  const child=cp.spawnSync(process.execPath,['tests/helpers/pty-host-auth-controls.cjs','publish-planned'],{encoding:'utf8',timeout:25000,maxBuffer:262144,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});
+  const marker=child.stderr.split('\n').find(line=>line.startsWith('PTY_FIXTURE_PARENT_CHANNEL_MISSING '));
+  if(marker)({hostPid,hostStartIdentity}=JSON.parse(marker.slice(marker.indexOf(' ')+1)));
+  assert.equal(child.status,1,child.stderr);assert.match(child.stderr,/requires an IPC parent channel/);
+  assert.ok(marker,'helper reports the exact host identity it must clean up');assert.ok(Number.isSafeInteger(hostPid));assert.match(hostStartIdentity,/^\d+:\d+$/);
+  assert.notEqual(ownerProcessStartIdentity(hostPid),hostStartIdentity,'failed handoff left its exact PTY host alive');
+  assert.equal(fs.existsSync(path.join(home,'pty-host.sock')),false,'failed handoff left a socket behind');
+  assert.equal(fs.existsSync(path.join(home,'pty-owner','record.json')),false,'failed handoff left its native owner behind');
+  // Host records remain as absence-proof evidence after a clean shutdown.
+ }finally{
+  if(hostPid&&hostStartIdentity&&ownerProcessStartIdentity(hostPid)===hostStartIdentity){
+   process.kill(hostPid,'SIGTERM');const deadline=Date.now()+3000;
+   while(ownerProcessStartIdentity(hostPid)===hostStartIdentity&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+   if(ownerProcessStartIdentity(hostPid)===hostStartIdentity)process.kill(hostPid,'SIGKILL');
+  }
+  await import('./helpers/pty-host.mjs').then(({cleanupNativeOwner})=>cleanupNativeOwner(home));
+  fs.rmSync(root,{recursive:true,force:true});
+ }
 });
