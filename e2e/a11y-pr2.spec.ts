@@ -50,6 +50,11 @@ test.describe("keyboard access to project and terminal lists", () => {
     const projectClose = projectTabs.locator(".aya-tab-close").first();
     await expect(projectClose).toHaveAttribute("type", "button");
     await expect(projectClose).toHaveAttribute("tabindex", "-1");
+    // Capture keyboard-visible focus, not only the selected-tab underline.
+    await tabs.first().focus();
+    await window.keyboard.press("ArrowRight");
+    await expect(tabs.nth(1)).toBeFocused();
+    expect(await tabs.nth(1).evaluate((tab) => tab.matches(":focus-visible"))).toBe(true);
     await tabs.nth(1).screenshot({ path: "/tmp/a11y-pr2-focus-project-tab-dark.png" });
 
     // The first seeded project contains two terminals; the second project is a
