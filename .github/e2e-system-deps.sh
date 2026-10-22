@@ -30,9 +30,10 @@ case "${1:?prepare or install}" in
       diff -u "$cache_dir/packages.tsv" "$RUNNER_TEMP/e2e-packages-restored.tsv"
       echo "Electron system dependencies restored from cache"
     else
-      # Preserve Playwright's complete, version-matched package list, including
-      # Firefox/WebKit dependencies and fonts, rather than hand-maintaining it.
-      npx playwright install-deps
+      # Every spec uses Electron or Chromium. Ask Playwright for Chromium's
+      # version-matched dependencies and fonts; the unused Firefox/WebKit
+      # packages made cold shards exceed the job timeout on slow apt mirrors.
+      npx playwright install-deps chromium
       sudo apt-get install -y xvfb
       package_manifest > "$cache_dir/packages.tsv"
       mapfile -t changed_packages < <(
