@@ -22,6 +22,7 @@ export interface RemoteTerminalSessionDeps {
   resize: (terminalId: string, cols: number, rows: number) => Promise<void>;
   exit: (terminalId: string) => Promise<void>;
   isRunning?: (identity: RemoteTerminalProcessIdentity | undefined) => Promise<boolean | null>;
+  onController?: (terminalId: string, controlled: boolean) => void;
   newId?: () => string;
 }
 
@@ -46,6 +47,7 @@ interface Session {
   retainedBytes: number;
   chunks: OutputChunk[];
   clients: Set<net.Socket>;
+  controller?: net.Socket;
 }
 
 export type RemoteTerminalWriter = (socket: net.Socket, message: unknown) => void;
@@ -62,7 +64,13 @@ export class RemotePtySessions implements PtyEventSink {
   send(_channel: "pty:event", event: PtyEvent): void { this.onPtyEvent(event); }
 
   detach(socket: net.Socket): void {
-    for (const session of this.sessions.values()) session.clients.delete(socket);
+    for (const session of this.sessions.values()) {
+      session.clients.delete(socket);
+      if (session.controller === socket) {
+        session.controller = undefined;
+        this.deps.onController?.(session.terminalId, false);
+      }
+    }
   }
 
   onPtyEvent(event: PtyEvent): void {
@@ -128,8 +136,13 @@ export class RemotePtySessions implements PtyEventSink {
           const preset = (await this.deps.listPresets()).find((item) => item.id === request.preset);
           if (!preset || !preset.command.trim()) throw new Error("The selected terminal preset is unavailable.");
           this.makeRoom();
-          const terminalId = (this.deps.newId ?? randomUUID)();
-          const session: Session = { terminalId, project: project.slug, preset: preset.id, state: "running", totalBytes: 0, retainedBytes: 0, chunks: [], clients: new Set() };
+          const terminalId = request.terminalId ?? (this.deps.newId ?? randomUUID)();
+          const previous = this.sessions.get(terminalId);
+          if (previous) {
+            if (previous.state === "exited" || (previous.state === "failed" && previous.spawnFailed)) this.sessions.delete(terminalId);
+            else throw new Error("A remote terminal with this id is already running.");
+          }
+          const session: Session = { terminalId, project: project.slug, preset: preset.id, state: "running", totalBytes: 0, retainedBytes: 0, chunks: [], clients: new Set([socket]), controller: socket };
           this.sessions.set(terminalId, session);
           try {
             const processIdentity = await this.deps.spawn(terminalId, project, preset, request.cols, request.rows);
@@ -156,11 +169,17 @@ export class RemotePtySessions implements PtyEventSink {
             replay = replay.subarray(1);
             fromOffset += 1;
           }
+          const readOnly = session.controller !== undefined && session.controller !== socket;
+          if (!readOnly && session.controller !== socket) {
+            session.controller = socket;
+          }
+          if (!readOnly) this.deps.onController?.(session.terminalId, true);
           session.clients.add(socket);
           writer(socket, {
             type: "pty:attached", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id,
             terminalId: session.terminalId, fromOffset, endOffset: session.totalBytes,
             truncated: request.offset < oldest,
+            ...(readOnly ? { readOnly: true } : {}),
           });
           if (replay.length) this.writeOutput(socket, session.terminalId, fromOffset, replay, writer);
           if (session.state === "exited") writer(socket, session.killed
@@ -169,13 +188,17 @@ export class RemotePtySessions implements PtyEventSink {
           return;
         }
         case "pty:write": {
-          if (this.sessions.get(request.terminalId)?.state !== "running") throw new Error("The remote terminal is no longer running.");
+          const session = this.sessions.get(request.terminalId);
+          if (session?.state !== "running") throw new Error("The remote terminal is no longer running.");
+          if (session.controller !== socket) throw new Error("Another Aya controls this terminal. Try again after that connection closes.");
           const accepted = await this.deps.write(request.terminalId, request.data);
           writer(socket, { type: "pty:written", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId, accepted });
           return;
         }
         case "pty:resize": {
-          if (this.sessions.get(request.terminalId)?.state !== "running") throw new Error("The remote terminal is no longer running.");
+          const session = this.sessions.get(request.terminalId);
+          if (session?.state !== "running") throw new Error("The remote terminal is no longer running.");
+          if (session.controller !== socket) throw new Error("Another Aya controls this terminal. Try again after that connection closes.");
           await this.deps.resize(request.terminalId, request.cols, request.rows);
           writer(socket, { type: "pty:resized", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id, terminalId: request.terminalId });
           return;
@@ -183,6 +206,7 @@ export class RemotePtySessions implements PtyEventSink {
         case "pty:exit": {
           const session = this.sessions.get(request.terminalId);
           if (!session) throw new Error("The remote terminal is no longer available.");
+          if (session.controller !== socket) throw new Error("Another Aya controls this terminal. Try again after that connection closes.");
           if (session.state === "running" || session.state === "uncertain" || (session.state === "failed" && !session.spawnFailed)) {
             try {
               await this.deps.exit(request.terminalId);

@@ -76,6 +76,8 @@ export interface SeedOptions {
   /** The project lives on a host reached by ssh. `ssh`, `claude` and `grok` on PATH stand in
    *  for it: the "remote" agents keep their sessions under <root>/remote-home, out of Aya's sight. */
   remoteProject?: boolean;
+  /** Start a local remote terminal host for the remote-project GUI contract. */
+  remoteTerminalHost?: "v1" | "v2";
   /** Files written under HOME (shell rc files, say). */
   homeFiles?: Record<string, string>;
   /** `ssh` on PATH is e2e/helpers/fake-ssh-machines.cjs: fixed probe answers per target, every call logged to
@@ -351,6 +353,7 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     throw new Error(`seed: launchEnv HOME ${opts.launchEnv.HOME} is outside the seeded root`);
   }
   let launchEnv: Record<string, string> = { HOME: home, ...opts.launchEnv };
+  if (opts.remoteTerminalHost) launchEnv.AYA_REMOTE_SOCKET = join(root, "remote-terminal.sock");
   const prependPath = (bin: string) => (launchEnv = { ...launchEnv, PATH: `${bin}:${launchEnv.PATH ?? process.env.PATH}` });
   const homeFiles = { ...opts.homeFiles };
   // A login shell stand-in: runs the -c script, ignores -l and -i.
@@ -433,6 +436,9 @@ shift
 [ "$1" = "me@fakehost" ] || exit 255
 shift
 [ "$#" = "1" ] || exit 255
+if [ "$1" = "aya remote --stdio" ]; then
+  exec ${shellQuote(join(__dirname, "../../bin/aya"))} remote --stdio
+fi
 HOME=${shellQuote(remoteHome)} XDG_RUNTIME_DIR=${shellQuote(remoteRuntime)} exec /bin/sh -c "$1"
 `, { mode: 0o755 });
     for (const [name, env, fake] of [

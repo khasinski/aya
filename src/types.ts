@@ -489,6 +489,7 @@ export type PtyEvent =
   // the host stayed up. The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
   | { type: "host-connection"; ptyId:string;connected:boolean;reason:string }
+  | { type: "remote-control"; ptyId: string; controlled: boolean; readOnly?: boolean }
   | { type: "disconnected"; ptyId: string; reason?:string;recoveryBlocked?:boolean;retryable?:boolean }
   | {type:"recovery-unavailable";ptyId:string;reason:string}
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
@@ -826,7 +827,7 @@ export interface AyaApi {
   acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<void>;
   ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
-  ptyKill(ptyId: string): Promise<void>;
+  ptyKill(ptyId: string, action?: "end-remote"): Promise<void>;
   ptyBuffer(ptyId: string): Promise<string>;
   /** Live cwd of a terminal's process - where the console actually is after a
    *  `cd`, not the cwd Aya spawned it with. null when it can't be read (old
@@ -1137,6 +1138,12 @@ export interface TerminalState {
   /** Restored from a persisted project tab, not newly created by the user.
    *  Agent presets may append --resume only in this case. */
   restored?: boolean;
+  /** Another Aya currently has the host-side controller for this pane. */
+  remoteControlled?: boolean;
+  /** This local view is attached read-only because another client controls it. */
+  remoteReadOnly?: boolean;
+  /** Display name of the machine that owns this pane. Derived from its remote project. */
+  remoteHost?: string;
   /** Opened for a team role (WorkingTab.teamLaunch). */
   /** Opened on a machine (WorkingTab.sshTarget). */
   sshTarget?: string;

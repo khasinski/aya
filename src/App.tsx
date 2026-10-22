@@ -1232,6 +1232,7 @@ export function App() {
                   }
                   projectId={activeProjectId ?? undefined}
                   projectRemote={Boolean(activeProject?.remote)}
+                  projectRemoteHost={activeProject?.remote?.label}
                   onCreateWorktrees={createWorktreesForProject}
                   onStartWorktrees={(projectId, preset, checkouts, prompt) => {
                     for (const checkout of checkouts) {

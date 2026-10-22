@@ -337,6 +337,7 @@ export type PtyEvent =
   // host stayed up). The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
   | { type: "host-connection"; ptyId:string;connected:boolean;reason:string }
+  | { type: "remote-control"; ptyId: string; controlled: boolean; readOnly?: boolean }
   | { type: "disconnected"; ptyId: string; reason?:string;recoveryBlocked?:boolean;retryable?:boolean }
   | {type:"recovery-unavailable";ptyId:string;reason:string}
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
@@ -662,7 +663,7 @@ export interface AyaApi {
   acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<void>;
   ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
-  ptyKill(ptyId: string): Promise<void>;
+  ptyKill(ptyId: string, action?: "end-remote"): Promise<void>;
   ptyBuffer(ptyId: string): Promise<string>;
   /** Live cwd of a terminal's process - where the console actually is after a
    *  `cd`, not the cwd Aya spawned it with. null when it can't be read (old

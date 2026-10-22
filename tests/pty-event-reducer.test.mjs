@@ -58,6 +58,16 @@ test("spawn-failed for an unknown ptyId is a no-op (same reference back)", () =>
   assert.equal(next, prev, "should return the same map reference");
 });
 
+test("remote controller state is visible and read-only attachments stay distinct", () => {
+  const prev = { t1: termState("t1") };
+  const controlled = applyPtyEvent(prev, { type: "remote-control", ptyId: "t1", controlled: true });
+  assert.equal(controlled.t1.remoteControlled, true);
+  assert.equal(controlled.t1.remoteReadOnly, false);
+  const readOnly = applyPtyEvent(controlled, { type: "remote-control", ptyId: "t1", controlled: false, readOnly: true });
+  assert.equal(readOnly.t1.remoteControlled, false);
+  assert.equal(readOnly.t1.remoteReadOnly, true);
+});
+
 test("spawn-failed clears any stale bell from a prior waiting state", () => {
   const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
   const next = applyPtyEvent(prev, {

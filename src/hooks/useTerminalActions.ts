@@ -93,6 +93,7 @@ export function useTerminalActions({
         status: "running",
         bell: false,
         exitCode: null,
+        ...(project.remote ? { remoteHost: project.remote.label } : {}),
         ...(initialPrompt ? { initialPrompt } : {}),
         ...(sshTarget ? { sshTarget } : {}),
       };
@@ -451,7 +452,7 @@ export function useTerminalActions({
       // and replays the old buffer instead of starting fresh.
       const releaseAttachClose = cancelPendingTerminalAttach(id);
       try {
-        await window.aya.ptyKill(id);
+        await window.aya.ptyKill(id, t.remoteHost ? "end-remote" : undefined);
       } catch (err: unknown) {
         window.alert(terminalKillRefusal("restart", t.name, err));
         return;
