@@ -38,7 +38,7 @@ interface TerminalActionsOptions {
   setSingleViewByProject: Dispatch<SetStateAction<Record<string, string | null>>>;
   setCloseFocusHold: Dispatch<SetStateAction<{ slug: string; terminalId: string } | null>>;
   appendProjectEvent: (event: Omit<ProjectEvent, "id" | "createdAt"> & { createdAt?: number }) => void;
-  persistProject: (slug: string, nextTerminals: Record<string, TerminalState>) => void;
+  persistProject: (slug: string, nextTerminals: Record<string, TerminalState>) => Promise<void>;
 }
 
 export function useTerminalActions({
@@ -340,6 +340,28 @@ export function useTerminalActions({
       });
     },
     [persistProject, setTerminals],
+  );
+
+  // aya pane rename: main resolved the pane. Saved through persistProject, as a
+  // sidebar rename, which writes the split tree; awaited, unlike renameTerminal's,
+  // so a pane list right after the CLI returns shows the name.
+  useEffect(
+    () =>
+      window.aya.onPaneChange(({ requestId, projectSlug, paneId, change }) => {
+        const rename = async () => {
+          const terminal = terminalsRef.current[paneId];
+          if (terminal?.projectSlug !== projectSlug) throw new Error(`pane ${paneId} is not open in this window`);
+          const next = { ...terminalsRef.current, [paneId]: { ...terminal, name: change.rename } };
+          terminalsRef.current = next;
+          setTerminals((prev) => (prev[paneId] ? { ...prev, [paneId]: { ...prev[paneId], name: change.rename } } : prev));
+          await persistProject(projectSlug, next);
+        };
+        void rename().then(
+          () => window.aya.teamPanesOpened(requestId, null),
+          (err: unknown) => window.aya.teamPanesOpened(requestId, err instanceof Error ? err.message : String(err)),
+        );
+      }),
+    [persistProject, terminalsRef, setTerminals],
   );
 
   /** Called by TerminalView when the user presses Shift+Enter in a

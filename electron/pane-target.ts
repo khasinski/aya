@@ -50,6 +50,9 @@ export function resolvePaneTarget(
   projects: ProjectConfig[],
   query: PaneQuery,
 ): PaneResolution {
+  if (query.projectSlug && !projects.some((p) => p.slug === query.projectSlug)) {
+    return { ok: false, error: `no project "${query.projectSlug}"; projects: ${projects.map((p) => p.slug).join(", ")}` };
+  }
   const all = candidates(projects, query);
 
   if (query.terminalId) {

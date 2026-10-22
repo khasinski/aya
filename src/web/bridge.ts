@@ -161,6 +161,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     // Main asks the desktop window that shows the project to add the tabs.
     onTeamOpenPanes: noopSubscription,
     teamPanesOpened: noopAsync,
+    onPaneChange: noopSubscription,
     usageHookStatus: inv("usage-hook:status"),
     installUsageHook: inv("usage-hook:install"),
     uninstallUsageHook: inv("usage-hook:uninstall"),

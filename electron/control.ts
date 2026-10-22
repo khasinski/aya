@@ -31,10 +31,10 @@ import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isD
 import { debugAnswer } from "./team-debug";
 import { oneLine, printable } from "./printable";
 import { handleTeamRequest, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
-import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
+import { handleTeamPanesRequest, PaneOpenTimeout, THIS_PANE, type TeamPaneDeps } from "./team-panes";
 import { handleTeamShow } from "./team-show";
 import type { TeamRunner } from "./team-runner";
-import type { ControlStatusUpdate, ProjectConfig, PtyEvent } from "./types";
+import type { ControlStatusUpdate, PaneChangeRequest, ProjectConfig, PtyEvent } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
@@ -115,6 +115,8 @@ export interface ControlServerOptions {
   openProject: (directory: string) => Promise<void> | void;
   /** Every parsed request, with the pane it came from (adoption, #117); awaited before the request runs. */
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void | Promise<void>;
+  /** Asks the window that shows the project to change one of its tabs; settles with the window's answer. */
+  changePane?: (projectSlug: string, paneId: string, change: PaneChangeRequest["change"]) => Promise<void>;
   /** What `aya team` runs on (the same deps as the team runner); teams are off without it. */
   team?: TeamControlDeps;
   /** Told of a team saved with aya team save, as after the Teams window's Save. */
@@ -423,6 +425,9 @@ export class PaneInputChangedError extends Error {
   constructor() { super("The pane received other text while the file was copying."); }
 }
 
+/** Longest tab name pane rename sets; a name is shown whole in the tab bar and in every pane list row. */
+const PANE_NAME_MAX_CHARS = 200;
+
 /** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
 const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);
 
@@ -569,6 +574,24 @@ async function handleRequest(
     const pane = { id: host.newPaneId(), presetId: preset.id, name, teamLaunch: false };
     await host.openPanes(project.slug, [pane]);
     return { output: `${pane.id}\n` };
+  }
+  if (request.type === "pane-rename") {
+    if (!options.listProjects || !options.changePane) throw new Error("pane control is not available");
+    const projects = await options.listProjects();
+    const resolved = resolvePaneTarget(projects, { name: request.target, projectSlug: request.projectSlug });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const { projectSlug, terminalId, name } = resolved.match;
+    // A tab name is one line in the tab bar and in pane list.
+    const newName = oneLine(request.name);
+    if (!newName) throw new Error("the name has no visible characters; nothing was renamed");
+    if (newName.length > PANE_NAME_MAX_CHARS) throw new Error(`the name is ${newName.length} characters, the most is ${PANE_NAME_MAX_CHARS}; nothing was renamed`);
+    // Pane commands target by name, so two panes of one project with one name need an id from then on.
+    const taken = projects.find((p) => p.slug === projectSlug)!.tabs.find((t) => t.id !== terminalId && t.name.trim().toLowerCase() === newName.toLowerCase());
+    if (taken) throw new Error(`pane ${taken.id} in project ${projectSlug} is already named ${taken.name}; nothing was renamed`);
+    await options.changePane(projectSlug, terminalId, { rename: newName }).catch((err: unknown) => {
+      throw err instanceof PaneOpenTimeout ? new Error("the Aya window did not answer in time; the pane may still be renamed") : err;
+    });
+    return { output: `renamed ${name} to ${newName}\n` };
   }
   if (request.type === "pane-state") {
     if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");

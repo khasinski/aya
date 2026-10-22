@@ -326,10 +326,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   }, []);
 
   const persistProject = useCallback(
-    (slug: string, nextTerminals: Record<string, TerminalState>) => {
+    (slug: string, nextTerminals: Record<string, TerminalState>): Promise<void> => {
       const { projectsRef, setAllProjects, setProjects } = initial.current;
       const project = projectsRef.current.find((p) => p.slug === slug);
-      if (!project) return;
+      if (!project) return Promise.resolve();
       const tabs: WorkingTab[] = Object.values(nextTerminals)
         .filter((t) => t.projectSlug === slug)
         .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
@@ -353,7 +353,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       };
       setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
-      void window.aya.updateProject(updated);
+      return window.aya.updateProject(updated);
     },
     [],
   );

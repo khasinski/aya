@@ -62,7 +62,7 @@ import { reachedAyaPanes } from "./reached-aya";
 import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./ipc/team-ipc";
-import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
+import { askProjectWindow, askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
 import { confirmPaneRestart, confirmRestart, confirmStoppingProcesses, type RelaunchDeps } from "./relaunch-notes";
 import { foregroundCommand } from "./foreground-command";
 import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
@@ -1104,6 +1104,12 @@ app.whenReady().then(async () => {
     team: teamDeps,
     teamRunner,
     teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),
+    // The window that shows the project owns its tabs, as for an open.
+    changePane: (projectSlug, paneId, change) => {
+      const windowId = windowSlices.windowOf(projectSlug);
+      const win = windowId === null ? null : BrowserWindow.fromId(windowId);
+      return askProjectWindow(win, paneOpens, projectSlug, (w, requestId) => w.webContents.send("panes:change", { requestId, projectSlug, paneId, change }), !windowProjects.bootProjectsLoaded);
+    },
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).

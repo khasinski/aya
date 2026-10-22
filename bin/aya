@@ -50,6 +50,8 @@ Usage:
   aya pane send target [--no-submit] [--project slug] text
                                      Type text into another pane and press
                                      Enter (--no-submit: type only)
+  aya pane rename target name [--project slug]
+                                     Rename a pane's tab
   aya team whoami                    Print this pane's team role and protocol
   aya team show [team] [--json]      Print the whole team as Aya runs it: every
                                      role, the lead, cadence and protocol (no
@@ -227,6 +229,14 @@ function requestFromArgs() {
       name: process.argv[5] || undefined,
       projectSlug: process.argv[6] || optionalEnv("AYA_PROJECT_SLUG"),
       cwd: process.cwd(),
+    };
+  }
+  if (kind === "pane-rename") {
+    return {
+      type: "pane-rename",
+      target: process.argv[4],
+      name: process.argv[5],
+      projectSlug: process.argv[6] || optionalEnv("AYA_PROJECT_SLUG"),
     };
   }
   // pane read/send target ANOTHER terminal, so the caller's own project scopes
@@ -871,6 +881,10 @@ case "$command" in
         target="${1:-}"
         if [ -z "$target" ] || [ "$#" -gt 1 ]; then usage_fail; fi
         send_control pane-read "$target" "$project"
+        ;;
+      rename)
+        if [ "$#" -ne 2 ] || [ -z "$1" ] || [ -z "$2" ]; then usage_fail; fi
+        send_control pane-rename "$1" "$2" "$project"
         ;;
       send)
         target="${1:-}"
