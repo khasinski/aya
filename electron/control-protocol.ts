@@ -71,6 +71,15 @@ export type ControlRequest =
       projectSlug?: string;
       selfTerminalId?: string;
     }
+  // Open a pane from a preset, as the launcher does. No slug: the caller's
+  // pane's project, else the project whose directory holds `cwd`.
+  | {
+      type: "pane-new";
+      presetId: string;
+      name?: string;
+      projectSlug?: string;
+      cwd?: string;
+    }
   | { type: "capabilities" }
   // aya machines: argv as typed after "machines".
   | { type: "machines"; argv: string[]; user?: string; token?: string }
@@ -222,6 +231,17 @@ export function parseControlRequest(value: unknown): ControlRequest {
       type,
       projectSlug: optionalString(value.projectSlug),
       selfTerminalId: optionalString(value.selfTerminalId),
+    };
+  }
+  if (type === "pane-new") {
+    const presetId = optionalString(value.presetId);
+    if (!presetId) throw new Error("pane-new requires presetId");
+    return {
+      type,
+      presetId,
+      name: optionalString(value.name)?.trim(),
+      projectSlug: optionalString(value.projectSlug),
+      cwd: optionalString(value.cwd),
     };
   }
   if (type === "pane-wait") {

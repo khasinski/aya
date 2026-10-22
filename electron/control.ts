@@ -26,7 +26,7 @@ import {
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
-import { handleTeamAuthorRequest } from "./team-author";
+import { callerProject, handleTeamAuthorRequest } from "./team-author";
 import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
 import { oneLine, printable } from "./printable";
@@ -432,7 +432,7 @@ const speaksAsPane = (request: ControlRequest): boolean =>
 
 /** Requests that act on the pane or project whose id they carry: a Codex daemon's id may be another project's pane.
  *  `status` too: a question is a team's signal, it holds the named pane's rounds. */
-const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status"]);
+const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status", "pane-new"]);
 
 async function daemonRefusal(caller: ControlCaller, options: ControlServerOptions, shareMs?: number): Promise<string | null> {
   if (!caller.terminalId || !caller.pid) return null;
@@ -543,6 +543,32 @@ async function handleRequest(
       selfTerminalId: request.selfTerminalId,
     });
     return { output: formatPaneList(entries) };
+  }
+  if (request.type === "pane-new") {
+    const host = options.teamPanes;
+    if (!host) throw new Error("pane control is not available");
+    const projects = await host.listProjects();
+    // --project beats the caller's own project, as in pane list; an unknown slug never falls back to the cwd's project.
+    const project = request.projectSlug
+      ? projects.find((p) => p.slug === request.projectSlug)
+      : await callerProject(projects, caller.terminalId, { cwd: request.cwd });
+    if (!project) {
+      const where = request.projectSlug
+        ? `no project "${request.projectSlug}"; projects: ${projects.map((p) => p.slug).join(", ")}`
+        : "run aya pane new in an Aya pane, in the directory of a project open in Aya, or pass --project <slug>";
+      throw new Error(`${where}; nothing was opened`);
+    }
+    // The presets and the install check below are this machine's, not the remote host's, as for aya team open.
+    if (project.remote) throw new Error(`project ${project.slug} is remote; aya pane new works only on local projects; nothing was opened`);
+    const presets = await host.listPresets();
+    const preset = presets.find((p) => p.id === request.presetId);
+    if (!preset) throw new Error(`no preset "${request.presetId}"; presets: ${presets.map((p) => p.id).join(", ")}; nothing was opened`);
+    if (!(await host.presetInstalled(preset))) throw new Error(`preset "${preset.id}" (${preset.name}) is not installed; nothing was opened`);
+    // A tab name is one line in the tab bar and in pane list.
+    const name = (request.name && oneLine(request.name)) || preset.name;
+    const pane = { id: host.newPaneId(), presetId: preset.id, name, teamLaunch: false };
+    await host.openPanes(project.slug, [pane]);
+    return { output: `${pane.id}\n` };
   }
   if (request.type === "pane-state") {
     if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");

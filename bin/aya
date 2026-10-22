@@ -35,6 +35,9 @@ Usage:
   aya status error text              Mark this terminal as errored
   aya status clear                   Clear agent status
   aya pane list [--project slug]     List the panes/agents in this project
+  aya pane new preset [--name name] [--project slug]
+                                     Open a new pane from a preset and print
+                                     its id (presets: aya presets)
   aya pane state target [--explain] [--project slug]
                                      Show the pane's fresh state; --explain adds the matching rules
                                      Unknown is a state answer (exit 0), never a host start
@@ -215,6 +218,15 @@ function requestFromArgs() {
       type: "pane-list",
       projectSlug: process.argv[4] || optionalEnv("AYA_PROJECT_SLUG"),
       selfTerminalId: optionalEnv("AYA_TERMINAL_ID"),
+    };
+  }
+  if (kind === "pane-new") {
+    return {
+      type: "pane-new",
+      presetId: process.argv[4],
+      name: process.argv[5] || undefined,
+      projectSlug: process.argv[6] || optionalEnv("AYA_PROJECT_SLUG"),
+      cwd: process.cwd(),
     };
   }
   // pane read/send target ANOTHER terminal, so the caller's own project scopes
@@ -774,6 +786,28 @@ case "$command" in
     case "$action" in
       list|ls)
         send_control pane-list "$project"
+        ;;
+      new)
+        preset=""
+        name=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --name)
+              [ "$#" -ge 2 ] && [ -n "$2" ] || usage_fail
+              name=$2
+              shift 2
+              ;;
+            --name=*)
+              name=${1#--name=}
+              [ -n "$name" ] || usage_fail
+              shift
+              ;;
+            -*) usage_fail ;;
+            *) [ -z "$preset" ] || usage_fail; preset=$1; shift ;;
+          esac
+        done
+        [ -n "$preset" ] || usage_fail
+        send_control pane-new "$preset" "$name" "$project"
         ;;
       state)
         target=""
