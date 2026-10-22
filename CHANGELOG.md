@@ -2,8 +2,8 @@
 
 ## v0.13.0 - 2026-10-22
 
-Antigravity usage in view, worktrees and Changes ready for everyday use, and
-terminal processes that survive host crashes and updates.
+Antigravity usage in view, optional Command Rail, worktrees and Changes ready
+for everyday use, and terminal processes that survive host crashes and updates.
 
 ### Features
 

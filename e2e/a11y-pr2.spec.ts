@@ -155,6 +155,8 @@ test.describe("keyboard access to project and terminal lists", () => {
         selected: input.selectionStart === 0 && input.selectionEnd === input.value.length,
       };
     })).toEqual({ active: true, selected: true });
+    await window.keyboard.press("Delete");
+    await expect(editor).toBeFocused();
     await window.keyboard.type("renamed by keyboard");
     await window.keyboard.press("Enter");
     await expect(window.getByRole("listitem", { name: /renamed by keyboard/ })).toBeVisible();
@@ -294,6 +296,8 @@ test.describe("keyboard access to project and terminal lists", () => {
         selected: input.selectionStart === 0 && input.selectionEnd === input.value.length,
       };
     })).toEqual({ active: true, selected: true });
+    await window.keyboard.press("Delete");
+    await expect(editor).toBeFocused();
     await window.keyboard.type("renamed by keyboard");
     await window.keyboard.press("Enter");
     await expect(terminal).toHaveAttribute("data-terminal-name", "renamed by keyboard");
