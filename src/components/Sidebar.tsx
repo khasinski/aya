@@ -175,7 +175,11 @@ function SidebarImpl({
   }, [showMobileLauncher]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
+    ? focusedTerminalId
+    : activeId;
 
   // Worktrees are available for local repositories without an opt-in flag.
   const showWorktrees = worktrees.length > 0;
@@ -276,10 +280,11 @@ function SidebarImpl({
         } ${dropClass}`}
         role="listitem"
         aria-current={isActive ? "true" : undefined}
-        tabIndex={isActive ? 0 : -1}
+        tabIndex={rovingTerminalId === t.id ? 0 : -1}
         draggable={!isRenamingRow}
         {...itemHandlers(t.id)}
         onClick={() => onSelect(t.id)}
+        onFocus={() => setFocusedTerminalId(t.id)}
         onKeyDown={(e) => {
           if (e.key === "Delete") {
             e.preventDefault();

@@ -157,6 +157,14 @@ function ProjectsLeftLayoutImpl({
   const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || [];
   const roles = paneRoles(activeTeams);
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
+  const [focusedProjectSlug, setFocusedProjectSlug] = useState<string | null>(null);
+  const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
+  const rovingProjectSlug = projects.some((project) => project.slug === focusedProjectSlug)
+    ? focusedProjectSlug
+    : activeProjectId;
+  const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
+    ? focusedTerminalId
+    : activeTerminalId;
   const [projectDraft, setProjectDraft] = useState("");
   const projectInputRef = useRef<HTMLInputElement>(null);
   const {
@@ -482,7 +490,7 @@ function ProjectsLeftLayoutImpl({
                 key={t.id}
                 role="tab"
                 aria-selected={isActive}
-                tabIndex={isActive ? 0 : -1}
+                tabIndex={rovingTerminalId === t.id ? 0 : -1}
                 data-testid="termtab"
                 data-terminal-id={t.id}
                 data-terminal-name={t.name}
@@ -493,6 +501,7 @@ function ProjectsLeftLayoutImpl({
                 draggable={!isRenaming}
                 {...termDragHandlers(t.id)}
                 onClick={() => !isRenaming && onSelectTerminal(t.id)}
+                onFocus={() => setFocusedTerminalId(t.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Delete") {
                     e.preventDefault();
@@ -790,7 +799,7 @@ function ProjectsLeftLayoutImpl({
                   role="listitem"
                   data-project-slug={p.slug}
                   aria-current={isActive ? "true" : undefined}
-                  tabIndex={isActive ? 0 : -1}
+                  tabIndex={rovingProjectSlug === p.slug ? 0 : -1}
                   data-testid="railtab"
                   className={`aya-railtab ${isActive ? "aya-railtab--active" : ""} ${
                     isDragging ? "aya-railtab--dragging" : ""
@@ -798,6 +807,7 @@ function ProjectsLeftLayoutImpl({
                   draggable={!isRenaming}
                   {...projectDragHandlers(p.slug)}
                   onClick={() => !isRenaming && onSelectProject(p.slug)}
+                  onFocus={() => setFocusedProjectSlug(p.slug)}
                   onKeyDown={(e) => {
                     if (e.key === "Delete") {
                       e.preventDefault();

@@ -140,6 +140,10 @@ function TopBarImpl({
     windows: Array<{ id: number; activeProject: string | null }>;
   } | null>(null);
   const [focusProjectAfterMove, setFocusProjectAfterMove] = useState<{ slug: string; index: number } | null>(null);
+  const [focusedProjectSlug, setFocusedProjectSlug] = useState<string | null>(null);
+  const rovingProjectSlug = projects.some((project) => project.slug === focusedProjectSlug)
+    ? focusedProjectSlug
+    : activeProjectId;
 
   useLayoutEffect(() => {
     if (!focusProjectAfterMove || projects.findIndex((project) => project.slug === focusProjectAfterMove.slug) !== focusProjectAfterMove.index) return;
@@ -354,7 +358,7 @@ function TopBarImpl({
               data-project-slug={p.slug}
               role="tab"
               aria-selected={isActive}
-              tabIndex={isActive ? 0 : -1}
+              tabIndex={rovingProjectSlug === p.slug ? 0 : -1}
               className={`aya-tab ${isActive ? "aya-tab--active" : ""} ${
                 isDragging ? "aya-tab--dragging" : ""
               } ${isRemote ? "aya-tab--remote" : ""} ${dropClass}`}
@@ -368,6 +372,7 @@ function TopBarImpl({
               draggable={!isRenaming}
               {...itemHandlers(p.slug)}
               onClick={() => !isRenaming && onSelectProject(p.slug)}
+              onFocus={() => setFocusedProjectSlug(p.slug)}
               onKeyDown={(e) => {
                 if (e.key === "Delete") {
                   e.preventDefault();
