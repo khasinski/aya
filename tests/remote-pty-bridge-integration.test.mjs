@@ -27,7 +27,7 @@ const { waitFor } = await import("./helpers/pty-host.mjs");
 const hostScript = resolve("dist-electron/pty-host.js");
 const ayaCli = resolve("bin/aya");
 const project = { slug: "project", name: "Project", directory: projectDir, tabs: [] };
-const command = "i=0; while [ $i -lt 80 ]; do printf 'REMOTE-OUTPUT-%02d\\n' $i; i=$((i+1)); sleep 0.05; done; exec cat";
+const command = "i=0; while [ $i -lt 80 ]; do printf 'REMOTE-OUTPUT-%02d\\n' $i; i=$((i+1)); sleep 0.05; done; IFS= read -r trigger; printf 'POST-DISCONNECT-%s\\n' \"$trigger\"; exec cat";
 const bridgeParentScript = `
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
@@ -144,12 +144,6 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     const originalPid = await host.getPid(terminalId);
     assert.ok(originalPid > 1);
     if (kind === "bridge") {
-      // Coverage on macOS can stretch the short PTY writes well past their
-      // nominal 4 seconds; keep this bounded without turning a slow runner
-      // into a false bridge failure.
-      await waitFor(() => received.map((event) => event.data).join("").includes("REMOTE-OUTPUT-79"), 30_000);
-      assert.equal(await first.client.write(terminalId, "REMOTE-INPUT-PROBE\n"), true);
-      await waitFor(() => received.map((event) => event.data).join("").includes("REMOTE-INPUT-PROBE"), 5_000);
       const initialSize = await host.getSize(terminalId);
       assert.equal(initialSize?.cols, 80);
       assert.equal(initialSize?.rows, 24);
@@ -174,10 +168,13 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
       assert.equal(processAlive(childBridgePid), false);
     }
 
-    // The host continues draining the finite output script after its bridge
-    // disappears. Coverage and loaded macOS runners can stretch the 4 s script
-    // well past 10 s, so use the same bounded slow-runner allowance as above.
-    await waitFor(() => localEvents.filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay).map((event) => event.chunk).join("").includes("REMOTE-OUTPUT-79"), 30_000);
+    // This input is sent only after the bridge (and, for ssh-parent, its child)
+    // is gone. The shell prints a unique marker only after consuming it.
+    const eventCountAtDisconnect = localEvents.length;
+    assert.equal(await host.write(terminalId, "after-kill\n"), true);
+    await waitFor(() => localEvents.slice(eventCountAtDisconnect)
+      .filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay)
+      .map((event) => event.chunk).join("").includes("POST-DISCONNECT-after-kill"), 10_000);
     assert.equal(await host.getPid(terminalId), originalPid);
     const hostBytes = Buffer.from(localEvents
       .filter((event) => event.type === "data" && event.ptyId === terminalId && !event.replay)
@@ -196,7 +193,7 @@ test("remote bridges can die abruptly and reattach with the exact output gap", {
     assert.equal(attached.fromOffset, resumeAt);
     const expected = hostBytes.subarray(resumeAt, attached.endOffset);
     await waitFor(() => Buffer.byteLength(replayed.map((event) => event.data).join(""), "utf8") >= expected.length, 5_000);
-    const replayBuffer = Buffer.from(replayed.map((event) => event.data).join(""), "utf8").subarray(0, expected.length);
+    const replayBuffer = Buffer.from(replayed.map((event) => event.data).join(""), "utf8");
     assert.deepEqual(replayBuffer, expected, `${kind} bridge gap should replay byte-for-byte`);
     assert.equal(await host.getPid(terminalId), originalPid);
     assert.equal((await second.client.list()).find((item) => item.terminalId === terminalId)?.state, "running");

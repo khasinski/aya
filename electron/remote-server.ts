@@ -220,14 +220,16 @@ export function startRemoteServerOn(
         const idx = buffer.indexOf("\n");
         if (idx < 0) {
           if (Buffer.byteLength(buffer, "utf8") > REMOTE_MAX_FRAME_BYTES) {
-            sendJson(socket, remoteError("frame_too_large", "Remote request exceeded the frame size limit."));
-            socket.end();
+            // Do not leave an oversized partial frame attached to a readable
+            // socket: a same-user client could keep appending forever.
+            buffer = "";
+            socket.destroy();
           }
           return;
         }
         if (Buffer.byteLength(buffer.slice(0, idx), "utf8") > REMOTE_MAX_FRAME_BYTES) {
-          sendJson(socket, remoteError("frame_too_large", "Remote request exceeded the frame size limit."));
-          socket.end();
+          buffer = "";
+          socket.destroy();
           return;
         }
         const line = buffer.slice(0, idx).trim();

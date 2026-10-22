@@ -103,7 +103,7 @@ test("a command that is not an object gets bad_request", async (t) => {
   }
 });
 
-test("the server rejects a valid frame followed by an oversized partial frame in one chunk", async (t) => {
+test("the server closes and drops an oversized partial frame, including continued input", async (t) => {
   const { socket } = start(t);
   const client = net.createConnection(socket);
   const messages = [];
@@ -126,9 +126,14 @@ test("the server rejects a valid frame followed by an oversized partial frame in
     client.once("connect", resolve);
     client.once("error", reject);
   });
-  client.write(`${JSON.stringify({ type: "session:open", protocol: 2, id: "valid" })}\n${"x".repeat(REMOTE_MAX_FRAME_BYTES + 1)}`);
+  client.write(`${"x".repeat(REMOTE_MAX_FRAME_BYTES + 1)}`);
   await closed;
-  assert.equal(messages.some((message) => message.type === "error" && message.code === "frame_too_large"), true);
+  assert.equal(messages.some((message) => message.type !== "hello" && message.type !== "snapshot"), false);
+  // Further writes after the first over-limit detection cannot be buffered by
+  // the server because it has destroyed the socket and discarded the frame.
+  for (let index = 0; index < 32; index += 1) client.write("x".repeat(REMOTE_MAX_FRAME_BYTES));
+  assert.equal(client.destroyed, true);
+  assert.equal(client.writable, false);
 });
 
 test("fs:mkdir makes the whole path and answers with it; without a path it fails with the reason", async (t) => {
