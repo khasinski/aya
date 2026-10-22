@@ -262,7 +262,9 @@ export class RemoteTerminalClient extends EventEmitter {
     if (!this.opened) this.readyReject(error);
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
-    if (!this.closed && this.listenerCount("error") > 0) this.emit("error", error);
+    // Preserve the first failure notification for consumers such as the remote
+    // terminal manager, even though the client is closed before listeners run.
+    if (this.listenerCount("error") > 0) this.emit("error", error);
   }
 }
 

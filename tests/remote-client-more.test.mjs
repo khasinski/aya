@@ -123,11 +123,15 @@ test("an abrupt stdout pipe reset rejects requests without an unhandled stream e
   }
   const bridge = new FakeBridge();
   const client = new RemoteTerminalClient(bridge);
+  const errors = [];
+  client.on("error", (error) => errors.push(error));
   const pending = client.attach("terminal", 0);
   const rejected = assert.rejects(pending, /ECONNRESET/);
   bridge.stdout.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
   await rejected;
   bridge.stderr.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /ECONNRESET/);
 });
 
 const {
