@@ -106,14 +106,16 @@ User flow:
    - `Username`, pre-filled with the current local OS username.
    - `Hostname`, empty or selectable from previously seen machines.
 3. User enters the hostname and confirms.
-4. Aya automatically tries SSH for that pair:
+4. Aya opens the SSH bridge for that pair:
 
    ```bash
    ssh username@hostname aya remote
    ```
 
-5. If the remote machine has Aya running and remote access enabled, the
-   command sets up the bridge/pairing automatically.
+5. The remote machine must have Aya running and `aya remote` available to SSH
+   sessions. The SSH login is the user's explicit action and authenticates the
+   connection; the SSH bridge does not require a separate Aya enable setting
+   or pairing token.
 6. The remote host is saved for future use.
 
 This gives users the right mental model: connect to a machine, not configure
@@ -163,25 +165,28 @@ Later LAN pairing can add:
 - Client revoke/disconnect UI.
 - Connected-client list on the host.
 
-Remote access must be disabled by default.
+These LAN controls apply only to a future LAN listener. The SSH bridge does not
+open a listener or require a separate remote-access setting.
 
-### Enabling Remote On A Host
+### SSH Bridge Host Readiness
 
-When the user enables remote access on a machine, Aya should run a host
-readiness check before declaring the machine connectable.
+The SSH bridge needs Aya running on the host, an SSH login, and `aya remote`
+available in the non-interactive SSH environment. The user's SSH login is the
+explicit action that authorizes access and supplies authentication. Aya may
+check host readiness before connecting, but there is no separate host-side
+"enable remote" action for the SSH bridge.
 
 Checks:
 
 - `aya remote` CLI is installed and available to SSH sessions.
 - Remote Aya app is running and can be reached through its local socket/API.
-- Remote access is enabled in Aya settings.
 - An SSH server is installed.
 - The SSH server appears to be running/listening.
 - The current user can be reached over SSH, or Aya can at least show the
   expected `username@hostname` value for another machine to try.
 
-If no SSH server is found, Aya should not silently enable remote. It should
-show a clear setup prompt:
+If no SSH server is found, Aya should show a clear setup prompt before trying
+to connect:
 
 - macOS: suggest enabling `Remote Login` in System Settings.
 - Linux: suggest installing and starting OpenSSH server, using the distro's
@@ -189,8 +194,9 @@ show a clear setup prompt:
 - Windows: suggest installing/enabling OpenSSH Server from Windows Optional
   Features or PowerShell.
 
-The prompt should explain that Aya uses SSH for authentication and encryption,
-and that Aya does not need a public TCP listener when the SSH bridge is used.
+The prompt should explain that Aya uses the user's SSH login for authentication
+and encryption, and that Aya does not need a public TCP listener when the SSH
+bridge is used.
 
 Suggested wording:
 
@@ -198,7 +204,7 @@ Suggested wording:
 SSH server not detected
 
 Aya remote connections use SSH. Install or enable an SSH server on this
-machine, then try enabling remote access again.
+machine, then try the SSH connection again.
 ```
 
 When possible, include a copyable command or system setting shortcut, but avoid
@@ -231,7 +237,7 @@ Stored fields:
 - Display name, defaulting to hostname.
 - Last successful connection time.
 - Last connection status/error.
-- Remote host id/fingerprint after first successful pairing.
+- Remote host id/fingerprint after the first successful SSH connection.
 
 Connect UI behavior:
 
@@ -239,7 +245,8 @@ Connect UI behavior:
 - Recently connected machines appear as selectable rows.
 - Selecting a saved machine fills username + hostname.
 - Failed machines remain visible with the last error until removed.
-- Users can remove saved machines and revoke trusted pairing data.
+- Users can remove saved machines. SSH trust and host-key records remain
+  managed by the user's SSH configuration.
 
 Saved machines should not store SSH passwords. Authentication should rely on
 the user's SSH setup: keys, ssh-agent, host aliases, and platform prompts.
@@ -371,9 +378,15 @@ Later:
 
 ## Security Requirements
 
-Remote PTY control is equivalent to shell access. Treat it as high risk.
+Remote PTY control is equivalent to shell access. Treat it as high risk. For
+the SSH bridge, the user explicitly connects with an SSH login; SSH
+authentication and host-key verification are the access controls. The bridge
+uses the host's owner-only local socket and does not expose a network listener.
 
-Requirements:
+### Future LAN Listener Requirements
+
+These requirements apply only to a future LAN listener. They are not steps or
+settings required to use the SSH bridge:
 
 - Disabled by default.
 - Localhost-only by default.
