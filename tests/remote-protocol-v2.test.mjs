@@ -6,6 +6,8 @@ const { parseRemoteTerminalRequest, REMOTE_TERMINAL_REPLAY_MAX_BYTES } = await i
 test("remote terminal protocol accepts only bounded, exact v2 frames", () => {
   assert.equal(REMOTE_TERMINAL_REPLAY_MAX_BYTES, 1_048_576);
   assert.deepEqual(parseRemoteTerminalRequest({ type: "session:open", protocol: 2, id: "open-1" }), { type: "session:open", protocol: 2, id: "open-1" });
+  assert.deepEqual(parseRemoteTerminalRequest({ type: "session:open", protocol: 2, id: "open-2", clientId: "aya-process" }), { type: "session:open", protocol: 2, id: "open-2", clientId: "aya-process" });
+  assert.equal(parseRemoteTerminalRequest({ type: "session:open", protocol: 2, id: "open-3", clientId: "x".repeat(129) }), null);
   assert.deepEqual(parseRemoteTerminalRequest({ type: "pty:spawn", protocol: 2, id: "spawn-1", project: "repo", preset: "shell", cols: 80, rows: 24 }), {
     type: "pty:spawn", protocol: 2, id: "spawn-1", project: "repo", preset: "shell", cols: 80, rows: 24,
   });

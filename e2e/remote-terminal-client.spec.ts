@@ -26,7 +26,7 @@ test.describe("remote terminal v2 client", () => {
     await pane.locator(".xterm-screen").click();
     await window.keyboard.type("REMOTE_V2_INPUT");
     await window.keyboard.press("Enter");
-    await expect(pane.locator(".xterm-rows")).toContainText("REMOTE_V2_INPUT", { timeout: 10_000 });
+    await expect.poll(async () => occurrences(await pane.locator(".xterm-rows").innerText(), "REMOTE_V2_INPUT"), { timeout: 10_000 }).toBe(2);
 
     const beforeResize = readRemoteState(seeded.root).find((item) => item.terminalId === terminalId)?.size;
     await window.setViewportSize({ width: 920, height: 610 });
@@ -38,8 +38,8 @@ test.describe("remote terminal v2 client", () => {
     try {
       const attached = await observer.attach(terminalId!, 0);
       expect(attached.readOnly).toBe(true);
-      await expect(observer.write(terminalId!, "MUST_NOT_TYPE\n")).rejects.toThrow(/another Aya controls this terminal/i);
-      await expect(observer.resize(terminalId!, 101, 33)).rejects.toThrow(/another Aya controls this terminal/i);
+      await expect(observer.write(terminalId!, "MUST_NOT_TYPE\n")).rejects.toThrow(/another Aya controls this host/i);
+      await expect(observer.resize(terminalId!, 101, 33)).rejects.toThrow(/another Aya controls this host/i);
     } finally {
       await observer.detach();
     }
@@ -67,13 +67,37 @@ test.describe("remote terminal v2 client", () => {
       rows: 24,
       attachOnly: true,
     }), { id: terminalId!, cwd: seeded.projectDir });
-    await expect(pane.locator(".xterm-rows")).toContainText("OUTPUT_DURING_DETACH", { timeout: 10_000 });
+    await expect.poll(async () => occurrences(await pane.locator(".xterm-rows").innerText(), "OUTPUT_DURING_DETACH"), { timeout: 10_000 }).toBe(2);
     expect(readRemoteState(seeded.root).find((item) => item.terminalId === terminalId)?.pid).toBe(processBeforeDetach);
     await window.screenshot({ path: join(SHOTS, "remote-terminal.png") });
 
+    // The fixture's host preset is `cat`; EOF makes its process exit without
+    // ending the stable local tab. Restart must spawn a fresh host PTY rather
+    // than attaching to that already-exited session id.
+    await pane.locator(".xterm-screen").click();
+    await window.keyboard.press("Control+D");
+    const exitObserver = openObserver(seeded.root);
+    try {
+      await expect.poll(async () => (await exitObserver.list()).find((item) => item.terminalId === terminalId)?.state, { timeout: 10_000 }).toBe("exited");
+    } finally {
+      await exitObserver.detach();
+    }
+    await pane.locator(".xterm-screen").click();
+    await window.keyboard.press("Shift+Enter");
+    await expect.poll(() => {
+      const pid = readRemoteState(seeded.root).find((item) => item.terminalId === terminalId)?.pid;
+      return typeof pid === "number" && pid > 1 && pid !== processBeforeDetach;
+    }, { timeout: 10_000 }).toBe(true);
+    const restartedPid = readRemoteState(seeded.root).find((item) => item.terminalId === terminalId)?.pid;
+    expect(restartedPid).toBeGreaterThan(1);
+    await pane.locator(".xterm-screen").click();
+    await window.keyboard.type("REMOTE_AFTER_RESTART");
+    await window.keyboard.press("Enter");
+    await expect.poll(async () => occurrences(await pane.locator(".xterm-rows").innerText(), "REMOTE_AFTER_RESTART"), { timeout: 10_000 }).toBe(2);
+
     await pane.locator(".xterm-screen").click({ button: "right" });
     await window.getByTestId("terminal-context-end-remote").click();
-    await expect.poll(() => isAlive(processBeforeDetach!)).toBe(false);
+    await expect.poll(() => isAlive(restartedPid!)).toBe(false);
   });
 });
 
@@ -99,6 +123,10 @@ function readRemoteState(root: string): Array<{ terminalId: string; pid: number 
 function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch { return false; }
+}
+
+function occurrences(text: string, marker: string): number {
+  return text.split(marker).length - 1;
 }
 
 function openObserver(root: string): RemoteTerminalClient {

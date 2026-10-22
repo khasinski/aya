@@ -18,6 +18,7 @@ interface ManagedTerminal {
   onError: (error: Error) => void;
   readOnly: boolean;
   outputOffset: number;
+  exited: boolean;
 }
 
 /** Main-process lifecycle for a local view of a host-owned PTY. Detaching a
@@ -33,10 +34,15 @@ export class RemoteTerminalManager {
 
   async spawn(request: SpawnRequest, sshTarget: string, project: string): Promise<"remote" | "legacy"> {
     if (this.legacy.has(request.ptyId)) return "legacy";
-    const existing = this.terminals.get(request.ptyId);
-    if (existing?.client) {
+    let existing = this.terminals.get(request.ptyId);
+    if (existing?.client && (!existing.exited || request.attachOnly || request.attachIfReused)) {
       await this.attach(request.ptyId, existing);
       return "remote";
+    }
+    if (existing?.exited && !request.attachOnly && !request.attachIfReused) {
+      await this.releaseClient(existing);
+      this.terminals.delete(request.ptyId);
+      existing = undefined;
     }
     // A pane explicitly restarted after its prior host session disappeared
     // must create a new PTY. An attach-only remount still probes the old id.
@@ -51,6 +57,7 @@ export class RemoteTerminalManager {
       client,
       readOnly: false,
       outputOffset: existing?.outputOffset ?? 0,
+      exited: false,
       onOutput: (event) => {
         if (event.terminalId !== terminal.remoteTerminalId) return;
         terminal.outputOffset = Math.max(terminal.outputOffset, event.offset + Buffer.byteLength(event.data, "utf8"));
@@ -58,6 +65,7 @@ export class RemoteTerminalManager {
       },
       onExit: (event) => {
         if (event.terminalId !== terminal.remoteTerminalId) return;
+        terminal.exited = true;
         this.deps.sendEvent(event.killed
           ? { type: "exit", ptyId: request.ptyId, exitCode: -1 }
           : { type: "exit", ptyId: request.ptyId, exitCode: event.exitCode ?? 0 });

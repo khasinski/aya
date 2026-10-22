@@ -120,3 +120,23 @@ test("an explicitly restarted pane creates a new session after an attach reports
   assert.equal(await firstManager.spawn(request, "devbox", "remote-repo"), "remote");
   assert.deepEqual(clients[1].calls[0], ["spawn", "remote-repo", "codex", 90, 28, "tab-uuid"]);
 });
+
+test("restarting a pane after its remote process exits starts a fresh host terminal", async () => {
+  const events = [];
+  const clients = [];
+  const manager = new RemoteTerminalManager({
+    connect: () => { const client = new FakeTerminalClient(); clients.push(client); return client; },
+    sendEvent: (event) => events.push(event),
+  });
+
+  assert.equal(await manager.spawn(request, "devbox", "remote-repo"), "remote");
+  clients[0].emit("exit", { terminalId: "tab-uuid", exitCode: 0 });
+  assert.deepEqual(events.at(-1), { type: "exit", ptyId: "tab-uuid", exitCode: 0 });
+
+  assert.equal(await manager.spawn(request, "devbox", "remote-repo"), "remote");
+  assert.deepEqual(clients[1].calls.slice(0, 2), [
+    ["spawn", "remote-repo", "codex", 90, 28, "tab-uuid"],
+    ["attach", "tab-uuid", 0],
+  ]);
+  assert.equal(clients[0].calls.at(-1)[0], "detach");
+});

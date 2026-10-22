@@ -27,6 +27,9 @@ export const REMOTE_TIMEOUTS: RemoteTimeouts = { bridgeMs: 15_000, sshKillMs: 25
 const REMOTE_BRIDGE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 // The bridge's grace after client.end() for stdout to flush before it exits.
 const EXIT_FLUSH_DELAY_MS = 250;
+// Every bridge opened by this Aya process shares one host-control identity.
+// A separate Aya process gets a different id and observes read-only.
+const REMOTE_TERMINAL_CLIENT_ID = randomUUID();
 
 export interface RemoteTerminalAttachResult {
   terminalId: string;
@@ -121,7 +124,7 @@ export class RemoteTerminalClient extends EventEmitter {
       if (value.protocol !== REMOTE_PROTOCOL_VERSION) { this.fail(new Error("Remote Aya sent an incompatible snapshot.")); return; }
       if (!this.snapshotReceived) {
         this.snapshotReceived = true;
-        this.send({ type: "session:open", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: this.id() });
+        this.send({ type: "session:open", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: this.id(), clientId: REMOTE_TERMINAL_CLIENT_ID });
       }
       return;
     }

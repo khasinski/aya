@@ -145,6 +145,7 @@ async function handleCommand(
       sendTerminalJson(socket, remoteError("terminal_unavailable", "Remote terminals are not available on this Aya.", id));
       return;
     }
+    options.terminalSessions.registerClient(socket, request.clientId);
     terminalSession.protocol = REMOTE_TERMINAL_PROTOCOL_VERSION;
     sendTerminalJson(socket, { type: "session:ready", protocol: REMOTE_TERMINAL_PROTOCOL_VERSION, id: request.id });
     return;

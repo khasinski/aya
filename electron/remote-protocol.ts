@@ -28,7 +28,7 @@ export interface RemoteDirectoryEntry {
 }
 
 export type RemoteTerminalRequest =
-  | { type: "session:open"; protocol: number; id: string }
+  | { type: "session:open"; protocol: number; id: string; clientId?: string }
   | { type: "pty:spawn"; protocol: 2; id: string; project: string; preset: string; cols: number; rows: number; terminalId?: string }
   | { type: "pty:attach"; protocol: 2; id: string; terminalId: string; offset: number }
   | { type: "pty:write"; protocol: 2; id: string; terminalId: string; data: string }
@@ -61,8 +61,8 @@ export function parseRemoteTerminalRequest(value: unknown): RemoteTerminalReques
   const str = (key: string, max = 256): boolean => typeof record[key] === "string" && (record[key] as string).length > 0 && (record[key] as string).length <= max;
   const dimension = (key: string): boolean => Number.isSafeInteger(record[key]) && (record[key] as number) >= 1 && (record[key] as number) <= 500;
   if (record.type === "session:open") {
-    if (!ownKeys(record, ["type", "protocol", "id"]) || !str("id", 128) || !Number.isSafeInteger(record.protocol)) return null;
-    return { type: "session:open", protocol: record.protocol as number, id: record.id as string };
+    if (!(ownKeys(record, ["type", "protocol", "id"]) || ownKeys(record, ["type", "protocol", "id", "clientId"])) || !str("id", 128) || !Number.isSafeInteger(record.protocol) || (record.clientId !== undefined && !str("clientId", 128))) return null;
+    return { type: "session:open", protocol: record.protocol as number, id: record.id as string, ...(typeof record.clientId === "string" ? { clientId: record.clientId } : {}) };
   }
   if (record.protocol !== REMOTE_TERMINAL_PROTOCOL_VERSION || !str("id", 128)) return null;
   switch (record.type) {
