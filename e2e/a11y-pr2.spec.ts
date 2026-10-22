@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
 import { reloadInProjectsLeftLayout } from "./helpers/layout";
+import { fireShortcut } from "./helpers/shortcut";
 
 async function dragProjectAfter(window: import("@playwright/test").Page) {
   const source = '.aya-project-tablist [role="tab"]:first-child';
@@ -26,7 +27,14 @@ async function dragProjectAfter(window: import("@playwright/test").Page) {
 test.describe("keyboard access to project and terminal lists", () => {
   test.use({ seedOptions: { secondProject: true } });
 
-  test("classic project tabs and terminal rows use roving keyboard focus", async ({ window }) => {
+  test("classic project tabs and terminal rows use roving keyboard focus", async ({ app, window }) => {
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await expect(settings).toBeVisible();
+    await settings.getByTestId("appearance-segment").filter({ hasText: "Dark" }).click();
+    await window.keyboard.press("Escape");
+    await expect(settings).toHaveCount(0);
+
     const projectTabs = window.getByRole("tablist", { name: "Projects" });
     const tabs = projectTabs.getByRole("tab");
     await expect(tabs).toHaveCount(2);
@@ -39,8 +47,10 @@ test.describe("keyboard access to project and terminal lists", () => {
     await tabs.nth(1).focus();
     await window.keyboard.press("Enter");
     await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
-    await expect(projectTabs.getByRole("button", { name: /Close project/ }).first()).toHaveAttribute("type", "button");
-    await tabs.nth(1).screenshot({ path: "/tmp/a11y-pr2-focus-project-tab.png" });
+    const projectClose = projectTabs.locator(".aya-tab-close").first();
+    await expect(projectClose).toHaveAttribute("type", "button");
+    await expect(projectClose).toHaveAttribute("tabindex", "-1");
+    await tabs.nth(1).screenshot({ path: "/tmp/a11y-pr2-focus-project-tab-dark.png" });
 
     // The first seeded project contains two terminals; the second project is a
     // separate one-terminal project used by the rail navigation checks below.
@@ -59,17 +69,27 @@ test.describe("keyboard access to project and terminal lists", () => {
     await rows.nth(1).focus();
     await window.keyboard.press("Space");
     await expect(rows.nth(1)).toHaveAttribute("aria-current", "true");
-    await expect(rows.getByRole("button", { name: /Close terminal/ }).first()).toHaveAttribute("type", "button");
-    await rows.first().screenshot({ path: "/tmp/a11y-pr2-focus-sidebar-row.png" });
+    const terminalClose = rows.locator(".aya-sidebar-close").first();
+    await expect(terminalClose).toHaveAttribute("type", "button");
+    await expect(terminalClose).toHaveAttribute("tabindex", "-1");
+    await rows.nth(1).screenshot({ path: "/tmp/a11y-pr2-focus-sidebar-row-dark.png" });
+
+    await fireShortcut(app, "open-settings");
+    const lightSettings = window.locator(".aya-modal--settings");
+    await lightSettings.getByTestId("appearance-segment").filter({ hasText: "Light" }).click();
+    await window.keyboard.press("Escape");
+    await rows.nth(1).focus();
+    await rows.nth(1).screenshot({ path: "/tmp/a11y-pr2-focus-sidebar-row-light.png" });
   });
 
   test("keyboard context-menu shortcuts focus the menu and restore the row", async ({ window }) => {
     const row = window.getByRole("list", { name: "Terminals" }).getByRole("listitem").first();
     await row.focus();
+    await expect(row).toBeFocused();
     await window.keyboard.press("Shift+F10");
     const menu = window.getByRole("menu");
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole("button").first()).toBeFocused();
+    await expect(menu.locator('[role="menuitem"]:not(:disabled)').first()).toBeFocused();
     await window.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
     await expect(row).toBeFocused();
@@ -89,29 +109,89 @@ test.describe("keyboard access to project and terminal lists", () => {
     await expect.poll(() => tabs.allTextContents()).toEqual([original[1], original[0]]);
   });
 
+  test("context menus move project tabs and terminal rows with the keyboard", async ({ window }) => {
+    const projectTabs = window.locator('.aya-project-tablist [role="tab"]');
+    await expect(projectTabs).toHaveCount(2);
+    const projectSlugs = await projectTabs.evaluateAll((items) => items.map((item) => item.getAttribute("data-project-slug")));
+    await projectTabs.nth(1).focus();
+    await window.keyboard.press("Shift+F10");
+    const projectMenu = window.getByRole("menu");
+    const moveProjectLeft = projectMenu.getByRole("menuitem", { name: "Move left" });
+    await expect(moveProjectLeft).toBeEnabled();
+    await expect(projectMenu.getByRole("menuitem", { name: "Move right" })).toBeDisabled();
+    await moveProjectLeft.focus();
+    await window.keyboard.press("ArrowDown");
+    const closeProjectItem = projectMenu.getByRole("menuitem", { name: "Close project" });
+    await expect(closeProjectItem).toBeFocused();
+    await closeProjectItem.evaluate((item) => item.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true })));
+    await expect(moveProjectLeft).toBeFocused();
+    await moveProjectLeft.evaluate((item) => item.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    await expect.poll(() => projectTabs.evaluateAll((items) => items.map((item) => item.getAttribute("data-project-slug"))))
+      .toEqual([projectSlugs[1], projectSlugs[0]]);
+    await expect(window.locator('[data-project-slug="' + projectSlugs[1] + '"]')).toBeFocused();
+
+    const rows = window.getByRole("list", { name: "Terminals" }).getByRole("listitem");
+    await expect(rows).toHaveCount(2);
+    const firstRow = window.locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]');
+    await firstRow.focus();
+    await window.keyboard.press("Shift+F10");
+    const terminalMenu = window.getByRole("menu");
+    await expect(terminalMenu.getByRole("menuitem", { name: "Move up" })).toBeDisabled();
+    const moveDown = terminalMenu.getByRole("menuitem", { name: "Move down" });
+    await expect(moveDown).toBeEnabled();
+    const firstEnabledTerminalItem = terminalMenu.locator('[role="menuitem"]:not(:disabled)').first();
+    await firstEnabledTerminalItem.focus();
+    await window.keyboard.press("ArrowDown");
+    await expect(terminalMenu.locator('[role="menuitem"]:not(:disabled)').nth(1)).toBeFocused();
+    await terminalMenu.locator('[role="menuitem"]:not(:disabled)').nth(1).evaluate((item) => item.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })));
+    await expect(terminalMenu.locator('[role="menuitem"]:not(:disabled)').last()).toBeFocused();
+    await terminalMenu.locator('[role="menuitem"]:not(:disabled)').last().evaluate((item) => item.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true })));
+    await expect(firstEnabledTerminalItem).toBeFocused();
+    await moveDown.focus();
+    await moveDown.evaluate((item) => item.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    await expect.poll(() => window.getByTestId("sidebar-terminal").evaluateAll((items) => items.map((item) => item.getAttribute("data-terminal-name"))))
+      .toEqual(["shell 2", "shell 1"]);
+    await expect(firstRow).toBeFocused();
+  });
+
+  test("Delete closes a focused item without a second tab stop on the close button", async ({ window }) => {
+    const projectTab = window.locator('.aya-project-tablist [role="tab"]').nth(1);
+    const closeButton = projectTab.locator(".aya-tab-close");
+    await expect(projectTab.locator(".aya-tab-close")).toHaveAttribute("aria-hidden", "true");
+    await expect(closeButton).toHaveAttribute("tabindex", "-1");
+    await projectTab.focus();
+    await window.keyboard.press("Delete");
+    await expect(window.locator('.aya-project-tablist [role="tab"]')).toHaveCount(1);
+  });
+
   test("projects-left project list and terminal tabs are keyboard-operable", async ({ window }) => {
     await reloadInProjectsLeftLayout(window);
     const projects = window.getByRole("list", { name: "Projects" }).getByRole("listitem");
     await expect(projects).toHaveCount(2);
     await projects.first().focus();
+    await expect(projects.first()).toBeFocused();
     await window.keyboard.press("ArrowDown");
     await expect(projects.nth(1)).toBeFocused();
     await expect(projects.first()).toHaveAttribute("aria-current", "true");
     await window.keyboard.press("Enter");
     await expect(projects.nth(1)).toHaveAttribute("aria-current", "true");
-    await expect(window.getByRole("button", { name: /Close project/ }).first()).toHaveAttribute("type", "button");
+    const railProjectClose = window.locator(".aya-railtab-close").first();
+    await expect(railProjectClose).toHaveAttribute("type", "button");
+    await expect(railProjectClose).toHaveAttribute("tabindex", "-1");
 
     const terminals = window.getByRole("tablist", { name: "Terminals" }).getByRole("tab");
     await expect(terminals).toHaveCount(1);
     await terminals.first().focus();
     await window.keyboard.press("Enter");
     await expect(terminals.first()).toHaveAttribute("aria-selected", "true");
-    await expect(window.getByRole("button", { name: /Close terminal/ }).first()).toHaveAttribute("type", "button");
+    const railTerminalClose = window.locator(".aya-tab-close").last();
+    await expect(railTerminalClose).toHaveAttribute("type", "button");
+    await expect(railTerminalClose).toHaveAttribute("tabindex", "-1");
     await terminals.first().focus();
     await window.keyboard.press("Shift+F10");
     const menu = window.getByRole("menu");
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole("button").first()).toBeFocused();
+    await expect(menu.locator('[role="menuitem"]:not(:disabled)').first()).toBeFocused();
     await window.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
     await expect(terminals.first()).toBeFocused();

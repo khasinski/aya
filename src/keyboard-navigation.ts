@@ -42,3 +42,35 @@ export function handleRovingItemKeyDown(
 export function isContextMenuKey(event: Pick<KeyboardEvent, "key" | "shiftKey">): boolean {
   return (event.key === "F10" && event.shiftKey) || event.key === "ContextMenu";
 }
+
+/** Arrow-key behavior for a focused menu item in a custom context menu. */
+export function handleMenuNavigation(event: ReactKeyboardEvent<HTMLElement>): void {
+  if (event.key === "Enter" || event.key === " ") {
+    const item = (event.target as HTMLElement).closest<HTMLElement>('[role="menuitem"]:not(:disabled):not([aria-disabled="true"])');
+    if (!item) return;
+    event.preventDefault();
+    item.click();
+    return;
+  }
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
+  const items = [...event.currentTarget.querySelectorAll<HTMLElement>(
+    '[role="menuitem"]:not(:disabled):not([aria-disabled="true"])',
+  )];
+  if (!items.length) return;
+  const index = items.indexOf(document.activeElement as HTMLElement);
+  const next = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? items.length - 1
+      : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+  event.preventDefault();
+  items[next]?.focus();
+}
+
+export function moveItem<T>(items: readonly T[], index: number, delta: -1 | 1): T[] {
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= items.length) return [...items];
+  const result = [...items];
+  [result[index], result[target]] = [result[target], result[index]];
+  return result;
+}

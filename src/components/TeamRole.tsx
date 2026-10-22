@@ -45,6 +45,9 @@ export function TeamRoleMenuItems({
         return (
           <button
             key={`${team}/${role}`}
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
             className="aya-context-menu-item"
             disabled={mine}
             onClick={() => {
@@ -58,6 +61,9 @@ export function TeamRoleMenuItems({
       })}
       {current && (
         <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
           className="aya-context-menu-item"
           onClick={() => {
             onAssign(current.team, current.role, null);
