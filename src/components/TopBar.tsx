@@ -390,14 +390,16 @@ function TopBarImpl({
             </div>
           );
         })}
-        <div
+        <button
+          type="button"
           className={`aya-tab-new ${blockChrome ? "aya-tab-new--disabled" : ""}`}
           title="New project"
-          onClick={blockChrome ? undefined : onNewProject}
-          aria-disabled={blockChrome}
+          aria-label="New project"
+          onClick={onNewProject}
+          disabled={blockChrome}
         >
           <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
-        </div>
+        </button>
       </div>
       <div className="aya-topbar-right">
         {monitoredSessions.length > 0 && (
@@ -569,6 +571,7 @@ function TopBarImpl({
         </button>
         <button
           className="aya-iconbtn"
+          aria-label="Settings"
           title={blockChrome ? "Settings (close the open dialog first)" : "Settings"}
           onClick={() => onOpenSettings()}
           disabled={blockChrome}

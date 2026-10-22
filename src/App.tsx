@@ -180,6 +180,7 @@ export function App() {
   >({});
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
+  const settingsOpenerRef = useRef<HTMLElement | null>(null);
   const {
     appThemePreference,
     setAppThemePreference,
@@ -240,9 +241,24 @@ export function App() {
   );
   const fontSize = TERMINAL_FONT_SIZE_PX;
   const openSettings = useCallback((tab: SettingsTab = "general") => {
+    const active = document.activeElement;
+    settingsOpenerRef.current = active instanceof HTMLElement ? active : null;
     setSettingsInitialTab(tab);
     setShowSettings(true);
   }, []);
+
+  useEffect(() => {
+    if (showSettings) return;
+    const opener = settingsOpenerRef.current;
+    settingsOpenerRef.current = null;
+    if (!opener) return;
+    const frame = requestAnimationFrame(() => {
+      if (opener.isConnected) opener.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [showSettings]);
+
+  const closeSettings = useCallback(() => setShowSettings(false), []);
 
   // Active terminal, derived early: the git surface below follows the checkout
   // THIS terminal is in, so its id/cwd are needed before the poll effects.
@@ -1180,11 +1196,22 @@ export function App() {
               grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
             />
-            {body ?? (
-              <div
+            {body ? (
+              <main
                 className="aya-main"
+                aria-label="Terminal workspace"
+                style={{ gridTemplateColumns: "1fr" }}
+              >
+                <h1 className="aya-visually-hidden">Aya</h1>
+                {body}
+              </main>
+            ) : (
+              <main
+                className="aya-main"
+                aria-label="Terminal workspace"
                 style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
               >
+                <h1 className="aya-visually-hidden">Aya</h1>
                 <Sidebar
                   teams={activeTeams}
                   onAssignTeamRole={onAssignTeamRole}
@@ -1232,7 +1259,7 @@ export function App() {
                   }
                 />
                 {panesNode}
-              </div>
+              </main>
             )}
           </>
         );
@@ -1434,7 +1461,7 @@ export function App() {
           onMacOptionKeyModeChange={setMacOptionKeyMode}
           initialTab={settingsInitialTab}
           onRestartPtyHost={restartPtyHost}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettings}
           onSave={onSavePresets}
           onSaveSnippets={onSaveSnippets}
           onSaveThemes={onSaveThemes}

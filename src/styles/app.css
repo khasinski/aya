@@ -186,6 +186,17 @@ body {
 .aya-app > .aya-topbar { grid-row: 1; }
 .aya-app > .aya-main { grid-row: 2; }
 .aya-app > .aya-statusbar { grid-row: 3; }
+.aya-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Browser-only in-page waiting alerts stay reachable over plain HTTP. */
 .aya-web-waiting-banners {
@@ -284,12 +295,18 @@ body {
   -webkit-app-region: no-drag;
   display: flex; align-items: center; justify-content: center;
   width: 36px;
+  height: 100%;
+  padding: 0;
   color: var(--fg-tertiary);
   font-size: 16px;
   cursor: pointer;
+  background: transparent;
+  border: 0;
   border-right: 1px solid var(--border);
+  font-family: inherit;
 }
 .aya-tab-new:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-tab-new:disabled { cursor: not-allowed; }
 .aya-topbar-right {
   -webkit-app-region: no-drag;
   display: flex; align-items: center; padding: 0 10px; gap: 6px;
