@@ -8,7 +8,7 @@ import {createRequire} from 'node:module';
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'aya-pane-cap-'));
 process.env.AYA_HOME=path.join(root,'aya');
 const require=createRequire(import.meta.url);
-const {MAX_PTY_PANES}=require('../dist-electron/pty-pane-limits.js');
+const {MAX_PTY_PANES,paneLimitFailureMessage}=require('../dist-electron/pty-pane-limits.js');
 const {MAX_CHECKPOINT_PANES}=require('../dist-electron/vt-checkpoint-schema.js');
 const {OwnerPty}=require('../dist-electron/pty-owner-adapter.js');
 const {spawnPty,killPty}=require('../dist-electron/pty-core.js');
@@ -21,6 +21,10 @@ test('owner, checkpoint and recovery counts come from the same pane limit',()=>{
   assert.equal(build.maxPanes,MAX_PTY_PANES);
 });
 
+test('pane-limit guidance is derived from the shared cap',()=>{
+  assert.equal(paneLimitFailureMessage(),`Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then restart this tab.`);
+});
+
 test('pane cap refusal shows recovery guidance without a command failure exit 127',async(t)=>{
   t.mock.method(OwnerPty,'spawn',async()=>{throw Object.assign(new Error('Pane limit reached'),{code:'OWNER_REJECTED'});});
   const events=[];
@@ -31,11 +35,25 @@ test('pane cap refusal shows recovery guidance without a command failure exit 12
   });
   const failure=events.find(event=>event.type==='spawn-failed');
   assert.equal(failure?.reason,'pane-limit-reached');
-  assert.equal(failure?.detail,'Aya can run at most 128 terminals at once. Close a terminal you no longer need, then restart this tab.');
+  assert.equal(failure?.detail,paneLimitFailureMessage());
   const banner=events.find(event=>event.type==='data')?.chunk??'';
-  assert.match(banner,/Aya can run at most 128 terminals at once/);
+  assert.ok(banner.includes(paneLimitFailureMessage()));
   assert.match(banner,/Close a terminal you no longer need/);
   assert.equal(events.some(event=>event.type==='exit'),false);
+});
+
+test('a JS host without a connected native owner does not misreport the pane cap',async(t)=>{
+  t.mock.method(OwnerPty,'spawn',async()=>{throw new Error('The PTY owner is disconnected');});
+  const events=[];
+  const sink={isDestroyed:()=>false,sendPtyEvent:event=>events.push(event)};
+  await spawnPty({ptyId:'owner-unavailable',command:'sleep 30',cwd:process.cwd(),cols:80,rows:24},sink,{
+    prepare:async()=>({argv:['/bin/sleep','30'],env:{PATH:'/usr/bin:/bin'},command:'sleep 30',launch:{command:'sleep 30',cwd:process.cwd()},ownSessionId:null,spawnedAt:Date.now()}),
+  });
+  const failure=events.find(event=>event.type==='spawn-failed');
+  assert.equal(failure?.reason,'node-pty-spawn-error');
+  assert.match(failure?.detail??'',/PTY owner is disconnected/);
+  assert.notEqual(failure?.detail,paneLimitFailureMessage());
+  assert.ok(events.some(event=>event.type==='exit'&&event.exitCode===127));
 });
 
 test('a real owner frees a pane slot and accepts a retry for the same refused pane id',{timeout:90000},async()=>{
