@@ -1,15 +1,12 @@
 // "debug on": every decision a team's runner makes, one JSON line each in the team's debug.jsonl, for
 // `aya team debug <team>`. Off (the default) a call costs one boolean read: nothing is formatted or written.
+// A leaf: the team store, files and runner import it, so it imports none of them. Finding the team a pane
+// or a socket answer belongs to is in team-debug-route.ts.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ControlCaller, ControlRequest } from "./control-protocol";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
-import { callerProject } from "./team-author";
-import { paneTeamRole } from "./team-files";
-import { openTeamStore } from "./team-store";
 import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE } from "./team-records";
-import type { ProjectConfig } from "./types";
 
 export const DEBUG_SWITCH_FILE = "debug.json";
 export { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE };
@@ -50,8 +47,6 @@ export function watchDebugSwitch(ayaHome: string): () => void {
   }
 }
 
-type DebugDeps = { teamHome: string; listProjects: () => Promise<ProjectConfig[]> };
-
 const cut = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}...` : text);
 const trimmed = (key: string, value: unknown): unknown => (typeof value === "string" ? cut(value, MESSAGE_FIELDS.has(key) ? MESSAGE_CHARS : OTHER_CHARS) : value);
 
@@ -84,47 +79,5 @@ function fileSize(file: string): number {
     return fs.statSync(file).size;
   } catch {
     return 0;
-  }
-}
-
-/** A decision about a pane, in the debug log of the team it plays a role in, if any. */
-export async function debugPane(deps: DebugDeps, paneId: string, event: string, fields: Record<string, unknown>): Promise<void> {
-  if (!debugOn()) return;
-  try {
-    const project = (await deps.listProjects()).find((p) => p.tabs.some((t) => t.id === paneId));
-    const plays = project ? await paneTeamRole(deps.teamHome, project, paneId) : null;
-    if (plays) debugLog(plays.store, event, { pane: paneId, role: plays.role, ...fields });
-  } catch {
-    // as above
-  }
-}
-
-/** The socket's answer to an aya team command, in a team's debug log (the team it names, else its pane's team). */
-export async function debugAnswer<T>(
-  deps: DebugDeps | undefined,
-  request: ControlRequest,
-  caller: ControlCaller,
-  answer: Promise<T>,
-): Promise<T> {
-  if (!debugOn() || !deps || !request.type.startsWith("team-")) return answer;
-  const fields = { command: request.type, caller: caller.terminalId ?? null, ...(request.type === "team-send" ? { to: request.role, text: request.text } : {}) };
-  const log = async (outcome: Record<string, unknown>) => {
-    try {
-      const named = "team" in request ? request.team : undefined;
-      const project = "cwd" in request ? await callerProject(await deps.listProjects(), caller.terminalId, request) : null;
-      if (named && project) return debugLog(openTeamStore(deps.teamHome, project.slug, named), "socket", { ...fields, ...outcome });
-      if (caller.terminalId) await debugPane(deps, caller.terminalId, "socket", { ...fields, ...outcome });
-    } catch {
-      // as above
-    }
-  };
-  try {
-    const value = await answer;
-    const output = (value as { output?: unknown } | undefined)?.output;
-    await log({ ok: true, ...(typeof output === "string" ? { output } : {}) });
-    return value;
-  } catch (err) {
-    await log({ ok: false, error: err instanceof Error ? err.message : String(err) });
-    throw err;
   }
 }
