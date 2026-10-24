@@ -52,7 +52,12 @@ for(const scenario of ['takeover','deadline','close','quit'])test(`a still-closi
    await expect(view.locator('.aya-sidebar-row[data-terminal-name="shell 1"]')).toBeVisible();
    expect(inventory(seeded.ayaHome).panes).toEqual(before.panes);expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(errors).toEqual([]);return;
   }
-  if(expiry)await view.reload();
+  if(expiry){
+   // After the exhausted wait only the reloaded view's attach opens a new connection; until then main refuses
+   // buffer reads with the still-closing reason, which a poll of the buffer reports as a failure, not as "not yet".
+   await view.reload();
+   await expect.poll(()=>next.evaluate(()=>{const client=(globalThis as any).principalClient;return client.isConnected()&&!client.principalRetryExhausted;})).toBe(true);
+  }
   await expect(view.getByTestId('terminal-history-notice').first()).not.toBeVisible();
   await waitForShellReady(view);
   const terminal=view.getByTestId('xterm-host').first();await terminal.click();await view.keyboard.type("printf 'PRINCIPAL_TAKEOVER\\n'");await view.keyboard.press('Enter');
