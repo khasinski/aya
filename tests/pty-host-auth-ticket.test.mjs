@@ -67,9 +67,13 @@ test('late rename cleanup cannot touch a later attempt ticket',async()=>{
  }finally{hold.release();await f.close();}
 });
 test('late valid completion is rejected by monotonic check before a delayed timer callback',async()=>{
- const f=await fixture(),t=ticket();let now=0;
- const io={...fs,rename:async(...args)=>{await fs.rename(...args);now=100;}};
- try{await assert.rejects(writeAuthTransferTicket(f.file(t),t,{deadline:100,now:()=>now,io}));assert.deepEqual(await fs.readdir(f.root),[]);}finally{await f.close();}
+ const f=await fixture(),t=ticket(),deadline=60_000;let now=0;
+ const io={...fs,rename:async(...args)=>{await fs.rename(...args);now=deadline;}};
+ try{
+  await assert.rejects(writeAuthTransferTicket(f.file(t),t,{deadline,now:()=>now,io}));
+  assert.equal(await readAuthTransferTicket(f.file(t)),null,'the late rename never publishes an adoptable ticket');
+  assert.deepEqual(await fs.readdir(f.root),[],'the owned temporary inode is cleaned before the call rejects');
+ }finally{await f.close();}
 });
 test('quit cancellation fences the pending write and does not await blocked I/O',async()=>{
  const f=await fixture(),t=ticket(),hold=gate(),controller=new AbortController();let writing=false;
