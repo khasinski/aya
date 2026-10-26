@@ -34,6 +34,8 @@ export interface ReverseJsonlOptions {
   onMaxCarryBytes?: (bytes: number) => void;
   /** Test instrumentation for cancellation/progress without exposing file data. */
   onBytesRead?: (bytes: number) => void;
+  /** Receives only a bounded start-of-line prefix when a line is skipped. */
+  onOversizedLinePrefix?: (prefix: string) => void;
 }
 
 /** Fill a buffer despite short positional reads; stop only when it is full or
@@ -241,6 +243,25 @@ export async function scanJsonlLinesReverse(
     let offset = size;
     let carry: Buffer[] = [];
     let carryBytes = 0;
+    const oversizedPrefixLimit = 1024;
+    let oversizedPrefix: Buffer[] = [];
+    let oversizedPrefixBytes = 0;
+    const addOversizedPrefix = (earlier: Buffer) => {
+      const available = oversizedPrefixLimit - oversizedPrefixBytes;
+      if (available <= 0 || earlier.length === 0) return;
+      const part = earlier.subarray(0, available);
+      oversizedPrefix.unshift(part);
+      oversizedPrefixBytes += part.length;
+    };
+    const reportOversizedPrefix = () => {
+      if (oversizedPrefixBytes > 0) {
+        options.onOversizedLinePrefix?.(
+          Buffer.concat(oversizedPrefix, oversizedPrefixBytes).toString("utf8"),
+        );
+      }
+      oversizedPrefix = [];
+      oversizedPrefixBytes = 0;
+    };
     // True when the suffix being carried belongs to a line whose beginning
     // has already exceeded maxLineBytes. Drop it when its preceding LF arrives.
     let skippingOversizedLine = false;
@@ -275,11 +296,15 @@ export async function scanJsonlLinesReverse(
         const segment = chunk.subarray(newline + 1, end);
         const lineBytes = segment.length + carryBytes;
         if (skippingOversizedLine) {
+          addOversizedPrefix(segment);
           partial = true;
           skippedOversizedLines = true;
+          reportOversizedPrefix();
         } else if (lineBytes > maxLineBytes) {
+          addOversizedPrefix(segment);
           partial = true;
           skippedOversizedLines = true;
+          reportOversizedPrefix();
         } else if (lineBytes > 0) {
           const lineBuffer = carryBytes === 0
             ? segment
@@ -300,10 +325,12 @@ export async function scanJsonlLinesReverse(
       if (!stopped && end > 0) {
         if (skippingOversizedLine) {
           // Continue seeking the start delimiter without retaining bytes.
+          addOversizedPrefix(chunk.subarray(0, end));
         } else if (end + carryBytes > maxLineBytes) {
           skippingOversizedLine = true;
           carry = [];
           carryBytes = 0;
+          addOversizedPrefix(chunk.subarray(0, end));
           partial = true;
           skippedOversizedLines = true;
         } else {
@@ -320,9 +347,11 @@ export async function scanJsonlLinesReverse(
         if (skippingOversizedLine) {
           partial = true;
           skippedOversizedLines = true;
+          reportOversizedPrefix();
         } else if (carryBytes > maxLineBytes) {
           partial = true;
           skippedOversizedLines = true;
+          reportOversizedPrefix();
         } else if (carryBytes > 0) {
           const lineBuffer = carry.length === 1 ? carry[0] : Buffer.concat(carry, carryBytes);
           const firstLine = lineBuffer.toString("utf8");
@@ -337,6 +366,7 @@ export async function scanJsonlLinesReverse(
         carryBytes = 0;
       }
     }
+    if (!stopped && offset > start && skippingOversizedLine) reportOversizedPrefix();
     return {
       bytesRead,
       truncated: partial || stopped,

@@ -21,6 +21,13 @@ test("History results render the partial-coverage line beneath hits", () => {
   );
 });
 
+test("History explains when the global hit cap limits results", () => {
+  assert.equal(
+    formatHarnessSearchCoverage({ partial: true, searchedBackTo: date, hitLimitReached: 80 }, true, "Codex", formatDate),
+    "Showing the first 80 matches. Searched back to Oct 26, 2026, 3:05 PM",
+  );
+});
+
 test("History empty state names the date boundary and agent when coverage is partial", () => {
   assert.equal(
     formatHarnessSearchCoverage({ partial: true, searchedBackTo: date }, false, "Claude", formatDate),

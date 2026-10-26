@@ -8,12 +8,15 @@ export function formatHarnessSearchCoverage(
   formatDate: (iso: string) => string = (iso) => new Date(iso).toLocaleString(),
 ): string | null {
   if (!coverage.partial) return null;
+  const hitLimit = hasHits && coverage.hitLimitReached
+    ? `Showing the first ${coverage.hitLimitReached} matches. `
+    : "";
   if (!coverage.searchedBackTo) {
-    return `Search timed out before reading recent ${agentLabel} sessions`;
+    return `${hitLimit}Search timed out before reading recent ${agentLabel} sessions`;
   }
   const date = formatDate(coverage.searchedBackTo);
   const message = hasHits
-    ? `Searched back to ${date}`
+    ? `${hitLimit}Searched back to ${date}`
     : `No matches since ${date} in recent ${agentLabel} sessions for this directory`;
   return coverage.longMessagesSkipped
     ? `${message} (very long messages were not searched)`

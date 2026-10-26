@@ -317,6 +317,56 @@ test("an empty result discloses that very long messages were skipped", async (t)
   assert.equal(result.coverage.longMessagesSkipped, true);
 });
 
+test("oversized messages and non-message records are classified from a bounded prefix", async (t) => {
+  const cases = [
+    {
+      agent: "claude",
+      id: "claude-message",
+      oversizedLine: claudeMessage(`needle ${"x".repeat(70 * 1024)}`),
+      expectNotice: true,
+    },
+    {
+      agent: "claude",
+      id: "claude-progress",
+      oversizedLine: claudeLine({ type: "progress", data: "x".repeat(70 * 1024) }),
+      expectNotice: false,
+    },
+    {
+      agent: "codex",
+      id: "codex-message",
+      oversizedLine: codexMessage("assistant", `needle ${"x".repeat(70 * 1024)}`),
+      expectNotice: true,
+    },
+    {
+      agent: "codex",
+      id: "codex-event",
+      oversizedLine: codexLine({ type: "event_msg", payload: { type: "token_count", data: "x".repeat(70 * 1024) } }),
+      expectNotice: false,
+    },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.id, async (t) => {
+      const root = mkdtempSync(join(tmpdir(), `aya-hsearch-${scenario.id}-`));
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      if (scenario.agent === "claude") {
+        writeClaudeSession(root, scenario.id, [scenario.oversizedLine], Math.floor(Date.now() / 1000));
+      } else {
+        const day = join(root, "sessions", "2026", "10", "26");
+        mkdirSync(day, { recursive: true });
+        writeFileSync(join(day, `rollout-${scenario.id}.jsonl`), `${codexLine({ type: "session_meta", payload: { cwd: CWD } })}\n${scenario.oversizedLine}\n`);
+      }
+      const result = await searchHarnessSessions({
+        agent: scenario.agent,
+        cwd: CWD,
+        configDir: root,
+        query: "needle",
+      });
+      assert.equal(result.coverage.partial, true);
+      assert.equal(result.coverage.longMessagesSkipped, scenario.expectNotice ? true : undefined);
+    });
+  }
+});
+
 test("cached history marks results partial when the cached hit cap is reached", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "aya-hsearch-cached-cap-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -332,6 +382,7 @@ test("cached history marks results partial when the cached hit cap is reached", 
   const result = await searchHarnessSessions({ ...req, query: "quota hit" });
   assert.equal(result.hits.length, 80);
   assert.equal(result.coverage.partial, true);
+  assert.equal(result.coverage.hitLimitReached, 80);
 });
 
 test("deadline is checked while walking cached messages", async (t) => {

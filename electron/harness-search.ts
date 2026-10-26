@@ -54,6 +54,8 @@ export interface HarnessSearchResult {
     searchedBackTo?: string;
     /** Some messages exceeded the safe per-line search limit. */
     longMessagesSkipped?: boolean;
+    /** The global hit cap stopped the search; value is the number returned. */
+    hitLimitReached?: number;
   };
 }
 
@@ -467,6 +469,12 @@ export function matchMessage(
   };
 }
 
+function oversizedPrefixIsMessage(prefix: string, agent: HarnessSearchRequest["agent"]): boolean {
+  if (agent === "claude") return /"type"\s*:\s*"(?:user|assistant)"/.test(prefix);
+  return /"type"\s*:\s*"response_item"/.test(prefix) &&
+    /"payload"\s*:\s*\{\s*"type"\s*:\s*"message"/.test(prefix);
+}
+
 export interface HarnessSearchOptions {
   /** Internal deterministic hooks; production callers use the 3-second budget. */
   timeBudgetMs?: number;
@@ -494,6 +502,7 @@ export async function searchHarnessSessions(
   const hits: HarnessSearchHit[] = [];
   let partial = discovery.partial;
   let longMessagesSkipped = false;
+  let hitLimitReached = false;
   let searchedBackToMs: number | undefined;
   let transcriptExamined = false;
   let lastTranscriptMtimeMs: number | undefined;
@@ -508,6 +517,7 @@ export async function searchHarnessSessions(
     if (!match) return;
     if (sessionHits[0] >= MAX_HITS_PER_SESSION || hits.length >= MAX_HITS_TOTAL) {
       partial = true;
+      if (hits.length >= MAX_HITS_TOTAL) hitLimitReached = true;
       return;
     }
     hits.push({
@@ -555,6 +565,7 @@ export async function searchHarnessSessions(
       }
       if (hits.length >= MAX_HITS_TOTAL && sessionIndex < sessions.length - 1) {
         partial = true;
+        hitLimitReached = true;
         break;
       }
       continue;
@@ -604,6 +615,9 @@ export async function searchHarnessSessions(
         chunkBytes: options.chunkBytes,
         onMaxCarryBytes: options.onMaxCarryBytes,
         onBytesRead: options.onBytesRead,
+        onOversizedLinePrefix: (prefix) => {
+          if (oversizedPrefixIsMessage(prefix, req.agent)) longMessagesSkipped = true;
+        },
       });
     } catch {
       scanResult = undefined;
@@ -618,7 +632,6 @@ export async function searchHarnessSessions(
     if (scanResult?.truncated) partial = true;
     if (scanResult?.skippedOversizedLines) {
       partial = true;
-      longMessagesSkipped = true;
     }
     if (!scanResult || scanResult.truncated) cacheable = false;
     if (cacheable) {
@@ -637,6 +650,7 @@ export async function searchHarnessSessions(
     // not visited; disclose that the returned result is a partial search.
     if (hits.length >= MAX_HITS_TOTAL && sessionIndex < sessions.length - 1) {
       partial = true;
+      hitLimitReached = true;
       break;
     }
   }
@@ -646,6 +660,7 @@ export async function searchHarnessSessions(
       partial,
       ...(options.signal?.aborted ? { cancelled: true } : {}),
       ...(longMessagesSkipped ? { longMessagesSkipped: true } : {}),
+      ...(hitLimitReached ? { hitLimitReached: MAX_HITS_TOTAL } : {}),
       ...(!discovery.partial && partial && searchedBackToMs === undefined && transcriptExamined && lastTranscriptMtimeMs !== undefined
         ? { searchedBackTo: new Date(lastTranscriptMtimeMs).toISOString() }
         : {}),

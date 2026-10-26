@@ -779,6 +779,8 @@ export interface HarnessSearchResult {
     searchedBackTo?: string;
     longMessagesSkipped?: boolean;
     cancelled?: boolean;
+    /** The global hit cap stopped the search; value is the number returned. */
+    hitLimitReached?: number;
   };
 }
 
