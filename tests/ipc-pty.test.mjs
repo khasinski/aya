@@ -174,11 +174,11 @@ test("history search rejects queries beyond the character and token limits at IP
   const base = { agent: "claude", cwd: "/tmp/project" };
   await assert.rejects(
     call("harness:search", { ...base, query: "x".repeat(257) }, "long", "pane"),
-    /at most 256 characters/,
+    /supports up to 256 characters/,
   );
   await assert.rejects(
     call("harness:search", { ...base, query: Array.from({ length: 17 }, (_, i) => `t${i}`).join(" ") }, "many", "pane"),
-    /at most 16 words/,
+    /supports up to 16 words/,
   );
   await call("harness:search", { ...base, query: Array.from({ length: 16 }, (_, i) => `t${i}`).join(" ") }, "limit", "pane");
   assert.equal(calls, 1, "invalid queries never reach the scanner");
@@ -207,6 +207,30 @@ test("history searches cap global concurrent scans and admit work when one finis
   assert.equal(requests.length, 5);
   requests[4].resolve({ hits: [], coverage: { partial: false } });
   await admitted;
+});
+
+test("a same-pane query waits for its aborted predecessor when all four scan slots are occupied", async () => {
+  const requests = [];
+  const { callFrom } = setup({
+    searchHarness: (_request, { signal }) => new Promise((resolve) => requests.push({ resolve, signal })),
+  });
+  const request = { agent: "claude", cwd: "/tmp/project", query: "needle" };
+  const pending = Array.from({ length: 4 }, (_, i) =>
+    callFrom(i + 1, "harness:search", request, `first-${i}`, `pane-${i}`),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const replacement = callFrom(1, "harness:search", request, "replacement", "pane-0");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests[0].signal.aborted, true);
+  assert.equal(requests.length, 4, "replacement waits rather than exceeding the global cap");
+
+  requests[0].resolve({ hits: [], coverage: { partial: false, cancelled: true } });
+  await pending[0];
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 5, "the replacement starts as soon as its own slot is free");
+  for (const entry of requests.slice(1)) entry.resolve({ hits: [], coverage: { partial: false } });
+  await Promise.all([...pending.slice(1), replacement]);
 });
 
 test("history searches in separate panes/windows run concurrently and cancellation stays in scope", async () => {

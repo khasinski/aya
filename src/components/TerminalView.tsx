@@ -1888,6 +1888,8 @@ interface FindBarProps {
   onClearTerminalMatches: () => void;
   /** A completed result can be supplied when restoring/rendering the bar. */
   initialHistoryResult?: HarnessSearchResult;
+  /** A refusal can be supplied when restoring/rendering the bar. */
+  initialHistoryError?: string;
 }
 
 // History (transcript) search: debounce keystrokes before the IPC round-trip
@@ -1915,6 +1917,7 @@ export function FindBar({
   command,
   onClearTerminalMatches,
   initialHistoryResult,
+  initialHistoryError,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [historyMode, setHistoryMode] = useState(initialHistoryResult !== undefined);
@@ -1923,6 +1926,7 @@ export function FindBar({
   // True once a transcript search has completed for the current query, so
   // "No matches" only shows after an actual (empty) result, not while typing.
   const [searched, setSearched] = useState(initialHistoryResult !== undefined);
+  const [historyError, setHistoryError] = useState<string | null>(initialHistoryError ?? null);
   const [expandedHit, setExpandedHit] = useState<number | null>(null);
   const historySeqRef = useRef(0);
   const historyRequestIdRef = useRef(0);
@@ -1946,6 +1950,7 @@ export function FindBar({
       setHits([]);
       setCoverage({ partial: false });
       setSearched(false);
+      setHistoryError(null);
       setExpandedHit(null);
       return;
     }
@@ -1954,6 +1959,7 @@ export function FindBar({
     setHits([]);
     setCoverage({ partial: false });
     setSearched(false);
+    setHistoryError(null);
     setExpandedHit(null);
     let requestId: string | undefined;
     const timer = window.setTimeout(() => {
@@ -1966,19 +1972,24 @@ export function FindBar({
             setHits([]);
             setCoverage({ partial: false });
             setSearched(false);
+            setHistoryError(null);
             setExpandedHit(null);
             return;
           }
           setHits(results.hits);
           setCoverage(results.coverage);
           setSearched(true);
+          setHistoryError(null);
           setExpandedHit(null);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (historySeqRef.current !== seq) return;
           setHits([]);
           setCoverage({ partial: false });
           setSearched(true);
+          const message = error instanceof Error ? error.message : "History search could not be started. Try again.";
+          const ipcMessage = message.match(/Error invoking remote method '[^']+': Error:\s*([\s\S]*)$/);
+          setHistoryError((ipcMessage?.[1] ?? message).trim());
         });
     }, HISTORY_SEARCH_DEBOUNCE_MS);
     return () => {
@@ -1997,6 +2008,7 @@ export function FindBar({
       setHits([]);
       setCoverage({ partial: false });
       setSearched(false);
+      setHistoryError(null);
       // Re-run the live terminal search for the query already in the box.
       onChange(value, false);
     }
@@ -2083,13 +2095,13 @@ export function FindBar({
           ✕
         </button>
       </div>
-      {historyActive && (searched || hits.length > 0) && (
+      {historyActive && (searched || hits.length > 0 || historyError !== null) && (
         <div className="aya-findbar-results">
           {hits.length === 0 ? (
             <div className="aya-findbar-empty">
-              {partialCoverageText
+              {historyError ?? (partialCoverageText
                 ? <FindBarCoverageLine coverage={coverage} hasHits={false} agentLabel={agentLabel} />
-                : `No matches in recent ${agentLabel} sessions for this directory`}
+                : `No matches in recent ${agentLabel} sessions for this directory`)}
             </div>
           ) : (
             hits.map((hit, index) => {

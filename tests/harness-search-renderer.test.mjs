@@ -115,3 +115,29 @@ test("FindBar renders partial coverage with hits and with an empty result", () =
   }));
   assert.doesNotMatch(completeMarkup, /aya-findbar-coverage/);
 });
+
+test("FindBar shows query and capacity refusals instead of claiming there were no matches", () => {
+  const common = {
+    value: "needle",
+    onChange() {},
+    onNext() {},
+    onPrev() {},
+    onClose() {},
+    historyAgent: "claude",
+    paneId: "pane-test",
+    cwd: "/tmp/project",
+    onClearTerminalMatches() {},
+    initialHistoryResult: { hits: [], coverage: { partial: false } },
+  };
+  for (const message of [
+    "History search supports up to 256 characters.",
+    "Too many history searches are running. Wait a moment and try again.",
+  ]) {
+    const markup = renderToStaticMarkup(createElement(FindBar, {
+      ...common,
+      initialHistoryError: message,
+    }));
+    assert.ok(markup.includes(message), `FindBar shows refusal: ${message}`);
+    assert.doesNotMatch(markup, /No matches in recent Claude sessions/);
+  }
+});

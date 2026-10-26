@@ -15,6 +15,15 @@ const MAX_ACTIVE_HARNESS_SEARCHES = 4;
 const MAX_HARNESS_QUERY_CHARS = 256;
 const MAX_HARNESS_QUERY_TOKENS = 16;
 
+interface ActiveHarnessSearch {
+  requestId: string;
+  senderId: number;
+  paneId: string;
+  controller: AbortController;
+  done: Promise<void>;
+  finish: () => void;
+}
+
 export interface PtyIpcDeps {
   ipcMain: Pick<IpcMain, "handle"> & Partial<Pick<IpcMain, "on">>;
   host: Pick<PtyHostClient, "write" | "resize" | "kill" | "getBuffer" | "getCwd" | "search" | "getSize">;
@@ -55,15 +64,10 @@ export interface PtyIpcDeps {
 
 export function registerPtyIpc(deps: PtyIpcDeps): void {
   const { ipcMain, host, gate } = deps;
-  const activeHarnessSearches = new Map<string, {
-    requestId: string;
-    senderId: number;
-    paneId: string;
-    controller: AbortController;
-  }>();
+  const activeHarnessSearches = new Map<string, ActiveHarnessSearch>();
   // Include superseded requests until their scanners actually stop. This keeps
   // rapid same-pane query changes from bypassing the global work limit.
-  const runningHarnessSearches = new Set<object>();
+  const runningHarnessSearches = new Set<ActiveHarnessSearch>();
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
     // This check belongs in main: remote spawns do not pass through
@@ -168,11 +172,11 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     }
     const query = requireString(r.query, "harness:search.query");
     if (query.length > MAX_HARNESS_QUERY_CHARS) {
-      throw new Error(`harness:search.query must be at most ${MAX_HARNESS_QUERY_CHARS} characters`);
+      throw new Error(`History search supports up to ${MAX_HARNESS_QUERY_CHARS} characters.`);
     }
     const queryTokens = query.trim().split(/\s+/).filter(Boolean);
     if (queryTokens.length > MAX_HARNESS_QUERY_TOKENS) {
-      throw new Error(`harness:search.query must have at most ${MAX_HARNESS_QUERY_TOKENS} words`);
+      throw new Error(`History search supports up to ${MAX_HARNESS_QUERY_TOKENS} words.`);
     }
     const searchRequest: HarnessSearchRequest = {
       agent,
@@ -188,24 +192,37 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     // its prior work without cancelling searches in another pane/window.
     const senderId = event?.sender?.id ?? -1;
     const key = JSON.stringify([senderId, paneId]);
-    activeHarnessSearches.get(key)?.controller.abort();
-    if (runningHarnessSearches.size >= MAX_ACTIVE_HARNESS_SEARCHES) {
-      throw new Error("Too many history searches are running. Wait a moment and try again.");
-    }
+    const previous = activeHarnessSearches.get(key);
+    previous?.controller.abort();
     const controller = new AbortController();
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => { finish = resolve; });
     const active = {
       requestId,
       senderId,
       paneId,
       controller,
+      done,
+      finish,
     };
     activeHarnessSearches.set(key, active);
-    runningHarnessSearches.add(active);
     try {
+      // Reuse a superseded pane's slot only after its scanner has observed
+      // cancellation. This prevents both cap races and false busy refusals
+      // while typing quickly in one pane.
+      if (previous) await previous.done;
+      if (controller.signal.aborted || activeHarnessSearches.get(key) !== active) {
+        return { hits: [], coverage: { partial: false, cancelled: true } };
+      }
+      if (runningHarnessSearches.size >= MAX_ACTIVE_HARNESS_SEARCHES) {
+        throw new Error("Too many history searches are running. Wait a moment and try again.");
+      }
+      runningHarnessSearches.add(active);
       return await (deps.searchHarness ?? searchHarnessSessions)(searchRequest, { signal: controller.signal });
     } finally {
       runningHarnessSearches.delete(active);
       if (activeHarnessSearches.get(key) === active) activeHarnessSearches.delete(key);
+      active.finish();
     }
   });
   ipcMain.handle("harness:search-cancel", (event, rawRequestId: unknown, rawPaneId: unknown) => {
