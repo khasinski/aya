@@ -22,6 +22,8 @@ type CancelReconnect = () => void;
 export interface RemoteTerminalManagerDeps {
   connect: (sshTarget: string) => TerminalConnection;
   sendEvent: (event: PtyEvent) => void;
+  /** Rechecked by the client after its SSH bridge is ready, immediately before pty:spawn is written. */
+  assertSpawnAllowed?: () => void;
   /** Electron webContents ids that will receive the next broadcast event. */
   outputSinks?: () => number[];
   schedule?: (callback: () => void, delayMs: number) => CancelReconnect;
@@ -161,7 +163,11 @@ export class RemoteTerminalManager {
           throw error;
         }
       } else {
-        await client.spawnTerminal(project, request.presetId ?? "", request.cols, request.rows, request.ptyId);
+        // RemoteTerminalClient runs the guard after SSH readiness and just
+        // before writing pty:spawn. Once that frame is sent, the remote host
+        // owns the PTY; finish registering it locally so an update restart can
+        // reattach to that same host session instead of abandoning it.
+        await client.spawnTerminal(project, request.presetId ?? "", request.cols, request.rows, request.ptyId, this.deps.assertSpawnAllowed);
         this.terminals.set(request.ptyId, terminal);
         await this.attach(request.ptyId, terminal);
       }

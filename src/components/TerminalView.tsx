@@ -45,12 +45,14 @@ import { DEBUG_TERMINAL_INPUT_STORAGE_KEY } from "../storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "../window-events";
 import {
   hadNoSession,
+  markNoSession,
   markMountDecided,
   wasMountDecided,
   wasSpawned,
 } from "../spawnSession";
 import { SnippetBar } from "./SnippetBar";
 import { terminalFocusRetryStillOwned } from "../terminal-focus-retry";
+import { displayIpcError, UPDATE_SPAWN_REFUSAL } from "../update-spawn";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
 // 80x24 a PTY gets before xterm has measured the pane (used at every spawn).
@@ -134,6 +136,8 @@ interface Props {
    *  Shift+Enter hint. The host resets the terminal's exitCode/status so the
    *  PTY event loop can flow again. */
   onRequestRestart?: () => void;
+  /** Marks a rejected spawn as stopped so the pane never claims to be running without a PTY. */
+  onSpawnFailure?: (terminalId: string) => void;
   /** Bumped by App when the user right-clicks → Restart on this terminal.
    *  The component reuses its xterm instance and spawns a fresh PTY. */
   restartTrigger: number;
@@ -322,6 +326,7 @@ function TerminalViewComponent({
   onCloseProject,
   onPtyData,
   onRequestRestart,
+  onSpawnFailure,
   restartTrigger,
   isActivePane = false,
   paneStyle,
@@ -410,10 +415,18 @@ function TerminalViewComponent({
       setHistoryNotice(notice=>notice??"The terminal host is disconnected. The process may still be running; input remains disabled.");
     }else{
       term.options.disableStdin=remoteReadOnlyRef.current;
-      term.write(`\r\n[Terminal attachment failed: ${String(error).replace(/[\x00-\x1f\x7f]/g,' ')}]\r\n`);
+      // The host can refuse a spawn before it emits the usual no-session
+      // event (for example while preparing an update). Remember that this
+      // pane has no live session so a later view remount does not silently
+      // turn into an automatic retry. An explicit Restart clears the marker.
+      markNoSession(terminal.id);
+      onSpawnFailure?.(terminal.id);
+      const message = displayIpcError(error).replace(/[\x00-\x1f\x7f]/g, " ");
+      if (message === UPDATE_SPAWN_REFUSAL) setHistoryNotice(message);
+      else term.write(`\r\n[Terminal attachment failed: ${message}]\r\n`);
     }
     markRestoring(false);
-  },[markRestoring]);
+  },[markRestoring, onSpawnFailure, terminal.id]);
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );

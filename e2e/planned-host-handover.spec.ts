@@ -8,7 +8,7 @@ const root=join(__dirname,'..'),hostScript=join(root,'dist-electron/pty-host.js'
 const rulesScript=join(root,'dist-electron/agent-screen-rules.js'),rulesBuilt=readFileSync(rulesScript),packageFile=join(root,'package.json'),packageBuilt=readFileSync(packageFile);
 const apps:ElectronApplication[]=[];
 test.afterEach(async()=>{writeFileSync(hostScript,built);writeFileSync(rulesScript,rulesBuilt);writeFileSync(packageFile,packageBuilt);for(const app of apps.splice(0))await closeAndWait(app);});
-async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false,dateOffsetMs=0,failOrdinaryAnnouncement=false,failStatusAfterReplacedTransfer=false){
+async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false,dateOffsetMs=0,failOrdinaryAnnouncement=false,failStatusAfterReplacedTransfer=false,blockUpdatePrepare=false){
  const wrapper=join(seeded.root,'handover-main.js');
  // Wrapper code is constant; disposable paths/options are data, never JS source.
  writeFileSync(wrapper,`const electron=require('electron'),path=require('node:path'),root=process.env.AYA_TEST_APP_ROOT;
@@ -45,6 +45,10 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
    return status;
   };
  }
+ if(process.env.AYA_TEST_BLOCK_UPDATE_PREPARE==='1'){
+  const fs=require('node:fs'),{PtyHostClient}=require(path.join(root,'dist-electron/pty-host-client.js')),original=PtyHostClient.prototype.preparePlannedHandover;
+  PtyHostClient.prototype.preparePlannedHandover=async function(...args){const state=await original.apply(this,args);fs.writeFileSync(process.env.AYA_TEST_UPDATE_PREPARE_READY,'ready');const deadline=Date.now()+15000;while(!fs.existsSync(process.env.AYA_TEST_UPDATE_PREPARE_RELEASE)){if(Date.now()>deadline)throw Error('test update preparation gate expired');await new Promise(r=>setTimeout(r,2));}throw Error('injected update preparation failure');};
+ }
  const offset=Number(process.env.AYA_TEST_DATE_OFFSET_MS||0);
  if(offset){const now=Date.now;Date.now=()=>now()+offset;}
  require(path.join(root,'dist-electron/main.js'));
@@ -52,7 +56,7 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
  const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
   AYA_TEST_HANDOVER_CHOICE:String(choice),AYA_TEST_PLAIN_HOST:plainHost?'1':'0',AYA_TEST_PLAIN_NODE:process.execPath,AYA_TEST_PLAIN_RUNTIME:JSON.stringify({node:process.versions.node,electron:null}),
   AYA_TEST_BLOCK_DISPLAY:blockDisplay?'1':'0',AYA_TEST_DISPLAY_RELEASE:join(seeded.root,'release-display'),AYA_TEST_REAL_UPDATE:realUpdate?'1':'0',
-  AYA_TEST_DATE_OFFSET_MS:String(dateOffsetMs),AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT:failOrdinaryAnnouncement?'1':'0',AYA_TEST_FAIL_STATUS_AFTER_REPLACED_TRANSFER:failStatusAfterReplacedTransfer?'1':'0',AYA_TEST_QUESTIONS_FILE:join(seeded.root,'handover-questions.json'),AYA_TEST_ORDINARY_RESULT:join(seeded.root,'ordinary-result'),
+  AYA_TEST_DATE_OFFSET_MS:String(dateOffsetMs),AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT:failOrdinaryAnnouncement?'1':'0',AYA_TEST_FAIL_STATUS_AFTER_REPLACED_TRANSFER:failStatusAfterReplacedTransfer?'1':'0',AYA_TEST_BLOCK_UPDATE_PREPARE:blockUpdatePrepare?'1':'0',AYA_TEST_UPDATE_PREPARE_READY:join(seeded.root,'update-prepare-ready'),AYA_TEST_UPDATE_PREPARE_RELEASE:join(seeded.root,'release-update-prepare'),AYA_TEST_QUESTIONS_FILE:join(seeded.root,'handover-questions.json'),AYA_TEST_ORDINARY_RESULT:join(seeded.root,'ordinary-result'),
  }})});apps.push(app);
  return {app,window:await app.firstWindow()};
 }
@@ -210,6 +214,40 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
  await expect(visiblePane(second.window,'shell 1').locator('.xterm-rows')).toContainText('ACTUAL_UPDATE_ROUTE');
  expect(identities(seeded.ayaHome)).toEqual(before);expect(await foreground(second.app)).toBe(command);
  expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
+});
+
+test('terminal creation is disabled and safely refused while update preparation later fails',async({seeded})=>{
+ test.setTimeout(45000);const first=await launch(seeded,1,false,true,false,0,false,false,true);await waitForShellReady(first.window);
+ await first.window.evaluate(()=>window.aya.ptyWrite('tab-left','exit\r'));
+ await expect(visiblePane(first.window,'shell 1').locator('.xterm-rows')).toContainText(/process exited with code/);
+ await expect.poll(()=>inventory(seeded.ayaHome).panes.some(p=>p.id==='tab-left')).toBe(false);
+ await first.app.evaluate(({app})=>{(globalThis as unknown as {testUpdater:{emit:(event:string,data:unknown)=>void}}).testUpdater.emit('update-downloaded',{version:app.getVersion()});});
+ void first.window.evaluate(()=>window.aya.installUpdate());
+ const ready=join(seeded.root,'update-prepare-ready');await expect.poll(()=>existsSync(ready)).toBe(true);
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.getUpdateStatus())).toMatchObject({preparingUpdate:true});
+ await expect(first.window.locator('.aya-launcher-btn').first()).toBeDisabled();
+ await first.window.locator('.aya-sidebar-row[data-terminal-id="tab-left"]').click({button:'right'});
+ await first.window.getByRole('menuitem',{name:'Restart terminal',exact:true}).click();
+ const pane=visiblePane(first.window,'shell 1');
+ await expect(pane.getByTestId('terminal-history-notice')).toHaveText("Aya is getting ready to restart for an update. This terminal wasn't started.");
+ await expect(pane.getByTestId('terminal-history-notice')).not.toContainText(/Error invoking remote method|Error:/);
+ await expect(first.window.getByRole('img',{name:'shell 1: Terminal is stopped. Press Shift+Enter to restart it.'})).toBeVisible();
+ await first.window.locator('.aya-sidebar-row[data-terminal-id="tab-left"]').click({button:'right'});
+ await expect(first.window.getByRole('menuitem',{name:'Restart terminal',exact:true})).toBeEnabled();
+ await first.window.keyboard.press('Escape');
+ await expect.poll(()=>inventory(seeded.ayaHome).panes.some(p=>p.id==='tab-left')).toBe(false);
+ writeFileSync(join(seeded.root,'release-update-prepare'),'go');
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.getUpdateStatus())).toMatchObject({phase:'downloaded'});
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.getUpdateStatus())).not.toHaveProperty('preparingUpdate');
+ await expect(first.window.locator('.aya-launcher-btn').first()).toBeEnabled();
+ await expect.poll(()=>inventory(seeded.ayaHome).panes.some(p=>p.id==='tab-left')).toBe(false);
+ const beforeIds=inventory(seeded.ayaHome).panes.map(p=>p.id);
+ await first.window.locator('.aya-launcher-btn').first().click();
+ await expect.poll(()=>inventory(seeded.ayaHome).panes.filter(p=>!beforeIds.includes(p.id))).toHaveLength(1);
+ const created=inventory(seeded.ayaHome).panes.find(p=>!beforeIds.includes(p.id))!;
+ expect(inventory(seeded.ayaHome).panes).toHaveLength(beforeIds.length+1);
+ await first.window.evaluate(id=>window.aya.ptyWrite(id,"printf 'AFTER_CANCEL\\n'\r"),created.id);
+ await expect.poll(()=>first.window.evaluate(id=>window.aya.ptyBuffer(id),created.id)).toContain('AFTER_CANCEL\r\n');
 });
 
 

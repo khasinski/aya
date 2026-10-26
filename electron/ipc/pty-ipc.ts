@@ -27,6 +27,8 @@ export interface PtyIpcDeps {
   prepareSpawn: (req: SpawnRequest) => Promise<SpawnRequest>;
   /** Hands the prepared spawn to the host. */
   sendSpawn: (req: SpawnRequest) => Promise<boolean>;
+  /** Refuses new terminals while an update handover is being prepared. */
+  assertSpawnAllowed?: () => void;
   /** Removes the brief files written for a pane. */
   forgetBrief: (ptyId: string) => Promise<void>;
   /** Explicit replacement invalidates only this pane's unapplied display. */
@@ -49,7 +51,13 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   const { ipcMain, host, gate } = deps;
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
+    // This check belongs in main: remote spawns do not pass through
+    // PtyHostClient.spawn, which has its own host-freeze refusal.
+    deps.assertSpawnAllowed?.();
     return gate.spawn(validated.ptyId, () => deps.prepareSpawn(validated), prepared => {
+      // Preparation can await filesystem/config work. Recheck before any
+      // local or remote route is dispatched in case an update began meanwhile.
+      deps.assertSpawnAllowed?.();
       // Keep cleanup authority while preparation can still be cancelled. The
       // gate invokes send only for a surviving explicit request.
       if (!validated.attachOnly && !validated.attachIfReused && !validated.replayAfter) deps.forgetDisplay?.(validated.ptyId);

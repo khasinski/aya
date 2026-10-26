@@ -107,6 +107,33 @@ test("support checks and construction leave the platform updater untouched", asy
   assert.equal(UPDATE_AUTO_CHECK_DELAY_MS, 12_000);
 });
 
+test("install preparation is announced immediately and stays active only after a successful handover", async () => {
+  for (const outcome of ["succeeds", "fails", "cancelled"]) {
+    let settle;
+    const preparation = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+    const s = setup({ preparePlannedUpdate: () => preparation });
+    downloaded(s);
+    const installing = s.updates.install();
+    assert.equal(s.updates.getUpdateStatus().preparingUpdate, true, `${outcome}: preparation starts before awaiting`);
+    assert.equal(latest(s).preparingUpdate, true, `${outcome}: all windows receive the disabled state`);
+    if (outcome === "succeeds") {
+      settle.resolve(true);
+      await installing;
+      assert.equal(s.updates.getUpdateStatus().preparingUpdate, true, "successful handover remains active until Aya quits");
+      assert.equal(s.log.some(([what]) => what === "install"), true);
+    } else if (outcome === "fails") {
+      settle.reject(new Error("checkpoint failed"));
+      await assert.rejects(installing, /checkpoint failed/);
+      assert.equal(s.updates.getUpdateStatus().preparingUpdate, undefined);
+    } else {
+      settle.resolve(false);
+      await installing;
+      assert.equal(s.updates.getUpdateStatus().preparingUpdate, undefined);
+      assert.equal(s.log.some(([what]) => what === "install"), false);
+    }
+  }
+});
+
 test("configuration runs once, sets updater flags and broadcasts every event to live windows", () => {
   const s = setup();
   s.updates.configureAutoUpdates(s.windows[0]);
@@ -244,8 +271,10 @@ test("background work uses the same Restart to update prompt and honors cancella
   s.deps.relaunchDeps.panes = async () => [{ id: "a", name: "agent" }];
   downloaded(s);
   await s.updates.install();
-  assert.equal(s.log.at(-1)[1], "Restart to update");
-  assert.match(s.log.at(-1)[2], /^Restarting to update stops what these panes are doing \(agent: 1 background terminal\)/);
+  const ask = s.log.findLast(([what]) => what === "ask");
+  assert.equal(ask[1], "Restart to update");
+  assert.match(ask[2], /^Restarting to update stops what these panes are doing \(agent: 1 background terminal\)/);
+  assert.equal(s.updates.getUpdateStatus().preparingUpdate, undefined);
   assert.equal(await readPendingUpdate(), null);
   assert.equal(s.log.some(([what]) => what === "install"), false);
 });
