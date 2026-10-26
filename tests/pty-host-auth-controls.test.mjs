@@ -53,6 +53,15 @@ async function waitForTargetsRetired(targets,identify,timeoutMs=5000){
  if(states.some(state=>!state.known))throw Error('fixture cannot verify host retirement after repeated identity probes');
  throw Error('fixture host outlived cleanup');
 }
+async function stopOwnedPendingHost(child,targets){
+ if(!child||child.exitCode!==null||child.signalCode!==null||targets.some(target=>target.pid===child.pid))return;
+ // This is the ChildProcess spawned by this fixture, so its process handle is
+ // the safe identity even when the native PID probe is temporarily unavailable.
+ const exited=once(child,'exit');child.kill('SIGTERM');
+ if(child.exitCode===null&&child.signalCode===null){
+  let timer;try{await Promise.race([exited,new Promise((_resolve,reject)=>{timer=setTimeout(()=>reject(Error('fixture-owned planned host did not exit')),5000);})]);}finally{clearTimeout(timer);}
+ }
+}
 function fixtureRetirementTargets(c,ticket,identify=ownerProcessStartIdentity){
  const child=c.pendingPlannedHost,targets=[{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity}];
  if(c.lastHostPid&&c.lastHostStart)targets.push({pid:c.lastHostPid,startIdentity:c.lastHostStart});
@@ -82,6 +91,7 @@ async function retirePlannedFixture(c,ticket,overrides={}){
    if(child?.pid===target.pid&&child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');
    else{const result=(overrides.terminate??native.terminateVerifiedProcess)(target,target.pid);if(!['signalled','absent','mismatch'].includes(result))throw Error('fixture cleanup cannot verify host retirement: '+result);}
   }
+  await stopOwnedPendingHost(child,targets);
   await waitForTargetsRetired(targets,identify);
   await (overrides.cleanupOwner??cleanupNativeOwner)(process.env.AYA_HOME);
  }
@@ -409,4 +419,13 @@ test('planned cleanup retries a transient native process-identity failure before
  const identity=()=>{probes++;if(probes===1)throw Error('Cannot verify process identity');return null;};
  await retirePlannedFixture(client,ticket,{identity,cleanupOwner:async()=>{ownerCleaned=true;}});
  assert.ok(probes>=2);assert.equal(ownerCleaned,true);
+});
+
+test('planned cleanup stops its owned pending host when the first identity probe is transiently unknown',async()=>{
+ const {EventEmitter}=await import('node:events');let probes=0,signals=0,ownerCleaned=false;
+ const child=new EventEmitter();Object.assign(child,{pid:456,exitCode:null,signalCode:null,kill(signal){signals++;assert.equal(signal,'SIGTERM');queueMicrotask(()=>{this.signalCode=signal;this.emit('exit',null,signal);});return true;}});
+ const ticket={hostPid:123,hostStartIdentity:'1:2'},client={pendingPlannedHost:child,lastHostPid:null,lastHostStart:null,hostAsked:false,isConnected:()=>false,openSocket:async()=>{throw Error('fixture socket gone');},dispose(){},dropSocket(){}};
+ const identity=pid=>{probes++;if(pid===child.pid&&probes===1)throw Error('Cannot verify process identity');return null;};
+ await retirePlannedFixture(client,ticket,{identity,cleanupOwner:async()=>{ownerCleaned=true;}});
+ assert.ok(probes>=2);assert.equal(signals,1);assert.equal(child.signalCode,'SIGTERM');assert.equal(ownerCleaned,true);
 });
