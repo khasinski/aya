@@ -472,7 +472,10 @@ async function parseRollout(
   // read of such a truncated file still has no result to preserve.
   if (scan.truncated && cached) {
     for (const account of cached.accounts) {
-      if (!latestByAccount.has(account.id)) latestByAccount.set(account.id, account);
+      if (
+        !latestByAccount.has(account.id) &&
+        latestByAccount.size < MAX_CODEX_ACCOUNTS_PER_ROLLOUT
+      ) latestByAccount.set(account.id, account);
     }
   }
   const parsed: ParsedRollout = {

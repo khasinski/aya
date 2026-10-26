@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   mkdtempSync,
   mkdirSync,
+  appendFileSync,
   writeFileSync,
   utimesSync,
   rmSync,
@@ -273,6 +274,41 @@ test("a rollout with 128 large account names caches only capped account text", a
     assert.equal(accounts.length, 128);
     assert.ok(accounts.every((account) => account.id.length <= MAX_CODEX_ACCOUNT_TEXT_CHARS));
     assert.ok(accounts.every((account) => account.label.length <= MAX_CODEX_ACCOUNT_TEXT_CHARS));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
+test("truncated rollout account merge stays within the 128-account cap", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-account-cap-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-accounts.jsonl");
+  const accounts = Array.from({ length: 128 }, (_, i) => JSON.stringify({
+    timestamp: "2026-10-26T11:00:00.000Z",
+    payload: {
+      type: "token_count",
+      account_id: `account-${i}`,
+      rate_limits: { account_id: `account-${i}`, primary: { used_percent: i }, secondary: { used_percent: i } },
+    },
+  }));
+  writeFileSync(file, `${accounts.join("\n")}\n`);
+  try {
+    const source = [{ id: "codex", label: "Codex", home }];
+    assert.equal((await readCodexUsageAccountsFromSources(source)).length, 128);
+    appendFileSync(file, `${"x".repeat(CODEX_USAGE_TAIL_MAX_BYTES + 128)}\n${JSON.stringify({
+      timestamp: "2026-10-26T12:00:00.000Z",
+      payload: {
+        type: "token_count",
+        account_id: "newest-account",
+        rate_limits: { account_id: "newest-account", primary: { used_percent: 99 }, secondary: { used_percent: 99 } },
+      },
+    })}\n`);
+    const merged = await readCodexUsageAccountsFromSources(source);
+    assert.equal(merged.length, 128);
+    assert.ok(merged.some((account) => account.id === "newest-account"));
   } finally {
     rmSync(home, { recursive: true, force: true });
     resetCodexUsageCaches();
