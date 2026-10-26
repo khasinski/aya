@@ -364,6 +364,25 @@ test("deadline during session discovery reports no searched boundary", async (t)
   }
 });
 
+test("partial discovery never claims a searched boundary from its incomplete file list", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-discovery-partial-date-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeClaudeSession(root, "one-found", [
+    claudeMessage("needle found", "2026-10-26T09:00:00.000Z"),
+  ], Math.floor(Date.now() / 1000));
+  let calls = 0;
+  const clockValues = [0, 0, 0, 10, 0, 0, 0, 0, 0];
+  const result = await searchHarnessSessions({
+    agent: "claude", cwd: CWD, configDir: root, query: "needle",
+  }, {
+    timeBudgetMs: 5,
+    now: () => clockValues[calls++] ?? 0,
+  });
+  assert.equal(result.hits.length, 1);
+  assert.equal(result.coverage.partial, true);
+  assert.equal(result.coverage.searchedBackTo, undefined);
+});
+
 test("a superseded history search stops scanning after its signal is aborted", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "aya-hsearch-cancel-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

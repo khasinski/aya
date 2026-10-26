@@ -51,11 +51,12 @@ export interface PtyIpcDeps {
 
 export function registerPtyIpc(deps: PtyIpcDeps): void {
   const { ipcMain, host, gate } = deps;
-  let activeHarnessSearch: {
+  const activeHarnessSearches = new Map<string, {
     requestId: string;
     senderId: number;
+    paneId: string;
     controller: AbortController;
-  } | undefined;
+  }>();
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
     // This check belongs in main: remote spawns do not pass through
@@ -145,12 +146,14 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     host.search(requireString(query, "pty:search.query")),
   );
-  ipcMain.handle("harness:search", async (event, req: unknown, rawRequestId: unknown) => {
+  ipcMain.handle("harness:search", async (event, req: unknown, rawRequestId: unknown, rawPaneId: unknown) => {
     if (typeof req !== "object" || req === null) {
       throw new Error("harness:search: request must be an object");
     }
     const requestId = requireString(rawRequestId, "harness:search.requestId");
     if (requestId.length > 256) throw new Error("harness:search.requestId is too long");
+    const paneId = requireString(rawPaneId, "harness:search.paneId");
+    if (paneId.length > 256) throw new Error("harness:search.paneId is too long");
     const r = req as Record<string, unknown>;
     const agent = requireString(r.agent, "harness:search.agent");
     if (agent !== "claude" && agent !== "codex") {
@@ -166,27 +169,33 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
       command: r.command === undefined ? undefined : requireString(r.command, "harness:search.command"),
       query: requireString(r.query, "harness:search.query"),
     };
-    // History is one interactive search surface. A newer query supersedes the
-    // previous scan rather than letting quick typing stack disk work in main.
-    activeHarnessSearch?.controller.abort();
+    // Each find bar can run one scan. A newer query in that same pane stops
+    // its prior work without cancelling searches in another pane/window.
+    const senderId = event?.sender?.id ?? -1;
+    const key = JSON.stringify([senderId, paneId]);
+    activeHarnessSearches.get(key)?.controller.abort();
     const controller = new AbortController();
     const active = {
       requestId,
-      senderId: event?.sender?.id ?? -1,
+      senderId,
+      paneId,
       controller,
     };
-    activeHarnessSearch = active;
+    activeHarnessSearches.set(key, active);
     try {
       return await (deps.searchHarness ?? searchHarnessSessions)(searchRequest, { signal: controller.signal });
     } finally {
-      if (activeHarnessSearch === active) activeHarnessSearch = undefined;
+      if (activeHarnessSearches.get(key) === active) activeHarnessSearches.delete(key);
     }
   });
-  ipcMain.handle("harness:search-cancel", (event, rawRequestId: unknown) => {
+  ipcMain.handle("harness:search-cancel", (event, rawRequestId: unknown, rawPaneId: unknown) => {
     const requestId = requireString(rawRequestId, "harness:search-cancel.requestId");
-    if (activeHarnessSearch?.requestId === requestId &&
-        activeHarnessSearch.senderId === (event?.sender?.id ?? -1)) {
-      activeHarnessSearch.controller.abort();
+    const paneId = requireString(rawPaneId, "harness:search-cancel.paneId");
+    const senderId = event?.sender?.id ?? -1;
+    const key = JSON.stringify([senderId, paneId]);
+    const active = activeHarnessSearches.get(key);
+    if (active?.requestId === requestId && active.senderId === senderId && active.paneId === paneId) {
+      active.controller.abort();
     }
   });
   ipcMain.handle("pty-host:restart", async () => deps.restartHost());

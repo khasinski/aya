@@ -20,6 +20,7 @@
     "src/project-timeline.ts",
     "src/attention.ts",
     "src/components/TerminalStatusDot.tsx",
+    "src/components/FindBarCoverageLine.tsx",
     "src/colors.ts",
     "src/control-status-target.ts",
     "src/team-edit.ts",

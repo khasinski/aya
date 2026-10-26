@@ -642,10 +642,10 @@ export async function searchHarnessSessions(
       partial,
       ...(options.signal?.aborted ? { cancelled: true } : {}),
       ...(longMessagesSkipped ? { longMessagesSkipped: true } : {}),
-      ...(partial && searchedBackToMs === undefined && transcriptExamined && lastTranscriptMtimeMs !== undefined
+      ...(!discovery.partial && partial && searchedBackToMs === undefined && transcriptExamined && lastTranscriptMtimeMs !== undefined
         ? { searchedBackTo: new Date(lastTranscriptMtimeMs).toISOString() }
         : {}),
-      ...(partial && searchedBackToMs !== undefined
+      ...(!discovery.partial && partial && searchedBackToMs !== undefined
         ? { searchedBackTo: new Date(searchedBackToMs).toISOString() }
         : {}),
     },

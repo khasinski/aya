@@ -25,6 +25,7 @@ import type {
 } from "../types";
 import { formatHarnessSearchCoverage } from "../harness-search-coverage";
 import { beginHistorySearch } from "../harness-search-sequence";
+import { FindBarCoverageLine } from "./FindBarCoverageLine";
 import { effectiveAgent } from "../agentPreset";
 import { ptyEventBus } from "../ptyEventBus";
 import type { SettingsTab } from "../settings-tabs";
@@ -1830,6 +1831,7 @@ function TerminalViewComponent({
             }
           }}
           historyAgent={findHistoryAgent}
+          paneId={terminal.id}
           cwd={cwd}
           configDir={preset.configDir}
           command={preset.command}
@@ -1877,6 +1879,7 @@ interface FindBarProps {
   onClose: () => void;
   /** Non-null enables the experimental History mode for this agent tab. */
   historyAgent: "claude" | "codex" | null;
+  paneId: string;
   cwd: string;
   configDir?: string;
   /** The preset's command: an inline CODEX_HOME there moves the history too. */
@@ -1904,6 +1907,7 @@ function FindBar({
   onPrev,
   onClose,
   historyAgent,
+  paneId,
   cwd,
   configDir,
   command,
@@ -1942,14 +1946,26 @@ function FindBar({
       setExpandedHit(null);
       return;
     }
+    // Results belong to the previous query and must not remain visible under
+    // this one while its debounced request is waiting or being cancelled.
+    setHits([]);
+    setCoverage({ partial: false });
+    setSearched(false);
+    setExpandedHit(null);
     let requestId: string | undefined;
     const timer = window.setTimeout(() => {
       requestId = `history-${seq}-${++historyRequestIdRef.current}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       window.aya
-        .harnessSearch({ agent: historyAgent, cwd, configDir, command, query }, requestId)
+        .harnessSearch({ agent: historyAgent, cwd, configDir, command, query }, requestId, paneId)
         .then((results) => {
           if (historySeqRef.current !== seq) return; // stale response
-          if (results.coverage.cancelled) return;
+          if (results.coverage.cancelled) {
+            setHits([]);
+            setCoverage({ partial: false });
+            setSearched(false);
+            setExpandedHit(null);
+            return;
+          }
           setHits(results.hits);
           setCoverage(results.coverage);
           setSearched(true);
@@ -1964,9 +1980,9 @@ function FindBar({
     }, HISTORY_SEARCH_DEBOUNCE_MS);
     return () => {
       window.clearTimeout(timer);
-      if (requestId) void window.aya.harnessSearchCancel(requestId).catch(() => {});
+      if (requestId) void window.aya.harnessSearchCancel(requestId, paneId).catch(() => {});
     };
-  }, [historyActive, historyAgent, cwd, configDir, command, query]);
+  }, [historyActive, historyAgent, cwd, configDir, command, query, paneId]);
 
   const switchMode = (toHistory: boolean) => {
     if (toHistory === historyMode) return;
@@ -2068,7 +2084,9 @@ function FindBar({
         <div className="aya-findbar-results">
           {hits.length === 0 ? (
             <div className="aya-findbar-empty">
-              {partialCoverageText ?? `No matches in recent ${agentLabel} sessions for this directory`}
+              {partialCoverageText
+                ? <FindBarCoverageLine coverage={coverage} hasHits={false} agentLabel={agentLabel} />
+                : `No matches in recent ${agentLabel} sessions for this directory`}
             </div>
           ) : (
             hits.map((hit, index) => {
@@ -2114,9 +2132,7 @@ function FindBar({
             })
           )}
           {partialCoverageText && hits.length > 0 && (
-            <div className="aya-findbar-coverage">
-              {partialCoverageText}
-            </div>
+            <FindBarCoverageLine coverage={coverage} hasHits agentLabel={agentLabel} />
           )}
         </div>
       )}

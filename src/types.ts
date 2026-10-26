@@ -858,8 +858,8 @@ export interface AyaApi {
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
-  harnessSearch(req: HarnessSearchRequest, requestId: string): Promise<HarnessSearchResult>;
-  harnessSearchCancel(requestId: string): Promise<void>;
+  harnessSearch(req: HarnessSearchRequest, requestId: string, paneId: string): Promise<HarnessSearchResult>;
+  harnessSearchCancel(requestId: string, paneId: string): Promise<void>;
   restartPtyHost(): Promise<void>;
   retryPtyHostRecovery():Promise<boolean>;
   /** Stop running hosts this Aya does not use; returns the pids signalled. */

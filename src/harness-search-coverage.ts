@@ -13,7 +13,7 @@ export function formatHarnessSearchCoverage(
   }
   const date = formatDate(coverage.searchedBackTo);
   const message = hasHits
-    ? `Searched back to ${date} in long sessions`
+    ? `Searched back to ${date}`
     : `No matches since ${date} in recent ${agentLabel} sessions for this directory`;
   return coverage.longMessagesSkipped
     ? `${message} (very long messages were not searched)`
