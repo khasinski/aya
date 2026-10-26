@@ -4,6 +4,7 @@
 
 import { exec, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
@@ -22,6 +23,8 @@ const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
 const UNTRACKED_FILE_HEAD_MAX_BYTES = 256 * 1024;
 const UNTRACKED_DIFF_OMITTED_MARKER =
   "[Additional untracked file diffs omitted: the combined diff reached the 5 MB limit.]";
+const TRACKED_DIFF_TRIMMED_MARKER =
+  "[Tracked diff shortened to leave room for the untracked-file notice.]";
 export const GIT_ERROR_MESSAGE_MAX_CHARS = 300;
 
 // Aya only observes repository state. `git status` can otherwise refresh the
@@ -608,6 +611,13 @@ function syntheticUntrackedPlaceholder(file: GitChangedFile, reason: string): st
   ].join("\n");
 }
 
+function utf8Prefix(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, "utf8");
+  let end = Math.min(bytes.length, maxBytes);
+  while (end > 0 && !isUtf8(bytes.subarray(0, end))) end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+}
+
 /** Read only a bounded head from a regular untracked file. lstat and the inode
  * check prevent following a symlink that appears between status and open. */
 async function untrackedFileDiff(
@@ -631,7 +641,10 @@ async function untrackedFileDiff(
 
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    handle = await open(fullPath, "r");
+    handle = await open(
+      fullPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    );
     const [opened, current] = await Promise.all([handle.stat(), lstat(fullPath)]);
     if (
       current.isSymbolicLink() ||
@@ -650,7 +663,12 @@ async function untrackedFileDiff(
     }
 
     const head = Buffer.alloc(UNTRACKED_FILE_HEAD_MAX_BYTES + 1);
-    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    let bytesRead = 0;
+    while (bytesRead < head.length) {
+      const result = await handle.read(head, bytesRead, head.length - bytesRead, bytesRead);
+      if (result.bytesRead <= 0) break;
+      bytesRead += result.bytesRead;
+    }
     if (bytesRead > UNTRACKED_FILE_HEAD_MAX_BYTES) {
       return syntheticUntrackedPlaceholder(
         file,
@@ -680,15 +698,28 @@ export async function getGitDiff(directory: string): Promise<string> {
     ]);
     const untracked = files.filter((file) => file.status === "??");
     let combined = diff.trimEnd();
+    const markerBytes = Buffer.byteLength(UNTRACKED_DIFF_OMITTED_MARKER, "utf8");
+    const trackedTrimmedMarkerBytes = Buffer.byteLength(TRACKED_DIFF_TRIMMED_MARKER, "utf8");
+    if (
+      untracked.length > 0 &&
+      Buffer.byteLength(combined, "utf8") + markerBytes + 1 > GIT_DIFF_MAX_BUFFER_BYTES
+    ) {
+      const trackedBudget = GIT_DIFF_MAX_BUFFER_BYTES - markerBytes - trackedTrimmedMarkerBytes - 2;
+      combined = utf8Prefix(combined, trackedBudget).trimEnd();
+      const separator = combined ? "\n" : "";
+      combined += `${separator}${TRACKED_DIFF_TRIMMED_MARKER}\n${UNTRACKED_DIFF_OMITTED_MARKER}`;
+      return combined;
+    }
     for (let index = 0; index < untracked.length; index += 1) {
       const entry = await untrackedFileDiff(directory, untracked[index]);
       if (!entry) continue;
       const separator = combined ? "\n" : "";
       const appendBytes = Buffer.byteLength(separator + entry, "utf8");
       const remaining = GIT_DIFF_MAX_BUFFER_BYTES - Buffer.byteLength(combined, "utf8");
-      const markerReserve = index < untracked.length - 1
-        ? Buffer.byteLength(`${combined ? "\n" : ""}${UNTRACKED_DIFF_OMITTED_MARKER}`, "utf8")
-        : 0;
+      // Keep room for the marker while considering every entry, including the
+      // final one. If an entry cannot fit with that reserve, we can always
+      // announce that it and the remaining files were omitted.
+      const markerReserve = Buffer.byteLength(`${combined ? "\n" : ""}${UNTRACKED_DIFF_OMITTED_MARKER}`, "utf8");
       if (appendBytes + markerReserve <= remaining) {
         combined += separator + entry;
         continue;

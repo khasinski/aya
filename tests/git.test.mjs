@@ -349,6 +349,56 @@ test("getGitDiff: an untracked binary file is represented by a one-line placehol
   }
 });
 
+test("getGitDiff identifies invalid UTF-8 as binary even without a NUL byte", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    commit(root, "a.txt", "hi\n");
+    writeFileSync(join(root, "invalid-utf8.dat"), Buffer.from([0xc3, 0x28, 0x61]));
+    const diff = await getGitDiff(root);
+    assert.match(diff, /diff --git a\/invalid-utf8\.dat b\/invalid-utf8\.dat/);
+    assert.match(diff, /^\+Binary untracked file omitted from text diff\.$/m);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("getGitDiff reserves the omission marker beside a near-limit tracked diff", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    const oldText = "a".repeat(2_499_300);
+    const newText = "b".repeat(2_499_300);
+    commit(root, "tracked.txt", `${oldText}\n`);
+    writeFileSync(join(root, "tracked.txt"), `${newText}\n`);
+    const tracked = execFileSync("git", ["diff", "--no-ext-diff", "--no-color", "HEAD", "--"], {
+      cwd: root,
+      maxBuffer: 6_000_000,
+    });
+    assert.ok(tracked.length < 5_000_000, `tracked diff was ${tracked.length} bytes`);
+    assert.ok(tracked.length > 4_990_000, `tracked diff was only ${tracked.length} bytes`);
+    writeFileSync(join(root, "untracked-1.txt"), "x".repeat(16 * 1024));
+    writeFileSync(join(root, "untracked-2.txt"), "y".repeat(16 * 1024));
+
+    const diff = await getGitDiff(root);
+    assert.match(diff, /Additional untracked file diffs omitted: the combined diff reached the 5 MB limit\./);
+    assert.ok(Buffer.byteLength(diff, "utf8") <= 5_000_000);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("getGitDiff skips an untracked FIFO without blocking", { skip: process.platform === "win32", timeout: 3000 }, async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    commit(root, "a.txt", "hi\n");
+    const fifo = join(root, "waiting.pipe");
+    execFileSync("mkfifo", [fifo]);
+    const diff = await getGitDiff(root);
+    assert.equal(diff.includes("waiting.pipe"), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("getGitDiff bounds untracked file reads by type and the combined diff budget", async (t) => {
   const cases = [
     {
