@@ -67,6 +67,7 @@ import { askProjectWindow, askWindowToOpenPanes, newPaneId, RendererRequests, pa
 import { confirmPaneRestart, confirmRestart, confirmStoppingProcesses, type RelaunchDeps } from "./relaunch-notes";
 import { foregroundCommand } from "./foreground-command";
 import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
+import { attachSquirrelUpdaterEvents } from "./squirrel-updater-events";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -534,6 +535,7 @@ const applicationMenuDeps = {
   configureAppIdentity,
 };
 
+const squirrelUpdaterEvents = attachSquirrelUpdaterEvents(nativeAutoUpdater);
 const updates = createUpdates({
   app,
   autoUpdater: () => autoUpdater,
@@ -542,14 +544,10 @@ const updates = createUpdates({
   env: process.env,
   eachAyaWindow,
   diagnosticsLog: { append: (event, fields) => diagnosticsLog.append(event, fields) },
-  onSquirrelUpdateDownloaded: (listener) => {
-    nativeAutoUpdater.on("update-downloaded", listener);
-    return () => nativeAutoUpdater.removeListener("update-downloaded", listener);
-  },
-  onBeforeQuitForUpdate: (listener) => {
-    nativeAutoUpdater.on("before-quit-for-update", listener);
-    return () => nativeAutoUpdater.removeListener("before-quit-for-update", listener);
-  },
+  onSquirrelUpdateDownloaded: squirrelUpdaterEvents.onUpdateDownloaded,
+  onSquirrelError: squirrelUpdaterEvents.onError,
+  onBeforeQuitForUpdate: squirrelUpdaterEvents.onBeforeQuitForUpdate,
+  captureSquirrelHandoffListeners: squirrelUpdaterEvents.captureHandoffListeners,
   dialog,
   shell: externalShell,
   notifications: {

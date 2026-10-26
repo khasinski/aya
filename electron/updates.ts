@@ -5,6 +5,7 @@ import type { autoUpdater } from "electron-updater";
 import type { PtyLogWriter } from "./pty-log";
 import { backgroundWorkKnown, confirmRestart, confirmRestartOnce, type RelaunchDeps } from "./relaunch-notes";
 import type { UpdateStatus } from "./types";
+import { redactUpdaterError } from "./squirrel-updater-events";
 import {
   diagnoseRelaunch,
   readPendingUpdate,
@@ -40,7 +41,9 @@ export interface UpdatesDeps {
   diagnosticsLog: PtyLogWriter;
   /** Native Electron updater events; distinct from electron-updater's download event. */
   onSquirrelUpdateDownloaded?: (listener: () => void) => () => void;
+  onSquirrelError?: (listener: (error: unknown) => void) => () => void;
   onBeforeQuitForUpdate?: (listener: () => void) => () => void;
+  captureSquirrelHandoffListeners?: () => () => void;
   handoffTimeoutMs?: number;
   dialog: Pick<Dialog, "showMessageBox">;
   shell: Pick<Shell, "openExternal">;
@@ -73,6 +76,13 @@ export function createUpdates(deps: UpdatesDeps) {
   // auto-check 12 s later, so it is merged in separately and cleared on apply.
   let rollbackNotice: string | null = null;
   let handleInstallHandoffError: ((error: unknown) => boolean) | null = null;
+  const nativeUpdaterErrors = new WeakSet<object>();
+  let squirrelUpdateReady = false;
+  deps.onSquirrelUpdateDownloaded?.(() => { squirrelUpdateReady = true; });
+  deps.onSquirrelError?.((error) => {
+    if (typeof error === "object" && error !== null) nativeUpdaterErrors.add(error);
+    diagnosticsLog.append("update-squirrel-error", { error: redactUpdaterError(error) });
+  });
   // Where to send a user whose auto-update silently failed (#78).
   const RELEASES_URL = "https://github.com/khasinski/aya/releases/latest";
 
@@ -251,8 +261,13 @@ export function createUpdates(deps: UpdatesDeps) {
       }
     });
     deps.autoUpdater().on("error", (error) => {
-      if (handleInstallHandoffError?.(error)) return;
-      diagnosticsLog.append("update-error", { error: (error instanceof Error ? error.message : String(error)).slice(0, 500) });
+      const nativeError = typeof error === "object" && error !== null && nativeUpdaterErrors.has(error);
+      if (handleInstallHandoffError?.(error)) {
+        if (nativeError) nativeUpdaterErrors.delete(error as object);
+        return;
+      }
+      if (nativeError) nativeUpdaterErrors.delete(error as object);
+      else diagnosticsLog.append("update-error", { error: redactUpdaterError(error) });
       // quitAndInstall reports a failed handoff HERE rather than throwing, so this
       // is the only place an async install failure can release the latch. The
       // marker is deliberately kept: `error` also fires for unrelated checks, and
@@ -308,10 +323,17 @@ export function createUpdates(deps: UpdatesDeps) {
       quitAndInstall: (isSilent, isForceRunAfter) => deps.autoUpdater().quitAndInstall(isSilent, isForceRunAfter),
     },
     quit: () => app.quit(),
-    failed: (message) => setUpdateStatus({ phase: "error", message }),
+    failed: (message, retryable) => setUpdateStatus(
+      retryable
+        ? { phase: "downloaded", ...(updateStatus.downloadedVersion ? { downloadedVersion: updateStatus.downloadedVersion } : {}), message }
+        : { phase: "error", message },
+    ),
     settleMs: QUIT_INSTALL_SETTLE_MS,
     onSquirrelUpdateDownloaded: deps.onSquirrelUpdateDownloaded,
+    isSquirrelUpdateReady: () => squirrelUpdateReady,
+    onSquirrelError: deps.onSquirrelError,
     onBeforeQuitForUpdate: deps.onBeforeQuitForUpdate,
+    captureSquirrelHandoffListeners: deps.captureSquirrelHandoffListeners,
     monitorSquirrelHandoff: deps.platform === "darwin",
     handoffTimeoutMs: deps.handoffTimeoutMs,
     log: (event, fields) => diagnosticsLog.append(event, fields),
@@ -353,11 +375,15 @@ export interface UpdateInstallDeps {
   clearMark: () => Promise<void>;
   updater: { autoRunAppAfterInstall: boolean; quitAndInstall: (isSilent: boolean, isForceRunAfter: boolean) => void };
   quit: () => void;
-  failed: (message: string) => void;
+  failed: (message: string, retryable?: boolean) => void;
   /** The install an ordinary quit started holds the quit this long at most before it quits without it. */
   settleMs: number;
   onSquirrelUpdateDownloaded?: (listener: () => void) => () => void;
+  isSquirrelUpdateReady?: () => boolean;
+  onSquirrelError?: (listener: (error: unknown) => void) => () => void;
   onBeforeQuitForUpdate?: (listener: () => void) => () => void;
+  /** Captures listeners before MacUpdater.quitAndInstall and removes only its new callback on failure. */
+  captureSquirrelHandoffListeners?: () => () => void;
   /** Only MacUpdater has the native Squirrel handoff that can wait indefinitely. */
   monitorSquirrelHandoff?: boolean;
   handoffTimeoutMs?: number;
@@ -374,6 +400,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     timer: ReturnType<typeof setTimeout> | null;
     offSquirrel: (() => void) | null;
     offQuit: (() => void) | null;
+    cancelUpdaterListener: (() => void) | null;
   };
   let handoff: Handoff | null = null;
 
@@ -394,17 +421,19 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     stopHandoff(attempt);
     deps.log?.(event, {
       version: attempt.version,
-      ...(error === undefined ? {} : { error: (error instanceof Error ? error.message : String(error)).slice(0, 500) }),
+      ...(error === undefined ? {} : { error: redactUpdaterError(error) }),
     });
     const errorText = error === undefined ? "" : ` Reason: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`;
     const timeoutSeconds = Math.ceil((deps.handoffTimeoutMs ?? SQUIRREL_HANDOFF_TIMEOUT_MS) / 1000);
+    attempt.cancelUpdaterListener?.();
+    attempt.cancelUpdaterListener = null;
     await Promise.resolve().then(() => deps.abortPlannedUpdate?.()).catch(() => {});
     await Promise.resolve().then(() => deps.clearMark()).catch(() => {});
     deps.latch.installing = false;
     deps.setPreparingUpdate?.(false);
     deps.failed(event === "update-handoff-timeout"
       ? `${UPDATE_HANDOFF_FALLBACK} The handoff did not complete within ${timeoutSeconds} second${timeoutSeconds === 1 ? "" : "s"}.`
-      : `${UPDATE_HANDOFF_FALLBACK}${errorText}`);
+      : `${UPDATE_HANDOFF_FALLBACK}${errorText}`, true);
   }
 
   function beginHandoff(version?: string): Handoff {
@@ -415,6 +444,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
       timer: null,
       offSquirrel: null,
       offQuit: null,
+      cancelUpdaterListener: null,
     };
     handoff = attempt;
     attempt.offSquirrel = deps.onSquirrelUpdateDownloaded?.(() => {
@@ -428,7 +458,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     }) ?? null;
     attempt.offQuit = deps.onBeforeQuitForUpdate?.(() => {
       if (!attempt.active) return;
-      deps.log?.("update-quit", { version: attempt.version, squirrelDownloaded: attempt.squirrelDownloaded });
+      deps.log?.("update-quit", { version: attempt.version, squirrelDownloaded: attempt.squirrelDownloaded || deps.isSquirrelUpdateReady?.() === true });
       stopHandoff(attempt);
     }) ?? null;
     deps.log?.("update-squirrel-handoff-started", { version });
@@ -446,7 +476,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     if (attempt.squirrelDownloaded) {
       deps.log?.("update-error-after-squirrel-update-downloaded", {
         version: attempt.version,
-        error: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+        error: redactUpdaterError(error),
       });
       return true;
     }
@@ -476,6 +506,9 @@ export function updateInstaller(deps: UpdateInstallDeps) {
       // Before the handoff, since quitAndInstall quits; inside the try so a failed write releases the latch.
       if (status.downloadedVersion) await deps.mark(status.downloadedVersion);
       if (deps.monitorSquirrelHandoff !== false) attempt = beginHandoff(status.downloadedVersion ?? undefined);
+      // MacUpdater adds its own native update-downloaded listener inside quitAndInstall.
+      // Remove exactly that callback on failure so a late event cannot quit outside a prepared handover.
+      if (attempt) attempt.cancelUpdaterListener = deps.captureSquirrelHandoffListeners?.() ?? null;
       deps.updater.quitAndInstall(false, true);
     } catch (err) {
       // A synchronous handoff failure is observable; the async ShipIt one is caught on the next launch.
@@ -483,7 +516,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
       else {
         deps.latch.installing = false;
         deps.setPreparingUpdate?.(false);
-        deps.log?.("update-handoff-error", { error: (err instanceof Error ? err.message : String(err)).slice(0, 500) });
+        deps.log?.("update-handoff-error", { error: redactUpdaterError(err) });
         await deps.abortPlannedUpdate?.().catch(() => {});
         await deps.clearMark().catch(() => {});
         const message = `Couldn't start the update: ${err instanceof Error ? err.message : String(err)}`;

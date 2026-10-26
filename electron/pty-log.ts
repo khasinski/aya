@@ -12,6 +12,7 @@
 //   host; accepted risk, see #95.)
 // - Small and self-limiting: the file rotates to a single `.1` generation at
 //   PTY_LOG_MAX_BYTES, so it cannot grow unbounded on a chatty session.
+// - Private: active and rotated generations are mode 0600 regardless of umask.
 // - Every line carries ts (ISO), pid (writer - distinguishes overlapping
 //   hosts during a handoff), and ev (event name); event-specific fields
 //   follow. Sizes are measured in BYTES (Buffer.byteLength), not string
@@ -40,6 +41,7 @@ export function createPtyLog(
   // writer (second host during a handoff) can make the size drift; the only
   // consequence is rotating slightly early or late, which is fine.
   let size = -1;
+  let secured = false;
   return {
     append(event, fields) {
       try {
@@ -62,6 +64,15 @@ export function createPtyLog(
             size = 0;
           }
         }
+        if (!secured) {
+          try {
+            fs.chmodSync(file, 0o600);
+            secured = true;
+          } catch (error) {
+            // A new file is created below with mode 0600.
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+        }
         if (size + bytes > maxBytes) {
           // No inner try: if the rename fails (`.1` unwritable), the outer
           // catch drops this line while `size` keeps the real file size - the
@@ -70,10 +81,16 @@ export function createPtyLog(
           // (#89). A single line larger than the whole cap is dropped the
           // same way (spawn already clamps its command field).
           fs.renameSync(file, `${file}.1`);
+          fs.chmodSync(`${file}.1`, 0o600);
+          secured = false;
           size = 0;
         }
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.appendFileSync(file, line);
+        fs.appendFileSync(file, line, { mode: 0o600 });
+        if (!secured) {
+          fs.chmodSync(file, 0o600);
+          secured = true;
+        }
         size += bytes;
       } catch {
         // Logging must never break the PTY layer.
