@@ -7,7 +7,7 @@ import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 import { test } from "node:test";
 import { createServer } from "node:net";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -151,6 +151,13 @@ test("a displaced host that exits on its own, not through shutdown, leaves the s
 
   const first = startHost(["--require", preload]);
   await waitFor(() => existsSync(socket));
+  // Bind creates the filesystem socket before the host's listening callback records its own inode.
+  // Wait for the registry record, which is written after that capture, before displacing the socket.
+  const hostRecord = join(home, "pty-hosts", `${first.pid}.json`);
+  await waitFor(() => {
+    try { return JSON.parse(readFileSync(hostRecord, "utf8")).pid === first.pid; }
+    catch { return false; }
+  });
   const firstInode = statSync(socket).ino;
   rmSync(socket);
   const replacement = createServer();

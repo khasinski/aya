@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {waitFor} from './helpers/wait-for.mjs';
 const require=createRequire(import.meta.url);
 const {UserRulePanePolicy}=require('../dist-electron/screen-user-rule-pane.js');
 const {GuardedRuleInput}=require('../dist-electron/screen-user-rule-input.js');
@@ -84,9 +85,9 @@ test('client publishes the post-composer-ACK clear at the host-advanced revision
  try{
   client.setUserRuleStatusObserver((id,screen)=>f.policy.status(id,screen));client.attachWebContents(sink);
   const receive=screen=>client.onData(JSON.stringify({type:'snapshot',ptyId:f.id,snapshot:screen})+'\n');
-  receive(await mirror.vtSnapshot(f.id));await new Promise(resolve=>setTimeout(resolve,70));
+  receive(await mirror.vtSnapshot(f.id));await waitFor(()=>events.length===1);
   assert.deepEqual(events,[{type:'vt-status',ptyId:f.id,waiting:true,dialog:'User-defined dialog'}]);
-  await f.draw('❯ ');const beforeAck=await mirror.vtSnapshot(f.id);receive(beforeAck);await new Promise(resolve=>setTimeout(resolve,80));
+  await f.draw('❯ ');const beforeAck=await mirror.vtSnapshot(f.id);receive(beforeAck);await waitFor(()=>events.length===2);
   assert.deepEqual(events,[{type:'vt-status',ptyId:f.id,waiting:true,dialog:'User-defined dialog'},{type:'vt-status',ptyId:f.id,waiting:false}]);
   assert.equal(client.latestRuleSnapshots.get(f.id).revision,(await mirror.vtSnapshot(f.id)).revision,'the client adopts the validated post-ACK snapshot');
  }finally{client.dispose();await f.close();}
