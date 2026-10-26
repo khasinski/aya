@@ -12,9 +12,14 @@ import assert from "node:assert/strict";
 import {
   mkdtempSync,
   mkdirSync,
+  appendFileSync,
   writeFileSync,
   utimesSync,
   rmSync,
+  openSync,
+  ftruncateSync,
+  writeSync,
+  closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +53,9 @@ const newer = join(sessions, "rollout-new.jsonl");
 
 const { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } =
   await import("../dist-electron/usage-codex.js");
+const { resetCodexUsageCaches } = await import("../dist-electron/usage-codex.js");
+const { CODEX_USAGE_TAIL_MAX_BYTES } = await import("../dist-electron/usage-codex.js");
+const { MAX_CODEX_ACCOUNT_TEXT_CHARS } = await import("../dist-electron/usage-codex.js");
 
 // SOURCES mirrors codexUsageSources([]); accounts[0] is this test's
 // own adapter, standing in for the removed single-snapshot reader.
@@ -106,6 +114,205 @@ test("uses source ids when separate CODEX_HOME logs do not expose account ids", 
   assert.equal(out.length, 2);
   assert.equal(out[0].id, "codex");
   assert.equal(out[1].id, "codex-2");
+});
+
+test("a sparse 1 GiB rollout is read from its bounded tail", async () => {
+  resetCodexUsageCaches();
+  const root = mkdtempSync(join(tmpdir(), "aya-codex-sparse-"));
+  const dir = join(root, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-sparse.jsonl");
+  const line = snapshotLine(17, 29, "sparse-account", "Sparse Account");
+  const size = 1024 * 1024 * 1024;
+  const fd = openSync(file, "w+");
+  try {
+    ftruncateSync(fd, size);
+    const bytes = Buffer.from(`\n${line}`);
+    writeSync(fd, bytes, 0, bytes.length, size - bytes.length);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    const before = process.memoryUsage().rss;
+    const accounts = await readCodexUsageAccountsFromSources([
+      { id: "codex-sparse", label: "Sparse", home: root },
+    ]);
+    const after = process.memoryUsage().rss;
+    assert.equal(accounts.length, 1);
+    assert.equal(accounts[0].id, "sparse-account");
+    assert.equal(accounts[0].usage.fiveHour.pct, 17);
+    assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a truncated rollout with no tail snapshot preserves its previous same-file usage", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-cached-truncated-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-current.jsonl");
+  try {
+    writeFileSync(file, snapshotLine(41, 62, "current", "Current"));
+    const t = Date.now() / 1000;
+    utimesSync(file, t - 5, t - 5);
+    const initial = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.equal(initial.length, 1);
+    assert.equal(initial[0].usage.fiveHour.pct, 41);
+
+    const fd = openSync(file, "w+");
+    try {
+      const size = CODEX_USAGE_TAIL_MAX_BYTES + 64;
+      ftruncateSync(fd, size);
+      const oldSnapshot = Buffer.from(snapshotLine(9, 19, "current", "Current"));
+      const tailNoise = Buffer.from(noSnapshotLine);
+      writeSync(fd, oldSnapshot, 0, oldSnapshot.length, 0);
+      writeSync(fd, tailNoise, 0, tailNoise.length, size - tailNoise.length);
+    } finally {
+      closeSync(fd);
+    }
+    utimesSync(file, t + 5, t + 5);
+
+    const afterGrowth = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.equal(afterGrowth.length, 1);
+    assert.equal(afterGrowth[0].id, "current");
+    assert.equal(afterGrowth[0].usage.fiveHour.pct, 41);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
+test("a first read of a truncated rollout without a tail snapshot has no usage", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-first-truncated-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-current.jsonl");
+  const fd = openSync(file, "w+");
+  try {
+    const size = CODEX_USAGE_TAIL_MAX_BYTES + 64;
+    ftruncateSync(fd, size);
+    const tailNoise = Buffer.from(noSnapshotLine);
+    writeSync(fd, tailNoise, 0, tailNoise.length, size - tailNoise.length);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    const accounts = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.deepEqual(accounts, []);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
+test("a truncated Codex tail merges cached accounts absent from its newer lines", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-mixed-truncated-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-mixed.jsonl");
+  try {
+    writeFileSync(file, [
+      snapshotLine(11, 21, "account-a", "A"),
+      snapshotLine(12, 22, "account-b", "B"),
+    ].join(""));
+    const t = Date.now() / 1000;
+    utimesSync(file, t - 5, t - 5);
+    const initial = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.deepEqual(initial.map((account) => account.id).sort(), ["account-a", "account-b"]);
+
+    const fd = openSync(file, "w+");
+    try {
+      const size = CODEX_USAGE_TAIL_MAX_BYTES + 128;
+      ftruncateSync(fd, size);
+      const oldA = Buffer.from(snapshotLine(13, 23, "account-a", "A"));
+      const newestB = Buffer.from(`\n${snapshotLine(44, 54, "account-b", "B")}`);
+      writeSync(fd, oldA, 0, oldA.length, 0);
+      writeSync(fd, newestB, 0, newestB.length, size - newestB.length);
+    } finally {
+      closeSync(fd);
+    }
+    utimesSync(file, t + 5, t + 5);
+
+    const accounts = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.deepEqual(accounts.map((account) => account.id).sort(), ["account-a", "account-b"]);
+    assert.equal(accounts.find((account) => account.id === "account-a").usage.fiveHour.pct, 11);
+    assert.equal(accounts.find((account) => account.id === "account-b").usage.fiveHour.pct, 44);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
+test("a rollout with 128 large account names caches only capped account text", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-many-large-accounts-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-accounts.jsonl");
+  const lines = [];
+  for (let i = 0; i < 128; i += 1) {
+    lines.push(JSON.stringify({
+      timestamp: "2026-10-26T11:00:00.000Z",
+      payload: {
+        type: "token_count",
+        rate_limits: {
+          account_id: `${i}-${"i".repeat(500)}`,
+          account_label: `${i}-${"l".repeat(500)}`,
+          primary: { used_percent: 4 },
+          secondary: { used_percent: 8 },
+        },
+      },
+    }));
+  }
+  writeFileSync(file, `${lines.join("\n")}\n`);
+  try {
+    const accounts = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.equal(accounts.length, 128);
+    assert.ok(accounts.every((account) => account.id.length <= MAX_CODEX_ACCOUNT_TEXT_CHARS));
+    assert.ok(accounts.every((account) => account.label.length <= MAX_CODEX_ACCOUNT_TEXT_CHARS));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
+test("truncated rollout account merge stays within the 128-account cap", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-account-cap-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-accounts.jsonl");
+  const accounts = Array.from({ length: 128 }, (_, i) => JSON.stringify({
+    timestamp: "2026-10-26T11:00:00.000Z",
+    payload: {
+      type: "token_count",
+      account_id: `account-${i}`,
+      rate_limits: { account_id: `account-${i}`, primary: { used_percent: i }, secondary: { used_percent: i } },
+    },
+  }));
+  writeFileSync(file, `${accounts.join("\n")}\n`);
+  try {
+    const source = [{ id: "codex", label: "Codex", home }];
+    assert.equal((await readCodexUsageAccountsFromSources(source)).length, 128);
+    appendFileSync(file, `${"x".repeat(CODEX_USAGE_TAIL_MAX_BYTES + 128)}\n${JSON.stringify({
+      timestamp: "2026-10-26T12:00:00.000Z",
+      payload: {
+        type: "token_count",
+        account_id: "newest-account",
+        rate_limits: { account_id: "newest-account", primary: { used_percent: 99 }, secondary: { used_percent: 99 } },
+      },
+    })}\n`);
+    const merged = await readCodexUsageAccountsFromSources(source);
+    assert.equal(merged.length, 128);
+    assert.ok(merged.some((account) => account.id === "newest-account"));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
 });
 
 test.after(() => {

@@ -19,6 +19,7 @@ import { codexHomeFor } from "./agent-brief";
 import { claudeProjectDirName } from "./claude-session";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
 import { CODEX_SESSIONS_SUBDIR, DEFAULT_CODEX_HOME } from "./usage-codex";
+import { scanJsonlTail } from "./bounded-file-read";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
@@ -51,15 +52,20 @@ export interface HarnessSearchHit {
 const MAX_SESSIONS_SCANNED = 12;
 const MAX_HITS_TOTAL = 80;
 const MAX_HITS_PER_SESSION = 20;
-// A transcript bigger than this is skipped rather than read into memory.
-const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
+// Search the newest bounded portion of a transcript; large sessions are
+// common, and the tail is the most useful history for an interactive search.
+export const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+const MAX_TRANSCRIPT_MESSAGES = 1000;
+const MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE = 4 * 1024 * 1024;
+const MAX_CACHED_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
+const MAX_CACHED_MESSAGE_CHARS = 64 * 1024;
 // Full message text returned with a hit (shown when the user expands it).
 const MAX_HIT_TEXT_CHARS = 2000;
 const SNIPPET_CONTEXT_BEFORE = 60;
 const SNIPPET_CONTEXT_AFTER = 100;
-// Parsed-transcript LRU: 12 sessions × a couple of live tabs fits well under
-// this; beyond it the oldest parse is dropped, not the newest.
+// Parsed-transcript LRU; both file count and retained message bytes are capped.
 const PARSE_CACHE_MAX_FILES = 32;
+const CODEX_CWD_CACHE_MAX_FILES = 256;
 // Codex session_meta is the first JSONL line; its base_instructions blob can
 // be a few KB, so probe generously but never read the whole rollout for it.
 const META_PROBE_BYTES = 64 * 1024;
@@ -241,6 +247,11 @@ async function codexSessionCwd(file: string): Promise<string | null> {
     await handle?.close().catch(() => {});
   }
   codexCwdCache.set(file, cwd);
+  while (codexCwdCache.size > CODEX_CWD_CACHE_MAX_FILES) {
+    const oldest = codexCwdCache.keys().next().value;
+    if (oldest === undefined) break;
+    codexCwdCache.delete(oldest);
+  }
   return cwd;
 }
 
@@ -300,14 +311,38 @@ interface ParsedTranscript {
   mtimeMs: number;
   size: number;
   messages: HarnessMessage[];
+  weight: number;
 }
 
 const parseCache = new Map<string, ParsedTranscript>();
+let parseCacheBytes = 0;
 
 /** Test hook: forget cached parses and Codex cwd probes. */
 export function resetHarnessSearchCaches(): void {
   parseCache.clear();
+  parseCacheBytes = 0;
   codexCwdCache.clear();
+}
+
+function cacheTranscript(file: string, parsed: ParsedTranscript): void {
+  const old = parseCache.get(file);
+  if (old) {
+    parseCacheBytes -= old.weight;
+    parseCache.delete(file);
+  }
+  if (parsed.weight > MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE) return;
+  parseCache.set(file, parsed);
+  parseCacheBytes += parsed.weight;
+  while (
+    parseCache.size > PARSE_CACHE_MAX_FILES ||
+    parseCacheBytes > MAX_CACHED_TRANSCRIPT_BYTES
+  ) {
+    const oldest = parseCache.keys().next().value;
+    if (oldest === undefined) break;
+    const entry = parseCache.get(oldest);
+    parseCache.delete(oldest);
+    if (entry) parseCacheBytes -= entry.weight;
+  }
 }
 
 async function transcriptMessages(
@@ -325,27 +360,38 @@ async function transcriptMessages(
     parseCache.set(session.file, cached);
     return cached.messages;
   }
-  let raw: string;
+  const newestFirst: HarnessMessage[] = [];
+  let weight = 0;
   try {
-    raw = await fs.readFile(session.file, "utf-8");
+    await scanJsonlTail(session.file, (line) => {
+      const extracted = agent === "claude"
+        ? extractClaudeMessages([line])
+        : extractCodexMessages([line]);
+      for (const message of extracted) {
+        const text = message.text.length > MAX_CACHED_MESSAGE_CHARS
+          ? message.text.slice(0, MAX_CACHED_MESSAGE_CHARS)
+          : message.text;
+        const bounded: HarnessMessage = { ...message, text, lower: text.toLowerCase() };
+        const messageWeight = (bounded.text.length + bounded.lower.length) * 2 + 128;
+        if (
+          newestFirst.length >= MAX_TRANSCRIPT_MESSAGES ||
+          weight + messageWeight > MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE
+        ) return true;
+        newestFirst.push(bounded);
+        weight += messageWeight;
+      }
+      return false;
+    }, { maxBytes: MAX_TRANSCRIPT_BYTES });
   } catch {
     return [];
   }
-  const lines = raw.split("\n");
-  const messages =
-    agent === "claude"
-      ? extractClaudeMessages(lines)
-      : extractCodexMessages(lines);
-  parseCache.set(session.file, {
+  const messages = newestFirst.reverse();
+  cacheTranscript(session.file, {
     mtimeMs: session.mtimeMs,
     size: session.size,
     messages,
+    weight,
   });
-  while (parseCache.size > PARSE_CACHE_MAX_FILES) {
-    const oldest = parseCache.keys().next().value;
-    if (oldest === undefined) break;
-    parseCache.delete(oldest);
-  }
   return messages;
 }
 
@@ -400,7 +446,6 @@ export async function searchHarnessSessions(
       : await codexSessionFiles(req.cwd, req.configDir, req.command);
   const hits: HarnessSearchHit[] = [];
   for (const session of sessions) {
-    if (session.size > MAX_TRANSCRIPT_BYTES) continue;
     const messages = await transcriptMessages(session, req.agent);
     let sessionHits = 0;
     // Newest messages first within the (already newest-first) session order.

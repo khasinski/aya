@@ -13,6 +13,7 @@ import {
   CODEX_DEFAULT_DIR,
   CODEX_SESSIONS_SUBDIR,
   MAX_DATE_MS,
+  MAX_CODEX_ACCOUNT_TEXT_CHARS,
 } from "../dist-electron/usage-codex.js";
 
 test("Codex's default home is ~/.codex", () => {
@@ -284,6 +285,17 @@ test("latestUsageFromLines tolerates malformed lines; null when none", () => {
   assert.equal(latestUsageFromLines(lines, 0).fiveHour.pct, 1.0);
 });
 
+test("usage readers skip oversized JSONL rows and keep the next usable snapshot", () => {
+  const oversized = JSON.stringify({
+    timestamp: "2026-06-03T12:00:00.000Z",
+    payload: { type: "token_count", rate_limits: SAMPLE, padding: "x".repeat(1024 * 1024) },
+  });
+  assert.ok(Buffer.byteLength(oversized) > 1024 * 1024);
+  const valid = line("2026-06-03T11:00:00.000Z", SAMPLE);
+  assert.equal(latestUsageFromLines([valid, oversized], 0).fiveHour.pct, 1);
+  assert.equal(latestUsageAccountsFromLines([valid, oversized], 0).length, 1);
+});
+
 test("latestUsageAccountsFromLines returns the newest complete snapshot per account", () => {
   const lines = [
     accountLine("2026-06-03T10:00:00.000Z", "work", "Work", 5, 10),
@@ -360,6 +372,20 @@ test("latestUsageAccountsFromLines reads id/label from a nested payload.account"
   assert.equal(out.length, 1);
   assert.equal(out[0].id, "team-42");
   assert.equal(out[0].label, "Team");
+});
+
+test("Codex account identifiers and labels are capped before caching", () => {
+  const longValue = "x".repeat(MAX_CODEX_ACCOUNT_TEXT_CHARS + 1000);
+  const out = latestUsageAccountsFromLines([accountLine(
+    "2026-06-03T11:00:00.000Z",
+    longValue,
+    longValue,
+    6,
+    14,
+  )], 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id.length, MAX_CODEX_ACCOUNT_TEXT_CHARS);
+  assert.equal(out[0].label.length, MAX_CODEX_ACCOUNT_TEXT_CHARS);
 });
 
 test("MAX_DATE_MS is the ECMAScript Date range limit", () => {

@@ -12,6 +12,9 @@ import assert from "node:assert/strict";
 import {
   mkdtempSync,
   mkdirSync,
+  closeSync,
+  ftruncateSync,
+  openSync,
   writeFileSync,
   utimesSync,
   rmSync,
@@ -38,6 +41,7 @@ const {
   readUsageAccounts,
   claudeUsageFileForConfigDir,
   resetUsageFileCaches,
+  MAX_USAGE_SNAPSHOT_BYTES,
 } = await import("../dist-electron/usage.js");
 
 const configDir = mkdtempSync(join(tmpdir(), "aya-usage-cfg-"));
@@ -81,6 +85,23 @@ test("legacy USAGE_FILE path is cached the same way", async () => {
 
   resetUsageFileCaches(); // reset hook forces a re-read
   assert.equal((await readUsageAccounts())[0].usage.fiveHour.pct, 99);
+});
+
+test("a sparse oversized usage snapshot is refused after a bounded read", async () => {
+  const legacy = join(home, "usage.json");
+  writeFileSync(legacy, snapshot(99));
+  const fd = openSync(legacy, "r+");
+  try {
+    ftruncateSync(fd, 1024 * 1024 * 1024);
+  } finally {
+    closeSync(fd);
+  }
+  resetUsageFileCaches();
+  const before = process.memoryUsage().rss;
+  assert.deepEqual(await readUsageAccounts(), []);
+  const after = process.memoryUsage().rss;
+  assert.ok(MAX_USAGE_SNAPSHOT_BYTES <= 1024 * 1024);
+  assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
 });
 
 test.after(() => {

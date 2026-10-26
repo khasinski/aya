@@ -160,6 +160,23 @@ test("extractGrokLimit rejects other lines and changed shapes", () => {
   assert.equal(extractGrokLimit(JSON.stringify(moved)), null);
 });
 
+test("Grok limit reader skips oversized JSONL rows and keeps a following valid row", async () => {
+  const oversized = JSON.stringify({
+    msg: "billing: fetched credits config",
+    ts: "2026-09-26T19:48:33.830Z",
+    ctx: { config: { creditUsagePercent: 99, currentPeriod: { end: END } } },
+    padding: "x".repeat(1024 * 1024),
+  });
+  assert.ok(Buffer.byteLength(oversized) > 1024 * 1024);
+  assert.equal(extractGrokLimit(oversized), null);
+  const home = grokHome([oversized, creditsLine(47, END)]);
+  try {
+    assert.equal((await readGrokLimit(home, NOW)).pct, 47);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 function grokHome(lines) {
   const home = mkdtempSync(join(tmpdir(), "aya-grok-"));
   mkdirSync(join(home, "logs"), { recursive: true });

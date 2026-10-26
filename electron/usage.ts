@@ -14,6 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { CLAUDE_CONFIG_DIRNAME, CLAUDE_SETTINGS_FILENAME } from "./constants";
 import { USAGE_FILE } from "./paths";
+import { readFileAtMost } from "./bounded-file-read";
 
 export interface UsageWindow {
   /** Percent of this limit window already used (0–100+). */
@@ -145,14 +146,17 @@ export function parseUsageAccounts(raw: string): UsageAccount[] {
 // Poll-path caches: the usage chip polls every 30s but the hook rewrites these
 // files far less often, so a stat (cheap) gates the read+parse (not). Parsed
 // results — including null/[] for a broken file — are reused until the mtime
-// moves. Entries are dropped when a file disappears; the key space is bounded
-// by the number of configured sources.
+// moves. Entries are dropped when a file disappears and each cache has a hard
+// cap, so repeatedly changing configured sources cannot grow it indefinitely.
 interface CachedParse<T> {
   mtimeMs: number;
   value: T;
 }
 const usageDataCache = new Map<string, CachedParse<UsageData | null>>();
 const usageAccountsCache = new Map<string, CachedParse<UsageAccount[]>>();
+/** Hook snapshots are small JSON control files, not session logs. */
+export const MAX_USAGE_SNAPSHOT_BYTES = 1024 * 1024;
+const MAX_USAGE_CACHE_ENTRIES = 128;
 
 /** Test hook: forget all cached usage-file parses. */
 export function resetUsageFileCaches(): void {
@@ -174,16 +178,30 @@ async function readParsed<T>(
     return undefined;
   }
   const cached = cache.get(file);
-  if (cached && cached.mtimeMs === mtimeMs) return cached.value;
-  let raw: string;
+  if (cached && cached.mtimeMs === mtimeMs) {
+    cache.delete(file);
+    cache.set(file, cached);
+    return cached.value;
+  }
+  let raw: string | null;
   try {
-    raw = await fs.readFile(file, "utf-8");
+    raw = await readFileAtMost(file, MAX_USAGE_SNAPSHOT_BYTES);
   } catch {
     cache.delete(file);
     return undefined;
   }
+  if (raw === null) {
+    cache.delete(file);
+    return undefined;
+  }
   const value = parse(raw);
+  cache.delete(file);
   cache.set(file, { mtimeMs, value });
+  while (cache.size > MAX_USAGE_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
   return value;
 }
 

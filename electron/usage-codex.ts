@@ -15,6 +15,7 @@ import { codexHomeFor } from "./agent-brief";
 import type { UsageAccount, UsageData } from "./usage";
 import { expandUserPath, usageAccountFromData } from "./usage";
 import { CODEX_CONFIG_FILENAME, CODEX_DIRNAME } from "./constants";
+import { isOversizedUsageJsonlLine, scanJsonlTail } from "./bounded-file-read";
 
 export { CODEX_CONFIG_FILENAME, CODEX_DIRNAME };
 export const CODEX_DEFAULT_DIR = `~/${CODEX_DIRNAME}`;
@@ -30,6 +31,12 @@ export const DEFAULT_CODEX_HOME =
 
 // Bound the per-poll work: only the few most-recent rollouts are read/parsed.
 const MAX_ROLLOUTS_SCANNED = 20;
+const MAX_CODEX_HOME_CACHES = 16;
+const MAX_CODEX_PARSE_CACHE_FILES = MAX_ROLLOUTS_SCANNED * MAX_CODEX_HOME_CACHES;
+/** Usage snapshots are append-only; only the newest bounded tail is relevant. */
+export const CODEX_USAGE_TAIL_MAX_BYTES = 8 * 1024 * 1024;
+const MAX_CODEX_ACCOUNTS_PER_ROLLOUT = 128;
+export const MAX_CODEX_ACCOUNT_TEXT_CHARS = 256;
 // The ECMAScript Date range: past it, toISOString throws RangeError.
 export const MAX_DATE_MS = 8.64e15;
 
@@ -116,7 +123,10 @@ function accountMetaFromEvent(obj: {
       account.name,
       account.email,
     ) ?? (id === "default" ? "Account" : id);
-  return { id, label };
+  return {
+    id: id.slice(0, MAX_CODEX_ACCOUNT_TEXT_CHARS),
+    label: label.slice(0, MAX_CODEX_ACCOUNT_TEXT_CHARS),
+  };
 }
 
 // Windows at or below this length render as the "5h" ring; anything longer
@@ -211,6 +221,7 @@ export function latestUsageFromLines(
 ): UsageData | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!lines[i].includes('"rate_limits"')) continue;
+    if (isOversizedUsageJsonlLine(lines[i])) continue;
     let obj: { timestamp?: unknown; payload?: { rate_limits?: unknown } };
     try {
       obj = JSON.parse(lines[i]);
@@ -237,6 +248,7 @@ export function latestUsageAccountsFromLines(
   const byId = new Map<string, UsageAccount>();
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!lines[i].includes('"rate_limits"')) continue;
+    if (isOversizedUsageJsonlLine(lines[i])) continue;
     let obj: { timestamp?: unknown; payload?: Record<string, unknown> };
     try {
       obj = JSON.parse(lines[i]);
@@ -321,6 +333,10 @@ async function recentRolloutFiles(
 ): Promise<{ file: string; mtimeMs: number }[]> {
   const root = path.join(expandUserPath(home), CODEX_SESSIONS_SUBDIR);
   let cache = walkCaches.get(root);
+  if (cache) {
+    walkCaches.delete(root);
+    walkCaches.set(root, cache);
+  }
   if (!cache) {
     cache = {
       dirs: new Map(),
@@ -329,6 +345,14 @@ async function recentRolloutFiles(
       lastFullSweepMs: 0,
     };
     walkCaches.set(root, cache);
+    while (walkCaches.size > MAX_CODEX_HOME_CACHES) {
+      const oldestRoot = walkCaches.keys().next().value;
+      if (oldestRoot === undefined) break;
+      walkCaches.delete(oldestRoot);
+      for (const file of rolloutParseCache.keys()) {
+        if (file.startsWith(oldestRoot + path.sep)) rolloutParseCache.delete(file);
+      }
+    }
   }
   const now = Date.now();
   const fullSweep = now - cache.lastFullSweepMs >= FULL_STAT_SWEEP_INTERVAL_MS;
@@ -424,19 +448,48 @@ async function parseRollout(
 ): Promise<ParsedRollout | null> {
   const cached = rolloutParseCache.get(file);
   if (cached && cached.mtimeMs === mtimeMs) return cached;
-  let raw: string;
+  let latestUsage: UsageData | null = null;
+  const latestByAccount = new Map<string, UsageAccount>();
+  let scan: Awaited<ReturnType<typeof scanJsonlTail>>;
   try {
-    raw = await fs.readFile(file, "utf-8");
+    scan = await scanJsonlTail(file, (line) => {
+      if (!line.includes('"rate_limits"')) return;
+      if (isOversizedUsageJsonlLine(line)) return;
+      if (!latestUsage) latestUsage = latestUsageFromLines([line], mtimeMs);
+      for (const account of latestUsageAccountsFromLines([line], mtimeMs)) {
+        if (
+          !latestByAccount.has(account.id) &&
+          latestByAccount.size < MAX_CODEX_ACCOUNTS_PER_ROLLOUT
+        ) latestByAccount.set(account.id, account);
+      }
+    }, { maxBytes: CODEX_USAGE_TAIL_MAX_BYTES });
   } catch {
     return null;
   }
-  const lines = raw.split("\n");
+  // Rollouts are append-only, but an old snapshot can fall outside the hard
+  // tail budget. Keep this file's last parsed value rather than letting a
+  // different, older rollout appear to be the current account state. A first
+  // read of such a truncated file still has no result to preserve.
+  if (scan.truncated && cached) {
+    for (const account of cached.accounts) {
+      if (
+        !latestByAccount.has(account.id) &&
+        latestByAccount.size < MAX_CODEX_ACCOUNTS_PER_ROLLOUT
+      ) latestByAccount.set(account.id, account);
+    }
+  }
   const parsed: ParsedRollout = {
     mtimeMs,
-    usage: latestUsageFromLines(lines, mtimeMs),
-    accounts: latestUsageAccountsFromLines(lines, mtimeMs),
+    usage: latestUsage ?? (scan.truncated ? cached?.usage ?? null : null),
+    accounts: [...latestByAccount.values()].sort((a, b) => a.label.localeCompare(b.label)),
   };
+  rolloutParseCache.delete(file);
   rolloutParseCache.set(file, parsed);
+  while (rolloutParseCache.size > MAX_CODEX_PARSE_CACHE_FILES) {
+    const oldest = rolloutParseCache.keys().next().value;
+    if (oldest === undefined) break;
+    rolloutParseCache.delete(oldest);
+  }
   return parsed;
 }
 
