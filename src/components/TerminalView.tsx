@@ -57,6 +57,7 @@ import {
 import { SnippetBar } from "./SnippetBar";
 import { terminalFocusRetryStillOwned } from "../terminal-focus-retry";
 import { displayIpcError, UPDATE_SPAWN_REFUSAL } from "../update-spawn";
+import { ipcMessage } from "./use-async-action";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
 // 80x24 a PTY gets before xterm has measured the pane (used at every spawn).
@@ -1987,9 +1988,7 @@ export function FindBar({
           setHits([]);
           setCoverage({ partial: false });
           setSearched(true);
-          const message = error instanceof Error ? error.message : "History search could not be started. Try again.";
-          const ipcMessage = message.match(/Error invoking remote method '[^']+': Error:\s*([\s\S]*)$/);
-          setHistoryError((ipcMessage?.[1] ?? message).trim());
+          setHistoryError(ipcMessage(error));
         });
     }, HISTORY_SEARCH_DEBOUNCE_MS);
     return () => {
