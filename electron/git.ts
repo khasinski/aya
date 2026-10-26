@@ -4,7 +4,8 @@
 
 import { exec, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
+import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
@@ -18,6 +19,9 @@ const GIT_COMMAND_TIMEOUT_MS = 1500;
 const GIT_DIFF_TIMEOUT_MS = 3000;
 // Ceiling on git diff output buffered into memory (5MB).
 const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
+const UNTRACKED_FILE_HEAD_MAX_BYTES = 256 * 1024;
+const UNTRACKED_DIFF_OMITTED_MARKER =
+  "[Additional untracked file diffs omitted: the combined diff reached the 5 MB limit.]";
 export const GIT_ERROR_MESSAGE_MAX_CHARS = 300;
 
 // Aya only observes repository state. `git status` can otherwise refresh the
@@ -591,6 +595,80 @@ function syntheticNewFileDiff(file: GitChangedFile, content: string): string {
   ].join("\n");
 }
 
+function syntheticUntrackedPlaceholder(file: GitChangedFile, reason: string): string {
+  const filePath = quotePathForDiff(file.path);
+  return [
+    `diff --git a/${filePath} b/${filePath}`,
+    "new file mode 100644",
+    "index 0000000..0000000",
+    "--- /dev/null",
+    `+++ b/${filePath}`,
+    "@@ -0,0 +1,1 @@",
+    `+${reason}`,
+  ].join("\n");
+}
+
+/** Read only a bounded head from a regular untracked file. lstat and the inode
+ * check prevent following a symlink that appears between status and open. */
+async function untrackedFileDiff(
+  directory: string,
+  file: GitChangedFile,
+): Promise<string | null> {
+  const fullPath = path.join(directory, file.path);
+  let before: Awaited<ReturnType<typeof lstat>>;
+  try {
+    before = await lstat(fullPath);
+  } catch {
+    return null;
+  }
+  if (before.isSymbolicLink() || !before.isFile()) return null;
+  if (before.size > UNTRACKED_FILE_HEAD_MAX_BYTES) {
+    return syntheticUntrackedPlaceholder(
+      file,
+      `Large untracked file omitted (over ${UNTRACKED_FILE_HEAD_MAX_BYTES / 1024} KiB).`,
+    );
+  }
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(fullPath, "r");
+    const [opened, current] = await Promise.all([handle.stat(), lstat(fullPath)]);
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !opened.isFile() ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      current.dev !== before.dev ||
+      current.ino !== before.ino
+    ) return null;
+    if (opened.size > UNTRACKED_FILE_HEAD_MAX_BYTES) {
+      return syntheticUntrackedPlaceholder(
+        file,
+        `Large untracked file omitted (over ${UNTRACKED_FILE_HEAD_MAX_BYTES / 1024} KiB).`,
+      );
+    }
+
+    const head = Buffer.alloc(UNTRACKED_FILE_HEAD_MAX_BYTES + 1);
+    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    if (bytesRead > UNTRACKED_FILE_HEAD_MAX_BYTES) {
+      return syntheticUntrackedPlaceholder(
+        file,
+        `Large untracked file omitted (over ${UNTRACKED_FILE_HEAD_MAX_BYTES / 1024} KiB).`,
+      );
+    }
+    const contentBytes = head.subarray(0, bytesRead);
+    if (contentBytes.includes(0) || !isUtf8(contentBytes)) {
+      return syntheticUntrackedPlaceholder(file, "Binary untracked file omitted from text diff.");
+    }
+    return syntheticNewFileDiff(file, contentBytes.toString("utf8"));
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 export async function getGitDiff(directory: string): Promise<string> {
   try {
     const [{ stdout: diff }, files] = await Promise.all([
@@ -601,18 +679,27 @@ export async function getGitDiff(directory: string): Promise<string> {
       getGitChangedFiles(directory),
     ]);
     const untracked = files.filter((file) => file.status === "??");
-    const synthetic = await Promise.all(
-      untracked.map(async (file) => {
-        try {
-          const content = await readFile(`${directory}/${file.path}`, "utf8");
-          if (content.includes("\0")) return "";
-          return syntheticNewFileDiff(file, content);
-        } catch {
-          return "";
-        }
-      }),
-    );
-    return [diff.trimEnd(), ...synthetic.filter(Boolean)].filter(Boolean).join("\n");
+    let combined = diff.trimEnd();
+    for (let index = 0; index < untracked.length; index += 1) {
+      const entry = await untrackedFileDiff(directory, untracked[index]);
+      if (!entry) continue;
+      const separator = combined ? "\n" : "";
+      const appendBytes = Buffer.byteLength(separator + entry, "utf8");
+      const remaining = GIT_DIFF_MAX_BUFFER_BYTES - Buffer.byteLength(combined, "utf8");
+      const markerReserve = index < untracked.length - 1
+        ? Buffer.byteLength(`${combined ? "\n" : ""}${UNTRACKED_DIFF_OMITTED_MARKER}`, "utf8")
+        : 0;
+      if (appendBytes + markerReserve <= remaining) {
+        combined += separator + entry;
+        continue;
+      }
+
+      const markerSeparator = combined ? "\n" : "";
+      const marker = markerSeparator + UNTRACKED_DIFF_OMITTED_MARKER;
+      if (Buffer.byteLength(marker, "utf8") <= remaining) combined += marker;
+      break;
+    }
+    return combined;
   } catch {
     return "";
   }
