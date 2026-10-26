@@ -164,6 +164,8 @@ export interface VtSnapshot {
   /** Absent on older hosts or while parser work is not fully applied. */
   revision?: string;
   recoveryUnknown?: boolean;
+  /** Visible rows still contain cells beyond cols after a narrowing resize. */
+  clippedVisible?: boolean;
   agent?: AgentKind;
   shell: boolean;
   composerSeen: boolean;
@@ -180,6 +182,19 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
   if (!generation) { generation = randomUUID(); generations.set(pane, generation); }
   const buffer = pane.terminal.buffer.active;
   const cols = pane.terminal.cols;
+  const viewportY = buffer.viewportY;
+  const viewportEnd = Math.min(buffer.length, viewportY + pane.terminal.rows);
+  let clippedVisible = false;
+  for (let y = viewportY; y < viewportEnd && !clippedVisible; y++) {
+    const line = buffer.getLine(y);
+    for (let x = cols; line && x < line.length; x++) {
+      const c = line.getCell(x);
+      if (c && (c.getChars() !== "" || c.isDim() || c.isInverse())) {
+        clippedVisible = true;
+        break;
+      }
+    }
+  }
   const rows: string[] = [], cells: VtSnapshot["cells"] = [];
   for (let y = 0; y < buffer.length; y++) {
     const line = buffer.getLine(y);
@@ -193,7 +208,7 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
     cells.push(row);
   }
   const revision = appliedRevision(pane);
-  return { generation, ...(revision ? {revision} : {}), ...(pane.recoveryUnknown?{recoveryUnknown:true}:{}), agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
+  return { generation, ...(revision ? {revision} : {}), ...(pane.recoveryUnknown?{recoveryUnknown:true}:{}), ...(clippedVisible ? {clippedVisible:true}:{}), agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
     openedAt: pane.openedAt, lastOutputAt: pane.lastOutputAt, rows, cells, cols };
 }
 export async function vtSnapshot(id: string): Promise<VtSnapshot | null> {

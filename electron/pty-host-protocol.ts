@@ -133,6 +133,7 @@ export function vtSnapshotValidationError(value: unknown): string | null {
   if (s.revision !== undefined && !validVtSnapshotFence({ generation: s.generation, revision: s.revision })) return "revision is invalid";
   if (typeof s.shell !== "boolean") return "shell flag is not boolean";
   if (s.recoveryUnknown !== undefined && typeof s.recoveryUnknown !== "boolean") return "recoveryUnknown is not boolean";
+  if (s.clippedVisible !== undefined && typeof s.clippedVisible !== "boolean") return "clippedVisible is not boolean";
   if (typeof s.composerSeen !== "boolean") return "composerSeen is not boolean";
   if (typeof s.openedAt !== "number" || !Number.isFinite(s.openedAt)) return "openedAt is not finite";
   if (!(s.lastOutputAt === null || (typeof s.lastOutputAt === "number" && Number.isFinite(s.lastOutputAt)))) return "lastOutputAt is not finite or null";
