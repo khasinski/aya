@@ -772,6 +772,14 @@ export interface HarnessSearchHit {
   matchLength: number;
 }
 
+export interface HarnessSearchResult {
+  hits: HarnessSearchHit[];
+  coverage: {
+    partial: boolean;
+    searchedBackTo?: string;
+  };
+}
+
 /** A config file the user can edit, which the renderer reloads when it changes
  *  on disk under ~/.aya/. */
 export type ConfigSlice = "snippets" | "presets" | "themes" | "projects";
@@ -848,7 +856,7 @@ export interface AyaApi {
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
-  harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
+  harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchResult>;
   restartPtyHost(): Promise<void>;
   retryPtyHostRecovery():Promise<boolean>;
   /** Stop running hosts this Aya does not use; returns the pids signalled. */

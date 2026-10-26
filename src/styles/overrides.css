@@ -355,7 +355,8 @@
   padding-top: 6px;
   border-top: 1px solid var(--border);
 }
-.aya-findbar-empty {
+.aya-findbar-empty,
+.aya-findbar-coverage {
   padding: 4px 2px;
   font-size: 11px;
   color: var(--fg-secondary);

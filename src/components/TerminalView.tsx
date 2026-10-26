@@ -17,11 +17,13 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type {
   HarnessSearchHit,
+  HarnessSearchResult,
   Preset,
   Snippet,
   TerminalState,
   ThemeColors,
 } from "../types";
+import { formatHarnessSearchCoverage } from "../harness-search-coverage";
 import { effectiveAgent } from "../agentPreset";
 import { ptyEventBus } from "../ptyEventBus";
 import type { SettingsTab } from "../settings-tabs";
@@ -1909,6 +1911,7 @@ function FindBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const [historyMode, setHistoryMode] = useState(false);
   const [hits, setHits] = useState<HarnessSearchHit[]>([]);
+  const [coverage, setCoverage] = useState<HarnessSearchResult["coverage"]>({ partial: false });
   // True once a transcript search has completed for the current query, so
   // "No matches" only shows after an actual (empty) result, not while typing.
   const [searched, setSearched] = useState(false);
@@ -1927,6 +1930,7 @@ function FindBar({
     if (!historyActive || !historyAgent) return;
     if (query.length < HISTORY_MIN_QUERY_CHARS) {
       setHits([]);
+      setCoverage({ partial: false });
       setSearched(false);
       setExpandedHit(null);
       return;
@@ -1937,13 +1941,15 @@ function FindBar({
         .harnessSearch({ agent: historyAgent, cwd, configDir, command, query })
         .then((results) => {
           if (historySeqRef.current !== seq) return; // stale response
-          setHits(results);
+          setHits(results.hits);
+          setCoverage(results.coverage);
           setSearched(true);
           setExpandedHit(null);
         })
         .catch(() => {
           if (historySeqRef.current !== seq) return;
           setHits([]);
+          setCoverage({ partial: false });
           setSearched(true);
         });
     }, HISTORY_SEARCH_DEBOUNCE_MS);
@@ -1958,6 +1964,7 @@ function FindBar({
       onClearTerminalMatches();
     } else {
       setHits([]);
+      setCoverage({ partial: false });
       setSearched(false);
       // Re-run the live terminal search for the query already in the box.
       onChange(value, false);
@@ -1966,6 +1973,11 @@ function FindBar({
   };
 
   const agentLabel = historyAgent === "claude" ? "Claude" : "Codex";
+  const partialCoverageText = formatHarnessSearchCoverage(
+    coverage,
+    hits.length > 0,
+    agentLabel,
+  );
   return (
     <div className={`aya-findbar ${historyActive ? "aya-findbar--history" : ""}`}>
       <div className="aya-findbar-row">
@@ -2044,7 +2056,7 @@ function FindBar({
         <div className="aya-findbar-results">
           {hits.length === 0 ? (
             <div className="aya-findbar-empty">
-              No matches in recent {agentLabel} sessions for this directory
+              {partialCoverageText ?? `No matches in recent ${agentLabel} sessions for this directory`}
             </div>
           ) : (
             hits.map((hit, index) => {
@@ -2088,6 +2100,11 @@ function FindBar({
                 </button>
               );
             })
+          )}
+          {partialCoverageText && hits.length > 0 && (
+            <div className="aya-findbar-coverage">
+              {partialCoverageText}
+            </div>
           )}
         </div>
       )}

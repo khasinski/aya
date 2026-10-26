@@ -19,7 +19,7 @@ import { codexHomeFor } from "./agent-brief";
 import { claudeProjectDirName } from "./claude-session";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
 import { CODEX_SESSIONS_SUBDIR, DEFAULT_CODEX_HOME } from "./usage-codex";
-import { scanJsonlTail } from "./bounded-file-read";
+import { scanJsonlLinesReverse } from "./bounded-file-read";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
@@ -46,16 +46,23 @@ export interface HarnessSearchHit {
   matchLength: number;
 }
 
+export interface HarnessSearchResult {
+  hits: HarnessSearchHit[];
+  coverage: {
+    partial: boolean;
+    /** Oldest message timestamp examined, or the session's modified time. */
+    searchedBackTo?: string;
+  };
+}
+
 // Newest sessions to search per query — bounds worst-case parse cost when a
 // project has months of history. The freshest sessions are what per-tab
 // search is for; the global Cmd+K can grow a real index later.
 const MAX_SESSIONS_SCANNED = 12;
 const MAX_HITS_TOTAL = 80;
 const MAX_HITS_PER_SESSION = 20;
-// Search the newest bounded portion of a transcript; large sessions are
-// common, and the tail is the most useful history for an interactive search.
-export const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 1000;
+const MAX_CACHEABLE_TRANSCRIPT_BYTES = 512 * 1024;
 const MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE = 4 * 1024 * 1024;
 const MAX_CACHED_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_MESSAGE_CHARS = 64 * 1024;
@@ -69,6 +76,8 @@ const CODEX_CWD_CACHE_MAX_FILES = 256;
 // Codex session_meta is the first JSONL line; its base_instructions blob can
 // be a few KB, so probe generously but never read the whole rollout for it.
 const META_PROBE_BYTES = 64 * 1024;
+export const HARNESS_SEARCH_TIME_BUDGET_MS = 3_000;
+export const MAX_SEARCH_MESSAGE_BYTES = 64 * 1024;
 
 export interface HarnessMessage {
   role: "user" | "assistant";
@@ -345,10 +354,7 @@ function cacheTranscript(file: string, parsed: ParsedTranscript): void {
   }
 }
 
-async function transcriptMessages(
-  session: SessionFile,
-  agent: "claude" | "codex",
-): Promise<HarnessMessage[]> {
+function cachedTranscript(session: SessionFile): HarnessMessage[] | null {
   const cached = parseCache.get(session.file);
   if (
     cached &&
@@ -360,39 +366,11 @@ async function transcriptMessages(
     parseCache.set(session.file, cached);
     return cached.messages;
   }
-  const newestFirst: HarnessMessage[] = [];
-  let weight = 0;
-  try {
-    await scanJsonlTail(session.file, (line) => {
-      const extracted = agent === "claude"
-        ? extractClaudeMessages([line])
-        : extractCodexMessages([line]);
-      for (const message of extracted) {
-        const text = message.text.length > MAX_CACHED_MESSAGE_CHARS
-          ? message.text.slice(0, MAX_CACHED_MESSAGE_CHARS)
-          : message.text;
-        const bounded: HarnessMessage = { ...message, text, lower: text.toLowerCase() };
-        const messageWeight = (bounded.text.length + bounded.lower.length) * 2 + 128;
-        if (
-          newestFirst.length >= MAX_TRANSCRIPT_MESSAGES ||
-          weight + messageWeight > MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE
-        ) return true;
-        newestFirst.push(bounded);
-        weight += messageWeight;
-      }
-      return false;
-    }, { maxBytes: MAX_TRANSCRIPT_BYTES });
-  } catch {
-    return [];
+  if (cached) {
+    parseCache.delete(session.file);
+    parseCacheBytes -= cached.weight;
   }
-  const messages = newestFirst.reverse();
-  cacheTranscript(session.file, {
-    mtimeMs: session.mtimeMs,
-    size: session.size,
-    messages,
-    weight,
-  });
-  return messages;
+  return null;
 }
 
 interface MessageMatch {
@@ -435,40 +413,159 @@ export function matchMessage(
   };
 }
 
+export interface HarnessSearchOptions {
+  /** Internal deterministic hooks; production callers use the 3-second budget. */
+  timeBudgetMs?: number;
+  now?: () => number;
+  chunkBytes?: number;
+  onMaxCarryBytes?: (bytes: number) => void;
+}
+
 export async function searchHarnessSessions(
   req: HarnessSearchRequest,
-): Promise<HarnessSearchHit[]> {
+  options: HarnessSearchOptions = {},
+): Promise<HarnessSearchResult> {
   const tokens = req.query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return [];
+  if (tokens.length === 0) return { hits: [], coverage: { partial: false } };
+  const now = options.now ?? (() => performance.now());
+  const deadline = now() + (options.timeBudgetMs ?? HARNESS_SEARCH_TIME_BUDGET_MS);
   const sessions =
     req.agent === "claude"
       ? await claudeSessionFiles(req.cwd, req.configDir)
       : await codexSessionFiles(req.cwd, req.configDir, req.command);
   const hits: HarnessSearchHit[] = [];
+  let partial = false;
+  let searchedBackToMs: number | undefined;
+  const noteTimestamp = (timestamp: string | undefined) => {
+    const parsed = timestamp ? Date.parse(timestamp) : NaN;
+    if (Number.isFinite(parsed) && (searchedBackToMs === undefined || parsed < searchedBackToMs)) {
+      searchedBackToMs = parsed;
+    }
+  };
+  const appendHit = (session: SessionFile, message: HarnessMessage, sessionHits: number[]) => {
+    const match = matchMessage(message, tokens);
+    if (!match || sessionHits[0] >= MAX_HITS_PER_SESSION || hits.length >= MAX_HITS_TOTAL) return;
+    hits.push({
+      sessionId: session.sessionId,
+      role: message.role,
+      timestamp: message.timestamp,
+      text: message.text.length > MAX_HIT_TEXT_CHARS
+        ? message.text.slice(0, MAX_HIT_TEXT_CHARS) + "…"
+        : message.text,
+      snippet: match.snippet,
+      matchStart: match.matchStart,
+      matchLength: match.matchLength,
+    });
+    sessionHits[0] += 1;
+  };
   for (const session of sessions) {
-    const messages = await transcriptMessages(session, req.agent);
-    let sessionHits = 0;
-    // Newest messages first within the (already newest-first) session order.
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (sessionHits >= MAX_HITS_PER_SESSION) break;
-      const match = matchMessage(messages[i], tokens);
-      if (!match) continue;
-      const m = messages[i];
-      hits.push({
-        sessionId: session.sessionId,
-        role: m.role,
-        timestamp: m.timestamp,
-        text:
-          m.text.length > MAX_HIT_TEXT_CHARS
-            ? m.text.slice(0, MAX_HIT_TEXT_CHARS) + "…"
-            : m.text,
-        snippet: match.snippet,
-        matchStart: match.matchStart,
-        matchLength: match.matchLength,
+    if (now() >= deadline || hits.length >= MAX_HITS_TOTAL) {
+      partial = true;
+      break;
+    }
+    const sessionHits = [0];
+    let sessionOldestTimestampMs: number | undefined;
+    const noteSessionTimestamp = (timestamp: string | undefined) => {
+      const parsed = timestamp ? Date.parse(timestamp) : NaN;
+      if (!Number.isFinite(parsed)) return;
+      if (sessionOldestTimestampMs === undefined || parsed < sessionOldestTimestampMs) {
+        sessionOldestTimestampMs = parsed;
+      }
+      noteTimestamp(timestamp);
+    };
+    const cached = session.size <= MAX_CACHEABLE_TRANSCRIPT_BYTES
+      ? cachedTranscript(session)
+      : null;
+    if (cached) {
+      for (let i = cached.length - 1; i >= 0; i--) {
+        noteSessionTimestamp(cached[i].timestamp);
+        appendHit(session, cached[i], sessionHits);
+      }
+      continue;
+    }
+    if (session.size > MAX_CACHEABLE_TRANSCRIPT_BYTES) cachedTranscript(session);
+
+    const cacheMessages: HarnessMessage[] = [];
+    let cacheWeight = 0;
+    let cacheable = session.size <= MAX_CACHEABLE_TRANSCRIPT_BYTES;
+    let scanResult: Awaited<ReturnType<typeof scanJsonlLinesReverse>> | undefined;
+    try {
+      scanResult = await scanJsonlLinesReverse(session.file, (line) => {
+        const extracted = req.agent === "claude"
+          ? extractClaudeMessages([line])
+          : extractCodexMessages([line]);
+        for (const message of extracted) {
+          if (message.text.length > MAX_CACHED_MESSAGE_CHARS) {
+            cacheable = false;
+            partial = true;
+            continue;
+          }
+          noteSessionTimestamp(message.timestamp);
+          appendHit(session, message, sessionHits);
+          if (cacheable && cacheMessages.length >= MAX_TRANSCRIPT_MESSAGES) {
+            cacheable = false;
+            cacheMessages.length = 0;
+            cacheWeight = 0;
+          }
+          if (cacheable) {
+            const bounded: HarnessMessage = { ...message, lower: message.text.toLowerCase() };
+            const weight = (bounded.text.length + bounded.lower.length) * 2 + 128;
+            if (cacheWeight + weight <= MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE) {
+              cacheMessages.push(bounded);
+              cacheWeight += weight;
+            } else {
+              cacheable = false;
+              cacheMessages.length = 0;
+              cacheWeight = 0;
+            }
+          }
+        }
+      }, {
+        maxBytes: Number.MAX_SAFE_INTEGER,
+        maxLineBytes: MAX_SEARCH_MESSAGE_BYTES,
+        shouldStop: () => now() >= deadline,
+        chunkBytes: options.chunkBytes,
+        onMaxCarryBytes: options.onMaxCarryBytes,
       });
-      sessionHits += 1;
-      if (hits.length >= MAX_HITS_TOTAL) return hits;
+    } catch {
+      scanResult = undefined;
+    }
+    if (scanResult?.truncated) partial = true;
+    if (scanResult?.truncated && sessionOldestTimestampMs === undefined) {
+      noteTimestamp(new Date(session.mtimeMs).toISOString());
+    }
+    if (!scanResult || scanResult.truncated) cacheable = false;
+    if (cacheable) {
+      cacheTranscript(session.file, {
+        mtimeMs: session.mtimeMs,
+        size: session.size,
+        messages: cacheMessages.reverse(),
+        weight: cacheWeight,
+      });
+    }
+    if (!scanResult || now() >= deadline) {
+      partial = true;
+      if (searchedBackToMs === undefined) searchedBackToMs = session.mtimeMs;
+      break;
+    }
+    if (scanResult.truncated && now() >= deadline) break;
+    // Once the global result cap is reached, older sessions are intentionally
+    // not visited; disclose that the returned result is a partial search.
+    if (hits.length >= MAX_HITS_TOTAL && sessions.indexOf(session) < sessions.length - 1) {
+      partial = true;
+      break;
     }
   }
-  return hits;
+  if (partial && searchedBackToMs === undefined && sessions.length > 0) {
+    searchedBackToMs = sessions[0].mtimeMs;
+  }
+  return {
+    hits,
+    coverage: {
+      partial,
+      ...(partial && searchedBackToMs !== undefined
+        ? { searchedBackTo: new Date(searchedBackToMs).toISOString() }
+        : {}),
+    },
+  };
 }

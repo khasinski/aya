@@ -39,7 +39,7 @@ writeSession(join(fakeHome, ".codex"), "found under stock home");
 
 test("history search without a configDir reads CODEX_HOME", async () => {
   const hits = await searchHarnessSessions({ agent: "codex", cwd: "/p", query: "found under" });
-  assert.deepEqual(hits.map((h) => h.snippet.includes("codex home")), [true]);
+  assert.deepEqual(hits.hits.map((h) => h.snippet.includes("codex home")), [true]);
 });
 
 test("history search with the stock ~/.codex configDir reads CODEX_HOME", async () => {
@@ -49,7 +49,7 @@ test("history search with the stock ~/.codex configDir reads CODEX_HOME", async 
     configDir: "~/.codex",
     query: "found under",
   });
-  assert.deepEqual(hits.map((h) => h.snippet.includes("codex home")), [true]);
+  assert.deepEqual(hits.hits.map((h) => h.snippet.includes("codex home")), [true]);
 });
 
 test("usage sources: CODEX_HOME without presets and for a stock preset", () => {
@@ -76,7 +76,7 @@ test("history search resolves a relative configDir against the tab cwd", async (
     configDir: ".rel",
     query: "relative under",
   });
-  assert.deepEqual(hits.map((h) => h.snippet.includes("under tab")), [true]);
+  assert.deepEqual(hits.hits.map((h) => h.snippet.includes("under tab")), [true]);
 });
 
 test("usage skips a relative CODEX_HOME: no tab cwd to resolve it against", () => {
@@ -92,7 +92,7 @@ test("usage skips a relative CODEX_HOME: no tab cwd to resolve it against", () =
 test("history search with a relative configDir and no tab cwd finds nothing", async () => {
   assert.deepEqual(
     await searchHarnessSessions({ agent: "codex", cwd: "", configDir: ".rel", query: "relative under" }),
-    [],
+    { hits: [], coverage: { partial: false } },
   );
 });
 
@@ -105,5 +105,5 @@ test("history search follows an inline CODEX_HOME in the preset's command", asyn
     command: `CODEX_HOME=${inline} codex`,
     query: "inline home",
   });
-  assert.deepEqual(hits.map((h) => h.snippet.includes("inline home")), [true]);
+  assert.deepEqual(hits.hits.map((h) => h.snippet.includes("inline home")), [true]);
 });

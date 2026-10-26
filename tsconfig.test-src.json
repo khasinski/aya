@@ -32,6 +32,7 @@
     "src/diff-review.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
+    "src/harness-search-coverage.ts",
     "src/hooks/usePersistentPreference.ts",
     "src/machines-view.ts",
     "src/local-summaries.ts",

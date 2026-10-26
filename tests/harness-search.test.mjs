@@ -207,10 +207,10 @@ test("searchHarnessSessions finds Claude history for the cwd, newest session fir
     configDir: root,
     query: "signing",
   });
-  assert.equal(hits.length, 2);
-  assert.equal(hits[0].sessionId, "new-session");
-  assert.equal(hits[0].role, "assistant");
-  assert.equal(hits[1].sessionId, "old-session");
+  assert.equal(hits.hits.length, 2);
+  assert.equal(hits.hits[0].sessionId, "new-session");
+  assert.equal(hits.hits[0].role, "assistant");
+  assert.equal(hits.hits[1].sessionId, "old-session");
 
   // AND semantics across the same message.
   const anded = await searchHarnessSessions({
@@ -219,8 +219,8 @@ test("searchHarnessSessions finds Claude history for the cwd, newest session fir
     configDir: root,
     query: "certificate expired",
   });
-  assert.equal(anded.length, 1);
-  assert.equal(anded[0].sessionId, "new-session");
+  assert.equal(anded.hits.length, 1);
+  assert.equal(anded.hits[0].sessionId, "new-session");
 
   // Unknown cwd → no hits, no error.
   const none = await searchHarnessSessions({
@@ -229,7 +229,7 @@ test("searchHarnessSessions finds Claude history for the cwd, newest session fir
     configDir: root,
     query: "signing",
   });
-  assert.deepEqual(none, []);
+  assert.deepEqual(none.hits, []);
 });
 
 test("searchHarnessSessions returns matching messages newest-first within one session", async () => {
@@ -247,7 +247,7 @@ test("searchHarnessSessions returns matching messages newest-first within one se
       configDir: root,
       query: "needle",
     });
-    assert.deepEqual(hits.map((hit) => hit.text), ["needle newest", "needle middle", "needle oldest"]);
+    assert.deepEqual(hits.hits.map((hit) => hit.text), ["needle newest", "needle middle", "needle oldest"]);
   } finally {
     resetHarnessSearchCaches();
     rmSync(root, { recursive: true, force: true });
@@ -269,7 +269,7 @@ test("searchHarnessSessions notices appended Claude transcript lines", async () 
     t - 10,
   );
   const req = { agent: "claude", cwd: CWD, configDir: root, query: "second" };
-  assert.equal((await searchHarnessSessions(req)).length, 0);
+  assert.equal((await searchHarnessSessions(req)).hits.length, 0);
 
   const appended =
     claudeLine({
@@ -278,7 +278,29 @@ test("searchHarnessSessions notices appended Claude transcript lines", async () 
     }) + "\n";
   writeFileSync(file, appended, { flag: "a" });
   utimesSync(file, t, t);
-  assert.equal((await searchHarnessSessions(req)).length, 1);
+  assert.equal((await searchHarnessSessions(req)).hits.length, 1);
+});
+
+test("history search skips a message over 64 KiB, keeps older hits, and discloses partial coverage", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-message-cap-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const oversized = claudeMessage("oversized " + "x".repeat(70 * 1024), "2026-10-26T09:30:00.000Z");
+  writeClaudeSession(root, "message-cap", [
+    claudeMessage("older target", "2026-10-26T09:00:00.000Z"),
+    oversized,
+    claudeMessage("newer target", "2026-10-26T10:00:00.000Z"),
+  ], Math.floor(Date.now() / 1000));
+  let maxCarry = 0;
+  const result = await searchHarnessSessions({
+    agent: "claude",
+    cwd: CWD,
+    configDir: root,
+    query: "target",
+  }, { onMaxCarryBytes: (bytes) => { maxCarry = Math.max(maxCarry, bytes); } });
+  assert.deepEqual(result.hits.map((hit) => hit.text), ["newer target", "older target"]);
+  assert.equal(result.coverage.partial, true);
+  assert.equal(result.coverage.searchedBackTo, "2026-10-26T09:00:00.000Z");
+  assert.ok(maxCarry <= 64 * 1024, `scanner retained ${maxCarry} bytes in a line carry`);
 });
 
 test("searchHarnessSessions filters Codex rollouts by session_meta cwd", async () => {
@@ -316,48 +338,104 @@ test("searchHarnessSessions filters Codex rollouts by session_meta cwd", async (
     configDir: root,
     query: "flaky test",
   });
-  assert.equal(hits.length, 1);
-  assert.equal(hits[0].sessionId, "2026-07-01T10-00-00-abc");
-  assert.equal(hits[0].role, "assistant");
-  assert.ok(hits[0].snippet.includes("worker.ts"));
+  assert.equal(hits.hits.length, 1);
+  assert.equal(hits.hits[0].sessionId, "2026-07-01T10-00-00-abc");
+  assert.equal(hits.hits[0].role, "assistant");
+  assert.ok(hits.hits[0].snippet.includes("worker.ts"));
 });
 
-test("harness search finds a recent message in a sparse 1 GiB transcript without loading it whole", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-sparse-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const file = writeClaudeSession(
-    root,
-    "sparse-session",
-    [claudeLine({
-      type: "assistant",
-      timestamp: "2026-10-26T09:00:00.000Z",
-      message: { role: "assistant", content: [{ type: "text", text: "temporary" }] },
-    })],
-    Math.floor(Date.now() / 1000),
-  );
-  const message = claudeLine({
+function claudeMessage(text, timestamp) {
+  return claudeLine({
     type: "assistant",
-    timestamp: "2026-10-26T10:00:00.000Z",
-    message: { role: "assistant", content: [{ type: "text", text: "bounded sparse lookup target" }] },
+    timestamp,
+    message: { role: "assistant", content: [{ type: "text", text }] },
   });
-  const size = 1024 * 1024 * 1024;
-  const fd = openSync(file, "w+");
-  try {
-    ftruncateSync(fd, size);
-    const bytes = Buffer.from(`\n${message}\n`);
-    writeSync(fd, bytes, 0, bytes.length, size - bytes.length);
-  } finally {
-    closeSync(fd);
+}
+
+function fakeClock(hitBudget) {
+  let calls = 0;
+  return () => {
+    calls += 1;
+    return hitBudget && calls >= 4 ? 10 : 0;
+  };
+}
+
+test("full-history scan coverage is honest and memory stays bounded", async (t) => {
+  const cases = [];
+  for (const size of ["small", "over-8MiB", "sparse-1GiB"]) {
+    for (const position of ["newest", "oldest", "none"]) {
+      for (const budgetHit of [false, true]) {
+        cases.push({ size, position, budgetHit });
+      }
+    }
   }
-  const before = process.memoryUsage().rss;
-  const hits = await searchHarnessSessions({
-    agent: "claude",
-    cwd: CWD,
-    configDir: root,
-    query: "bounded sparse lookup",
-  });
-  const after = process.memoryUsage().rss;
-  assert.equal(hits.length, 1);
-  assert.match(hits[0].text, /bounded sparse lookup target/);
-  assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
+  for (const { size, position, budgetHit } of cases) {
+    await t.test(`${size}, ${position} match, budget ${budgetHit ? "hit" : "not hit"}`, async (t) => {
+      const root = mkdtempSync(join(tmpdir(), "aya-hsearch-full-"));
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      const dir = join(root, "projects", claudeProjectDirName(CWD));
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, "session.jsonl");
+      const oldest = claudeMessage("oldest coverage needle", "2026-10-26T09:00:00.000Z");
+      const newest = claudeMessage("newest coverage needle", "2026-10-26T10:00:00.000Z");
+      const noise = `${JSON.stringify({ type: "progress", padding: "x".repeat(60 * 1024) })}\n`;
+      const nowSec = Math.floor(Date.now() / 1000);
+      let chunkBytes = 64 * 1024;
+      if (size === "small") {
+        writeFileSync(file, `${oldest}\n${noise.repeat(3)}${newest}\n`);
+      } else if (size === "over-8MiB") {
+        writeFileSync(file, `${oldest}\n${noise.repeat(145)}${newest}\n`);
+      } else {
+        const fd = openSync(file, "w+");
+        const fileBytes = 1024 * 1024 * 1024;
+        const prefix = Buffer.from(`${oldest}\n`);
+        const suffix = Buffer.from(`\n${newest}\n`);
+        try {
+          ftruncateSync(fd, fileBytes);
+          writeSync(fd, prefix, 0, prefix.length, 0);
+          writeSync(fd, suffix, 0, suffix.length, fileBytes - suffix.length);
+        } finally {
+          closeSync(fd);
+        }
+        chunkBytes = 4 * 1024 * 1024;
+      }
+      utimesSync(file, nowSec, nowSec);
+      resetHarnessSearchCaches();
+      let maxCarry = 0;
+      const before = process.memoryUsage().rss;
+      const result = await searchHarnessSessions({
+        agent: "claude",
+        cwd: CWD,
+        configDir: root,
+        query: size === "over-8MiB" && position === "newest" && !budgetHit
+          ? "coverage"
+          : position === "newest"
+            ? "newest coverage"
+            : position === "oldest"
+              ? "oldest coverage"
+              : "absent term",
+      }, {
+        timeBudgetMs: budgetHit ? 5 : 30_000,
+        now: fakeClock(budgetHit),
+        chunkBytes,
+        onMaxCarryBytes: (bytes) => { maxCarry = Math.max(maxCarry, bytes); },
+      });
+      const after = process.memoryUsage().rss;
+      const shouldFind = position !== "none" && !(budgetHit && position === "oldest");
+      assert.equal(result.hits.length > 0, shouldFind);
+      if (shouldFind) {
+        assert.match(result.hits[0].text, position === "newest" ? /newest coverage/ : /oldest coverage/);
+      }
+      if (size === "over-8MiB" && !budgetHit && position === "newest") {
+        assert.deepEqual(result.hits.map((hit) => hit.text.match(/(?:newest|oldest) coverage/)?.[0]), [
+          "newest coverage",
+          "oldest coverage",
+        ]);
+      }
+      assert.equal(result.coverage.partial, budgetHit || size === "sparse-1GiB");
+      if (result.coverage.partial) assert.ok(result.coverage.searchedBackTo);
+      assert.ok(maxCarry <= 64 * 1024, `scanner retained ${maxCarry} bytes in a line carry`);
+      assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
+    });
+  }
 });

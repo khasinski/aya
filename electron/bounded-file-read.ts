@@ -21,6 +21,19 @@ export interface JsonlTailOptions {
   beforeChunkRead?: (fileSize: number, position: number, length: number) => void | Promise<void>;
 }
 
+export interface ReverseJsonlOptions {
+  /** Maximum bytes to visit, starting at EOF. Defaults to the whole file. */
+  maxBytes?: number;
+  /** Read chunk size; exported for deterministic boundary tests. */
+  chunkBytes?: number;
+  /** Stop before reading another chunk (for a search-wide deadline). */
+  shouldStop?: () => boolean;
+  /** Maximum JSONL line size. Larger lines are skipped without retaining them. */
+  maxLineBytes?: number;
+  /** Test instrumentation for the largest line carry retained by the scanner. */
+  onMaxCarryBytes?: (bytes: number) => void;
+}
+
 /** Fill a buffer despite short positional reads; stop only when it is full or
  *  the underlying source reports EOF. Exported so the short-read behavior is
  *  pinned with a deterministic fake reader. */
@@ -46,7 +59,7 @@ export async function readBufferAtMost(
 
 export interface JsonlTailResult {
   bytesRead: number;
-  /** True when older file bytes were intentionally outside the read budget. */
+  /** True when the scan did not cover all eligible file content. */
   truncated: boolean;
 }
 
@@ -191,6 +204,129 @@ export async function scanJsonlTail(
       }) === true) stopped = true;
     }
     return { bytesRead, truncated: start > 0 || earlyEof };
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Visit JSONL lines newest-first with bounded chunk and line memory. Unlike
+ * scanJsonlTail this can walk the whole file; callers can stop it with
+ * shouldStop. An oversized line is skipped and marks the result truncated. */
+export async function scanJsonlLinesReverse(
+  file: string,
+  visit: (line: string, info: JsonlLineInfo) => boolean | void,
+  options: ReverseJsonlOptions = {},
+): Promise<JsonlTailResult> {
+  const maxBytes = options.maxBytes ?? Number.MAX_SAFE_INTEGER;
+  const chunkBytes = options.chunkBytes ?? JSONL_TAIL_CHUNK_BYTES;
+  const maxLineBytes = options.maxLineBytes ?? 1024 * 1024;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("maxBytes must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) {
+    throw new RangeError("chunkBytes must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes < 1) {
+    throw new RangeError("maxLineBytes must be a positive safe integer");
+  }
+  const handle = await fs.open(file, "r");
+  let bytesRead = 0;
+  try {
+    const size = (await handle.stat()).size;
+    const start = Math.max(0, size - maxBytes);
+    let offset = size;
+    let carry: Buffer[] = [];
+    let carryBytes = 0;
+    // True when the suffix being carried belongs to a line whose beginning
+    // has already exceeded maxLineBytes. Drop it when its preceding LF arrives.
+    let skippingOversizedLine = false;
+    let stopped = false;
+    let partial = start > 0;
+    while (offset > start) {
+      if (options.shouldStop?.()) {
+        stopped = true;
+        partial = true;
+        break;
+      }
+      const length = Math.min(chunkBytes, offset - start);
+      const chunkStart = offset - length;
+      const chunk = Buffer.allocUnsafe(length);
+      const result = await readBufferAtMost(
+        (buffer, bufferOffset, readLength, position) => handle.read(buffer, bufferOffset, readLength, position),
+        chunk,
+        length,
+        chunkStart,
+      );
+      bytesRead += result.bytesRead;
+      if (!result.complete) {
+        partial = true;
+        break;
+      }
+      let end = chunk.length;
+      while (!stopped) {
+        const newline = chunk.lastIndexOf(0x0a, end - 1);
+        if (newline < 0) break;
+        const segment = chunk.subarray(newline + 1, end);
+        const lineBytes = segment.length + carryBytes;
+        if (skippingOversizedLine) {
+          partial = true;
+        } else if (lineBytes > maxLineBytes) {
+          partial = true;
+        } else if (lineBytes > 0) {
+          const lineBuffer = carryBytes === 0
+            ? segment
+            : Buffer.concat([segment, ...carry], lineBytes);
+          const lineEndOffset = chunkStart + end + carryBytes;
+          if (visit(lineBuffer.toString("utf8"), {
+            startOffset: chunkStart + newline + 1,
+            endOffset: lineEndOffset,
+          }) === true) {
+            stopped = true;
+          }
+        }
+        carry = [];
+        carryBytes = 0;
+        skippingOversizedLine = false;
+        end = newline;
+      }
+      if (!stopped && end > 0) {
+        if (skippingOversizedLine) {
+          // Continue seeking the start delimiter without retaining bytes.
+        } else if (end + carryBytes > maxLineBytes) {
+          skippingOversizedLine = true;
+          carry = [];
+          carryBytes = 0;
+          partial = true;
+        } else {
+          carry.unshift(chunk.subarray(0, end));
+          carryBytes += end;
+          options.onMaxCarryBytes?.(carryBytes);
+        }
+      }
+      offset = chunkStart;
+
+      // Once byte zero is reached the remaining carry is a complete first
+      // line. At a bounded start it is only a prefix and is intentionally lost.
+      if (!stopped && offset === 0) {
+        if (skippingOversizedLine) {
+          partial = true;
+        } else if (carryBytes > maxLineBytes) {
+          partial = true;
+        } else if (carryBytes > 0) {
+          const lineBuffer = carry.length === 1 ? carry[0] : Buffer.concat(carry, carryBytes);
+          const firstLine = lineBuffer.toString("utf8");
+          if (visit(firstLine, {
+            startOffset: 0,
+            endOffset: carryBytes,
+          }) === true) {
+            stopped = true;
+          }
+        }
+        carry = [];
+        carryBytes = 0;
+      }
+    }
+    return { bytesRead, truncated: partial || stopped };
   } finally {
     await handle.close();
   }

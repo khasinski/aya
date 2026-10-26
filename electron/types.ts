@@ -6,6 +6,7 @@ import type { Snippet } from "./snippets";
 import type { HarnessDef } from "./harnesses";
 import type {
   HarnessSearchHit,
+  HarnessSearchResult,
   HarnessSearchRequest,
 } from "./harness-search";
 import type { AgentKind, Preset } from "./presets";
@@ -19,6 +20,7 @@ import type { StatusHookStatus } from "./status-hook";
 export type {
   BufferSearchHit,
   HarnessSearchHit,
+  HarnessSearchResult,
   HarnessSearchRequest,
   Snippet,
   HarnessDef,
@@ -683,7 +685,7 @@ export interface AyaApi {
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
-  harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
+  harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchResult>;
   restartPtyHost(): Promise<void>;
   retryPtyHostRecovery():Promise<boolean>;
   /** Stop running hosts this Aya does not use; returns the pids signalled. */
