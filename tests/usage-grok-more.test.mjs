@@ -25,6 +25,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   GROK_LIMIT_SCAN_MAX_BYTES,
+  GROK_LIMIT_PARTIAL_MAX_BYTES,
+  GROK_USAGE_TOTAL_SCAN_MAX_BYTES,
   GROK_USAGE_WINDOW_MS,
   extractGrokUsageRow,
   readGrokLimit,
@@ -83,7 +85,6 @@ function session(home, cwd, uuid, lines) {
 test("a line that mentions usage but is not JSON is skipped", () => {
   assert.equal(extractGrokUsageRow('{"usage": {"inputTokens": 5'), null);
 });
-
 test("a usage field that is not an object is not a turn", () => {
   for (const usage of [5, null, "150"]) {
     const line = JSON.stringify({ timestamp: NOW, params: { update: { usage } } });
@@ -327,4 +328,76 @@ test("a tail with no newline yields nothing, and the next appended line is still
   assert.equal(await readGrokLimit(home, NOW), null);
   appendFileSync(log, `\n${creditsLine(40, "2026-09-26T19:00:00.000Z")}\n`);
   assert.equal((await readGrokLimit(home, NOW)).pct, 40);
+});
+
+test("an oversized growing partial credits line is dropped until the next newline", async (t) => {
+  resetGrokUsageCache();
+  const { home, log } = bigLog(t);
+  writeFileSync(log, `${creditsLine(5, "2026-09-26T18:00:00.000Z")}\n`);
+  let tSec = NOW / 1000;
+  utimesSync(log, tSec, tSec);
+  assert.equal((await readGrokLimit(home, NOW)).pct, 5);
+
+  appendFileSync(log, "x".repeat(Math.floor(GROK_LIMIT_PARTIAL_MAX_BYTES * 0.7)));
+  tSec += 1;
+  utimesSync(log, tSec, tSec);
+  assert.equal((await readGrokLimit(home, NOW)).pct, 5);
+
+  appendFileSync(log, "x".repeat(Math.floor(GROK_LIMIT_PARTIAL_MAX_BYTES * 0.7)));
+  tSec += 1;
+  utimesSync(log, tSec, tSec);
+  assert.equal((await readGrokLimit(home, NOW)).pct, 5);
+
+  appendFileSync(log, `still-garbage\n${creditsLine(73, "2026-09-26T19:00:00.000Z")}\n`);
+  tSec += 1;
+  utimesSync(log, tSec, tSec);
+  assert.equal((await readGrokLimit(home, NOW)).pct, 73);
+});
+
+test("Grok usage filters expired and future rows before per-file and total row caps", async (t) => {
+  resetGrokUsageCache();
+  const home = tempHome(t);
+  const future = turnLine(NOW + 60_000);
+
+  // More than the per-file cap of out-of-window rows must not hide the valid
+  // in-window row at the beginning of this transcript.
+  session(home, "one-cwd", "per-file", [turnLine(NOW - 1000), ...Array(2001).fill(future)]);
+  const perFile = await readGrokUsage([home], NOW);
+  assert.equal(perFile.turns, 1);
+  assert.equal(perFile.totalTokens, 150);
+
+  resetGrokUsageCache();
+  const totalHome = tempHome(t);
+  for (let i = 0; i < 11; i += 1) {
+    session(totalHome, `junk-${i}`, "session", Array(2000).fill(future));
+  }
+  session(totalHome, "valid", "session", [turnLine(NOW - 2000)]);
+  const total = await readGrokUsage([totalHome], NOW);
+  assert.equal(total.turns, 1);
+  assert.equal(total.totalTokens, 150);
+});
+
+test("Grok usage reads at most the aggregate scan budget newest-first per poll", async (t) => {
+  resetGrokUsageCache();
+  const home = tempHome(t);
+  const size = GROK_USAGE_TOTAL_SCAN_MAX_BYTES / 4;
+  for (let i = 0; i < 5; i += 1) {
+    const file = session(home, `large-cwd-${i}`, "session", []);
+    const fd = openSync(file, "w+");
+    try {
+      ftruncateSync(fd, size);
+      const row = Buffer.from(`\n${turnLine(NOW - 1000)}\n`);
+      writeSync(fd, row, 0, row.length, size - row.length);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  const first = await readGrokUsage([home], NOW);
+  assert.equal(first.turns, 4);
+  assert.equal(first.totalTokens, 600);
+  // The unscanned candidate is not cached as a complete parse, so it is read
+  // on a later poll after cached candidates consume no IO budget.
+  const second = await readGrokUsage([home], NOW);
+  assert.equal(second.turns, 5);
+  assert.equal(second.totalTokens, 750);
 });

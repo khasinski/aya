@@ -463,15 +463,14 @@ async function parseRollout(
   // tail budget. Keep this file's last parsed value rather than letting a
   // different, older rollout appear to be the current account state. A first
   // read of such a truncated file still has no result to preserve.
-  if (scan.truncated && !latestUsage && latestByAccount.size === 0 && cached) {
-    const preserved = { ...cached, mtimeMs };
-    rolloutParseCache.delete(file);
-    rolloutParseCache.set(file, preserved);
-    return preserved;
+  if (scan.truncated && cached) {
+    for (const account of cached.accounts) {
+      if (!latestByAccount.has(account.id)) latestByAccount.set(account.id, account);
+    }
   }
   const parsed: ParsedRollout = {
     mtimeMs,
-    usage: latestUsage,
+    usage: latestUsage ?? (scan.truncated ? cached?.usage ?? null : null),
     accounts: [...latestByAccount.values()].sort((a, b) => a.label.localeCompare(b.label)),
   };
   rolloutParseCache.delete(file);

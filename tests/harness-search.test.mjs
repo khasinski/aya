@@ -232,6 +232,28 @@ test("searchHarnessSessions finds Claude history for the cwd, newest session fir
   assert.deepEqual(none, []);
 });
 
+test("searchHarnessSessions returns matching messages newest-first within one session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-message-order-"));
+  const t = Math.floor(Date.now() / 1000);
+  writeClaudeSession(root, "one-session", [
+    claudeLine({ type: "user", timestamp: "2026-07-01T09:00:00.000Z", message: { role: "user", content: "needle oldest" } }),
+    claudeLine({ type: "assistant", timestamp: "2026-07-01T09:01:00.000Z", message: { role: "assistant", content: [{ type: "text", text: "needle middle" }] } }),
+    claudeLine({ type: "user", timestamp: "2026-07-01T09:02:00.000Z", message: { role: "user", content: "needle newest" } }),
+  ], t);
+  try {
+    const hits = await searchHarnessSessions({
+      agent: "claude",
+      cwd: CWD,
+      configDir: root,
+      query: "needle",
+    });
+    assert.deepEqual(hits.map((hit) => hit.text), ["needle newest", "needle middle", "needle oldest"]);
+  } finally {
+    resetHarnessSearchCaches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("searchHarnessSessions notices appended Claude transcript lines", async () => {
   const root = mkdtempSync(join(tmpdir(), "aya-hsearch-claude2-"));
   const t = Math.floor(Date.now() / 1000);

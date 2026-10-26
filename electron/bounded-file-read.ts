@@ -10,6 +10,31 @@ export interface JsonlTailOptions {
   chunkBytes?: number;
   /** Test instrumentation for bytes copied while assembling carried lines. */
   onCarryBytesCopied?: (bytes: number) => void;
+  /** Test hook used to simulate a file shrinking after its initial stat. */
+  beforeChunkRead?: (fileSize: number, position: number, length: number) => void | Promise<void>;
+}
+
+/** Fill a buffer despite short positional reads; stop only when it is full or
+ *  the underlying source reports EOF. Exported so the short-read behavior is
+ *  pinned with a deterministic fake reader. */
+export async function readBufferAtMost(
+  read: (
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ) => Promise<{ bytesRead: number }>,
+  buffer: Buffer,
+  length: number,
+  position: number,
+): Promise<{ bytesRead: number; complete: boolean }> {
+  let bytesRead = 0;
+  while (bytesRead < length) {
+    const result = await read(buffer, bytesRead, length - bytesRead, position + bytesRead);
+    if (result.bytesRead <= 0) return { bytesRead, complete: false };
+    bytesRead += result.bytesRead;
+  }
+  return { bytesRead, complete: true };
 }
 
 export interface JsonlTailResult {
@@ -49,12 +74,25 @@ export async function scanJsonlTail(
     let carryChunks: Buffer[] = [];
     let firstChunk = true;
     let stopped = false;
+    let earlyEof = false;
 
     while (offset > start && !stopped) {
       const length = Math.min(chunkBytes, offset - start);
       const chunkStart = offset - length;
       const chunk = Buffer.allocUnsafe(length);
-      const { bytesRead: count } = await handle.read(chunk, 0, length, chunkStart);
+      await options.beforeChunkRead?.(size, chunkStart, length);
+      const result = await readBufferAtMost(
+        (buffer, bufferOffset, readLength, position) => handle.read(buffer, bufferOffset, readLength, position),
+        chunk,
+        length,
+        chunkStart,
+      );
+      const count = result.bytesRead;
+      if (!result.complete) {
+        bytesRead += count;
+        earlyEof = true;
+        break;
+      }
       if (count <= 0) break;
       bytesRead += count;
       const current = chunk.subarray(0, count);
@@ -126,7 +164,7 @@ export async function scanJsonlTail(
         : firstLine;
       if (withoutTrailingLf && visit(withoutTrailingLf) === true) stopped = true;
     }
-    return { bytesRead, truncated: start > 0 };
+    return { bytesRead, truncated: start > 0 || earlyEof };
   } finally {
     await handle.close();
   }
@@ -144,7 +182,12 @@ export async function readFileAtMost(
   const handle = await fs.open(file, "r");
   try {
     const buffer = Buffer.alloc(maxBytes + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const { bytesRead } = await readBufferAtMost(
+      (target, offset, length, position) => handle.read(target, offset, length, position),
+      buffer,
+      buffer.length,
+      0,
+    );
     if (bytesRead > maxBytes) return null;
     return buffer.toString("utf8", 0, bytesRead);
   } finally {

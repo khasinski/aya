@@ -7,12 +7,13 @@ import {
   openSync,
   renameSync,
   rmSync,
+  truncateSync,
   writeSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scanJsonlTail } from "../dist-electron/bounded-file-read.js";
+import { readBufferAtMost, readFileAtMost, scanJsonlTail } from "../dist-electron/bounded-file-read.js";
 
 const MIB = 1024 * 1024;
 const MAX_BYTES = 256 * 1024;
@@ -187,4 +188,48 @@ test("the file handle closes when the visitor throws", async (t) => {
   writeFileSync(file, "line\n");
   await assert.rejects(scanJsonlTail(file, () => { throw new Error("visitor failed"); }));
   renameSync(file, moved);
+});
+
+test("short positional reads are looped until the requested prefix is filled", async () => {
+  const source = Buffer.from("abcdefgh");
+  const target = Buffer.alloc(8);
+  const positions = [];
+  const result = await readBufferAtMost(async (buffer, offset, length, position) => {
+    positions.push(position);
+    const count = Math.min(2, length, source.length - position);
+    source.copy(buffer, offset, position, position + count);
+    return { bytesRead: count };
+  }, target, target.length, 0);
+  assert.deepEqual(result, { bytesRead: 8, complete: true });
+  assert.deepEqual(positions, [0, 2, 4, 6]);
+  assert.equal(target.toString(), "abcdefgh");
+});
+
+test("a file truncated after stat stops cleanly without parsing a partial chunk", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "shrinks.jsonl");
+  writeFileSync(file, "complete-old-line\ncomplete-new-line\n");
+  const lines = [];
+  let truncated = false;
+  const result = await scanJsonlTail(file, (line) => lines.push(line), {
+    maxBytes: 128,
+    chunkBytes: 128,
+    beforeChunkRead: () => {
+      if (truncated) return;
+      truncated = true;
+      truncateSync(file, 3);
+    },
+  });
+  assert.equal(truncated, true);
+  assert.deepEqual(lines, []);
+  assert.equal(result.truncated, true);
+  assert.equal(result.bytesRead, 3);
+});
+
+test("readFileAtMost returns a bounded file prefix", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "control.json");
+  writeFileSync(file, "bounded-content");
+  assert.equal(await readFileAtMost(file, 64), "bounded-content");
+  assert.equal(await readFileAtMost(file, 4), null);
 });

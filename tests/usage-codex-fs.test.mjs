@@ -206,6 +206,45 @@ test("a first read of a truncated rollout without a tail snapshot has no usage",
   }
 });
 
+test("a truncated Codex tail merges cached accounts absent from its newer lines", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-mixed-truncated-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-mixed.jsonl");
+  try {
+    writeFileSync(file, [
+      snapshotLine(11, 21, "account-a", "A"),
+      snapshotLine(12, 22, "account-b", "B"),
+    ].join(""));
+    const t = Date.now() / 1000;
+    utimesSync(file, t - 5, t - 5);
+    const initial = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.deepEqual(initial.map((account) => account.id).sort(), ["account-a", "account-b"]);
+
+    const fd = openSync(file, "w+");
+    try {
+      const size = CODEX_USAGE_TAIL_MAX_BYTES + 128;
+      ftruncateSync(fd, size);
+      const oldA = Buffer.from(snapshotLine(13, 23, "account-a", "A"));
+      const newestB = Buffer.from(`\n${snapshotLine(44, 54, "account-b", "B")}`);
+      writeSync(fd, oldA, 0, oldA.length, 0);
+      writeSync(fd, newestB, 0, newestB.length, size - newestB.length);
+    } finally {
+      closeSync(fd);
+    }
+    utimesSync(file, t + 5, t + 5);
+
+    const accounts = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.deepEqual(accounts.map((account) => account.id).sort(), ["account-a", "account-b"]);
+    assert.equal(accounts.find((account) => account.id === "account-a").usage.fiveHour.pct, 11);
+    assert.equal(accounts.find((account) => account.id === "account-b").usage.fiveHour.pct, 44);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
 test.after(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(secondRoot, { recursive: true, force: true });
