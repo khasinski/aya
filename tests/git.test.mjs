@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, execSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, ftruncateSync, mkdtempSync, openSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { makeRepo } from "./helpers/git.mjs";
@@ -334,16 +334,166 @@ test("getGitDiff: an untracked text file is included as a synthetic new-file dif
   }
 });
 
-test("getGitDiff: an untracked binary file (NUL bytes) is NOT included", async () => {
+test("getGitDiff: an untracked binary file is represented by a one-line placeholder", async () => {
   const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "hi\n");
-    // A NUL byte triggers the "binary" guard in syntheticNewFileDiff().
+    // A NUL byte in the sampled head triggers the binary placeholder.
     writeFileSync(join(root, "bin.dat"), Buffer.from([0x01, 0x00, 0x02, 0x03]));
     const diff = await getGitDiff(root);
-    assert.equal(diff.includes("bin.dat"), false);
+    assert.match(diff, /diff --git a\/bin\.dat b\/bin\.dat/);
+    assert.match(diff, /^\+Binary untracked file omitted from text diff\.$/m);
+    assert.equal(diff.includes("\u0000"), false);
   } finally {
     cleanup(root);
+  }
+});
+
+test("getGitDiff identifies invalid UTF-8 as binary even without a NUL byte", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    commit(root, "a.txt", "hi\n");
+    writeFileSync(join(root, "invalid-utf8.dat"), Buffer.from([0xc3, 0x28, 0x61]));
+    const diff = await getGitDiff(root);
+    assert.match(diff, /diff --git a\/invalid-utf8\.dat b\/invalid-utf8\.dat/);
+    assert.match(diff, /^\+Binary untracked file omitted from text diff\.$/m);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("getGitDiff reserves the omission marker beside a near-limit tracked diff", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    const oldText = "a".repeat(2_499_300);
+    const newText = "b".repeat(2_499_300);
+    commit(root, "tracked.txt", `${oldText}\n`);
+    writeFileSync(join(root, "tracked.txt"), `${newText}\n`);
+    const tracked = execFileSync("git", ["diff", "--no-ext-diff", "--no-color", "HEAD", "--"], {
+      cwd: root,
+      maxBuffer: 6_000_000,
+    });
+    assert.ok(tracked.length < 5_000_000, `tracked diff was ${tracked.length} bytes`);
+    assert.ok(tracked.length > 4_990_000, `tracked diff was only ${tracked.length} bytes`);
+    writeFileSync(join(root, "untracked-1.txt"), "x".repeat(16 * 1024));
+    writeFileSync(join(root, "untracked-2.txt"), "y".repeat(16 * 1024));
+
+    const diff = await getGitDiff(root);
+    assert.match(diff, /Additional untracked file diffs omitted: the combined diff reached the 5 MB limit\./);
+    assert.ok(Buffer.byteLength(diff, "utf8") <= 5_000_000);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("getGitDiff shortens tracked-only text when UTF-8 decoding expands the diff", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    const oldBytes = Buffer.alloc(2_300_000, 0xff);
+    const newBytes = Buffer.alloc(2_300_000, 0xfe);
+    commit(root, "tracked-bytes.txt", oldBytes);
+    writeFileSync(join(root, "tracked-bytes.txt"), newBytes);
+
+    const diff = await getGitDiff(root);
+    assert.match(diff, /Tracked diff shortened to stay within the 5 MB limit\./);
+    assert.ok(Buffer.byteLength(diff, "utf8") <= 5_000_000);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("getGitDiff skips an untracked FIFO without blocking", { skip: process.platform === "win32", timeout: 3000 }, async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    commit(root, "a.txt", "hi\n");
+    const fifo = join(root, "waiting.pipe");
+    execFileSync("mkfifo", [fifo]);
+    const diff = await getGitDiff(root);
+    assert.equal(diff.includes("waiting.pipe"), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("getGitDiff bounds untracked file reads by type and the combined diff budget", async (t) => {
+  const cases = [
+    {
+      name: "empty file",
+      run: async (root) => {
+        writeFileSync(join(root, "empty.txt"), "");
+        const diff = await getGitDiff(root);
+        assert.match(diff, /diff --git a\/empty\.txt b\/empty\.txt/);
+        assert.match(diff, /@@ -0,0 \+1,0 @@/);
+      },
+    },
+    {
+      name: "small text file",
+      run: async (root) => {
+        writeFileSync(join(root, "small.txt"), "first\nsecond\n");
+        const diff = await getGitDiff(root);
+        assert.match(diff, /^\+first$/m);
+        assert.match(diff, /^\+second$/m);
+      },
+    },
+    {
+      name: "oversized sparse file is not read whole",
+      run: async (root) => {
+        const file = join(root, "large.dat");
+        const fd = openSync(file, "w+");
+        try {
+          ftruncateSync(fd, 64 * 1024 * 1024);
+        } finally {
+          closeSync(fd);
+        }
+        const before = process.memoryUsage().rss;
+        const diff = await getGitDiff(root);
+        const after = process.memoryUsage().rss;
+        assert.match(diff, /diff --git a\/large\.dat b\/large\.dat/);
+        assert.match(diff, /^\+Large untracked file omitted \(over 256 KiB\)\.$/m);
+        assert.ok(after - before < 32 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
+        assert.ok(Buffer.byteLength(diff, "utf8") < 16 * 1024);
+      },
+    },
+    {
+      name: "symlink to a large file is skipped without following it",
+      run: async (root) => {
+        const outside = mkdtempSync(join(tmpdir(), "aya-git-diff-link-target-"));
+        try {
+          const target = join(outside, "large-target.bin");
+          writeFileSync(target, "");
+          truncateSync(target, 64 * 1024 * 1024);
+          symlinkSync(target, join(root, "linked.bin"));
+          const diff = await getGitDiff(root);
+          assert.equal(diff.includes("linked.bin"), false);
+          assert.equal(diff.includes("large-target.bin"), false);
+        } finally {
+          cleanup(outside);
+        }
+      },
+    },
+    {
+      name: "many small files cannot exceed the combined diff budget",
+      run: async (root) => {
+        for (let i = 0; i < 32; i += 1) {
+          writeFileSync(join(root, `many-${i}.txt`), "x".repeat(220 * 1024));
+        }
+        const diff = await getGitDiff(root);
+        assert.ok(Buffer.byteLength(diff, "utf8") <= 5_000_000);
+        assert.match(diff, /Additional untracked file diffs omitted: the combined diff reached the 5 MB limit\./);
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const root = makeRepo(REPO_PREFIX);
+      try {
+        commit(root, "base.txt", "tracked base\n");
+        await scenario.run(root);
+      } finally {
+        cleanup(root);
+      }
+    });
   }
 });
 

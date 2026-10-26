@@ -4,7 +4,9 @@
 
 import { exec, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
+import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
@@ -16,8 +18,17 @@ const execFileAsync = promisify(execFile);
 const GIT_COMMAND_TIMEOUT_MS = 1500;
 // Timeout for the (potentially larger) git diff command.
 const GIT_DIFF_TIMEOUT_MS = 3000;
-// Ceiling on git diff output buffered into memory (5MB).
+// Ceiling on the final decoded diff shown to the user (5MB).
 const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
+// Invalid UTF-8 can expand to U+FFFD while child_process.exec decodes stdout,
+// up to three UTF-8 bytes per source byte. Allow that bounded expansion before
+// applying the 5 MB decoded-output cap below.
+const GIT_DIFF_PROCESS_MAX_BUFFER_BYTES = GIT_DIFF_MAX_BUFFER_BYTES * 3;
+const UNTRACKED_FILE_HEAD_MAX_BYTES = 256 * 1024;
+const UNTRACKED_DIFF_OMITTED_MARKER =
+  "[Additional untracked file diffs omitted: the combined diff reached the 5 MB limit.]";
+const TRACKED_DIFF_TRIMMED_MARKER =
+  "[Tracked diff shortened to stay within the 5 MB limit.]";
 export const GIT_ERROR_MESSAGE_MAX_CHARS = 300;
 
 // Aya only observes repository state. `git status` can otherwise refresh the
@@ -37,6 +48,10 @@ const DIFF_OPTS = {
   maxBuffer: GIT_DIFF_MAX_BUFFER_BYTES,
   windowsHide: true,
   env: GIT_ENV,
+} as const;
+const TRACKED_DIFF_OPTS = {
+  ...DIFF_OPTS,
+  maxBuffer: GIT_DIFF_PROCESS_MAX_BUFFER_BYTES,
 } as const;
 
 /** Parse `git status --porcelain --branch`: the "## <branch>" header carries
@@ -591,28 +606,145 @@ function syntheticNewFileDiff(file: GitChangedFile, content: string): string {
   ].join("\n");
 }
 
+function syntheticUntrackedPlaceholder(file: GitChangedFile, reason: string): string {
+  const filePath = quotePathForDiff(file.path);
+  return [
+    `diff --git a/${filePath} b/${filePath}`,
+    "new file mode 100644",
+    "index 0000000..0000000",
+    "--- /dev/null",
+    `+++ b/${filePath}`,
+    "@@ -0,0 +1,1 @@",
+    `+${reason}`,
+  ].join("\n");
+}
+
+function utf8Prefix(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, "utf8");
+  let end = Math.min(bytes.length, maxBytes);
+  while (end > 0 && !isUtf8(bytes.subarray(0, end))) end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+}
+
+/** Read only a bounded head from a regular untracked file. lstat and the inode
+ * check prevent following a symlink that appears between status and open. */
+async function untrackedFileDiff(
+  directory: string,
+  file: GitChangedFile,
+): Promise<string | null> {
+  const fullPath = path.join(directory, file.path);
+  let before: Awaited<ReturnType<typeof lstat>>;
+  try {
+    before = await lstat(fullPath);
+  } catch {
+    return null;
+  }
+  if (before.isSymbolicLink() || !before.isFile()) return null;
+  if (before.size > UNTRACKED_FILE_HEAD_MAX_BYTES) {
+    return syntheticUntrackedPlaceholder(
+      file,
+      `Large untracked file omitted (over ${UNTRACKED_FILE_HEAD_MAX_BYTES / 1024} KiB).`,
+    );
+  }
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(
+      fullPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    );
+    const [opened, current] = await Promise.all([handle.stat(), lstat(fullPath)]);
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !opened.isFile() ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      current.dev !== before.dev ||
+      current.ino !== before.ino
+    ) return null;
+    if (opened.size > UNTRACKED_FILE_HEAD_MAX_BYTES) {
+      return syntheticUntrackedPlaceholder(
+        file,
+        `Large untracked file omitted (over ${UNTRACKED_FILE_HEAD_MAX_BYTES / 1024} KiB).`,
+      );
+    }
+
+    const head = Buffer.alloc(UNTRACKED_FILE_HEAD_MAX_BYTES + 1);
+    let bytesRead = 0;
+    while (bytesRead < head.length) {
+      const result = await handle.read(head, bytesRead, head.length - bytesRead, bytesRead);
+      if (result.bytesRead <= 0) break;
+      bytesRead += result.bytesRead;
+    }
+    if (bytesRead > UNTRACKED_FILE_HEAD_MAX_BYTES) {
+      return syntheticUntrackedPlaceholder(
+        file,
+        `Large untracked file omitted (over ${UNTRACKED_FILE_HEAD_MAX_BYTES / 1024} KiB).`,
+      );
+    }
+    const contentBytes = head.subarray(0, bytesRead);
+    if (contentBytes.includes(0) || !isUtf8(contentBytes)) {
+      return syntheticUntrackedPlaceholder(file, "Binary untracked file omitted from text diff.");
+    }
+    return syntheticNewFileDiff(file, contentBytes.toString("utf8"));
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 export async function getGitDiff(directory: string): Promise<string> {
   try {
     const [{ stdout: diff }, files] = await Promise.all([
       execAsync(`${READ_ONLY_GIT} diff --no-ext-diff --no-color HEAD --`, {
         cwd: directory,
-        ...DIFF_OPTS,
+        ...TRACKED_DIFF_OPTS,
       }),
       getGitChangedFiles(directory),
     ]);
     const untracked = files.filter((file) => file.status === "??");
-    const synthetic = await Promise.all(
-      untracked.map(async (file) => {
-        try {
-          const content = await readFile(`${directory}/${file.path}`, "utf8");
-          if (content.includes("\0")) return "";
-          return syntheticNewFileDiff(file, content);
-        } catch {
-          return "";
-        }
-      }),
-    );
-    return [diff.trimEnd(), ...synthetic.filter(Boolean)].filter(Boolean).join("\n");
+    let combined = diff.trimEnd();
+    const combinedBytes = Buffer.byteLength(combined, "utf8");
+    const trackedTrimmedMarkerBytes = Buffer.byteLength(TRACKED_DIFF_TRIMMED_MARKER, "utf8");
+    if (untracked.length === 0 && combinedBytes > GIT_DIFF_MAX_BUFFER_BYTES) {
+      const trackedBudget = GIT_DIFF_MAX_BUFFER_BYTES - trackedTrimmedMarkerBytes - 1;
+      combined = utf8Prefix(combined, trackedBudget).trimEnd();
+      return `${combined}${combined ? "\n" : ""}${TRACKED_DIFF_TRIMMED_MARKER}`;
+    }
+    const markerBytes = Buffer.byteLength(UNTRACKED_DIFF_OMITTED_MARKER, "utf8");
+    if (
+      untracked.length > 0 &&
+      Buffer.byteLength(combined, "utf8") + markerBytes + 1 > GIT_DIFF_MAX_BUFFER_BYTES
+    ) {
+      const trackedBudget = GIT_DIFF_MAX_BUFFER_BYTES - markerBytes - trackedTrimmedMarkerBytes - 2;
+      combined = utf8Prefix(combined, trackedBudget).trimEnd();
+      const separator = combined ? "\n" : "";
+      combined += `${separator}${TRACKED_DIFF_TRIMMED_MARKER}\n${UNTRACKED_DIFF_OMITTED_MARKER}`;
+      return combined;
+    }
+    for (let index = 0; index < untracked.length; index += 1) {
+      const entry = await untrackedFileDiff(directory, untracked[index]);
+      if (!entry) continue;
+      const separator = combined ? "\n" : "";
+      const appendBytes = Buffer.byteLength(separator + entry, "utf8");
+      const remaining = GIT_DIFF_MAX_BUFFER_BYTES - Buffer.byteLength(combined, "utf8");
+      // Keep room for the marker while considering every entry, including the
+      // final one. If an entry cannot fit with that reserve, we can always
+      // announce that it and the remaining files were omitted.
+      const markerReserve = Buffer.byteLength(`${combined ? "\n" : ""}${UNTRACKED_DIFF_OMITTED_MARKER}`, "utf8");
+      if (appendBytes + markerReserve <= remaining) {
+        combined += separator + entry;
+        continue;
+      }
+
+      const markerSeparator = combined ? "\n" : "";
+      const marker = markerSeparator + UNTRACKED_DIFF_OMITTED_MARKER;
+      if (Buffer.byteLength(marker, "utf8") <= remaining) combined += marker;
+      break;
+    }
+    return combined;
   } catch {
     return "";
   }
