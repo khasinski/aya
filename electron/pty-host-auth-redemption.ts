@@ -4,7 +4,7 @@ import {performance} from "node:perf_hooks";
 import type {Socket} from "node:net";
 import type {AuthTransferTicket} from "./pty-host-auth-ticket";
 import type {HostAuthPeer} from "./pty-host-auth";
-import {HostAuthTransfer,HostAuthTransferError,validAuthTransferDeadline} from "./pty-host-auth-transfer";
+import {HostAuthTransfer,HostAuthTransferError,validAuthTransferDeadline,type AuthRedemptionFailure} from "./pty-host-auth-transfer";
 import {handoverPeer} from "./pty-handover-window";
 export const AUTH_REDEMPTION_BYTES=1024;
 export const AUTH_REDEMPTION_MS=5000;
@@ -34,17 +34,21 @@ function proof(nonce:string,t:Transcript):string{
 export class HostRedemptionServer {
  private used=false;
  private readonly deadline:number;
+ private failure:AuthRedemptionFailure="malformed";
  constructor(private readonly transfer:HostAuthTransfer,private readonly host:HostAuthPeer,private readonly client:HostAuthPeer,private readonly clock:()=>number=()=>performance.now(),private readonly instance=randomBytes(32).toString("hex")){
   if(!peerOk(host)||!peerOk(client)||!hex(instance))throw new HostAuthTransferError();this.deadline=clock()+AUTH_REDEMPTION_MS;
  }
+ get refusalReason():AuthRedemptionFailure{return this.failure;}
  receive(line:string):string{
   try{
-   if(this.used||this.clock()>=this.deadline)throw new HostAuthTransferError();this.used=true;
+   if(this.used||this.clock()>=this.deadline){this.failure="expired";throw new HostAuthTransferError();}this.used=true;
    const m=frame(line,["type","version","attempt","purpose","deadline","nonce","clientNonce","hostPid","hostStartIdentity"]);
    if(m.type!=="pty-transfer-redeem"||m.version!==1||!hex(m.attempt)||!hex(m.clientNonce)||(m.purpose!=="ordinary-quit"&&m.purpose!=="planned-update")||m.hostPid!==this.host.pid||m.hostStartIdentity!==this.host.startIdentity)throw new HostAuthTransferError();
-   if(!validAuthTransferDeadline(m.purpose,m.deadline))this.transfer.refuseActiveRedemption();
-   if(!this.transfer.matchesActiveReservation(m.attempt,m.purpose,m.deadline as number|null))this.transfer.refuseActiveRedemption();
-   if(this.clock()>=this.deadline)throw new HostAuthTransferError();
+   const stateFailure=this.transfer.redemptionFailure(m.attempt,m.purpose,m.deadline);
+   if(!validAuthTransferDeadline(m.purpose,m.deadline)){this.failure=stateFailure??"other";this.transfer.refuseActiveRedemption();}
+   if(stateFailure){this.failure=stateFailure;this.transfer.refuseActiveRedemption();}
+   if(this.clock()>=this.deadline){this.failure="expired";throw new HostAuthTransferError();}
+   this.failure="other";
    const key=this.transfer.redeem(m.attempt,m.nonce as string,this.client);
    try{
     const credential=key.toString("base64"),serverNonce=randomBytes(32).toString("hex");

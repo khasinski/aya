@@ -50,10 +50,17 @@ class Session {
 }
 export class HostAuthServer extends Session {
   private transcript?: Transcript;
+  private helloAccepted = false;
+  private proofSubmitted = false;
+  private proofRejected = false;
   constructor(key: Buffer, host: HostAuthPeer, client: HostAuthPeer, private readonly instance: string,
     clock: () => number = () => performance.now()) {
     super(key, host, client, clock);
     if (!hex(instance)) throw new HostAuthError();
+  }
+  get refusalStage(): "hello-not-accepted" | "awaiting-proof" | "proof-invalid" {
+    if (this.proofSubmitted && this.proofRejected) return "proof-invalid";
+    return this.helloAccepted ? "awaiting-proof" : "hello-not-accepted";
   }
   principalBusy(): string {
     if (!this.authenticated || !this.transcript) throw new HostAuthError();
@@ -66,15 +73,17 @@ export class HostAuthServer extends Session {
         const hello = frame(line, ["type", "version", "nonce"]);
         if (hello.type !== "pty-auth-hello" || hello.version !== HOST_AUTH_PROTOCOL || !hex(hello.nonce)) throw new HostAuthError();
         const t = this.transcript = {clientNonce: hello.nonce, serverNonce: randomBytes(32).toString("hex"), instance: this.instance, host: {...this.host}, client: {...this.client}};
+        this.helloAccepted = true;
         this.phase = 1;
         return JSON.stringify({type: "pty-auth-challenge", version: HOST_AUTH_PROTOCOL, nonce: t.serverNonce, instance: t.instance, proof: proof(this.key, "server", t)});
       }
+      this.proofSubmitted = true;
       this.check(1);
       const response = frame(line, ["type", "proof"]), t = this.transcript!;
       if (response.type !== "pty-auth-proof" || !matches(proof(this.key, "client", t), response.proof)) throw new HostAuthError();
       this.phase = 2;
       return JSON.stringify({type: "pty-auth-ready", proof: proof(this.key, "ready", t)});
-    } catch { this.phase = -1; throw new HostAuthError(); }
+    } catch { if (this.proofSubmitted) this.proofRejected = true; this.phase = -1; throw new HostAuthError(); }
   }
 }
 export class HostAuthClient extends Session {

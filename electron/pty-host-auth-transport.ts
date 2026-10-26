@@ -8,6 +8,17 @@ import {HostRedemptionServer} from "./pty-host-auth-redemption";
 export const HOST_AUTH_PENDING_CONNECTIONS = 32;
 export interface AuthenticatedHostSocket {peer: HostAuthPeer; buffered: string}
 export type AcceptedHostSocket=AuthenticatedHostSocket|{transferred:true};
+export type HostAuthRefusalReason = "connection-limit" | "peer-identity-unavailable" | "opening-frame-rejected" | "redemption-malformed" | "redemption-expired" | "redemption-stale-or-unknown-attempt" | "redemption-already-redeemed" | "redemption-other" | "ordinary-proof-not-sent" | "ticket-not-adopted" | "wrong-capability" | "principal-busy";
+export interface HostAuthRefusal {
+  peerPid: number | null;
+  peerStartIdentity: string | null;
+  handoverAttempt: string | null;
+  reason: HostAuthRefusalReason;
+}
+export interface HostAuthDiagnostics {
+  handoverAttempt?: () => string | null;
+  refused?: (details: HostAuthRefusal) => void;
+}
 type PeerReader = (socket: Socket) => HostAuthPeer;
 interface Session {
   authenticated: boolean;
@@ -111,30 +122,70 @@ export class HostSocketAuthenticator {
   private readonly key: Buffer;
   constructor(key: Buffer, private readonly ownPeer: HostAuthPeer,
     private readonly authorize: (peer: HostAuthPeer) => void, private readonly readPeer: PeerReader = handoverPeer,
-    private readonly transfer?:HostAuthTransfer) {this.key=Buffer.from(key);}
+    private readonly transfer?:HostAuthTransfer, private readonly diagnostics:HostAuthDiagnostics={}) {this.key=Buffer.from(key);}
   get pendingConnections(): number {return this.pending.size;}
   async accept(socket: Socket): Promise<AcceptedHostSocket> {
     const deadline=performance.now()+HOST_AUTH_TIMEOUT_MS;
+    let peer:HostAuthPeer|null=null;
+    let reason:HostAuthRefusalReason="peer-identity-unavailable";
+    let handoverAttempt:string|null=null;
+    try {
+      const attempt=this.diagnostics.handoverAttempt?.();
+      if(typeof attempt==="string"&&/^[a-f0-9]{64}$/.test(attempt))handoverAttempt=attempt;
+    } catch {/* diagnostics must never affect authentication */}
     // Also retain failed sockets until their bounded refusal/close completes.
-    if (this.pending.size >= HOST_AUTH_PENDING_CONNECTIONS) {socket.destroy();throw new HostAuthError();}
+    if (this.pending.size >= HOST_AUTH_PENDING_CONNECTIONS) {
+      try { this.diagnostics.refused?.({peerPid:null,peerStartIdentity:null,handoverAttempt,reason:"connection-limit"}); } catch {/* diagnostics must never affect authentication */}
+      socket.destroy();throw new HostAuthError();
+    }
     this.pending.add(socket);socket.once("close", () => this.pending.delete(socket));
     // A rejected peer probe still needs an error handler during close.
     socket.on("error", () => {});
     try {
-      const peer = this.readPeer(socket);
-      const first=await openingFrame(socket,deadline),request=JSON.parse(first.line) as {type?:unknown}|null;
+      peer = this.readPeer(socket);
+      reason="ordinary-proof-not-sent";
+      const first=await openingFrame(socket,deadline);
+      let request:{type?:unknown}|null;
+      try { request=JSON.parse(first.line) as {type?:unknown}|null; }
+      catch { throw new HostAuthError(); }
       if(this.transfer&&request?.type==="pty-transfer-redeem"){
+        const redemption=new HostRedemptionServer(this.transfer,this.ownPeer,peer,()=>performance.now(),this.instance);
+        reason="redemption-malformed";
         if(first.buffered||performance.now()>=deadline)throw new HostAuthError();
-        const response=new HostRedemptionServer(this.transfer,this.ownPeer,peer,()=>performance.now(),this.instance).receive(first.line);
+        let response:string;
+        try { response=redemption.receive(first.line); }
+        catch { reason=`redemption-${redemption.refusalReason}` as HostAuthRefusalReason; throw new HostAuthError(); }
         if(performance.now()>=deadline)throw new HostAuthError();
         socket.end(response+"\n",()=>socket.destroy());
         const closing=setTimeout(()=>socket.destroy(),1000);closing.unref();socket.once("close",()=>clearTimeout(closing));
         return {transferred:true}; // stays in the pending budget until close
       }
-      const result = await handshake(socket, new HostAuthServer(this.key, this.ownPeer, peer, this.instance), peer, true, this.authorize,first.line+"\n"+first.buffered,deadline);
+      const session=new HostAuthServer(this.key,this.ownPeer,peer,this.instance);
+      reason="ordinary-proof-not-sent";
+      let result:AuthenticatedHostSocket;
+      try { result=await handshake(socket,session,peer,true,this.authorize,first.line+"\n"+first.buffered,deadline); }
+      catch(error) {
+        if(error instanceof HostPrincipalBusyError)throw error;
+        // A rejected proof is evidence of a bad capability even during a
+        // handover. Only a valid hello that waits for redemption without
+        // submitting proof is classified as a ticket the successor has not
+        // adopted yet.
+        reason=session.refusalStage==="proof-invalid"?"wrong-capability":
+          this.transfer?.phase==="active"&&session.refusalStage==="awaiting-proof"?"ticket-not-adopted":"ordinary-proof-not-sent";
+        throw error;
+      }
       if(performance.now()>=deadline)throw new HostAuthError();
       this.pending.delete(socket);return result;
-    } catch(error) {refuse(socket);if(error instanceof HostPrincipalBusyError)throw error;throw new HostAuthError();}
+    } catch(error) {
+      if(error instanceof HostPrincipalBusyError)reason="principal-busy";
+      try { this.diagnostics.refused?.({
+        peerPid:peer?.pid??null,
+        peerStartIdentity:peer?.startIdentity??null,
+        handoverAttempt,
+        reason,
+      }); } catch {/* diagnostics must never affect authentication */}
+      refuse(socket);if(error instanceof HostPrincipalBusyError)throw error;throw new HostAuthError();
+    }
   }
 }
 export async function authenticateHostSocket(socket: Socket, key: Buffer, ownPeer: HostAuthPeer,
