@@ -11,6 +11,10 @@ import { closePane, type createSpawnGate } from "../spawn-gate";
 import type { HarnessSearchRequest, SpawnRequest } from "../types";
 import { requirePositiveInt, requireString, validateSpawnRequest } from "../validation";
 
+const MAX_ACTIVE_HARNESS_SEARCHES = 4;
+const MAX_HARNESS_QUERY_CHARS = 256;
+const MAX_HARNESS_QUERY_TOKENS = 16;
+
 export interface PtyIpcDeps {
   ipcMain: Pick<IpcMain, "handle"> & Partial<Pick<IpcMain, "on">>;
   host: Pick<PtyHostClient, "write" | "resize" | "kill" | "getBuffer" | "getCwd" | "search" | "getSize">;
@@ -57,6 +61,9 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     paneId: string;
     controller: AbortController;
   }>();
+  // Include superseded requests until their scanners actually stop. This keeps
+  // rapid same-pane query changes from bypassing the global work limit.
+  const runningHarnessSearches = new Set<object>();
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
     // This check belongs in main: remote spawns do not pass through
@@ -159,6 +166,14 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     if (agent !== "claude" && agent !== "codex") {
       throw new Error("harness:search.agent must be 'claude' or 'codex'");
     }
+    const query = requireString(r.query, "harness:search.query");
+    if (query.length > MAX_HARNESS_QUERY_CHARS) {
+      throw new Error(`harness:search.query must be at most ${MAX_HARNESS_QUERY_CHARS} characters`);
+    }
+    const queryTokens = query.trim().split(/\s+/).filter(Boolean);
+    if (queryTokens.length > MAX_HARNESS_QUERY_TOKENS) {
+      throw new Error(`harness:search.query must have at most ${MAX_HARNESS_QUERY_TOKENS} words`);
+    }
     const searchRequest: HarnessSearchRequest = {
       agent,
       cwd: requireString(r.cwd, "harness:search.cwd"),
@@ -167,13 +182,16 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
           ? undefined
           : requireString(r.configDir, "harness:search.configDir"),
       command: r.command === undefined ? undefined : requireString(r.command, "harness:search.command"),
-      query: requireString(r.query, "harness:search.query"),
+      query,
     };
     // Each find bar can run one scan. A newer query in that same pane stops
     // its prior work without cancelling searches in another pane/window.
     const senderId = event?.sender?.id ?? -1;
     const key = JSON.stringify([senderId, paneId]);
     activeHarnessSearches.get(key)?.controller.abort();
+    if (runningHarnessSearches.size >= MAX_ACTIVE_HARNESS_SEARCHES) {
+      throw new Error("Too many history searches are running. Wait a moment and try again.");
+    }
     const controller = new AbortController();
     const active = {
       requestId,
@@ -182,9 +200,11 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
       controller,
     };
     activeHarnessSearches.set(key, active);
+    runningHarnessSearches.add(active);
     try {
       return await (deps.searchHarness ?? searchHarnessSessions)(searchRequest, { signal: controller.signal });
     } finally {
+      runningHarnessSearches.delete(active);
       if (activeHarnessSearches.get(key) === active) activeHarnessSearches.delete(key);
     }
   });

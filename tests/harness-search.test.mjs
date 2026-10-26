@@ -334,6 +334,26 @@ test("cached history marks results partial when the cached hit cap is reached", 
   assert.equal(result.coverage.partial, true);
 });
 
+test("deadline is checked while walking cached messages", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-cached-deadline-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeClaudeSession(root, "cached", [
+    claudeMessage("needle oldest", "2026-10-26T09:00:00.000Z"),
+    claudeMessage("needle middle", "2026-10-26T09:01:00.000Z"),
+    claudeMessage("needle newest", "2026-10-26T09:02:00.000Z"),
+  ], Math.floor(Date.now() / 1000));
+  const request = { agent: "claude", cwd: CWD, configDir: root, query: "not-present" };
+  await searchHarnessSessions(request); // populate the small-transcript cache
+
+  let calls = 0;
+  const result = await searchHarnessSessions({ ...request, query: "needle" }, {
+    timeBudgetMs: 1,
+    now: () => (++calls >= 8 ? 2 : 0),
+  });
+  assert.deepEqual(result.hits.map((hit) => hit.text), ["needle newest"]);
+  assert.equal(result.coverage.partial, true);
+});
+
 test("deadline during session discovery reports no searched boundary", async (t) => {
   for (const agent of ["claude", "codex"]) {
     await t.test(agent, async (t) => {

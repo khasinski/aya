@@ -168,6 +168,47 @@ test("transcript search takes claude or codex only, with text fields", async () 
   await assert.rejects(call("harness:search", { agent: "claude", cwd: 7, query: "x" }, "bad-cwd", "pane"), /harness:search\.cwd/);
 });
 
+test("history search rejects queries beyond the character and token limits at IPC", async () => {
+  let calls = 0;
+  const { call } = setup({ searchHarness: async () => (calls++, { hits: [], coverage: { partial: false } }) });
+  const base = { agent: "claude", cwd: "/tmp/project" };
+  await assert.rejects(
+    call("harness:search", { ...base, query: "x".repeat(257) }, "long", "pane"),
+    /at most 256 characters/,
+  );
+  await assert.rejects(
+    call("harness:search", { ...base, query: Array.from({ length: 17 }, (_, i) => `t${i}`).join(" ") }, "many", "pane"),
+    /at most 16 words/,
+  );
+  await call("harness:search", { ...base, query: Array.from({ length: 16 }, (_, i) => `t${i}`).join(" ") }, "limit", "pane");
+  assert.equal(calls, 1, "invalid queries never reach the scanner");
+});
+
+test("history searches cap global concurrent scans and admit work when one finishes", async () => {
+  const requests = [];
+  const { callFrom } = setup({
+    searchHarness: (_request, { signal }) => new Promise((resolve) => requests.push({ resolve, signal })),
+  });
+  const request = { agent: "claude", cwd: "/tmp/project", query: "needle" };
+  const pending = Array.from({ length: 4 }, (_, i) =>
+    callFrom(i + 1, "harness:search", request, `request-${i}`, `pane-${i}`),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 4);
+  await assert.rejects(
+    callFrom(9, "harness:search", request, "over-cap", "pane-over-cap"),
+    /Too many history searches are running/,
+  );
+  assert.equal(requests.length, 4, "the fifth scan is refused before it starts");
+  for (const entry of requests) entry.resolve({ hits: [], coverage: { partial: false } });
+  await Promise.all(pending);
+  const admitted = callFrom(9, "harness:search", request, "after-capacity", "pane-over-cap");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 5);
+  requests[4].resolve({ hits: [], coverage: { partial: false } });
+  await admitted;
+});
+
 test("history searches in separate panes/windows run concurrently and cancellation stays in scope", async () => {
   const requests = [];
   const { callFrom } = setup({

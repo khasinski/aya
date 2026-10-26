@@ -1886,6 +1886,8 @@ interface FindBarProps {
   command?: string;
   /** Clears xterm search highlights when the bar switches to History mode. */
   onClearTerminalMatches: () => void;
+  /** A completed result can be supplied when restoring/rendering the bar. */
+  initialHistoryResult?: HarnessSearchResult;
 }
 
 // History (transcript) search: debounce keystrokes before the IPC round-trip
@@ -1900,7 +1902,7 @@ function formatHitTime(timestamp: string | undefined): string | null {
   return formatLastActivity(ms) ?? "just now";
 }
 
-function FindBar({
+export function FindBar({
   value,
   onChange,
   onNext,
@@ -1912,14 +1914,15 @@ function FindBar({
   configDir,
   command,
   onClearTerminalMatches,
+  initialHistoryResult,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [historyMode, setHistoryMode] = useState(false);
-  const [hits, setHits] = useState<HarnessSearchHit[]>([]);
-  const [coverage, setCoverage] = useState<HarnessSearchResult["coverage"]>({ partial: false });
+  const [historyMode, setHistoryMode] = useState(initialHistoryResult !== undefined);
+  const [hits, setHits] = useState<HarnessSearchHit[]>(initialHistoryResult?.hits ?? []);
+  const [coverage, setCoverage] = useState<HarnessSearchResult["coverage"]>(initialHistoryResult?.coverage ?? { partial: false });
   // True once a transcript search has completed for the current query, so
   // "No matches" only shows after an actual (empty) result, not while typing.
-  const [searched, setSearched] = useState(false);
+  const [searched, setSearched] = useState(initialHistoryResult !== undefined);
   const [expandedHit, setExpandedHit] = useState<number | null>(null);
   const historySeqRef = useRef(0);
   const historyRequestIdRef = useRef(0);

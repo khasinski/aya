@@ -8,6 +8,7 @@ const { formatHarnessSearchCoverage } = await import(
 );
 const { beginHistorySearch } = await import("../dist-test/harness-search-sequence.js");
 const { FindBarCoverageLine } = await import("../dist-test/components/FindBarCoverageLine.js");
+const { FindBar } = await import("../dist-test/components/TerminalView.js");
 
 const date = "2026-10-26T14:05:00.000Z";
 const localDate = "Oct 26, 2026, 3:05 PM";
@@ -71,4 +72,46 @@ test("the rendered History results line appears only for partial coverage", () =
     agentLabel: "Claude",
   }));
   assert.equal(complete, "");
+});
+
+test("FindBar renders partial coverage with hits and with an empty result", () => {
+  const common = {
+    value: "needle",
+    onChange() {},
+    onNext() {},
+    onPrev() {},
+    onClose() {},
+    historyAgent: "claude",
+    paneId: "pane-test",
+    cwd: "/tmp/project",
+    onClearTerminalMatches() {},
+  };
+  const hitMarkup = renderToStaticMarkup(createElement(FindBar, {
+    ...common,
+    initialHistoryResult: {
+      hits: [{
+        sessionId: "session-1",
+        role: "assistant",
+        text: "needle found",
+        snippet: "needle found",
+        matchStart: 0,
+        matchLength: 6,
+      }],
+      coverage: { partial: true, searchedBackTo: date },
+    },
+  }));
+  assert.match(hitMarkup, /class="aya-findbar-coverage"[^>]*>Searched back to/);
+
+  const emptyMarkup = renderToStaticMarkup(createElement(FindBar, {
+    ...common,
+    initialHistoryResult: { hits: [], coverage: { partial: true, searchedBackTo: date } },
+  }));
+  assert.match(emptyMarkup, /No matches since .+ in recent Claude sessions/);
+  assert.match(emptyMarkup, /class="aya-findbar-coverage"[^>]*>No matches since/);
+
+  const completeMarkup = renderToStaticMarkup(createElement(FindBar, {
+    ...common,
+    initialHistoryResult: { hits: [], coverage: { partial: false } },
+  }));
+  assert.doesNotMatch(completeMarkup, /aya-findbar-coverage/);
 });

@@ -546,6 +546,10 @@ export async function searchHarnessSessions(
       transcriptExamined = true;
       lastTranscriptMtimeMs = session.mtimeMs;
       for (let i = cached.length - 1; i >= 0; i--) {
+        if (shouldStop()) {
+          partial = true;
+          break;
+        }
         noteSessionTimestamp(cached[i].timestamp);
         appendHit(session, cached[i], sessionHits);
       }
