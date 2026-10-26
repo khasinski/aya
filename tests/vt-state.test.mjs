@@ -164,7 +164,7 @@ test("snapshots stay within visible columns after resize across screen content s
     },
     {
       name: "dim and inverse cells at the edge",
-      writeAtEdge: (cols) => `\x1b[1;${Math.max(1, cols - 1)}H\x1b[2mD\x1b[0m\x1b[1;${cols}H\x1b[7mI\x1b[0m`,
+      writeAtEdge: (cols) => `\x1b[1;${Math.max(1, cols - 1)}H\x1b[2m \x1b[0m\x1b[1;${cols}H\x1b[7m \x1b[0m`,
     },
   ];
   let paneIndex = 0;
@@ -326,6 +326,29 @@ test("a wide glyph starting at the last visible column marks the snapshot clippe
   assert.equal(snapshotBusy(snapshot), false);
 });
 
+test("blank dim and inverse cells beyond the visible width mark the snapshot clipped", async (t) => {
+  for (const [name, style] of [["dim", { dim: 1, inverse: 0 }], ["inverse", { dim: 0, inverse: 1 }]]) {
+    await t.test(name, () => {
+      const cols = 40;
+      const line = {
+        length: cols + 1,
+        translateToString: () => " ".repeat(cols),
+        getCell: (x) => x === cols ? {
+          getChars: () => "", getWidth: () => 1, isDim: () => style.dim, isInverse: () => style.inverse,
+        } : undefined,
+      };
+      const blank = { length: cols, translateToString: () => "", getCell: () => undefined };
+      const pane = {
+        terminal: { cols, rows: 2, buffer: { active: { length: 2, viewportY: 0, getLine: (y) => y === 0 ? line : blank } } },
+        agent: "claude", shell: false, composerSeen: true, openedAt: Date.now(), lastOutputAt: null,
+      };
+      const snapshot = snapshotOf(pane);
+      assert.equal(snapshot.clippedVisible, true, "style metadata keeps an otherwise empty cell meaningful");
+      assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+    });
+  }
+});
+
 test("a real xterm wide glyph retained across narrowing is marked clipped and held", async () => {
   const id = "real-wide-glyph-retained-after-narrowing";
   openVtPane(id, 120, 24, () => {}, "claude");
@@ -341,6 +364,39 @@ test("a real xterm wide glyph retained across narrowing is marked clipped and he
     assert.equal(snapshot.clippedVisible, true);
     assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
     assert.equal(snapshotBusy(snapshot), false);
+  } finally {
+    closeVtPane(id);
+  }
+});
+
+test("live scan clears cached waiting when the visible snapshot becomes clipped", async () => {
+  const id = "live-clipped-scan-clears-waiting";
+  const events = [];
+  openVtPane(id, 40, 24, (waiting, dialog) => events.push({ waiting, dialog }), "claude");
+  try {
+    writeVtPane(id, "Do you want to proceed? [y/n]");
+    await settle();
+    __testScanVtPane(id);
+    const pane = __testVtPane(id);
+    assert.equal(pane.lastWaiting, true, "the complete approval prompt is initially cached");
+
+    const active = pane.terminal.buffer.active;
+    const source = active.getLine(0);
+    const getLine = active.getLine.bind(active);
+    active.getLine = (y) => y === 0 ? {
+      length: pane.terminal.cols + 1,
+      translateToString: (trim, start = 0, end = pane.terminal.cols) => source.translateToString(trim, start, end),
+      getCell: (x) => x === pane.terminal.cols ? {
+        getChars: () => "[", getWidth: () => 1, isDim: () => 0, isInverse: () => 0,
+      } : source.getCell(x),
+    } : getLine(y);
+
+    const snapshot = snapshotOf(pane);
+    assert.equal(snapshot.clippedVisible, true);
+    pane.onSnapshot?.(snapshot);
+    assert.equal(pane.lastWaiting, false, "the incomplete prompt is not replayed as waiting on attach");
+    assert.equal(pane.lastDialog, undefined);
+    assert.deepEqual(events, [{ waiting: true, dialog: undefined }], "unknown clipping does not publish a false clear event");
   } finally {
     closeVtPane(id);
   }

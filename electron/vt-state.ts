@@ -4,7 +4,7 @@ import type { Terminal } from "@xterm/headless";
 import { asksToRunAya, evaluateScreen, screenIsBusy, screenOffersAccountSetting, screenShowsUsageLimit } from "./agent-screen-rules";
 import { HOLD_RECOVERY_UNKNOWN, HOLD_SCREEN_CLIPPED, HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_BUSY, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
 import type { AgentKind } from "./presets";
-import { openVtPane as openMirror, panes, SCREEN_SETTLE_MS, SCREEN_SETTLE_MAX_MS, type VtPane, type VtSnapshot } from "./vt-mirror";
+import { openVtPane as openMirror, panes, SCREEN_SETTLE_MS, SCREEN_SETTLE_MAX_MS, snapshotOf, type VtPane, type VtSnapshot } from "./vt-mirror";
 export { closeAllVtPanes, closeVtPane, resizeVtPane, vtPaneAltScreen, vtPaneWaiting, vtPaneDialog, writeVtPane,
   SCREEN_SETTLE_MS, SCREEN_SETTLE_MAX_MS, type VtPane } from "./vt-mirror";
 export function openVtPane(...args: Parameters<typeof openMirror>): void {
@@ -14,7 +14,15 @@ export function openVtPane(...args: Parameters<typeof openMirror>): void {
 }
 function scan(pane: VtPane): void {
   if (!builtinScreenRules.get().available) return;
-  const rows = screenRows(pane.terminal);
+  const snapshot = snapshotOf(pane);
+  if (snapshot.clippedVisible) {
+    // An incomplete viewport cannot prove the pane is waiting. Clear the cached
+    // replay bit without publishing a definitive non-waiting transition.
+    pane.lastWaiting = false;
+    pane.lastDialog = undefined;
+    return;
+  }
+  const rows = snapshot.rows;
   // A numbered choice is a question for the user as much as an approval dialog (paneHold holds messages for it too).
   const screen = evaluateScreen(rows, pane.agent);
   const composer = composerState(pane.terminal);
