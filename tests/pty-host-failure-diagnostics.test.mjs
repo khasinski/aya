@@ -31,9 +31,6 @@ test('real controls helper prints the original START_BLOCKED proof and still fai
  fs.chmodSync(path.join(home,'pty-hosts'),0o777);
  const file=path.join(home,'pty-hosts',`${process.pid}.json`);fs.writeFileSync(file,JSON.stringify({pid:process.pid,pgid:process.pid,startTime:'unverified fixture',nonce:'PRIVATE_RECORD_FIELD'}),{mode:0o644});
  fs.chmodSync(file,0o644);
- fs.chmodSync(path.join(home,'pty-hosts'),0o777);
- const file=path.join(home,'pty-hosts',`${process.pid}.json`);fs.writeFileSync(file,JSON.stringify({pid:process.pid,pgid:process.pid,startTime:'unverified fixture',nonce:'PRIVATE_RECORD_FIELD'}),{mode:0o644});
- fs.chmodSync(file,0o644);
  try{
   const child=cp.spawnSync(process.execPath,['tests/helpers/pty-host-auth-controls.cjs','publish-planned'],{encoding:'utf8',timeout:10000,maxBuffer:262144,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});
   assert.equal(child.status,1,child.stderr);assert.match(child.stderr,/PTY_HOST_START_BLOCKED/);
