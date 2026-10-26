@@ -26,6 +26,9 @@ test.beforeEach(async () => { await clearPendingUpdate(); });
 
 function setup(over = {}) {
   const log = [];
+  const updateLogs = [];
+  const squirrelEvents = new EventEmitter();
+  const appUpdateEvents = new EventEmitter();
   const windows = [0, 1].map((id) => ({
     isDestroyed: () => false,
     webContents: { send: (channel, status) => log.push(["status", id, channel, status]) },
@@ -46,7 +49,18 @@ function setup(over = {}) {
     platform: "darwin",
     env: {},
     eachAyaWindow: (fn) => windows.filter((w) => !w.isDestroyed()).forEach(fn),
-    diagnosticsLog: { append: (ev, fields) => log.push(["diagnostics", ev, fields, existsSync(PENDING_UPDATE_FILE)]) },
+    diagnosticsLog: { append: (ev, fields) => ["update-download-done", "update-squirrel-handoff-started", "update-squirrel-update-downloaded", "update-quit", "update-handoff-timeout", "update-handoff-error", "update-error", "update-error-after-squirrel-update-downloaded"].includes(ev)
+      ? updateLogs.push([ev, fields])
+      : log.push(["diagnostics", ev, fields, existsSync(PENDING_UPDATE_FILE)]) },
+    onSquirrelUpdateDownloaded: (listener) => {
+      squirrelEvents.on("update-downloaded", listener);
+      return () => squirrelEvents.removeListener("update-downloaded", listener);
+    },
+    onBeforeQuitForUpdate: (listener) => {
+      appUpdateEvents.on("before-quit-for-update", listener);
+      return () => appUpdateEvents.removeListener("before-quit-for-update", listener);
+    },
+    handoffTimeoutMs: 60_000,
     dialog: { showMessageBox: async (...args) => { log.push(["dialog", ...args]); return { response: 1 }; } },
     shell: { openExternal: async (url) => log.push(["open", url]) },
     notifications: {
@@ -67,7 +81,7 @@ function setup(over = {}) {
     ...over,
   };
   const updates = createUpdates(deps);
-  return { updates, updater, windows, log, deps, touches: () => touches, version: (next) => { version = next; } };
+  return { updates, updater, windows, log, updateLogs, squirrelEvents, appUpdateEvents, deps, touches: () => touches, version: (next) => { version = next; } };
 }
 
 function writePending(targetVersion, attempts = 1, requestedAt = "2020-01-01T00:00:00.000Z") {
@@ -237,7 +251,7 @@ test("a synchronous check failure retains the existing cached-result behavior", 
   assert.equal(calls, 1);
 });
 
-test("install writes the marker before handoff; an async error keeps it and releases the latch", async () => {
+test("install writes the marker before handoff; an async error clears it and releases the latch", async () => {
   const s = setup();
   downloaded(s);
   await s.updates.install();
@@ -246,14 +260,71 @@ test("install writes the marker before handoff; an async error keeps it and rele
   assert.deepEqual(s.log.at(-1).slice(0, 4), ["install", false, true, true]);
   assert.equal(s.log.at(-1)[4].targetVersion, "0.13.0");
   s.updater.emit("error", new Error("handoff failed"));
-  assert.equal(latest(s).message, "handoff failed");
-  assert.equal((await readPendingUpdate()).targetVersion, "0.13.0");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match(latest(s).message, /latest DMG.*handoff failed/);
+  assert.equal(await readPendingUpdate(), null);
   s.updater.emit("update-downloaded", { version: "0.13.0" });
   await s.updates.install();
   assert.equal(s.log.filter(([what]) => what === "install").length, 2);
-  assert.equal((await readPendingUpdate()).attempts, 2);
+  assert.equal((await readPendingUpdate()).attempts, 1);
+  s.squirrelEvents.emit("update-downloaded");
   s.updater.emit("error", "plain failure");
-  assert.equal(latest(s).message, "plain failure");
+  assert.equal(latest(s).phase, "downloaded", "an error after Squirrel readiness does not undo the handoff");
+  assert.ok(s.updateLogs.some(([event]) => event === "update-error-after-squirrel-update-downloaded"));
+});
+
+test("Squirrel handoff success logs both stages and cancels its timeout", async () => {
+  const s = setup({ handoffTimeoutMs: 15 });
+  downloaded(s);
+  await s.updates.install();
+  assert.deepEqual(s.updateLogs.map(([event]) => event), ["update-download-done", "update-squirrel-handoff-started"]);
+  s.squirrelEvents.emit("update-downloaded");
+  s.updater.emit("error", new Error("late native updater warning"));
+  assert.equal(s.updates.getUpdateStatus().preparingUpdate, true, "an error after Squirrel readiness does not release a successful handoff");
+  s.appUpdateEvents.emit("before-quit-for-update");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(s.updateLogs.map(([event]) => event), [
+    "update-download-done", "update-squirrel-handoff-started", "update-squirrel-update-downloaded",
+    "update-error-after-squirrel-update-downloaded", "update-quit",
+  ]);
+  assert.equal(s.updates.getUpdateStatus().phase, "downloaded");
+  assert.equal(s.updates.getUpdateStatus().preparingUpdate, true);
+  assert.equal((await readPendingUpdate()).targetVersion, "0.13.0");
+});
+
+test("missing Squirrel update-downloaded times out, aborts handover, clears marker and permits retry", async () => {
+  let aborted = 0;
+  const s = setup({ handoffTimeoutMs: 10, abortPlannedUpdate: async () => { aborted++; } });
+  downloaded(s);
+  await s.updates.install();
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(s.updates.getUpdateStatus().phase, "error");
+  assert.equal(s.updates.getUpdateStatus().preparingUpdate, undefined);
+  assert.match(latest(s).message, /latest DMG.*install it manually.*within 1 second\./);
+  assert.equal(aborted, 1);
+  assert.equal(await readPendingUpdate(), null);
+  assert.ok(s.updateLogs.some(([event]) => event === "update-handoff-timeout"));
+
+  s.updater.emit("update-downloaded", { version: "0.13.0" });
+  await s.updates.install();
+  assert.equal(s.log.filter(([what]) => what === "install").length, 2, "a retry is not blocked by the abandoned latch");
+  s.squirrelEvents.emit("update-downloaded");
+  s.appUpdateEvents.emit("before-quit-for-update");
+});
+
+test("asynchronous Squirrel error releases the install and presents the DMG fallback", async () => {
+  let aborted = 0;
+  const s = setup({ handoffTimeoutMs: 100, abortPlannedUpdate: async () => { aborted++; } });
+  downloaded(s);
+  await s.updates.install();
+  s.updater.emit("error", new Error("Squirrel unavailable"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(s.updates.getUpdateStatus().phase, "error");
+  assert.equal(s.updates.getUpdateStatus().preparingUpdate, undefined);
+  assert.match(latest(s).message, /latest DMG.*install it manually/);
+  assert.equal(aborted, 1);
+  assert.equal(await readPendingUpdate(), null);
+  assert.deepEqual(s.updateLogs.at(-1), ["update-handoff-error", { version: "0.13.0", error: "Squirrel unavailable" }]);
 });
 
 test("a synchronous handoff failure clears its marker and publishes the existing error text", async () => {
@@ -263,7 +334,7 @@ test("a synchronous handoff failure clears its marker and publishes the existing
   s.updater.quitAndInstall = () => { throw new Error("ShipIt missing"); };
   await s.updates.install();
   assert.equal(await readPendingUpdate(), null);
-  assert.equal(latest(s).message, "Couldn't start the update: ShipIt missing");
+  assert.match(latest(s).message, /latest DMG.*ShipIt missing/);
 });
 
 test("background work uses the same Restart to update prompt and honors cancellation", async () => {

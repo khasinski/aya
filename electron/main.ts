@@ -10,6 +10,7 @@ import { isUserOnlyHold } from "./pane-holds";
 
 import {
   app,
+  autoUpdater as nativeAutoUpdater,
   BrowserWindow,
   clipboard,
   dialog,
@@ -541,6 +542,14 @@ const updates = createUpdates({
   env: process.env,
   eachAyaWindow,
   diagnosticsLog: { append: (event, fields) => diagnosticsLog.append(event, fields) },
+  onSquirrelUpdateDownloaded: (listener) => {
+    nativeAutoUpdater.on("update-downloaded", listener);
+    return () => nativeAutoUpdater.removeListener("update-downloaded", listener);
+  },
+  onBeforeQuitForUpdate: (listener) => {
+    nativeAutoUpdater.on("before-quit-for-update", listener);
+    return () => nativeAutoUpdater.removeListener("before-quit-for-update", listener);
+  },
   dialog,
   shell: externalShell,
   notifications: {

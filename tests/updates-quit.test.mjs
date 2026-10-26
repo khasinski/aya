@@ -246,7 +246,7 @@ describe("Restart to update", () => {
       await it.install();
       assert.equal(latch.installing, false);
       assert.equal(seen.cleared, 1);
-      assert.deepEqual(seen.failed, ["Couldn't start the update: ShipIt missing"]);
+      assert.match(seen.failed[0], /latest DMG.*install it manually.*ShipIt missing/);
     } finally {
       rmSync(deps.root, { recursive: true, force: true });
     }
