@@ -54,6 +54,7 @@ const { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } =
   await import("../dist-electron/usage-codex.js");
 const { resetCodexUsageCaches } = await import("../dist-electron/usage-codex.js");
 const { CODEX_USAGE_TAIL_MAX_BYTES } = await import("../dist-electron/usage-codex.js");
+const { MAX_CODEX_ACCOUNT_TEXT_CHARS } = await import("../dist-electron/usage-codex.js");
 
 // SOURCES mirrors codexUsageSources([]); accounts[0] is this test's
 // own adapter, standing in for the removed single-snapshot reader.
@@ -239,6 +240,39 @@ test("a truncated Codex tail merges cached accounts absent from its newer lines"
     assert.deepEqual(accounts.map((account) => account.id).sort(), ["account-a", "account-b"]);
     assert.equal(accounts.find((account) => account.id === "account-a").usage.fiveHour.pct, 11);
     assert.equal(accounts.find((account) => account.id === "account-b").usage.fiveHour.pct, 44);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
+test("a rollout with 128 large account names caches only capped account text", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-many-large-accounts-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-accounts.jsonl");
+  const lines = [];
+  for (let i = 0; i < 128; i += 1) {
+    lines.push(JSON.stringify({
+      timestamp: "2026-10-26T11:00:00.000Z",
+      payload: {
+        type: "token_count",
+        rate_limits: {
+          account_id: `${i}-${"i".repeat(500)}`,
+          account_label: `${i}-${"l".repeat(500)}`,
+          primary: { used_percent: 4 },
+          secondary: { used_percent: 8 },
+        },
+      },
+    }));
+  }
+  writeFileSync(file, `${lines.join("\n")}\n`);
+  try {
+    const accounts = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.equal(accounts.length, 128);
+    assert.ok(accounts.every((account) => account.id.length <= MAX_CODEX_ACCOUNT_TEXT_CHARS));
+    assert.ok(accounts.every((account) => account.label.length <= MAX_CODEX_ACCOUNT_TEXT_CHARS));
   } finally {
     rmSync(home, { recursive: true, force: true });
     resetCodexUsageCaches();

@@ -13,6 +13,7 @@ import {
   CODEX_DEFAULT_DIR,
   CODEX_SESSIONS_SUBDIR,
   MAX_DATE_MS,
+  MAX_CODEX_ACCOUNT_TEXT_CHARS,
 } from "../dist-electron/usage-codex.js";
 
 test("Codex's default home is ~/.codex", () => {
@@ -360,6 +361,20 @@ test("latestUsageAccountsFromLines reads id/label from a nested payload.account"
   assert.equal(out.length, 1);
   assert.equal(out[0].id, "team-42");
   assert.equal(out[0].label, "Team");
+});
+
+test("Codex account identifiers and labels are capped before caching", () => {
+  const longValue = "x".repeat(MAX_CODEX_ACCOUNT_TEXT_CHARS + 1000);
+  const out = latestUsageAccountsFromLines([accountLine(
+    "2026-06-03T11:00:00.000Z",
+    longValue,
+    longValue,
+    6,
+    14,
+  )], 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id.length, MAX_CODEX_ACCOUNT_TEXT_CHARS);
+  assert.equal(out[0].label.length, MAX_CODEX_ACCOUNT_TEXT_CHARS);
 });
 
 test("MAX_DATE_MS is the ECMAScript Date range limit", () => {

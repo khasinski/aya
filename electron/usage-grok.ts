@@ -94,11 +94,8 @@ interface LimitScan {
 }
 const limitScans = new Map<string, LimitScan>();
 
-/** Most of the log one poll may read. The first poll of a session starts from
- *  offset 0, and the log grows ~200 KB/h with no rotation we can rely on, so an
- *  unbounded read would pull a weeks-old log (tens of MB) into the main process
- *  at once. 32 MB is ~a week at that rate - older than the limit's own week, so
- *  nothing useful is skipped. */
+/** Per-file ceiling for unified.jsonl. Its bytes also count against the shared
+ *  GROK_USAGE_TOTAL_SCAN_MAX_BYTES poll budget used by session transcripts. */
 export const GROK_LIMIT_SCAN_MAX_BYTES = 32 * 1024 * 1024;
 
 /** Where to start reading: from `from`, unless that leaves more than `max`
@@ -111,10 +108,15 @@ export function limitScanWindow(
   return size - from > max ? { start: size - max, cut: true } : { start: from, cut: false };
 }
 
-async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
+async function newestLoggedLimit(
+  file: string,
+  maxBytes = GROK_LIMIT_SCAN_MAX_BYTES,
+): Promise<{ limit: GrokLimit | null; bytesRead: number }> {
   const known = limitScans.get(file);
+  if (maxBytes <= 0) return { limit: known?.limit ?? null, bytesRead: 0 };
   let scan: LimitScan;
   let chunk: string;
+  let bytesRead = 0;
   try {
     const handle = await fs.open(file, "r");
     try {
@@ -122,14 +124,15 @@ async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
       // Another file, or shorter than what was read: rotated or truncated.
       const fresh = !known || known.ino !== ino || size < known.size;
       scan = fresh ? { ino, size: 0, partial: "", discardUntilNewline: false, limit: null } : known;
-      const { start, cut } = limitScanWindow(scan.size, size);
+      const { start, cut } = limitScanWindow(scan.size, size, Math.min(maxBytes, GROK_LIMIT_SCAN_MAX_BYTES));
       const buffer = Buffer.alloc(size - start);
-      const { bytesRead } = await readBufferAtMost(
+      const readResult = await readBufferAtMost(
         (target, offset, length, position) => handle.read(target, offset, length, position),
         buffer,
         buffer.length,
         start,
       );
+      bytesRead = readResult.bytesRead;
       chunk = buffer.toString("utf-8", 0, bytesRead);
       let discardUntilNewline = scan.discardUntilNewline;
       if (cut) {
@@ -146,7 +149,7 @@ async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
     }
   } catch {
     // A passing read error keeps the last known limit instead of blanking it.
-    return known?.limit ?? null;
+    return { limit: known?.limit ?? null, bytesRead: 0 };
   }
   let input = scan.partial + chunk;
   let discardUntilNewline = scan.discardUntilNewline;
@@ -154,15 +157,20 @@ async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
     const newline = input.indexOf("\n");
     if (newline < 0) {
       limitScans.set(file, { ...scan, partial: "", discardUntilNewline: true });
-      return scan.limit;
+      return { limit: scan.limit, bytesRead };
     }
     input = input.slice(newline + 1);
     discardUntilNewline = false;
   }
-  const lines = input.split("\n");
-  const partial = lines.pop() ?? "";
   let limit = scan.limit;
-  for (const line of lines) limit = extractGrokLimit(line) ?? limit;
+  let lineStart = 0;
+  let newline = input.indexOf("\n", lineStart);
+  while (newline >= 0) {
+    limit = extractGrokLimit(input.slice(lineStart, newline)) ?? limit;
+    lineStart = newline + 1;
+    newline = input.indexOf("\n", lineStart);
+  }
+  const partial = input.slice(lineStart);
   const keepPartial = Buffer.byteLength(partial, "utf8") <= GROK_LIMIT_PARTIAL_MAX_BYTES;
   limitScans.set(file, {
     ...scan,
@@ -170,7 +178,7 @@ async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
     discardUntilNewline: discardUntilNewline || !keepPartial,
     limit,
   });
-  return limit;
+  return { limit, bytesRead };
 }
 
 /** The newest logged limit, or null when none is found or its week is over
@@ -178,8 +186,10 @@ async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
 export async function readGrokLimit(
   home: string,
   nowMs: number = Date.now(),
+  maxBytes: number = GROK_LIMIT_SCAN_MAX_BYTES,
 ): Promise<GrokLimit | null> {
-  const limit = await newestLoggedLimit(path.join(expandUserPath(home), "logs", "unified.jsonl"));
+  const result = await newestLoggedLimit(path.join(expandUserPath(home), "logs", "unified.jsonl"), maxBytes);
+  const limit = result.limit;
   return limit && Date.parse(limit.resetsAt) > nowMs ? limit : null;
 }
 
@@ -307,6 +317,8 @@ export function sumGrokUsage(
 
 interface CachedRows {
   mtimeMs: number;
+  ino: number;
+  size: number;
   rows: GrokUsageRow[];
 }
 const rowCache = new Map<string, CachedRows>();
@@ -324,6 +336,20 @@ function grokRowsWeight(rows: GrokUsageRow[]): number {
     (total, row) => total + 96 + row.models.reduce((n, model) => n + model.length * 2, 0),
     0,
   );
+}
+
+function grokRowKey(row: GrokUsageRow): string {
+  return JSON.stringify([
+    row.tsMs,
+    row.inputTokens,
+    row.outputTokens,
+    row.cachedReadTokens,
+    row.cacheCreationTokens,
+    row.reasoningTokens,
+    row.totalTokens,
+    row.costUsdTicks,
+    row.models,
+  ]);
 }
 
 /** updates.jsonl paths under a grok home whose file mtime is within the window
@@ -369,8 +395,13 @@ async function rowsForFile(
   maxBytes: number,
 ): Promise<{ rows: GrokUsageRow[]; bytesRead: number }> {
   let mtimeMs: number;
+  let ino: number;
+  let size: number;
   try {
-    mtimeMs = (await fs.stat(file)).mtimeMs;
+    const st = await fs.stat(file);
+    mtimeMs = st.mtimeMs;
+    ino = st.ino;
+    size = st.size;
   } catch {
     const old = rowCache.get(file);
     if (old) rowCacheBytes -= grokRowsWeight(old.rows);
@@ -378,7 +409,7 @@ async function rowsForFile(
     return { rows: [], bytesRead: 0 };
   }
   const cached = rowCache.get(file);
-  if (cached && cached.mtimeMs === mtimeMs) {
+  if (cached && cached.mtimeMs === mtimeMs && cached.ino === ino) {
     rowCache.delete(file);
     rowCache.set(file, cached);
     return {
@@ -404,16 +435,29 @@ async function rowsForFile(
     rowCache.delete(file);
     return { rows: [], bytesRead };
   }
-  const weight = grokRowsWeight(rows);
   const old = rowCache.get(file);
+  const grewInPlace = old && old.ino === ino && size > old.size;
+  const mergedRows: GrokUsageRow[] = [];
+  const rowKeys = new Set<string>();
+  for (const row of [...rows, ...(grewInPlace ? old.rows : [])]) {
+    if (row.tsMs < sinceMs || row.tsMs > nowMs) continue;
+    const key = grokRowKey(row);
+    if (rowKeys.has(key)) continue;
+    rowKeys.add(key);
+    mergedRows.push(row);
+    if (mergedRows.length >= MAX_GROK_TOTAL_ROWS) break;
+  }
+  const weight = grokRowsWeight(mergedRows);
+  // A reduced aggregate budget is a partial view, not a complete parse for
+  // this file. Keep its older cache intact for the next poll, while returning
+  // the merged view for this one result.
+  if (maxBytes < GROK_SESSION_TAIL_MAX_BYTES || weight > MAX_GROK_ROW_CACHE_BYTES) {
+    return { rows: mergedRows, bytesRead };
+  }
   if (old) rowCacheBytes -= grokRowsWeight(old.rows);
   rowCache.delete(file);
-  // A reduced aggregate budget is a partial view, not a complete parse for
-  // this file. Do not cache it as if later polls had seen the whole tail.
-  if (maxBytes >= GROK_SESSION_TAIL_MAX_BYTES && weight <= MAX_GROK_ROW_CACHE_BYTES) {
-    rowCache.set(file, { mtimeMs, rows });
-    rowCacheBytes += weight;
-  }
+  rowCache.set(file, { mtimeMs, ino, size, rows: mergedRows });
+  rowCacheBytes += weight;
   while (rowCacheBytes > MAX_GROK_ROW_CACHE_BYTES || rowCache.size > MAX_GROK_SESSION_FILES) {
     const oldest = rowCache.keys().next().value;
     if (oldest === undefined) break;
@@ -421,7 +465,7 @@ async function rowsForFile(
     rowCache.delete(oldest);
     if (evicted) rowCacheBytes -= grokRowsWeight(evicted.rows);
   }
-  return { rows, bytesRead };
+  return { rows: mergedRows, bytesRead };
 }
 
 /** Whether `a` was logged after `b`, by time: the log's ts strings may differ in offset or milliseconds, and a
@@ -472,7 +516,14 @@ export async function readGrokUsage(
         allRowsWeight += weight;
       }
     }
-    const found = await readGrokLimit(home, nowMs);
+    const limitScan = await newestLoggedLimit(
+      path.join(expandUserPath(home), "logs", "unified.jsonl"),
+      Math.max(0, GROK_USAGE_TOTAL_SCAN_MAX_BYTES - totalScanBytes),
+    );
+    totalScanBytes += limitScan.bytesRead;
+    const found = limitScan.limit && Date.parse(limitScan.limit.resetsAt) > nowMs
+      ? limitScan.limit
+      : null;
     if (found && (!limit || loggedAfter(found, limit))) limit = found;
   }
   const usage = sumGrokUsage(allRows, nowMs);

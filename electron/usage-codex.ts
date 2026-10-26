@@ -36,6 +36,7 @@ const MAX_CODEX_PARSE_CACHE_FILES = MAX_ROLLOUTS_SCANNED * MAX_CODEX_HOME_CACHES
 /** Usage snapshots are append-only; only the newest bounded tail is relevant. */
 export const CODEX_USAGE_TAIL_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_CODEX_ACCOUNTS_PER_ROLLOUT = 128;
+export const MAX_CODEX_ACCOUNT_TEXT_CHARS = 256;
 // The ECMAScript Date range: past it, toISOString throws RangeError.
 export const MAX_DATE_MS = 8.64e15;
 
@@ -122,7 +123,10 @@ function accountMetaFromEvent(obj: {
       account.name,
       account.email,
     ) ?? (id === "default" ? "Account" : id);
-  return { id, label };
+  return {
+    id: id.slice(0, MAX_CODEX_ACCOUNT_TEXT_CHARS),
+    label: label.slice(0, MAX_CODEX_ACCOUNT_TEXT_CHARS),
+  };
 }
 
 // Windows at or below this length render as the "5h" ring; anything longer

@@ -27,6 +27,7 @@ import {
   GROK_LIMIT_SCAN_MAX_BYTES,
   GROK_LIMIT_PARTIAL_MAX_BYTES,
   GROK_USAGE_TOTAL_SCAN_MAX_BYTES,
+  GROK_SESSION_TAIL_MAX_BYTES,
   GROK_USAGE_WINDOW_MS,
   extractGrokUsageRow,
   readGrokLimit,
@@ -142,6 +143,36 @@ test("readGrokUsage sums every session under every cwd of a home", async (t) => 
   assert.deepEqual(usage.models, ["grok-4-fast", "grok-4.6-build"]);
   assert.equal(usage.updatedAt, new Date(NOW - 1000).toISOString());
   assert.equal(usage.limit, undefined);
+});
+
+test("a growing Grok session keeps cached in-window turns beyond the row and tail caps", async (t) => {
+  resetGrokUsageCache();
+  const home = tempHome(t);
+  const rowCapped = session(home, "row-capped", "s", [turnLine(NOW - 10_000)]);
+  assert.equal((await readGrokUsage([home], NOW)).turns, 1);
+  appendFileSync(rowCapped, Array.from({ length: 2001 }, (_, i) =>
+    `${turnLine(NOW - 9000 + i)}\n`,
+  ).join(""));
+  const afterRows = await readGrokUsage([home], NOW);
+  assert.equal(afterRows.turns, 2001);
+  assert.equal(afterRows.totalTokens, 2001 * 150);
+
+  resetGrokUsageCache();
+  const tailHome = tempHome(t);
+  const tailFile = session(tailHome, "tail-capped", "s", [turnLine(NOW - 20_000)]);
+  assert.equal((await readGrokUsage([tailHome], NOW)).turns, 1);
+  const fd = openSync(tailFile, "r+");
+  try {
+    const size = GROK_SESSION_TAIL_MAX_BYTES + 128;
+    ftruncateSync(fd, size);
+    const newest = Buffer.from(`\n${turnLine(NOW - 1000)}\n`);
+    writeSync(fd, newest, 0, newest.length, size - newest.length);
+  } finally {
+    closeSync(fd);
+  }
+  const afterTail = await readGrokUsage([tailHome], NOW);
+  assert.equal(afterTail.turns, 2);
+  assert.equal(afterTail.totalTokens, 300);
 });
 
 test("Grok usage reads a sparse 1 GiB session from a bounded tail", async (t) => {
@@ -354,6 +385,22 @@ test("an oversized growing partial credits line is dropped until the next newlin
   assert.equal((await readGrokLimit(home, NOW)).pct, 73);
 });
 
+test("a newline-only unified log window is processed without a line array", async (t) => {
+  resetGrokUsageCache();
+  const { home, log } = bigLog(t);
+  const block = Buffer.alloc(256 * 1024, 0x0a);
+  const fd = openSync(log, "w");
+  try {
+    for (let i = 0; i < 8; i += 1) writeSync(fd, block);
+  } finally {
+    closeSync(fd);
+  }
+  const before = process.memoryUsage().heapUsed;
+  assert.equal(await readGrokLimit(home, NOW), null);
+  const growth = process.memoryUsage().heapUsed - before;
+  assert.ok(growth < 32 * 1024 * 1024, `heap grew by ${growth} bytes`);
+});
+
 test("Grok usage filters expired and future rows before per-file and total row caps", async (t) => {
   resetGrokUsageCache();
   const home = tempHome(t);
@@ -400,4 +447,30 @@ test("Grok usage reads at most the aggregate scan budget newest-first per poll",
   const second = await readGrokUsage([home], NOW);
   assert.equal(second.turns, 5);
   assert.equal(second.totalTokens, 750);
+});
+
+test("Grok limit logs share the aggregate read budget across homes", async (t) => {
+  resetGrokUsageCache();
+  const homes = [];
+  for (const [name, pct, ts] of [
+    ["one", 10, "2026-09-26T18:00:00.000Z"],
+    ["two", 20, "2026-09-26T19:00:00.000Z"],
+    ["three", 70, "2026-09-26T19:30:00.000Z"],
+  ]) {
+    const home = tempHome(t);
+    homes.push(home);
+    mkdirSync(join(home, "logs"));
+    const actualLog = join(home, "logs", "unified.jsonl");
+    const fd = openSync(actualLog, "w+");
+    try {
+      const size = GROK_LIMIT_SCAN_MAX_BYTES + 1024;
+      ftruncateSync(fd, size);
+      const tail = Buffer.from(`\n${creditsLine(pct, ts)}\n`);
+      writeSync(fd, tail, 0, tail.length, size - tail.length);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  const usage = await readGrokUsage(homes, NOW);
+  assert.equal(usage.limit.pct, 20, "the third home is outside the shared 64 MiB poll budget");
 });
