@@ -33,6 +33,7 @@
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/harness-search-coverage.ts",
+    "src/harness-search-sequence.ts",
     "src/hooks/usePersistentPreference.ts",
     "src/machines-view.ts",
     "src/local-summaries.ts",

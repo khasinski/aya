@@ -36,7 +36,7 @@ function setup(over = {}) {
     waiting: () => ["waiting"],
     ...over,
   });
-  return { handlers, log, gate, host, panes, call: (channel, ...args) => handlers.get(channel)({}, ...args) };
+  return { handlers, log, gate, host, panes, call: (channel, ...args) => handlers.get(channel)({ sender: { id: 7 } }, ...args) };
 }
 
 const spawnReq = (ptyId) => ({ ptyId, command: "claude", cwd: "/tmp", cols: 80, rows: 24 });
@@ -45,6 +45,7 @@ test("registers exactly the terminal and host channels", () => {
   assert.deepEqual([...setup().handlers.keys()].sort(), [
     "agent:waiting",
     "harness:search",
+    "harness:search-cancel",
     "pty-host:restart",
     "pty-host:retry-recovery",
     "pty-host:stop-others",
@@ -162,8 +163,33 @@ test("buffer, cwd, search and resize go to the host; an unreachable host's buffe
 test("transcript search takes claude or codex only, with text fields", async () => {
   const { call } = setup();
   await assert.rejects(call("harness:search", null), /request must be an object/);
-  await assert.rejects(call("harness:search", { agent: "grok", cwd: "/", query: "x" }), /must be 'claude' or 'codex'/);
-  await assert.rejects(call("harness:search", { agent: "claude", cwd: 7, query: "x" }), /harness:search\.cwd/);
+  await assert.rejects(call("harness:search", { agent: "grok", cwd: "/", query: "x" }, "bad-agent"), /must be 'claude' or 'codex'/);
+  await assert.rejects(call("harness:search", { agent: "claude", cwd: 7, query: "x" }, "bad-cwd"), /harness:search\.cwd/);
+});
+
+test("a newer history search supersedes the old scan and cancellation is request-scoped", async () => {
+  const requests = [];
+  const { call } = setup({
+    searchHarness: (_request, { signal }) => new Promise((resolve) => {
+      requests.push({ signal, resolve });
+      signal.addEventListener("abort", () => resolve({ hits: [], coverage: { partial: true } }), { once: true });
+    }),
+  });
+  const request = { agent: "claude", cwd: "/tmp/project", query: "needle" };
+  const first = call("harness:search", request, "first");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  const second = call("harness:search", request, "second");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].signal.aborted, true);
+  assert.equal(requests[1].signal.aborted, false);
+
+  await call("harness:search-cancel", "first");
+  assert.equal(requests[1].signal.aborted, false, "stale cancellation cannot stop the current search");
+  await call("harness:search-cancel", "second");
+  assert.equal(requests[1].signal.aborted, true);
+  await Promise.all([first, second]);
 });
 
 test("restart confirmation, host restart, stopping other hosts and waiting questions go to their deps", async () => {

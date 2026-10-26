@@ -303,6 +303,96 @@ test("history search skips a message over 64 KiB, keeps older hits, and disclose
   assert.ok(maxCarry <= 64 * 1024, `scanner retained ${maxCarry} bytes in a line carry`);
 });
 
+test("an empty result discloses that very long messages were skipped", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-long-empty-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeClaudeSession(root, "long-only", [
+    claudeMessage("needle " + "x".repeat(70 * 1024), "2026-10-26T09:30:00.000Z"),
+  ], Math.floor(Date.now() / 1000));
+  const result = await searchHarnessSessions({
+    agent: "claude", cwd: CWD, configDir: root, query: "needle",
+  });
+  assert.deepEqual(result.hits, []);
+  assert.equal(result.coverage.partial, true);
+  assert.equal(result.coverage.longMessagesSkipped, true);
+});
+
+test("cached history marks results partial when the cached hit cap is reached", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-cached-cap-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const now = Math.floor(Date.now() / 1000);
+  for (let session = 0; session < 5; session++) {
+    const lines = Array.from({ length: 21 }, (_, i) =>
+      claudeMessage(`quota hit ${session}-${i}`, `2026-10-26T09:${String(i).padStart(2, "0")}:00.000Z`),
+    );
+    writeClaudeSession(root, `cached-${session}`, lines, now - session);
+  }
+  const req = { agent: "claude", cwd: CWD, configDir: root, query: "prime-cache-never-matches" };
+  assert.equal((await searchHarnessSessions(req)).hits.length, 0);
+  const result = await searchHarnessSessions({ ...req, query: "quota hit" });
+  assert.equal(result.hits.length, 80);
+  assert.equal(result.coverage.partial, true);
+});
+
+test("deadline during session discovery reports no searched boundary", async (t) => {
+  for (const agent of ["claude", "codex"]) {
+    await t.test(agent, async (t) => {
+      const root = mkdtempSync(join(tmpdir(), `aya-hsearch-discovery-${agent}-`));
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (agent === "claude") {
+        writeClaudeSession(root, "not-read", [claudeMessage("needle", "2026-10-26T09:00:00.000Z")], nowSec);
+      } else {
+        const dir = join(root, "sessions", "2026", "10", "26");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "rollout-not-read.jsonl"), `${codexLine({ type: "session_meta", payload: { cwd: CWD } })}\n${codexMessage("assistant", "needle")}\n`);
+      }
+      let calls = 0;
+      const result = await searchHarnessSessions({
+        agent,
+        cwd: CWD,
+        configDir: root,
+        query: "needle",
+      }, {
+        timeBudgetMs: 5,
+        now: () => ++calls >= 4 ? 10 : 0,
+      });
+      assert.deepEqual(result.hits, []);
+      assert.equal(result.coverage.partial, true);
+      assert.equal(result.coverage.searchedBackTo, undefined);
+    });
+  }
+});
+
+test("a superseded history search stops scanning after its signal is aborted", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-cancel-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, "projects", claudeProjectDirName(CWD));
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "large.jsonl");
+  const line = `${JSON.stringify({ type: "progress", padding: "x".repeat(700) })}\n`;
+  writeFileSync(file, line.repeat(2000));
+  const controller = new AbortController();
+  let carryChecks = 0;
+  let bytesRead = 0;
+  const result = await searchHarnessSessions({
+    agent: "claude", cwd: CWD, configDir: root, query: "needle",
+  }, {
+    signal: controller.signal,
+    chunkBytes: 1024,
+    onMaxCarryBytes: () => {
+      if (++carryChecks === 1) controller.abort();
+    },
+    onBytesRead: (bytes) => { bytesRead = bytes; },
+  });
+  assert.ok(carryChecks >= 1);
+  assert.equal(result.coverage.partial, true);
+  assert.ok(result.coverage.searchedBackTo);
+  const { stat } = await import("node:fs/promises");
+  assert.ok((await stat(file)).size > 1_000_000);
+  assert.ok(bytesRead < 10_000, `superseded scan read ${bytesRead} bytes`);
+});
+
 test("searchHarnessSessions filters Codex rollouts by session_meta cwd", async () => {
   const root = mkdtempSync(join(tmpdir(), "aya-hsearch-codex-"));
   const day = join(root, "sessions", "2026", "07", "01");
@@ -356,7 +446,7 @@ function fakeClock(hitBudget) {
   let calls = 0;
   return () => {
     calls += 1;
-    return hitBudget && calls >= 4 ? 10 : 0;
+    return hitBudget && calls >= 8 ? 10 : 0;
   };
 }
 
@@ -380,7 +470,7 @@ test("full-history scan coverage is honest and memory stays bounded", async (t) 
       const newest = claudeMessage("newest coverage needle", "2026-10-26T10:00:00.000Z");
       const noise = `${JSON.stringify({ type: "progress", padding: "x".repeat(60 * 1024) })}\n`;
       const nowSec = Math.floor(Date.now() / 1000);
-      let chunkBytes = 64 * 1024;
+      let chunkBytes = 1024;
       if (size === "small") {
         writeFileSync(file, `${oldest}\n${noise.repeat(3)}${newest}\n`);
       } else if (size === "over-8MiB") {

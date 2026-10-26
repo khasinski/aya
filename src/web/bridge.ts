@@ -99,6 +99,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     ptyCwd: inv("pty:cwd"),
     ptySearch: inv("pty:search"),
     harnessSearch: inv("harness:search"),
+    harnessSearchCancel: inv("harness:search-cancel"),
     restartPtyHost: inv("pty-host:restart"),
     retryPtyHostRecovery: inv("pty-host:retry-recovery"),
     stopOtherPtyHosts: inv("pty-host:stop-others"),

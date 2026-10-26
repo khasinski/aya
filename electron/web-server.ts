@@ -153,6 +153,7 @@ export const WEB_BRIDGE_INVOKE_CHANNELS = [
   "env:github-link",
   "env:home",
   "harness:search",
+  "harness:search-cancel",
   "intelligence:ollama-status",
   "intelligence:pull-ollama-model",
   "local-summary:summarize",

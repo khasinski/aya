@@ -777,6 +777,8 @@ export interface HarnessSearchResult {
   coverage: {
     partial: boolean;
     searchedBackTo?: string;
+    longMessagesSkipped?: boolean;
+    cancelled?: boolean;
   };
 }
 
@@ -856,7 +858,8 @@ export interface AyaApi {
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
-  harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchResult>;
+  harnessSearch(req: HarnessSearchRequest, requestId: string): Promise<HarnessSearchResult>;
+  harnessSearchCancel(requestId: string): Promise<void>;
   restartPtyHost(): Promise<void>;
   retryPtyHostRecovery():Promise<boolean>;
   /** Stop running hosts this Aya does not use; returns the pids signalled. */

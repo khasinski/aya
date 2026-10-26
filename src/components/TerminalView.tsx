@@ -24,6 +24,7 @@ import type {
   ThemeColors,
 } from "../types";
 import { formatHarnessSearchCoverage } from "../harness-search-coverage";
+import { beginHistorySearch } from "../harness-search-sequence";
 import { effectiveAgent } from "../agentPreset";
 import { ptyEventBus } from "../ptyEventBus";
 import type { SettingsTab } from "../settings-tabs";
@@ -1917,6 +1918,7 @@ function FindBar({
   const [searched, setSearched] = useState(false);
   const [expandedHit, setExpandedHit] = useState<number | null>(null);
   const historySeqRef = useRef(0);
+  const historyRequestIdRef = useRef(0);
   useEffect(() => {
     // Focus + select-all on mount so opening the bar twice in a row lets
     // the user replace the query directly.
@@ -1927,20 +1929,27 @@ function FindBar({
   const historyActive = historyMode && historyAgent !== null;
   const query = value.trim();
   useEffect(() => {
+    const { id: seq, shouldSearch } = beginHistorySearch(
+      historySeqRef,
+      query,
+      HISTORY_MIN_QUERY_CHARS,
+    );
     if (!historyActive || !historyAgent) return;
-    if (query.length < HISTORY_MIN_QUERY_CHARS) {
+    if (!shouldSearch) {
       setHits([]);
       setCoverage({ partial: false });
       setSearched(false);
       setExpandedHit(null);
       return;
     }
-    const seq = ++historySeqRef.current;
+    let requestId: string | undefined;
     const timer = window.setTimeout(() => {
+      requestId = `history-${seq}-${++historyRequestIdRef.current}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       window.aya
-        .harnessSearch({ agent: historyAgent, cwd, configDir, command, query })
+        .harnessSearch({ agent: historyAgent, cwd, configDir, command, query }, requestId)
         .then((results) => {
           if (historySeqRef.current !== seq) return; // stale response
+          if (results.coverage.cancelled) return;
           setHits(results.hits);
           setCoverage(results.coverage);
           setSearched(true);
@@ -1953,7 +1962,10 @@ function FindBar({
           setSearched(true);
         });
     }, HISTORY_SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (requestId) void window.aya.harnessSearchCancel(requestId).catch(() => {});
+    };
   }, [historyActive, historyAgent, cwd, configDir, command, query]);
 
   const switchMode = (toHistory: boolean) => {

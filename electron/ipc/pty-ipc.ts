@@ -8,7 +8,7 @@ import { searchHarnessSessions } from "../harness-search";
 import { notePaneInput, withPaneInputLock } from "../pane-input-queue";
 import type { PtyHostClient } from "../pty-host-client";
 import { closePane, type createSpawnGate } from "../spawn-gate";
-import type { SpawnRequest } from "../types";
+import type { HarnessSearchRequest, SpawnRequest } from "../types";
 import { requirePositiveInt, requireString, validateSpawnRequest } from "../validation";
 
 export interface PtyIpcDeps {
@@ -45,10 +45,17 @@ export interface PtyIpcDeps {
   stopOtherHosts: () => Promise<number[]>;
   /** Questions agents are waiting on. */
   waiting: () => unknown;
+  /** Optional override for deterministic cancellation tests. */
+  searchHarness?: typeof searchHarnessSessions;
 }
 
 export function registerPtyIpc(deps: PtyIpcDeps): void {
   const { ipcMain, host, gate } = deps;
+  let activeHarnessSearch: {
+    requestId: string;
+    senderId: number;
+    controller: AbortController;
+  } | undefined;
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
     // This check belongs in main: remote spawns do not pass through
@@ -138,16 +145,18 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     host.search(requireString(query, "pty:search.query")),
   );
-  ipcMain.handle("harness:search", async (_e, req: unknown) => {
+  ipcMain.handle("harness:search", async (event, req: unknown, rawRequestId: unknown) => {
     if (typeof req !== "object" || req === null) {
       throw new Error("harness:search: request must be an object");
     }
+    const requestId = requireString(rawRequestId, "harness:search.requestId");
+    if (requestId.length > 256) throw new Error("harness:search.requestId is too long");
     const r = req as Record<string, unknown>;
     const agent = requireString(r.agent, "harness:search.agent");
     if (agent !== "claude" && agent !== "codex") {
       throw new Error("harness:search.agent must be 'claude' or 'codex'");
     }
-    return searchHarnessSessions({
+    const searchRequest: HarnessSearchRequest = {
       agent,
       cwd: requireString(r.cwd, "harness:search.cwd"),
       configDir:
@@ -156,7 +165,29 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
           : requireString(r.configDir, "harness:search.configDir"),
       command: r.command === undefined ? undefined : requireString(r.command, "harness:search.command"),
       query: requireString(r.query, "harness:search.query"),
-    });
+    };
+    // History is one interactive search surface. A newer query supersedes the
+    // previous scan rather than letting quick typing stack disk work in main.
+    activeHarnessSearch?.controller.abort();
+    const controller = new AbortController();
+    const active = {
+      requestId,
+      senderId: event?.sender?.id ?? -1,
+      controller,
+    };
+    activeHarnessSearch = active;
+    try {
+      return await (deps.searchHarness ?? searchHarnessSessions)(searchRequest, { signal: controller.signal });
+    } finally {
+      if (activeHarnessSearch === active) activeHarnessSearch = undefined;
+    }
+  });
+  ipcMain.handle("harness:search-cancel", (event, rawRequestId: unknown) => {
+    const requestId = requireString(rawRequestId, "harness:search-cancel.requestId");
+    if (activeHarnessSearch?.requestId === requestId &&
+        activeHarnessSearch.senderId === (event?.sender?.id ?? -1)) {
+      activeHarnessSearch.controller.abort();
+    }
   });
   ipcMain.handle("pty-host:restart", async () => deps.restartHost());
   ipcMain.handle("pty-host:retry-recovery",async()=>deps.retryRecovery?.()??false);

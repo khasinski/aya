@@ -32,6 +32,8 @@ export interface ReverseJsonlOptions {
   maxLineBytes?: number;
   /** Test instrumentation for the largest line carry retained by the scanner. */
   onMaxCarryBytes?: (bytes: number) => void;
+  /** Test instrumentation for cancellation/progress without exposing file data. */
+  onBytesRead?: (bytes: number) => void;
 }
 
 /** Fill a buffer despite short positional reads; stop only when it is full or
@@ -61,6 +63,8 @@ export interface JsonlTailResult {
   bytesRead: number;
   /** True when the scan did not cover all eligible file content. */
   truncated: boolean;
+  /** True when a complete or continued line exceeded the configured line cap. */
+  skippedOversizedLines?: boolean;
 }
 
 export interface JsonlLineInfo {
@@ -242,6 +246,7 @@ export async function scanJsonlLinesReverse(
     let skippingOversizedLine = false;
     let stopped = false;
     let partial = start > 0;
+    let skippedOversizedLines = false;
     while (offset > start) {
       if (options.shouldStop?.()) {
         stopped = true;
@@ -258,6 +263,7 @@ export async function scanJsonlLinesReverse(
         chunkStart,
       );
       bytesRead += result.bytesRead;
+      options.onBytesRead?.(bytesRead);
       if (!result.complete) {
         partial = true;
         break;
@@ -270,8 +276,10 @@ export async function scanJsonlLinesReverse(
         const lineBytes = segment.length + carryBytes;
         if (skippingOversizedLine) {
           partial = true;
+          skippedOversizedLines = true;
         } else if (lineBytes > maxLineBytes) {
           partial = true;
+          skippedOversizedLines = true;
         } else if (lineBytes > 0) {
           const lineBuffer = carryBytes === 0
             ? segment
@@ -297,6 +305,7 @@ export async function scanJsonlLinesReverse(
           carry = [];
           carryBytes = 0;
           partial = true;
+          skippedOversizedLines = true;
         } else {
           carry.unshift(chunk.subarray(0, end));
           carryBytes += end;
@@ -310,8 +319,10 @@ export async function scanJsonlLinesReverse(
       if (!stopped && offset === 0) {
         if (skippingOversizedLine) {
           partial = true;
+          skippedOversizedLines = true;
         } else if (carryBytes > maxLineBytes) {
           partial = true;
+          skippedOversizedLines = true;
         } else if (carryBytes > 0) {
           const lineBuffer = carry.length === 1 ? carry[0] : Buffer.concat(carry, carryBytes);
           const firstLine = lineBuffer.toString("utf8");
@@ -326,7 +337,11 @@ export async function scanJsonlLinesReverse(
         carryBytes = 0;
       }
     }
-    return { bytesRead, truncated: partial || stopped };
+    return {
+      bytesRead,
+      truncated: partial || stopped,
+      ...(skippedOversizedLines ? { skippedOversizedLines: true } : {}),
+    };
   } finally {
     await handle.close();
   }
