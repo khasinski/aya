@@ -322,25 +322,25 @@ test("oversized messages and non-message records are classified from a bounded p
     {
       agent: "claude",
       id: "claude-message",
-      oversizedLine: claudeMessage(`needle ${"x".repeat(70 * 1024)}`),
+      oversizedLine: claudeMessage(`needle ${"x".repeat(200 * 1024)}`),
       expectNotice: true,
     },
     {
       agent: "claude",
       id: "claude-progress",
-      oversizedLine: claudeLine({ type: "progress", data: "x".repeat(70 * 1024) }),
+      oversizedLine: claudeLine({ type: "progress", data: "x".repeat(200 * 1024) }),
       expectNotice: false,
     },
     {
       agent: "codex",
       id: "codex-message",
-      oversizedLine: codexMessage("assistant", `needle ${"x".repeat(70 * 1024)}`),
+      oversizedLine: codexMessage("assistant", `needle ${"x".repeat(200 * 1024)}`),
       expectNotice: true,
     },
     {
       agent: "codex",
       id: "codex-event",
-      oversizedLine: codexLine({ type: "event_msg", payload: { type: "token_count", data: "x".repeat(70 * 1024) } }),
+      oversizedLine: codexLine({ type: "event_msg", payload: { type: "token_count", data: "x".repeat(200 * 1024) } }),
       expectNotice: false,
     },
   ];

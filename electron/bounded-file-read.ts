@@ -247,11 +247,25 @@ export async function scanJsonlLinesReverse(
     let oversizedPrefix: Buffer[] = [];
     let oversizedPrefixBytes = 0;
     const addOversizedPrefix = (earlier: Buffer) => {
-      const available = oversizedPrefixLimit - oversizedPrefixBytes;
-      if (available <= 0 || earlier.length === 0) return;
-      const part = earlier.subarray(0, available);
-      oversizedPrefix.unshift(part);
-      oversizedPrefixBytes += part.length;
+      if (earlier.length === 0) return;
+      // The reverse scan discovers later chunks first. New earlier bytes must
+      // displace the same number of bytes from the retained suffix so the
+      // callback always receives the true start of the line.
+      const next: Buffer[] = [];
+      let remaining = oversizedPrefixLimit;
+      const first = earlier.subarray(0, remaining);
+      if (first.length) {
+        next.push(first);
+        remaining -= first.length;
+      }
+      for (const chunk of oversizedPrefix) {
+        if (remaining <= 0) break;
+        const part = chunk.subarray(0, remaining);
+        next.push(part);
+        remaining -= part.length;
+      }
+      oversizedPrefix = next;
+      oversizedPrefixBytes = oversizedPrefixLimit - remaining;
     };
     const reportOversizedPrefix = () => {
       if (oversizedPrefixBytes > 0) {
