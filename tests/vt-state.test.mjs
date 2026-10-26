@@ -12,12 +12,16 @@ import {
   openVtPane,
   resizeVtPane,
   screenShowsApproval,
+  snapshotBusy,
+  snapshotStatus,
   vtPaneAltScreen,
   writeVtPane,
 } from "../dist-electron/vt-state.js";
-import { vtSnapshot } from "../dist-electron/vt-mirror.js";
-import { asVtSnapshot } from "../dist-electron/pty-host-protocol.js";
+import { snapshotOf, vtSnapshot } from "../dist-electron/vt-mirror.js";
+import { asVtSnapshot, vtSnapshotValidationError } from "../dist-electron/pty-host-protocol.js";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "../dist-electron/constants.js";
+import { HOLD_APPROVAL, HOLD_SCREEN_CLIPPED } from "../dist-electron/pane-holds.js";
+import { snapshotHold } from "../dist-electron/vt-state.js";
 
 // xterm parses writes asynchronously, so a scan must come after a tick.
 const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -140,6 +144,296 @@ test("the B4 cols-minus-one/back redraw nudge keeps applied mirror snapshots val
       assert.equal(snapshot.cells.length, snapshot.rows.length);
     }
   } finally { closeVtPane(id); }
+});
+
+test("snapshots stay within visible columns after resize across screen content shapes", async (t) => {
+  const sequences = [
+    { name: "wide-to-narrow", initialCols: 120, resize: [[40, 24]] },
+    { name: "narrow-to-wide", initialCols: 40, resize: [[120, 24]] },
+    { name: "narrow with wrapped long line", initialCols: 120, longLine: true, resize: [[40, 24]] },
+    { name: "alternate screen", initialCols: 120, enterAlt: true, resize: [[40, 24]] },
+  ];
+  const contents = [
+    {
+      name: "plain text at the edge",
+      writeAtEdge: (cols) => `\x1b[1;${cols}H P`,
+    },
+    {
+      name: "wide character at the edge",
+      writeAtEdge: (cols) => `\x1b[1;${Math.max(1, cols - 1)}H漢`,
+    },
+    {
+      name: "dim and inverse cells at the edge",
+      writeAtEdge: (cols) => `\x1b[1;${Math.max(1, cols - 1)}H\x1b[2m \x1b[0m\x1b[1;${cols}H\x1b[7m \x1b[0m`,
+    },
+  ];
+  let paneIndex = 0;
+  for (const sequence of sequences) {
+    for (const content of contents) {
+      await t.test(`${sequence.name} / ${content.name}`, async () => {
+        const id = `snapshot-cols-${paneIndex++}`;
+        openVtPane(id, sequence.initialCols, 24, () => {}, "claude");
+        try {
+          if (sequence.enterAlt) writeVtPane(id, "\x1b[?1049h");
+          if (sequence.longLine) writeVtPane(id, "L".repeat(240));
+          writeVtPane(id, content.writeAtEdge(sequence.initialCols));
+          await settle();
+          for (const [cols, rows] of sequence.resize) resizeVtPane(id, cols, rows);
+          await settle();
+          writeVtPane(id, content.writeAtEdge(__testVtPane(id).terminal.cols));
+          await settle();
+
+          const pane = __testVtPane(id);
+          const snapshot = snapshotOf(pane);
+          assert.ok(asVtSnapshot(snapshot), "producer output satisfies the strict snapshot validator");
+          assert.ok(snapshot.cells.flat().every(([column]) => column >= 0 && column < snapshot.cols));
+          assert.deepEqual(
+            snapshot.rows,
+            Array.from({ length: pane.terminal.buffer.active.length }, (_, y) =>
+              pane.terminal.buffer.active.getLine(y)?.translateToString(true, 0, pane.terminal.cols) ?? "",
+            ),
+            "row text contains only the visible screen columns",
+          );
+          const buffer = pane.terminal.buffer.active;
+          let retainedTail = false;
+          for (let y = buffer.viewportY; y < Math.min(buffer.length, buffer.viewportY + pane.terminal.rows); y++) {
+            const line = buffer.getLine(y);
+            if (pane.terminal.cols > 0 && line?.getCell(pane.terminal.cols - 1)?.getWidth() === 2) retainedTail = true;
+            for (let x = pane.terminal.cols; line && x < line.length && !retainedTail; x++) {
+              const cell = line.getCell(x);
+              if (cell && (cell.getChars() !== "" || cell.isDim() || cell.isInverse())) retainedTail = true;
+            }
+          }
+          if (retainedTail) {
+            assert.equal(snapshot.clippedVisible, true, "a real xterm visible tail must be marked clipped");
+            assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED, "a real xterm clipped tail must hold sends");
+          }
+        } finally {
+          closeVtPane(id);
+        }
+      });
+    }
+  }
+});
+
+test("snapshot validation still rejects a cell beyond the reported columns", async () => {
+  const id = "snapshot-cols-validator-remains-strict";
+  openVtPane(id, 40, 24, () => {}, "claude");
+  try {
+    const snapshot = snapshotOf(__testVtPane(id));
+    const cells = snapshot.cells.map((row) => [...row]);
+    cells[0].push([snapshot.cols, "x", 0, 0]);
+    assert.equal(asVtSnapshot({ ...snapshot, cells }), null);
+    assert.ok(asVtSnapshot({ ...snapshot, clippedVisible: true }));
+    assert.equal(asVtSnapshot({ ...snapshot, clippedVisible: "yes" }), null);
+  } finally {
+    closeVtPane(id);
+  }
+});
+
+test("a narrowed visible approval prompt is held until widening restores its full text", async (t) => {
+  for (const prompt of ["Do you want to proceed? [y/n]", "Allow this action?"]) {
+    await t.test(prompt, async () => {
+      const cols = { value: 120 };
+      const text = `${" ".repeat(29)}${prompt}`;
+      const chars = Array.from(text);
+      const promptLine = {
+        length: 120,
+        translateToString: (_trim, start = 0, end = 120) => chars.slice(start, end).join("").trimEnd(),
+        getCell: (x) => chars[x] === undefined ? undefined : {
+          getChars: () => chars[x], getWidth: () => 1, isDim: () => 0, isInverse: () => 0,
+        },
+      };
+      const blankLine = {
+        length: 120,
+        translateToString: () => "",
+        getCell: () => undefined,
+      };
+      const lines = Array.from({ length: 24 }, (_, y) => y === 23 ? promptLine : blankLine);
+      const pane = {
+        terminal: {
+          get cols() { return cols.value; },
+          rows: 24,
+          buffer: { active: { length: 24, viewportY: 0, getLine: (y) => lines[y] } },
+        },
+        agent: "claude",
+        shell: false,
+        composerSeen: true,
+        openedAt: Date.now(),
+        lastOutputAt: null,
+      };
+      assert.equal(snapshotHold(snapshotOf(pane)).hold, HOLD_APPROVAL);
+
+      cols.value = 40; // Model xterm retaining the old row allocation after narrowing.
+      const narrow = snapshotOf(pane);
+      assert.equal(narrow.rows.join("\n").includes(prompt), false, "the dialog tail is outside the visible width");
+      assert.equal(narrow.clippedVisible, true);
+      assert.ok(asVtSnapshot(narrow), vtSnapshotValidationError(narrow));
+      assert.equal(snapshotHold(narrow).hold, HOLD_SCREEN_CLIPPED);
+
+      cols.value = 120;
+      const wide = snapshotOf(pane);
+      assert.equal(wide.clippedVisible, undefined, "widening removes the clipped-screen marker");
+      assert.equal(snapshotHold(wide).hold, HOLD_APPROVAL, "the restored prompt is recognized normally");
+    });
+  }
+});
+
+test("a clipped snapshot cannot publish a definitive status from its visible dialog text", () => {
+  const cols = 24;
+  const text = "Do you want to proceed? [y/n]";
+  const chars = Array.from(text);
+  const promptLine = {
+    length: 120,
+    translateToString: (_trim, start = 0, end = 120) => chars.slice(start, end).join("").trimEnd(),
+    getCell: (x) => chars[x] === undefined ? undefined : {
+      getChars: () => chars[x], getWidth: () => 1, isDim: () => 0, isInverse: () => 0,
+    },
+  };
+  const blankLine = { length: 120, translateToString: () => "", getCell: () => undefined };
+  const lines = Array.from({ length: 24 }, (_, y) => y === 23 ? promptLine : blankLine);
+  const pane = {
+    terminal: { cols, rows: 24, buffer: { active: { length: 24, viewportY: 0, getLine: (y) => lines[y] } } },
+    agent: "claude", shell: false, composerSeen: true, openedAt: Date.now(), lastOutputAt: null,
+  };
+  const clipped = snapshotOf(pane);
+  assert.equal(clipped.rows[23], "Do you want to proceed?", "the visible portion still matches an approval dialog");
+  assert.equal(clipped.clippedVisible, true, "the answer controls are clipped beyond the viewport");
+  assert.equal(snapshotStatus({ ...clipped, clippedVisible: undefined }).waiting, true,
+    "the visible dialog would otherwise publish a definitive waiting status");
+  assert.deepEqual(snapshotStatus(clipped), { waiting: null, composerSeen: false },
+    "clipping keeps status unknown and does not advance composer evidence");
+  assert.equal(snapshotBusy(clipped), false, "a clipped screen is unknown, not busy");
+});
+
+test("a wide glyph starting at the last visible column marks the snapshot clipped", () => {
+  const cols = 40;
+  const line = {
+    length: cols,
+    translateToString: () => " ".repeat(cols - 1) + "漢",
+    getCell: (x) => x === cols - 1 ? {
+      getChars: () => "漢", getWidth: () => 2, isDim: () => 0, isInverse: () => 0,
+    } : undefined,
+  };
+  const blank = { length: cols, translateToString: () => "", getCell: () => undefined };
+  const pane = {
+    terminal: { cols, rows: 2, buffer: { active: { length: 2, viewportY: 0, getLine: (y) => y === 0 ? line : blank } } },
+    agent: "claude", shell: false, composerSeen: true, openedAt: Date.now(), lastOutputAt: null,
+  };
+  const snapshot = snapshotOf(pane);
+  assert.equal(snapshot.clippedVisible, true, "the glyph occupies one column beyond the visible edge");
+  assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+  assert.equal(snapshotBusy(snapshot), false);
+});
+
+test("blank dim and inverse cells beyond the visible width mark the snapshot clipped", async (t) => {
+  for (const [name, style] of [["dim", { dim: 1, inverse: 0 }], ["inverse", { dim: 0, inverse: 1 }]]) {
+    await t.test(name, () => {
+      const cols = 40;
+      const line = {
+        length: cols + 1,
+        translateToString: () => " ".repeat(cols),
+        getCell: (x) => x === cols ? {
+          getChars: () => "", getWidth: () => 1, isDim: () => style.dim, isInverse: () => style.inverse,
+        } : undefined,
+      };
+      const blank = { length: cols, translateToString: () => "", getCell: () => undefined };
+      const pane = {
+        terminal: { cols, rows: 2, buffer: { active: { length: 2, viewportY: 0, getLine: (y) => y === 0 ? line : blank } } },
+        agent: "claude", shell: false, composerSeen: true, openedAt: Date.now(), lastOutputAt: null,
+      };
+      const snapshot = snapshotOf(pane);
+      assert.equal(snapshot.clippedVisible, true, "style metadata keeps an otherwise empty cell meaningful");
+      assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+    });
+  }
+});
+
+test("a real xterm wide glyph retained across narrowing is marked clipped and held", async () => {
+  const id = "real-wide-glyph-retained-after-narrowing";
+  openVtPane(id, 120, 24, () => {}, "claude");
+  try {
+    writeVtPane(id, "\x1b[1;40H漢");
+    await settle();
+    resizeVtPane(id, 40, 24);
+    await settle();
+    const snapshot = snapshotOf(__testVtPane(id));
+    const edge = __testVtPane(id).terminal.buffer.active.getLine(0)?.getCell(39);
+    assert.equal(edge?.getChars(), "漢", "xterm retained the wide glyph at the narrowed edge");
+    assert.equal(edge?.getWidth(), 2, "its continuation extends beyond the last visible column");
+    assert.equal(snapshot.clippedVisible, true);
+    assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+    assert.equal(snapshotBusy(snapshot), false);
+  } finally {
+    closeVtPane(id);
+  }
+});
+
+test("live scan clears cached waiting when the visible snapshot becomes clipped", async () => {
+  const id = "live-clipped-scan-clears-waiting";
+  const events = [];
+  openVtPane(id, 40, 24, (waiting, dialog) => events.push({ waiting, dialog }), "claude");
+  try {
+    writeVtPane(id, "Do you want to proceed? [y/n]");
+    await settle();
+    __testScanVtPane(id);
+    const pane = __testVtPane(id);
+    assert.equal(pane.lastWaiting, true, "the complete approval prompt is initially cached");
+
+    const active = pane.terminal.buffer.active;
+    const source = active.getLine(0);
+    const getLine = active.getLine.bind(active);
+    active.getLine = (y) => y === 0 ? {
+      length: pane.terminal.cols + 1,
+      translateToString: (trim, start = 0, end = pane.terminal.cols) => source.translateToString(trim, start, end),
+      getCell: (x) => x === pane.terminal.cols ? {
+        getChars: () => "[", getWidth: () => 1, isDim: () => 0, isInverse: () => 0,
+      } : source.getCell(x),
+    } : getLine(y);
+
+    const snapshot = snapshotOf(pane);
+    assert.equal(snapshot.clippedVisible, true);
+    pane.onSnapshot?.(snapshot);
+    assert.equal(pane.lastWaiting, false, "the incomplete prompt is not replayed as waiting on attach");
+    assert.equal(pane.lastDialog, undefined);
+    assert.deepEqual(events, [{ waiting: true, dialog: undefined }], "unknown clipping does not publish a false clear event");
+  } finally {
+    closeVtPane(id);
+  }
+});
+
+test("wide content in scrollback does not mark the visible snapshot clipped", () => {
+  const row = (text, length = 40, extra = []) => {
+    const cells = new Map([...Array.from(text).map((char, x) => [x, [char, 0, 0]]), ...extra]);
+    return {
+      length,
+      translateToString: (_trim, start = 0, end = length) =>
+        Array.from({ length: end - start }, (_, i) => cells.get(start + i)?.[0] ?? " ").join("").trimEnd(),
+      getCell: (x) => {
+        const cell = cells.get(x);
+        return cell ? { getChars: () => cell[0], getWidth: () => 1, isDim: () => cell[1], isInverse: () => cell[2] } : undefined;
+      },
+    };
+  };
+  const oldScrollback = row("old history", 80, [[60, ["old wide tail", 0, 0]]]);
+  const visibleOutput = row("recent output");
+  const visibleComposer = row("❯ ");
+  const lines = [oldScrollback, visibleOutput, visibleComposer];
+  const pane = {
+    terminal: {
+      cols: 40,
+      rows: 2,
+      buffer: { active: { length: lines.length, viewportY: 1, getLine: (y) => lines[y] } },
+    },
+    agent: "claude",
+    shell: false,
+    composerSeen: true,
+    openedAt: Date.now(),
+    lastOutputAt: null,
+  };
+  const snapshot = snapshotOf(pane);
+  assert.equal(snapshot.clippedVisible, undefined);
+  assert.equal(snapshotHold(snapshot).hold, null);
 });
 
 test("closeAllVtPanes clears everything (host shutdown)", async () => {

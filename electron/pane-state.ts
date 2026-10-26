@@ -4,7 +4,7 @@ import type { VtSnapshot } from "./vt-mirror";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
 import { evaluateScreenEvidence, matchingScreenRule, type ScreenRuleMatch } from "./agent-screen-rules";
 import { builtinScreenRules, HOLD_RULES_UNAVAILABLE } from "./screen-rule-provider";
-import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_RECOVERY_UNKNOWN, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
+import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_RECOVERY_UNKNOWN, HOLD_SCREEN_CLIPPED, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
 export interface PaneStateResult {
   state: "unknown" | "stopped" | "starting" | "waiting" | "busy" | "held" | "idle" | "shell";
   /** True only when this client observed an explicit process-exit event. */
@@ -26,8 +26,8 @@ export function unavailablePaneState(reason: string, state: "unknown" | "stopped
 export function explainPaneSnapshot(snapshot: VtSnapshot): PaneStateResult {
   const hold = snapshotHold(snapshot).hold, busy = snapshotBusy(snapshot), status = snapshotStatus(snapshot), rules = ruleMetadata();
   const noScreen = status.waiting === null || !snapshot.rows.some(row => row.trim());
-  const unknown = snapshot.recoveryUnknown || !rules.available || noScreen;
-  const reason = snapshot.shell ? undefined : snapshot.recoveryUnknown ? HOLD_RECOVERY_UNKNOWN : !rules.available ? rules.reason : noScreen ? "no screen evidence yet" : undefined;
+  const unknown = snapshot.clippedVisible || snapshot.recoveryUnknown || !rules.available || noScreen;
+  const reason = snapshot.clippedVisible ? HOLD_SCREEN_CLIPPED : snapshot.shell ? undefined : snapshot.recoveryUnknown ? HOLD_RECOVERY_UNKNOWN : !rules.available ? rules.reason : noScreen ? "no screen evidence yet" : undefined;
   const state = snapshot.shell ? "shell" : unknown ? "unknown" : status.waiting ? "waiting" : busy ? "busy" : hold ? "held" : "idle";
   const evidence: PaneStateResult["evidence"] = [];
   if (!unknown && !snapshot.shell) {
@@ -43,7 +43,7 @@ export function explainPaneSnapshot(snapshot: VtSnapshot): PaneStateResult {
     }
   }
   if (hold && !evidence.some(e => e.for === "hold")) {
-    const policies = new Map([[HOLD_SHELL,"shell"],[HOLD_STARTING,"starting"],[HOLD_DRAFT,"draft"],[HOLD_CHOICE,"numbered-choice"],[HOLD_APPROVE_AYA,"approve-aya"],[HOLD_RECOVERY_UNKNOWN,"recovery-screen-unknown"],[HOLD_RULES_UNAVAILABLE,"rules-unavailable"]]);
+    const policies = new Map([[HOLD_SHELL,"shell"],[HOLD_STARTING,"starting"],[HOLD_DRAFT,"draft"],[HOLD_CHOICE,"numbered-choice"],[HOLD_APPROVE_AYA,"approve-aya"],[HOLD_RECOVERY_UNKNOWN,"recovery-screen-unknown"],[HOLD_SCREEN_CLIPPED,"screen-clipped-after-resize"],[HOLD_RULES_UNAVAILABLE,"rules-unavailable"]]);
     evidence.push({for:"hold",policy:policies.get(hold) ?? "pane-hold"});
   }
   return { state, exited: false, ...(reason ? { reason } : {}), screenEvidence: !unknown, hold, busy, waiting: status.waiting, generation: snapshot.generation, rules, evidence };
