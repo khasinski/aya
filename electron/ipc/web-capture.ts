@@ -34,10 +34,13 @@ export function hasCapturedIpcHandler(channel: string): boolean {
 export async function invokeCapturedIpcHandler(
   channel: string,
   args: unknown[],
+  senderId?: number,
 ): Promise<unknown> {
   const handler = captured.get(channel);
   if (!handler) throw new Error(`Unknown channel: ${channel}`);
   // sender: null — window-scoped channels are overridden before this path.
-  const stubEvent = { sender: null } as unknown as IpcMainInvokeEvent;
+  const stubEvent = {
+    sender: senderId === undefined ? null : { id: senderId },
+  } as unknown as IpcMainInvokeEvent;
   return handler(stubEvent, ...args);
 }

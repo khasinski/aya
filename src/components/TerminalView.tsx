@@ -17,11 +17,15 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type {
   HarnessSearchHit,
+  HarnessSearchResult,
   Preset,
   Snippet,
   TerminalState,
   ThemeColors,
 } from "../types";
+import { formatHarnessSearchCoverage } from "../harness-search-coverage";
+import { beginHistorySearch } from "../harness-search-sequence";
+import { FindBarCoverageLine } from "./FindBarCoverageLine";
 import { effectiveAgent } from "../agentPreset";
 import { ptyEventBus } from "../ptyEventBus";
 import type { SettingsTab } from "../settings-tabs";
@@ -53,6 +57,7 @@ import {
 import { SnippetBar } from "./SnippetBar";
 import { terminalFocusRetryStillOwned } from "../terminal-focus-retry";
 import { displayIpcError, UPDATE_SPAWN_REFUSAL } from "../update-spawn";
+import { ipcMessage } from "./use-async-action";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
 // 80x24 a PTY gets before xterm has measured the pane (used at every spawn).
@@ -1827,6 +1832,7 @@ function TerminalViewComponent({
             }
           }}
           historyAgent={findHistoryAgent}
+          paneId={terminal.id}
           cwd={cwd}
           configDir={preset.configDir}
           command={preset.command}
@@ -1874,12 +1880,17 @@ interface FindBarProps {
   onClose: () => void;
   /** Non-null enables the experimental History mode for this agent tab. */
   historyAgent: "claude" | "codex" | null;
+  paneId: string;
   cwd: string;
   configDir?: string;
   /** The preset's command: an inline CODEX_HOME there moves the history too. */
   command?: string;
   /** Clears xterm search highlights when the bar switches to History mode. */
   onClearTerminalMatches: () => void;
+  /** A completed result can be supplied when restoring/rendering the bar. */
+  initialHistoryResult?: HarnessSearchResult;
+  /** A refusal can be supplied when restoring/rendering the bar. */
+  initialHistoryError?: string;
 }
 
 // History (transcript) search: debounce keystrokes before the IPC round-trip
@@ -1894,26 +1905,32 @@ function formatHitTime(timestamp: string | undefined): string | null {
   return formatLastActivity(ms) ?? "just now";
 }
 
-function FindBar({
+export function FindBar({
   value,
   onChange,
   onNext,
   onPrev,
   onClose,
   historyAgent,
+  paneId,
   cwd,
   configDir,
   command,
   onClearTerminalMatches,
+  initialHistoryResult,
+  initialHistoryError,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [historyMode, setHistoryMode] = useState(false);
-  const [hits, setHits] = useState<HarnessSearchHit[]>([]);
+  const [historyMode, setHistoryMode] = useState(initialHistoryResult !== undefined);
+  const [hits, setHits] = useState<HarnessSearchHit[]>(initialHistoryResult?.hits ?? []);
+  const [coverage, setCoverage] = useState<HarnessSearchResult["coverage"]>(initialHistoryResult?.coverage ?? { partial: false });
   // True once a transcript search has completed for the current query, so
   // "No matches" only shows after an actual (empty) result, not while typing.
-  const [searched, setSearched] = useState(false);
+  const [searched, setSearched] = useState(initialHistoryResult !== undefined);
+  const [historyError, setHistoryError] = useState<string | null>(initialHistoryError ?? null);
   const [expandedHit, setExpandedHit] = useState<number | null>(null);
   const historySeqRef = useRef(0);
+  const historyRequestIdRef = useRef(0);
   useEffect(() => {
     // Focus + select-all on mount so opening the bar twice in a row lets
     // the user replace the query directly.
@@ -1924,31 +1941,61 @@ function FindBar({
   const historyActive = historyMode && historyAgent !== null;
   const query = value.trim();
   useEffect(() => {
+    const { id: seq, shouldSearch } = beginHistorySearch(
+      historySeqRef,
+      query,
+      HISTORY_MIN_QUERY_CHARS,
+    );
     if (!historyActive || !historyAgent) return;
-    if (query.length < HISTORY_MIN_QUERY_CHARS) {
+    if (!shouldSearch) {
       setHits([]);
+      setCoverage({ partial: false });
       setSearched(false);
+      setHistoryError(null);
       setExpandedHit(null);
       return;
     }
-    const seq = ++historySeqRef.current;
+    // Results belong to the previous query and must not remain visible under
+    // this one while its debounced request is waiting or being cancelled.
+    setHits([]);
+    setCoverage({ partial: false });
+    setSearched(false);
+    setHistoryError(null);
+    setExpandedHit(null);
+    let requestId: string | undefined;
     const timer = window.setTimeout(() => {
+      requestId = `history-${seq}-${++historyRequestIdRef.current}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       window.aya
-        .harnessSearch({ agent: historyAgent, cwd, configDir, command, query })
+        .harnessSearch({ agent: historyAgent, cwd, configDir, command, query }, requestId, paneId)
         .then((results) => {
           if (historySeqRef.current !== seq) return; // stale response
-          setHits(results);
+          if (results.coverage.cancelled) {
+            setHits([]);
+            setCoverage({ partial: false });
+            setSearched(false);
+            setHistoryError(null);
+            setExpandedHit(null);
+            return;
+          }
+          setHits(results.hits);
+          setCoverage(results.coverage);
           setSearched(true);
+          setHistoryError(null);
           setExpandedHit(null);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (historySeqRef.current !== seq) return;
           setHits([]);
+          setCoverage({ partial: false });
           setSearched(true);
+          setHistoryError(ipcMessage(error));
         });
     }, HISTORY_SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [historyActive, historyAgent, cwd, configDir, command, query]);
+    return () => {
+      window.clearTimeout(timer);
+      if (requestId) void window.aya.harnessSearchCancel(requestId, paneId).catch(() => {});
+    };
+  }, [historyActive, historyAgent, cwd, configDir, command, query, paneId]);
 
   const switchMode = (toHistory: boolean) => {
     if (toHistory === historyMode) return;
@@ -1958,7 +2005,9 @@ function FindBar({
       onClearTerminalMatches();
     } else {
       setHits([]);
+      setCoverage({ partial: false });
       setSearched(false);
+      setHistoryError(null);
       // Re-run the live terminal search for the query already in the box.
       onChange(value, false);
     }
@@ -1966,6 +2015,11 @@ function FindBar({
   };
 
   const agentLabel = historyAgent === "claude" ? "Claude" : "Codex";
+  const partialCoverageText = formatHarnessSearchCoverage(
+    coverage,
+    hits.length > 0,
+    agentLabel,
+  );
   return (
     <div className={`aya-findbar ${historyActive ? "aya-findbar--history" : ""}`}>
       <div className="aya-findbar-row">
@@ -2040,11 +2094,13 @@ function FindBar({
           ✕
         </button>
       </div>
-      {historyActive && (searched || hits.length > 0) && (
+      {historyActive && (searched || hits.length > 0 || historyError !== null) && (
         <div className="aya-findbar-results">
           {hits.length === 0 ? (
             <div className="aya-findbar-empty">
-              No matches in recent {agentLabel} sessions for this directory
+              {historyError ?? (partialCoverageText
+                ? <FindBarCoverageLine coverage={coverage} hasHits={false} agentLabel={agentLabel} />
+                : `No matches in recent ${agentLabel} sessions for this directory`)}
             </div>
           ) : (
             hits.map((hit, index) => {
@@ -2088,6 +2144,9 @@ function FindBar({
                 </button>
               );
             })
+          )}
+          {partialCoverageText && hits.length > 0 && (
+            <FindBarCoverageLine coverage={coverage} hasHits agentLabel={agentLabel} />
           )}
         </div>
       )}

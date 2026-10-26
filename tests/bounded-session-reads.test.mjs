@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readBufferAtMost, readFileAtMost, scanJsonlTail } from "../dist-electron/bounded-file-read.js";
+import { readBufferAtMost, readFileAtMost, scanJsonlLinesReverse, scanJsonlTail } from "../dist-electron/bounded-file-read.js";
 
 const MIB = 1024 * 1024;
 const MAX_BYTES = 256 * 1024;
@@ -224,6 +224,52 @@ test("a file truncated after stat stops cleanly without parsing a partial chunk"
   assert.deepEqual(lines, []);
   assert.equal(result.truncated, true);
   assert.equal(result.bytesRead, 3);
+});
+
+test("reverse JSONL scan preserves newest-first order across chunk boundaries", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "reverse.jsonl");
+  writeFileSync(file, "old\n123456789\nnewest\n");
+  const lines = [];
+  const result = await scanJsonlLinesReverse(file, (line, info) => lines.push([line, info]), {
+    chunkBytes: 5,
+    maxLineBytes: 32,
+  });
+  assert.deepEqual(lines.map(([line]) => line), ["newest", "123456789", "old"]);
+  assert.deepEqual(lines.map(([, info]) => [info.startOffset, info.endOffset]), [
+    [14, 20], [4, 13], [0, 3],
+  ]);
+  assert.equal(result.truncated, false);
+});
+
+test("reverse JSONL scan skips oversized rows with bounded carry and continues older", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "oversized-reverse.jsonl");
+  writeFileSync(file, `oldest\n${"x".repeat(100)}\nnewest\n`);
+  const lines = [];
+  let maxCarry = 0;
+  const result = await scanJsonlLinesReverse(file, (line) => lines.push(line), {
+    chunkBytes: 7,
+    maxLineBytes: 16,
+    onMaxCarryBytes: (bytes) => { maxCarry = Math.max(maxCarry, bytes); },
+  });
+  assert.deepEqual(lines, ["newest", "oldest"]);
+  assert.equal(result.truncated, true);
+  assert.ok(maxCarry <= 16, `carry reached ${maxCarry} bytes`);
+});
+
+test("reverse JSONL scan reports deadline stops as partial", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "deadline.jsonl");
+  writeFileSync(file, "old\nmiddle\nnew\n");
+  const lines = [];
+  let checks = 0;
+  const result = await scanJsonlLinesReverse(file, (line) => lines.push(line), {
+    chunkBytes: 4,
+    shouldStop: () => ++checks > 2,
+  });
+  assert.deepEqual(lines, ["new"]);
+  assert.equal(result.truncated, true);
 });
 
 test("readFileAtMost returns a bounded file prefix", async (t) => {

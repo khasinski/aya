@@ -8,8 +8,21 @@ import { searchHarnessSessions } from "../harness-search";
 import { notePaneInput, withPaneInputLock } from "../pane-input-queue";
 import type { PtyHostClient } from "../pty-host-client";
 import { closePane, type createSpawnGate } from "../spawn-gate";
-import type { SpawnRequest } from "../types";
+import type { HarnessSearchRequest, SpawnRequest } from "../types";
 import { requirePositiveInt, requireString, validateSpawnRequest } from "../validation";
+
+const MAX_ACTIVE_HARNESS_SEARCHES = 4;
+const MAX_HARNESS_QUERY_CHARS = 256;
+const MAX_HARNESS_QUERY_TOKENS = 16;
+
+interface ActiveHarnessSearch {
+  requestId: string;
+  senderId: number;
+  paneId: string;
+  controller: AbortController;
+  done: Promise<void>;
+  finish: () => void;
+}
 
 export interface PtyIpcDeps {
   ipcMain: Pick<IpcMain, "handle"> & Partial<Pick<IpcMain, "on">>;
@@ -45,10 +58,16 @@ export interface PtyIpcDeps {
   stopOtherHosts: () => Promise<number[]>;
   /** Questions agents are waiting on. */
   waiting: () => unknown;
+  /** Optional override for deterministic cancellation tests. */
+  searchHarness?: typeof searchHarnessSessions;
 }
 
 export function registerPtyIpc(deps: PtyIpcDeps): void {
   const { ipcMain, host, gate } = deps;
+  const activeHarnessSearches = new Map<string, ActiveHarnessSearch>();
+  // Include superseded requests until their scanners actually stop. This keeps
+  // rapid same-pane query changes from bypassing the global work limit.
+  const runningHarnessSearches = new Set<ActiveHarnessSearch>();
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
     // This check belongs in main: remote spawns do not pass through
@@ -138,16 +157,28 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     host.search(requireString(query, "pty:search.query")),
   );
-  ipcMain.handle("harness:search", async (_e, req: unknown) => {
+  ipcMain.handle("harness:search", async (event, req: unknown, rawRequestId: unknown, rawPaneId: unknown) => {
     if (typeof req !== "object" || req === null) {
       throw new Error("harness:search: request must be an object");
     }
+    const requestId = requireString(rawRequestId, "harness:search.requestId");
+    if (requestId.length > 256) throw new Error("harness:search.requestId is too long");
+    const paneId = requireString(rawPaneId, "harness:search.paneId");
+    if (paneId.length > 256) throw new Error("harness:search.paneId is too long");
     const r = req as Record<string, unknown>;
     const agent = requireString(r.agent, "harness:search.agent");
     if (agent !== "claude" && agent !== "codex") {
       throw new Error("harness:search.agent must be 'claude' or 'codex'");
     }
-    return searchHarnessSessions({
+    const query = requireString(r.query, "harness:search.query");
+    if (query.length > MAX_HARNESS_QUERY_CHARS) {
+      throw new Error(`History search supports up to ${MAX_HARNESS_QUERY_CHARS} characters.`);
+    }
+    const queryTokens = query.trim().split(/\s+/).filter(Boolean);
+    if (queryTokens.length > MAX_HARNESS_QUERY_TOKENS) {
+      throw new Error(`History search supports up to ${MAX_HARNESS_QUERY_TOKENS} words.`);
+    }
+    const searchRequest: HarnessSearchRequest = {
       agent,
       cwd: requireString(r.cwd, "harness:search.cwd"),
       configDir:
@@ -155,8 +186,54 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
           ? undefined
           : requireString(r.configDir, "harness:search.configDir"),
       command: r.command === undefined ? undefined : requireString(r.command, "harness:search.command"),
-      query: requireString(r.query, "harness:search.query"),
-    });
+      query,
+    };
+    // Each find bar can run one scan. A newer query in that same pane stops
+    // its prior work without cancelling searches in another pane/window.
+    const senderId = event?.sender?.id ?? -1;
+    const key = JSON.stringify([senderId, paneId]);
+    const previous = activeHarnessSearches.get(key);
+    previous?.controller.abort();
+    const controller = new AbortController();
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => { finish = resolve; });
+    const active = {
+      requestId,
+      senderId,
+      paneId,
+      controller,
+      done,
+      finish,
+    };
+    activeHarnessSearches.set(key, active);
+    try {
+      // Reuse a superseded pane's slot only after its scanner has observed
+      // cancellation. This prevents both cap races and false busy refusals
+      // while typing quickly in one pane.
+      if (previous) await previous.done;
+      if (controller.signal.aborted || activeHarnessSearches.get(key) !== active) {
+        return { hits: [], coverage: { partial: false, cancelled: true } };
+      }
+      if (runningHarnessSearches.size >= MAX_ACTIVE_HARNESS_SEARCHES) {
+        throw new Error("Too many history searches are running. Wait a moment and try again.");
+      }
+      runningHarnessSearches.add(active);
+      return await (deps.searchHarness ?? searchHarnessSessions)(searchRequest, { signal: controller.signal });
+    } finally {
+      runningHarnessSearches.delete(active);
+      if (activeHarnessSearches.get(key) === active) activeHarnessSearches.delete(key);
+      active.finish();
+    }
+  });
+  ipcMain.handle("harness:search-cancel", (event, rawRequestId: unknown, rawPaneId: unknown) => {
+    const requestId = requireString(rawRequestId, "harness:search-cancel.requestId");
+    const paneId = requireString(rawPaneId, "harness:search-cancel.paneId");
+    const senderId = event?.sender?.id ?? -1;
+    const key = JSON.stringify([senderId, paneId]);
+    const active = activeHarnessSearches.get(key);
+    if (active?.requestId === requestId && active.senderId === senderId && active.paneId === paneId) {
+      active.controller.abort();
+    }
   });
   ipcMain.handle("pty-host:restart", async () => deps.restartHost());
   ipcMain.handle("pty-host:retry-recovery",async()=>deps.retryRecovery?.()??false);

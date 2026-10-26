@@ -36,7 +36,8 @@ function setup(over = {}) {
     waiting: () => ["waiting"],
     ...over,
   });
-  return { handlers, log, gate, host, panes, call: (channel, ...args) => handlers.get(channel)({}, ...args) };
+  const callFrom = (senderId, channel, ...args) => handlers.get(channel)({ sender: { id: senderId } }, ...args);
+  return { handlers, log, gate, host, panes, call: (channel, ...args) => callFrom(7, channel, ...args), callFrom };
 }
 
 const spawnReq = (ptyId) => ({ ptyId, command: "claude", cwd: "/tmp", cols: 80, rows: 24 });
@@ -45,6 +46,7 @@ test("registers exactly the terminal and host channels", () => {
   assert.deepEqual([...setup().handlers.keys()].sort(), [
     "agent:waiting",
     "harness:search",
+    "harness:search-cancel",
     "pty-host:restart",
     "pty-host:retry-recovery",
     "pty-host:stop-others",
@@ -162,8 +164,119 @@ test("buffer, cwd, search and resize go to the host; an unreachable host's buffe
 test("transcript search takes claude or codex only, with text fields", async () => {
   const { call } = setup();
   await assert.rejects(call("harness:search", null), /request must be an object/);
-  await assert.rejects(call("harness:search", { agent: "grok", cwd: "/", query: "x" }), /must be 'claude' or 'codex'/);
-  await assert.rejects(call("harness:search", { agent: "claude", cwd: 7, query: "x" }), /harness:search\.cwd/);
+  await assert.rejects(call("harness:search", { agent: "grok", cwd: "/", query: "x" }, "bad-agent", "pane"), /must be 'claude' or 'codex'/);
+  await assert.rejects(call("harness:search", { agent: "claude", cwd: 7, query: "x" }, "bad-cwd", "pane"), /harness:search\.cwd/);
+});
+
+test("history search rejects queries beyond the character and token limits at IPC", async () => {
+  let calls = 0;
+  const { call } = setup({ searchHarness: async () => (calls++, { hits: [], coverage: { partial: false } }) });
+  const base = { agent: "claude", cwd: "/tmp/project" };
+  await assert.rejects(
+    call("harness:search", { ...base, query: "x".repeat(257) }, "long", "pane"),
+    /supports up to 256 characters/,
+  );
+  await assert.rejects(
+    call("harness:search", { ...base, query: Array.from({ length: 17 }, (_, i) => `t${i}`).join(" ") }, "many", "pane"),
+    /supports up to 16 words/,
+  );
+  await call("harness:search", { ...base, query: Array.from({ length: 16 }, (_, i) => `t${i}`).join(" ") }, "limit", "pane");
+  assert.equal(calls, 1, "invalid queries never reach the scanner");
+});
+
+test("history searches cap global concurrent scans and admit work when one finishes", async () => {
+  const requests = [];
+  const { callFrom } = setup({
+    searchHarness: (_request, { signal }) => new Promise((resolve) => requests.push({ resolve, signal })),
+  });
+  const request = { agent: "claude", cwd: "/tmp/project", query: "needle" };
+  const pending = Array.from({ length: 4 }, (_, i) =>
+    callFrom(i + 1, "harness:search", request, `request-${i}`, `pane-${i}`),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 4);
+  await assert.rejects(
+    callFrom(9, "harness:search", request, "over-cap", "pane-over-cap"),
+    /Too many history searches are running/,
+  );
+  assert.equal(requests.length, 4, "the fifth scan is refused before it starts");
+  for (const entry of requests) entry.resolve({ hits: [], coverage: { partial: false } });
+  await Promise.all(pending);
+  const admitted = callFrom(9, "harness:search", request, "after-capacity", "pane-over-cap");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 5);
+  requests[4].resolve({ hits: [], coverage: { partial: false } });
+  await admitted;
+});
+
+test("a same-pane query waits for its aborted predecessor when all four scan slots are occupied", async () => {
+  const requests = [];
+  const { callFrom } = setup({
+    searchHarness: (_request, { signal }) => new Promise((resolve) => requests.push({ resolve, signal })),
+  });
+  const request = { agent: "claude", cwd: "/tmp/project", query: "needle" };
+  const pending = Array.from({ length: 4 }, (_, i) =>
+    callFrom(i + 1, "harness:search", request, `first-${i}`, `pane-${i}`),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const replacement = callFrom(1, "harness:search", request, "replacement", "pane-0");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests[0].signal.aborted, true);
+  assert.equal(requests.length, 4, "replacement waits rather than exceeding the global cap");
+
+  requests[0].resolve({ hits: [], coverage: { partial: false, cancelled: true } });
+  await pending[0];
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 5, "the replacement starts as soon as its own slot is free");
+  for (const entry of requests.slice(1)) entry.resolve({ hits: [], coverage: { partial: false } });
+  await Promise.all([...pending.slice(1), replacement]);
+});
+
+test("history searches in separate panes/windows run concurrently and cancellation stays in scope", async () => {
+  const requests = [];
+  const { callFrom } = setup({
+    searchHarness: (_request, { signal }) => new Promise((resolve) => {
+      requests.push({ signal, resolve });
+      signal.addEventListener("abort", () => resolve({ hits: [], coverage: { partial: true } }), { once: true });
+    }),
+  });
+  const request = { agent: "claude", cwd: "/tmp/project", query: "needle" };
+  const first = callFrom(7, "harness:search", request, "first", "pane-a");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  const otherWindow = callFrom(8, "harness:search", request, "other-window", "pane-a");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  const otherPane = callFrom(7, "harness:search", request, "other-pane", "pane-b");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 3);
+  assert.ok(requests.every(({ signal }) => !signal.aborted));
+  const completeResult = { hits: [{ text: "completed" }], coverage: { partial: false } };
+  requests[0].resolve(completeResult);
+  requests[1].resolve(completeResult);
+  requests[2].resolve(completeResult);
+  const completed = await Promise.all([first, otherWindow, otherPane]);
+  assert.ok(completed.every((result) => result.hits[0].text === "completed"));
+
+  const oldSamePane = callFrom(7, "harness:search", request, "old-same-pane", "pane-a");
+  await new Promise((resolve) => setImmediate(resolve));
+  const replacement = callFrom(7, "harness:search", request, "replacement", "pane-a");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 5);
+  assert.equal(requests[3].signal.aborted, true, "same pane in the same window supersedes its old query");
+  assert.equal(requests[4].signal.aborted, false);
+
+  const otherWindowAgain = callFrom(8, "harness:search", request, "other-window-again", "pane-a");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests[5].signal.aborted, false, "same pane in another window remains independent");
+  await callFrom(7, "harness:search-cancel", "old-same-pane", "pane-a");
+  assert.equal(requests[4].signal.aborted, false, "stale cancellation cannot stop the replacement query");
+  await callFrom(7, "harness:search-cancel", "replacement", "pane-a");
+  await callFrom(8, "harness:search-cancel", "other-window-again", "pane-a");
+  assert.equal(requests[4].signal.aborted, true);
+  assert.equal(requests[5].signal.aborted, true);
+  await Promise.all([oldSamePane, replacement, otherWindowAgain]);
 });
 
 test("restart confirmation, host restart, stopping other hosts and waiting questions go to their deps", async () => {

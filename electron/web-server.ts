@@ -153,6 +153,7 @@ export const WEB_BRIDGE_INVOKE_CHANNELS = [
   "env:github-link",
   "env:home",
   "harness:search",
+  "harness:search-cancel",
   "intelligence:ollama-status",
   "intelligence:pull-ollama-model",
   "local-summary:summarize",
@@ -232,6 +233,7 @@ export const WEB_ALLOWED_CHANNELS = new Set([
 export async function dispatchWebInvoke(
   channel: string,
   args: unknown[],
+  senderId?: number,
 ): Promise<unknown> {
   if (WEB_DENIED_CHANNELS.has(channel) || !WEB_ALLOWED_CHANNELS.has(channel)) {
     throw new Error("Not available in Aya Web");
@@ -241,7 +243,11 @@ export async function dispatchWebInvoke(
   if (!hasCapturedIpcHandler(channel)) {
     throw new Error(`Unknown channel: ${channel}`);
   }
-  return invokeCapturedIpcHandler(channel, args);
+  return invokeCapturedIpcHandler(
+    channel,
+    args,
+    channel.startsWith("harness:search") ? senderId : undefined,
+  );
 }
 
 function parseCookies(header: string | undefined): Record<string, string> {
@@ -338,6 +344,8 @@ export async function startWebServer(
   const sessions = new Map<string, Session>();
   const loginFailures = new Map<string, { count: number; resetAt: number }>();
   const clients = new Set<WebSocket>();
+  const webSenderIds = new WeakMap<WebSocket, number>();
+  let nextWebSenderId = -1;
 
   const sessionFor = (req: http.IncomingMessage): Session | null => {
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
@@ -522,6 +530,7 @@ export async function startWebServer(
       return;
     }
     clients.add(ws);
+    webSenderIds.set(ws, nextWebSenderId--);
     ws.on("close", () => clients.delete(ws));
     ws.on("error", () => clients.delete(ws));
     ws.send(
@@ -547,7 +556,7 @@ export async function startWebServer(
       const channel = f.channel;
       const args = Array.isArray(f.args) ? f.args : [];
       if (typeof id !== "number" || typeof channel !== "string") return;
-      void dispatchWebInvoke(channel, args)
+      void dispatchWebInvoke(channel, args, webSenderIds.get(ws))
         .then((value) => {
           if (ws.readyState !== ws.OPEN) return;
           ws.send(JSON.stringify({ t: "result", id, ok: true, value }));

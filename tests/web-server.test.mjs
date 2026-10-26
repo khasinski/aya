@@ -175,6 +175,43 @@ test("websocket requires a session and speaks the bridge protocol", async () => 
   }
 });
 
+test("each Aya Web socket supplies a distinct sender identity for pane-scoped history searches", async () => {
+  const ipcMain = { handle() {} };
+  captureIpcHandlers(ipcMain);
+  ipcMain.handle("harness:search", (event, _request, _requestId, paneId) => ({
+    senderId: event.sender.id,
+    paneId,
+  }));
+  const { base, cleanup } = await startTestServer();
+  const wsUrl = base.replace("http:", "ws:") + "/ws";
+  try {
+    const { cookie } = await login(base);
+    const a = await wsOpen(wsUrl, cookie);
+    const b = await wsOpen(wsUrl, cookie);
+    try {
+      await a.next();
+      await b.next();
+      a.ws.send(JSON.stringify({
+        t: "invoke", id: 1, channel: "harness:search", args: [{}, "a", "pane-1"],
+      }));
+      b.ws.send(JSON.stringify({
+        t: "invoke", id: 1, channel: "harness:search", args: [{}, "b", "pane-1"],
+      }));
+      const [fromA, fromB] = await Promise.all([a.next(), b.next()]);
+      assert.deepEqual(fromA.value.paneId, "pane-1");
+      assert.deepEqual(fromB.value.paneId, "pane-1");
+      assert.ok(Number.isSafeInteger(fromA.value.senderId));
+      assert.ok(Number.isSafeInteger(fromB.value.senderId));
+      assert.notEqual(fromA.value.senderId, fromB.value.senderId);
+    } finally {
+      a.ws.close();
+      b.ws.close();
+    }
+  } finally {
+    await cleanup();
+  }
+});
+
 test("web allowlist exactly tracks bridge invokes plus existing overrides", () => {
   const bridgeSource = readFileSync(
     new URL("../src/web/bridge.ts", import.meta.url),

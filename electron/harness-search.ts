@@ -19,7 +19,7 @@ import { codexHomeFor } from "./agent-brief";
 import { claudeProjectDirName } from "./claude-session";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
 import { CODEX_SESSIONS_SUBDIR, DEFAULT_CODEX_HOME } from "./usage-codex";
-import { scanJsonlTail } from "./bounded-file-read";
+import { scanJsonlLinesReverse } from "./bounded-file-read";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
@@ -46,16 +46,27 @@ export interface HarnessSearchHit {
   matchLength: number;
 }
 
+export interface HarnessSearchResult {
+  hits: HarnessSearchHit[];
+  coverage: {
+    partial: boolean;
+    /** Oldest message timestamp examined, or the session's modified time. */
+    searchedBackTo?: string;
+    /** Some messages exceeded the safe per-line search limit. */
+    longMessagesSkipped?: boolean;
+    /** The global hit cap stopped the search; value is the number returned. */
+    hitLimitReached?: number;
+  };
+}
+
 // Newest sessions to search per query — bounds worst-case parse cost when a
 // project has months of history. The freshest sessions are what per-tab
 // search is for; the global Cmd+K can grow a real index later.
 const MAX_SESSIONS_SCANNED = 12;
 const MAX_HITS_TOTAL = 80;
 const MAX_HITS_PER_SESSION = 20;
-// Search the newest bounded portion of a transcript; large sessions are
-// common, and the tail is the most useful history for an interactive search.
-export const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 1000;
+const MAX_CACHEABLE_TRANSCRIPT_BYTES = 512 * 1024;
 const MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE = 4 * 1024 * 1024;
 const MAX_CACHED_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_MESSAGE_CHARS = 64 * 1024;
@@ -69,6 +80,8 @@ const CODEX_CWD_CACHE_MAX_FILES = 256;
 // Codex session_meta is the first JSONL line; its base_instructions blob can
 // be a few KB, so probe generously but never read the whole rollout for it.
 const META_PROBE_BYTES = 64 * 1024;
+export const HARNESS_SEARCH_TIME_BUDGET_MS = 3_000;
+export const MAX_SEARCH_MESSAGE_BYTES = 64 * 1024;
 
 export interface HarnessMessage {
   role: "user" | "assistant";
@@ -84,6 +97,13 @@ interface SessionFile {
   mtimeMs: number;
   size: number;
 }
+
+interface SessionDiscovery {
+  sessions: SessionFile[];
+  partial: boolean;
+}
+
+type StopCheck = () => boolean;
 
 export { claudeProjectDirName };
 
@@ -189,33 +209,49 @@ export function extractCodexMessages(lines: string[]): HarnessMessage[] {
 async function claudeSessionFiles(
   cwd: string,
   configDir: string | undefined,
-): Promise<SessionFile[]> {
+  shouldStop: StopCheck,
+): Promise<SessionDiscovery> {
+  if (shouldStop()) return { sessions: [], partial: true };
   const base = expandUserPath(configDir?.trim() || DEFAULT_CLAUDE_CONFIG_DIR);
   const dir = path.join(base, "projects", claudeProjectDirName(cwd));
-  let names: string[];
+  let directory: Awaited<ReturnType<typeof fs.opendir>>;
   try {
-    names = await fs.readdir(dir);
+    directory = await fs.opendir(dir);
   } catch {
-    return []; // no history for this cwd (or no Claude at all)
+    return { sessions: [], partial: false }; // no history for this cwd (or no Claude at all)
   }
   const files: SessionFile[] = [];
-  for (const name of names) {
-    if (!name.endsWith(".jsonl")) continue;
-    const file = path.join(dir, name);
-    try {
-      const st = await fs.stat(file);
-      files.push({
-        file,
-        sessionId: name.slice(0, -".jsonl".length),
-        mtimeMs: st.mtimeMs,
-        size: st.size,
-      });
-    } catch {
-      // Vanished between readdir and stat.
+  let partial = false;
+  try {
+    for await (const entry of directory) {
+      if (shouldStop()) {
+        partial = true;
+        break;
+      }
+      if (!entry.name.endsWith(".jsonl")) continue;
+      const file = path.join(dir, entry.name);
+      try {
+        const st = await fs.stat(file);
+        files.push({
+          file,
+          sessionId: entry.name.slice(0, -".jsonl".length),
+          mtimeMs: st.mtimeMs,
+          size: st.size,
+        });
+      } catch {
+        // Vanished between readdir and stat.
+      }
+      if (shouldStop()) {
+        partial = true;
+        break;
+      }
     }
+  } finally {
+    await directory.close().catch(() => {});
   }
+  if (shouldStop()) partial = true;
   files.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return files.slice(0, MAX_SESSIONS_SCANNED);
+  return { sessions: files.slice(0, MAX_SESSIONS_SCANNED), partial };
 }
 
 // A rollout's first line (session_meta, carrying the session cwd) never
@@ -259,36 +295,56 @@ async function codexSessionFiles(
   cwd: string,
   configDir: string | undefined,
   command: string | undefined,
-): Promise<SessionFile[]> {
+  shouldStop: StopCheck,
+): Promise<SessionDiscovery> {
   const home = codexHomeFor({ configDir, command }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
-  if (!home) return [];
+  if (!home) return { sessions: [], partial: false };
   const root = path.join(home, CODEX_SESSIONS_SUBDIR);
   const all: { file: string; mtimeMs: number; size: number }[] = [];
+  let partial = false;
   async function walk(dir: string): Promise<void> {
-    let entries: import("node:fs").Dirent[];
+    if (shouldStop()) {
+      partial = true;
+      return;
+    }
+    let directory: Awaited<ReturnType<typeof fs.opendir>>;
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
+      directory = await fs.opendir(dir);
     } catch {
       return;
     }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full);
-      } else if (
-        entry.name.startsWith("rollout-") &&
-        entry.name.endsWith(".jsonl")
-      ) {
-        try {
-          const st = await fs.stat(full);
-          all.push({ file: full, mtimeMs: st.mtimeMs, size: st.size });
-        } catch {
-          // Vanished between readdir and stat.
+    try {
+      for await (const entry of directory) {
+        if (shouldStop()) {
+          partial = true;
+          return;
+        }
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+          if (partial) return;
+        } else if (
+          entry.name.startsWith("rollout-") &&
+          entry.name.endsWith(".jsonl")
+        ) {
+          try {
+            const st = await fs.stat(full);
+            all.push({ file: full, mtimeMs: st.mtimeMs, size: st.size });
+          } catch {
+            // Vanished between readdir and stat.
+          }
+          if (shouldStop()) {
+            partial = true;
+            return;
+          }
         }
       }
+    } finally {
+      await directory.close().catch(() => {});
     }
   }
   await walk(root);
+  if (shouldStop()) partial = true;
   all.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
   // Rollouts are project-agnostic on disk; keep the newest ones whose
@@ -296,15 +352,24 @@ async function codexSessionFiles(
   // once ever (cached), walking newest-first so a busy cwd fills up fast.
   const matched: SessionFile[] = [];
   for (const f of all) {
+    if (shouldStop()) {
+      partial = true;
+      break;
+    }
     if (matched.length >= MAX_SESSIONS_SCANNED) break;
-    if ((await codexSessionCwd(f.file)) !== cwd) continue;
+    const sessionCwd = await codexSessionCwd(f.file);
+    if (shouldStop()) {
+      partial = true;
+      break;
+    }
+    if (sessionCwd !== cwd) continue;
     const base = path.basename(f.file);
     matched.push({
       ...f,
       sessionId: base.slice("rollout-".length, -".jsonl".length),
     });
   }
-  return matched;
+  return { sessions: matched, partial };
 }
 
 interface ParsedTranscript {
@@ -345,10 +410,7 @@ function cacheTranscript(file: string, parsed: ParsedTranscript): void {
   }
 }
 
-async function transcriptMessages(
-  session: SessionFile,
-  agent: "claude" | "codex",
-): Promise<HarnessMessage[]> {
+function cachedTranscript(session: SessionFile): HarnessMessage[] | null {
   const cached = parseCache.get(session.file);
   if (
     cached &&
@@ -360,39 +422,11 @@ async function transcriptMessages(
     parseCache.set(session.file, cached);
     return cached.messages;
   }
-  const newestFirst: HarnessMessage[] = [];
-  let weight = 0;
-  try {
-    await scanJsonlTail(session.file, (line) => {
-      const extracted = agent === "claude"
-        ? extractClaudeMessages([line])
-        : extractCodexMessages([line]);
-      for (const message of extracted) {
-        const text = message.text.length > MAX_CACHED_MESSAGE_CHARS
-          ? message.text.slice(0, MAX_CACHED_MESSAGE_CHARS)
-          : message.text;
-        const bounded: HarnessMessage = { ...message, text, lower: text.toLowerCase() };
-        const messageWeight = (bounded.text.length + bounded.lower.length) * 2 + 128;
-        if (
-          newestFirst.length >= MAX_TRANSCRIPT_MESSAGES ||
-          weight + messageWeight > MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE
-        ) return true;
-        newestFirst.push(bounded);
-        weight += messageWeight;
-      }
-      return false;
-    }, { maxBytes: MAX_TRANSCRIPT_BYTES });
-  } catch {
-    return [];
+  if (cached) {
+    parseCache.delete(session.file);
+    parseCacheBytes -= cached.weight;
   }
-  const messages = newestFirst.reverse();
-  cacheTranscript(session.file, {
-    mtimeMs: session.mtimeMs,
-    size: session.size,
-    messages,
-    weight,
-  });
-  return messages;
+  return null;
 }
 
 interface MessageMatch {
@@ -435,40 +469,204 @@ export function matchMessage(
   };
 }
 
+function oversizedPrefixIsMessage(prefix: string, agent: HarnessSearchRequest["agent"]): boolean {
+  if (agent === "claude") return /"type"\s*:\s*"(?:user|assistant)"/.test(prefix);
+  return /"type"\s*:\s*"response_item"/.test(prefix) &&
+    /"payload"\s*:\s*\{\s*"type"\s*:\s*"message"/.test(prefix);
+}
+
+export interface HarnessSearchOptions {
+  /** Internal deterministic hooks; production callers use the 3-second budget. */
+  timeBudgetMs?: number;
+  now?: () => number;
+  chunkBytes?: number;
+  onMaxCarryBytes?: (bytes: number) => void;
+  onBytesRead?: (bytes: number) => void;
+  signal?: AbortSignal;
+}
+
 export async function searchHarnessSessions(
   req: HarnessSearchRequest,
-): Promise<HarnessSearchHit[]> {
+  options: HarnessSearchOptions = {},
+): Promise<HarnessSearchResult> {
   const tokens = req.query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return [];
-  const sessions =
+  if (tokens.length === 0) return { hits: [], coverage: { partial: false } };
+  const now = options.now ?? (() => performance.now());
+  const deadline = now() + (options.timeBudgetMs ?? HARNESS_SEARCH_TIME_BUDGET_MS);
+  const shouldStop = () => options.signal?.aborted === true || now() >= deadline;
+  const discovery =
     req.agent === "claude"
-      ? await claudeSessionFiles(req.cwd, req.configDir)
-      : await codexSessionFiles(req.cwd, req.configDir, req.command);
+      ? await claudeSessionFiles(req.cwd, req.configDir, shouldStop)
+      : await codexSessionFiles(req.cwd, req.configDir, req.command, shouldStop);
+  const sessions = discovery.sessions;
   const hits: HarnessSearchHit[] = [];
-  for (const session of sessions) {
-    const messages = await transcriptMessages(session, req.agent);
-    let sessionHits = 0;
-    // Newest messages first within the (already newest-first) session order.
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (sessionHits >= MAX_HITS_PER_SESSION) break;
-      const match = matchMessage(messages[i], tokens);
-      if (!match) continue;
-      const m = messages[i];
-      hits.push({
-        sessionId: session.sessionId,
-        role: m.role,
-        timestamp: m.timestamp,
-        text:
-          m.text.length > MAX_HIT_TEXT_CHARS
-            ? m.text.slice(0, MAX_HIT_TEXT_CHARS) + "…"
-            : m.text,
-        snippet: match.snippet,
-        matchStart: match.matchStart,
-        matchLength: match.matchLength,
+  let partial = discovery.partial;
+  let longMessagesSkipped = false;
+  let hitLimitReached = false;
+  let searchedBackToMs: number | undefined;
+  let transcriptExamined = false;
+  let lastTranscriptMtimeMs: number | undefined;
+  const noteTimestamp = (timestamp: string | undefined) => {
+    const parsed = timestamp ? Date.parse(timestamp) : NaN;
+    if (Number.isFinite(parsed) && (searchedBackToMs === undefined || parsed < searchedBackToMs)) {
+      searchedBackToMs = parsed;
+    }
+  };
+  const appendHit = (session: SessionFile, message: HarnessMessage, sessionHits: number[]) => {
+    const match = matchMessage(message, tokens);
+    if (!match) return;
+    if (sessionHits[0] >= MAX_HITS_PER_SESSION || hits.length >= MAX_HITS_TOTAL) {
+      partial = true;
+      if (hits.length >= MAX_HITS_TOTAL) hitLimitReached = true;
+      return;
+    }
+    hits.push({
+      sessionId: session.sessionId,
+      role: message.role,
+      timestamp: message.timestamp,
+      text: message.text.length > MAX_HIT_TEXT_CHARS
+        ? message.text.slice(0, MAX_HIT_TEXT_CHARS) + "…"
+        : message.text,
+      snippet: match.snippet,
+      matchStart: match.matchStart,
+      matchLength: match.matchLength,
+    });
+    sessionHits[0] += 1;
+  };
+  for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex++) {
+    const session = sessions[sessionIndex];
+    if (shouldStop()) {
+      partial = true;
+      break;
+    }
+    const sessionHits = [0];
+    let sessionOldestTimestampMs: number | undefined;
+    const noteSessionTimestamp = (timestamp: string | undefined) => {
+      const parsed = timestamp ? Date.parse(timestamp) : NaN;
+      if (!Number.isFinite(parsed)) return;
+      if (sessionOldestTimestampMs === undefined || parsed < sessionOldestTimestampMs) {
+        sessionOldestTimestampMs = parsed;
+      }
+      noteTimestamp(timestamp);
+    };
+    const cached = session.size <= MAX_CACHEABLE_TRANSCRIPT_BYTES
+      ? cachedTranscript(session)
+      : null;
+    if (cached) {
+      transcriptExamined = true;
+      lastTranscriptMtimeMs = session.mtimeMs;
+      for (let i = cached.length - 1; i >= 0; i--) {
+        if (shouldStop()) {
+          partial = true;
+          break;
+        }
+        noteSessionTimestamp(cached[i].timestamp);
+        appendHit(session, cached[i], sessionHits);
+      }
+      if (hits.length >= MAX_HITS_TOTAL && sessionIndex < sessions.length - 1) {
+        partial = true;
+        hitLimitReached = true;
+        break;
+      }
+      continue;
+    }
+    if (session.size > MAX_CACHEABLE_TRANSCRIPT_BYTES) cachedTranscript(session);
+
+    const cacheMessages: HarnessMessage[] = [];
+    let cacheWeight = 0;
+    let cacheable = session.size <= MAX_CACHEABLE_TRANSCRIPT_BYTES;
+    let scanResult: Awaited<ReturnType<typeof scanJsonlLinesReverse>> | undefined;
+    try {
+      scanResult = await scanJsonlLinesReverse(session.file, (line) => {
+        const extracted = req.agent === "claude"
+          ? extractClaudeMessages([line])
+          : extractCodexMessages([line]);
+        for (const message of extracted) {
+          if (message.text.length > MAX_CACHED_MESSAGE_CHARS) {
+            cacheable = false;
+            partial = true;
+            longMessagesSkipped = true;
+            continue;
+          }
+          noteSessionTimestamp(message.timestamp);
+          appendHit(session, message, sessionHits);
+          if (cacheable && cacheMessages.length >= MAX_TRANSCRIPT_MESSAGES) {
+            cacheable = false;
+            cacheMessages.length = 0;
+            cacheWeight = 0;
+          }
+          if (cacheable) {
+            const bounded: HarnessMessage = { ...message, lower: message.text.toLowerCase() };
+            const weight = (bounded.text.length + bounded.lower.length) * 2 + 128;
+            if (cacheWeight + weight <= MAX_CACHED_TRANSCRIPT_BYTES_PER_FILE) {
+              cacheMessages.push(bounded);
+              cacheWeight += weight;
+            } else {
+              cacheable = false;
+              cacheMessages.length = 0;
+              cacheWeight = 0;
+            }
+          }
+        }
+      }, {
+        maxBytes: Number.MAX_SAFE_INTEGER,
+        maxLineBytes: MAX_SEARCH_MESSAGE_BYTES,
+        shouldStop,
+        chunkBytes: options.chunkBytes,
+        onMaxCarryBytes: options.onMaxCarryBytes,
+        onBytesRead: options.onBytesRead,
+        onOversizedLinePrefix: (prefix) => {
+          if (oversizedPrefixIsMessage(prefix, req.agent)) longMessagesSkipped = true;
+        },
       });
-      sessionHits += 1;
-      if (hits.length >= MAX_HITS_TOTAL) return hits;
+    } catch {
+      scanResult = undefined;
+    }
+    if (scanResult && scanResult.bytesRead > 0) {
+      transcriptExamined = true;
+      lastTranscriptMtimeMs = session.mtimeMs;
+      if (sessionOldestTimestampMs === undefined && scanResult.truncated) {
+        noteTimestamp(new Date(session.mtimeMs).toISOString());
+      }
+    }
+    if (scanResult?.truncated) partial = true;
+    if (scanResult?.skippedOversizedLines) {
+      partial = true;
+    }
+    if (!scanResult || scanResult.truncated) cacheable = false;
+    if (cacheable) {
+      cacheTranscript(session.file, {
+        mtimeMs: session.mtimeMs,
+        size: session.size,
+        messages: cacheMessages.reverse(),
+        weight: cacheWeight,
+      });
+    }
+    if (!scanResult || shouldStop()) {
+      partial = true;
+      break;
+    }
+    // Once the global result cap is reached, older sessions are intentionally
+    // not visited; disclose that the returned result is a partial search.
+    if (hits.length >= MAX_HITS_TOTAL && sessionIndex < sessions.length - 1) {
+      partial = true;
+      hitLimitReached = true;
+      break;
     }
   }
-  return hits;
+  return {
+    hits,
+    coverage: {
+      partial,
+      ...(options.signal?.aborted ? { cancelled: true } : {}),
+      ...(longMessagesSkipped ? { longMessagesSkipped: true } : {}),
+      ...(hitLimitReached ? { hitLimitReached: MAX_HITS_TOTAL } : {}),
+      ...(!discovery.partial && partial && searchedBackToMs === undefined && transcriptExamined && lastTranscriptMtimeMs !== undefined
+        ? { searchedBackTo: new Date(lastTranscriptMtimeMs).toISOString() }
+        : {}),
+      ...(!discovery.partial && partial && searchedBackToMs !== undefined
+        ? { searchedBackTo: new Date(searchedBackToMs).toISOString() }
+        : {}),
+    },
+  };
 }
