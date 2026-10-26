@@ -15,7 +15,7 @@ import { codexHomeFor } from "./agent-brief";
 import type { UsageAccount, UsageData } from "./usage";
 import { expandUserPath, usageAccountFromData } from "./usage";
 import { CODEX_CONFIG_FILENAME, CODEX_DIRNAME } from "./constants";
-import { scanJsonlTail } from "./bounded-file-read";
+import { isOversizedUsageJsonlLine, scanJsonlTail } from "./bounded-file-read";
 
 export { CODEX_CONFIG_FILENAME, CODEX_DIRNAME };
 export const CODEX_DEFAULT_DIR = `~/${CODEX_DIRNAME}`;
@@ -221,6 +221,7 @@ export function latestUsageFromLines(
 ): UsageData | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!lines[i].includes('"rate_limits"')) continue;
+    if (isOversizedUsageJsonlLine(lines[i])) continue;
     let obj: { timestamp?: unknown; payload?: { rate_limits?: unknown } };
     try {
       obj = JSON.parse(lines[i]);
@@ -247,6 +248,7 @@ export function latestUsageAccountsFromLines(
   const byId = new Map<string, UsageAccount>();
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!lines[i].includes('"rate_limits"')) continue;
+    if (isOversizedUsageJsonlLine(lines[i])) continue;
     let obj: { timestamp?: unknown; payload?: Record<string, unknown> };
     try {
       obj = JSON.parse(lines[i]);
@@ -452,6 +454,7 @@ async function parseRollout(
   try {
     scan = await scanJsonlTail(file, (line) => {
       if (!line.includes('"rate_limits"')) return;
+      if (isOversizedUsageJsonlLine(line)) return;
       if (!latestUsage) latestUsage = latestUsageFromLines([line], mtimeMs);
       for (const account of latestUsageAccountsFromLines([line], mtimeMs)) {
         if (

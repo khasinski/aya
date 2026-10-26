@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { expandUserPath } from "./usage";
-import { readBufferAtMost, scanJsonlTail } from "./bounded-file-read";
+import { isOversizedUsageJsonlLine, readBufferAtMost, scanJsonlTail } from "./bounded-file-read";
 
 /** The default Grok home - the env override, else ~/.grok. */
 export const DEFAULT_GROK_HOME =
@@ -65,6 +65,7 @@ const isIsoTime = (v: unknown): v is string =>
 /** Null for any other line, or one whose shape is not what 1.0.41 logs. */
 export function extractGrokLimit(line: string): GrokLimit | null {
   if (!line.includes(CREDITS_MSG)) return null;
+  if (isOversizedUsageJsonlLine(line)) return null;
   let entry: {
     msg?: unknown;
     ts?: unknown;
@@ -198,6 +199,8 @@ export async function readGrokLimit(
  *  params.update.usage on a turn-completed line, with the event time at
  *  params._meta.agentTimestampMs (else the top-level `timestamp`). */
 export interface GrokUsageRow {
+  /** Source-file byte offset, populated by the bounded transcript scanner. */
+  sourceOffset?: number;
   tsMs: number;
   inputTokens: number;
   outputTokens: number;
@@ -225,6 +228,7 @@ export function extractGrokUsageRow(line: string): GrokUsageRow | null {
   // Cheap prefilter: skip the vast majority of lines (tool calls, content)
   // without paying for a JSON.parse.
   if (!line.includes('"usage"')) return null;
+  if (isOversizedUsageJsonlLine(line)) return null;
   let obj: {
     timestamp?: unknown;
     params?: {
@@ -339,17 +343,7 @@ function grokRowsWeight(rows: GrokUsageRow[]): number {
 }
 
 function grokRowKey(row: GrokUsageRow): string {
-  return JSON.stringify([
-    row.tsMs,
-    row.inputTokens,
-    row.outputTokens,
-    row.cachedReadTokens,
-    row.cacheCreationTokens,
-    row.reasoningTokens,
-    row.totalTokens,
-    row.costUsdTicks,
-    row.models,
-  ]);
+  return String(row.sourceOffset ?? -1);
 }
 
 /** updates.jsonl paths under a grok home whose file mtime is within the window
@@ -409,7 +403,7 @@ async function rowsForFile(
     return { rows: [], bytesRead: 0 };
   }
   const cached = rowCache.get(file);
-  if (cached && cached.mtimeMs === mtimeMs && cached.ino === ino) {
+  if (cached && cached.mtimeMs === mtimeMs && cached.ino === ino && cached.size === size) {
     rowCache.delete(file);
     rowCache.set(file, cached);
     return {
@@ -420,12 +414,12 @@ async function rowsForFile(
   const rows: GrokUsageRow[] = [];
   let bytesRead = 0;
   try {
-    const scan = await scanJsonlTail(file, (line) => {
+    const scan = await scanJsonlTail(file, (line, info) => {
       if (!line.includes('"usage"')) return;
       const row = extractGrokUsageRow(line);
       if (!row) return;
       if (row.tsMs < sinceMs || row.tsMs > nowMs) return;
-      rows.push(row);
+      rows.push({ ...row, sourceOffset: info.startOffset });
       return rows.length >= MAX_GROK_ROWS_PER_FILE;
     }, { maxBytes: Math.min(GROK_SESSION_TAIL_MAX_BYTES, maxBytes) });
     bytesRead = scan.bytesRead;

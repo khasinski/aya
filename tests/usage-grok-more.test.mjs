@@ -86,6 +86,21 @@ function session(home, cwd, uuid, lines) {
 test("a line that mentions usage but is not JSON is skipped", () => {
   assert.equal(extractGrokUsageRow('{"usage": {"inputTokens": 5'), null);
 });
+test("Grok usage skips oversized JSONL rows and still counts a later valid row", (t) => {
+  const home = tempHome(t);
+  const oversized = JSON.stringify({
+    timestamp: NOW,
+    params: { update: { usage: { inputTokens: 900, outputTokens: 0, totalTokens: 900, padding: "x".repeat(1024 * 1024) } } },
+  });
+  assert.ok(Buffer.byteLength(oversized) > 1024 * 1024);
+  const file = session(home, "cwd", "id", [oversized, turnLine(NOW, { inputTokens: 12, outputTokens: 0, totalTokens: 12 })]);
+  const stat = statSync(file);
+  utimesSync(file, stat.atime, new Date(NOW));
+  return readGrokUsage([home], NOW).then((usage) => {
+    assert.equal(usage.turns, 1);
+    assert.equal(usage.totalTokens, 12);
+  });
+});
 test("a usage field that is not an object is not a turn", () => {
   for (const usage of [5, null, "150"]) {
     const line = JSON.stringify({ timestamp: NOW, params: { update: { usage } } });
@@ -232,19 +247,34 @@ test("the same home listed twice is counted once", async (t) => {
   assert.equal(usage.turns, 1);
 });
 
-test("an unchanged mtime reuses the parsed rows until the cache is reset", async (t) => {
+test("same mtime and size reuses parsed rows until the cache is reset", async (t) => {
   resetGrokUsageCache();
   const home = tempHome(t);
   const file = session(home, "cwd", "s1", [turnLine(NOW - 1000)]);
   // Whole seconds: an mtime read back from stat would lose its sub-ms part.
   const fixed = Math.floor(NOW / 1000) - 60;
   utimesSync(file, fixed, fixed);
-  assert.equal((await readGrokUsage([home], NOW)).turns, 1);
-  writeFileSync(file, `${turnLine(NOW - 1000)}\n${turnLine(NOW - 2000)}\n`);
+  assert.equal((await readGrokUsage([home], NOW)).updatedAt, new Date(NOW - 1000).toISOString());
+  writeFileSync(file, `${turnLine(NOW - 2000)}\n`);
   utimesSync(file, fixed, fixed);
-  assert.equal((await readGrokUsage([home], NOW)).turns, 1, "same mtime: cached rows");
+  assert.equal((await readGrokUsage([home], NOW)).updatedAt, new Date(NOW - 1000).toISOString(), "same mtime and size: cached rows");
   resetGrokUsageCache();
-  assert.equal((await readGrokUsage([home], NOW)).turns, 2, "after reset: reparsed");
+  assert.equal((await readGrokUsage([home], NOW)).updatedAt, new Date(NOW - 2000).toISOString(), "after reset: reparsed");
+});
+
+test("same-mtime append is noticed and identical legitimate turns remain distinct", async (t) => {
+  resetGrokUsageCache();
+  const home = tempHome(t);
+  const row = turnLine(NOW - 1000);
+  const file = session(home, "cwd", "same-mtime-append", [row]);
+  const fixed = Math.floor(NOW / 1000) - 60;
+  utimesSync(file, fixed, fixed);
+  assert.equal((await readGrokUsage([home], NOW)).turns, 1);
+  appendFileSync(file, `${row}\n`);
+  utimesSync(file, fixed, fixed);
+  const usage = await readGrokUsage([home], NOW);
+  assert.equal(usage.turns, 2);
+  assert.equal(usage.totalTokens, 300);
 });
 
 test("an append that moves the mtime is picked up on the next poll", async (t) => {

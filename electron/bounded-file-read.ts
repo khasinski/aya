@@ -2,6 +2,13 @@ import { promises as fs } from "node:fs";
 
 export const JSONL_TAIL_CHUNK_BYTES = 64 * 1024;
 export const DEFAULT_JSONL_TAIL_MAX_BYTES = 16 * 1024 * 1024;
+/** Usage records are small; avoid parsing attacker/corruption-sized JSONL rows. */
+export const MAX_USAGE_JSONL_LINE_BYTES = 1024 * 1024;
+
+export function isOversizedUsageJsonlLine(line: string): boolean {
+  return line.length > MAX_USAGE_JSONL_LINE_BYTES ||
+    Buffer.byteLength(line, "utf8") > MAX_USAGE_JSONL_LINE_BYTES;
+}
 
 export interface JsonlTailOptions {
   /** Maximum number of bytes read from the end of the file. */
@@ -43,13 +50,20 @@ export interface JsonlTailResult {
   truncated: boolean;
 }
 
+export interface JsonlLineInfo {
+  /** Inclusive byte offset of the line in the source file. */
+  startOffset: number;
+  /** Exclusive byte offset of the line in the source file, excluding LF. */
+  endOffset: number;
+}
+
 /** Visit complete JSONL lines newest-first without loading the file into memory.
  * A line larger than one chunk is carried across chunks, but the whole carry
  * can never exceed maxBytes. If the byte budget starts in the middle of a line,
  * that partial line is discarded. Returning true from visit stops the scan. */
 export async function scanJsonlTail(
   file: string,
-  visit: (line: string) => boolean | void,
+  visit: (line: string, info: JsonlLineInfo) => boolean | void,
   options: JsonlTailOptions = {},
 ): Promise<JsonlTailResult> {
   const maxBytes = options.maxBytes ?? DEFAULT_JSONL_TAIL_MAX_BYTES;
@@ -113,12 +127,18 @@ export async function scanJsonlTail(
         const newline = combined.lastIndexOf(0x0a, end - 1);
         if (newline >= 0) {
           const lastLine = combined.subarray(newline + 1, end);
-          if (lastLine.length && visit(lastLine.toString("utf8")) === true) {
+          if (lastLine.length && visit(lastLine.toString("utf8"), {
+            startOffset: chunkStart + newline + 1,
+            endOffset: chunkStart + end,
+          }) === true) {
             stopped = true;
           }
           end = newline;
         } else if (chunkStart === 0) {
-          if (end && visit(combined.toString("utf8")) === true) stopped = true;
+          if (end && visit(combined.toString("utf8"), {
+            startOffset: chunkStart,
+            endOffset: chunkStart + end,
+          }) === true) stopped = true;
           completedAtByteZero = true;
           end = 0;
         }
@@ -129,7 +149,10 @@ export async function scanJsonlTail(
         const newline = combined.lastIndexOf(0x0a, end - 1);
         if (newline < 0) break;
         const line = combined.subarray(newline + 1, end);
-        if (line.length && visit(line.toString("utf8")) === true) {
+        if (line.length && visit(line.toString("utf8"), {
+          startOffset: chunkStart + newline + 1,
+          endOffset: chunkStart + end,
+        }) === true) {
           stopped = true;
           break;
         }
@@ -162,7 +185,10 @@ export async function scanJsonlTail(
       const withoutTrailingLf = firstLine.endsWith("\n")
         ? firstLine.slice(0, -1)
         : firstLine;
-      if (withoutTrailingLf && visit(withoutTrailingLf) === true) stopped = true;
+      if (withoutTrailingLf && visit(withoutTrailingLf, {
+        startOffset: 0,
+        endOffset: Buffer.byteLength(withoutTrailingLf, "utf8"),
+      }) === true) stopped = true;
     }
     return { bytesRead, truncated: start > 0 || earlyEof };
   } finally {

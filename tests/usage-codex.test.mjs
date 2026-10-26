@@ -285,6 +285,17 @@ test("latestUsageFromLines tolerates malformed lines; null when none", () => {
   assert.equal(latestUsageFromLines(lines, 0).fiveHour.pct, 1.0);
 });
 
+test("usage readers skip oversized JSONL rows and keep the next usable snapshot", () => {
+  const oversized = JSON.stringify({
+    timestamp: "2026-06-03T12:00:00.000Z",
+    payload: { type: "token_count", rate_limits: SAMPLE, padding: "x".repeat(1024 * 1024) },
+  });
+  assert.ok(Buffer.byteLength(oversized) > 1024 * 1024);
+  const valid = line("2026-06-03T11:00:00.000Z", SAMPLE);
+  assert.equal(latestUsageFromLines([valid, oversized], 0).fiveHour.pct, 1);
+  assert.equal(latestUsageAccountsFromLines([valid, oversized], 0).length, 1);
+});
+
 test("latestUsageAccountsFromLines returns the newest complete snapshot per account", () => {
   const lines = [
     accountLine("2026-06-03T10:00:00.000Z", "work", "Work", 5, 10),
