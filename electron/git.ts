@@ -18,13 +18,17 @@ const execFileAsync = promisify(execFile);
 const GIT_COMMAND_TIMEOUT_MS = 1500;
 // Timeout for the (potentially larger) git diff command.
 const GIT_DIFF_TIMEOUT_MS = 3000;
-// Ceiling on git diff output buffered into memory (5MB).
+// Ceiling on the final decoded diff shown to the user (5MB).
 const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
+// Invalid UTF-8 can expand to U+FFFD while child_process.exec decodes stdout,
+// up to three UTF-8 bytes per source byte. Allow that bounded expansion before
+// applying the 5 MB decoded-output cap below.
+const GIT_DIFF_PROCESS_MAX_BUFFER_BYTES = GIT_DIFF_MAX_BUFFER_BYTES * 3;
 const UNTRACKED_FILE_HEAD_MAX_BYTES = 256 * 1024;
 const UNTRACKED_DIFF_OMITTED_MARKER =
   "[Additional untracked file diffs omitted: the combined diff reached the 5 MB limit.]";
 const TRACKED_DIFF_TRIMMED_MARKER =
-  "[Tracked diff shortened to leave room for the untracked-file notice.]";
+  "[Tracked diff shortened to stay within the 5 MB limit.]";
 export const GIT_ERROR_MESSAGE_MAX_CHARS = 300;
 
 // Aya only observes repository state. `git status` can otherwise refresh the
@@ -44,6 +48,10 @@ const DIFF_OPTS = {
   maxBuffer: GIT_DIFF_MAX_BUFFER_BYTES,
   windowsHide: true,
   env: GIT_ENV,
+} as const;
+const TRACKED_DIFF_OPTS = {
+  ...DIFF_OPTS,
+  maxBuffer: GIT_DIFF_PROCESS_MAX_BUFFER_BYTES,
 } as const;
 
 /** Parse `git status --porcelain --branch`: the "## <branch>" header carries
@@ -692,14 +700,20 @@ export async function getGitDiff(directory: string): Promise<string> {
     const [{ stdout: diff }, files] = await Promise.all([
       execAsync(`${READ_ONLY_GIT} diff --no-ext-diff --no-color HEAD --`, {
         cwd: directory,
-        ...DIFF_OPTS,
+        ...TRACKED_DIFF_OPTS,
       }),
       getGitChangedFiles(directory),
     ]);
     const untracked = files.filter((file) => file.status === "??");
     let combined = diff.trimEnd();
-    const markerBytes = Buffer.byteLength(UNTRACKED_DIFF_OMITTED_MARKER, "utf8");
+    const combinedBytes = Buffer.byteLength(combined, "utf8");
     const trackedTrimmedMarkerBytes = Buffer.byteLength(TRACKED_DIFF_TRIMMED_MARKER, "utf8");
+    if (untracked.length === 0 && combinedBytes > GIT_DIFF_MAX_BUFFER_BYTES) {
+      const trackedBudget = GIT_DIFF_MAX_BUFFER_BYTES - trackedTrimmedMarkerBytes - 1;
+      combined = utf8Prefix(combined, trackedBudget).trimEnd();
+      return `${combined}${combined ? "\n" : ""}${TRACKED_DIFF_TRIMMED_MARKER}`;
+    }
+    const markerBytes = Buffer.byteLength(UNTRACKED_DIFF_OMITTED_MARKER, "utf8");
     if (
       untracked.length > 0 &&
       Buffer.byteLength(combined, "utf8") + markerBytes + 1 > GIT_DIFF_MAX_BUFFER_BYTES

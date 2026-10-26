@@ -386,6 +386,22 @@ test("getGitDiff reserves the omission marker beside a near-limit tracked diff",
   }
 });
 
+test("getGitDiff shortens tracked-only text when UTF-8 decoding expands the diff", async () => {
+  const root = makeRepo(REPO_PREFIX);
+  try {
+    const oldBytes = Buffer.alloc(2_300_000, 0xff);
+    const newBytes = Buffer.alloc(2_300_000, 0xfe);
+    commit(root, "tracked-bytes.txt", oldBytes);
+    writeFileSync(join(root, "tracked-bytes.txt"), newBytes);
+
+    const diff = await getGitDiff(root);
+    assert.match(diff, /Tracked diff shortened to stay within the 5 MB limit\./);
+    assert.ok(Buffer.byteLength(diff, "utf8") <= 5_000_000);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("getGitDiff skips an untracked FIFO without blocking", { skip: process.platform === "win32", timeout: 3000 }, async () => {
   const root = makeRepo(REPO_PREFIX);
   try {
