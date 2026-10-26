@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.13.1 - 2026-10-26
+
+Crash fixes and clearer diagnostics for terminal-host updates.
+
+### Fixes
+
+- Bound how much of an agent session file or an untracked file the main
+  process reads, stopping out-of-memory crashes on very large files
+  (#292, #293).
+- A terminal started while an update is being prepared is refused with a plain
+  message instead of failing obscurely (#283).
+- The terminal host logs why it refused an authentication proof (#284).
+- Test fixtures clean up after a failed host handoff (#285).
+
 ## v0.13.0 - 2026-10-22
 
 Antigravity usage in view, optional Command Rail, worktrees and Changes ready
