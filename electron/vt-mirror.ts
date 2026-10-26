@@ -187,6 +187,13 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
   let clippedVisible = false;
   for (let y = viewportY; y < viewportEnd && !clippedVisible; y++) {
     const line = buffer.getLine(y);
+    // A width-2 glyph at the last visible cell also occupies the next column,
+    // even when xterm represents that continuation with an empty cell.
+    const edge = cols > 0 ? line?.getCell(cols - 1) : undefined;
+    if (edge?.getWidth() === 2) {
+      clippedVisible = true;
+      break;
+    }
     for (let x = cols; line && x < line.length; x++) {
       const c = line.getCell(x);
       if (c && (c.getChars() !== "" || c.isDim() || c.isInverse())) {

@@ -253,7 +253,7 @@ export function snapshotHold(snapshot: VtSnapshot, pasted?: string): { hold: str
   const pane = paneFromSnapshot(snapshot);
   return { hold: holdPane(pane, pasted), composerSeen: pane.composerSeen };
 }
-export function snapshotBusy(snapshot: VtSnapshot): boolean { if(snapshot.recoveryUnknown)return false;return screenIsBusy(snapshot.rows, snapshot.agent); }
+export function snapshotBusy(snapshot: VtSnapshot): boolean { if(snapshot.clippedVisible || snapshot.recoveryUnknown)return false;return screenIsBusy(snapshot.rows, snapshot.agent); }
 export function snapshotStatus(snapshot: VtSnapshot): { waiting: boolean | null; dialog?: string; composerSeen: boolean } {
   if(snapshot.clippedVisible || snapshot.recoveryUnknown || !builtinScreenRules.get().available)return {waiting:null,composerSeen:false};
   let waiting: boolean | null = null, dialog: string | undefined;

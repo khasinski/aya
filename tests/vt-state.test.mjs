@@ -12,6 +12,8 @@ import {
   openVtPane,
   resizeVtPane,
   screenShowsApproval,
+  snapshotBusy,
+  snapshotStatus,
   vtPaneAltScreen,
   writeVtPane,
 } from "../dist-electron/vt-state.js";
@@ -192,6 +194,20 @@ test("snapshots stay within visible columns after resize across screen content s
             ),
             "row text contains only the visible screen columns",
           );
+          const buffer = pane.terminal.buffer.active;
+          let retainedTail = false;
+          for (let y = buffer.viewportY; y < Math.min(buffer.length, buffer.viewportY + pane.terminal.rows); y++) {
+            const line = buffer.getLine(y);
+            if (pane.terminal.cols > 0 && line?.getCell(pane.terminal.cols - 1)?.getWidth() === 2) retainedTail = true;
+            for (let x = pane.terminal.cols; line && x < line.length && !retainedTail; x++) {
+              const cell = line.getCell(x);
+              if (cell && (cell.getChars() !== "" || cell.isDim() || cell.isInverse())) retainedTail = true;
+            }
+          }
+          if (retainedTail) {
+            assert.equal(snapshot.clippedVisible, true, "a real xterm visible tail must be marked clipped");
+            assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED, "a real xterm clipped tail must hold sends");
+          }
         } finally {
           closeVtPane(id);
         }
@@ -225,7 +241,7 @@ test("a narrowed visible approval prompt is held until widening restores its ful
         length: 120,
         translateToString: (_trim, start = 0, end = 120) => chars.slice(start, end).join("").trimEnd(),
         getCell: (x) => chars[x] === undefined ? undefined : {
-          getChars: () => chars[x], isDim: () => 0, isInverse: () => 0,
+          getChars: () => chars[x], getWidth: () => 1, isDim: () => 0, isInverse: () => 0,
         },
       };
       const blankLine = {
@@ -263,6 +279,73 @@ test("a narrowed visible approval prompt is held until widening restores its ful
   }
 });
 
+test("a clipped snapshot cannot publish a definitive status from its visible dialog text", () => {
+  const cols = 24;
+  const text = "Do you want to proceed? [y/n]";
+  const chars = Array.from(text);
+  const promptLine = {
+    length: 120,
+    translateToString: (_trim, start = 0, end = 120) => chars.slice(start, end).join("").trimEnd(),
+    getCell: (x) => chars[x] === undefined ? undefined : {
+      getChars: () => chars[x], getWidth: () => 1, isDim: () => 0, isInverse: () => 0,
+    },
+  };
+  const blankLine = { length: 120, translateToString: () => "", getCell: () => undefined };
+  const lines = Array.from({ length: 24 }, (_, y) => y === 23 ? promptLine : blankLine);
+  const pane = {
+    terminal: { cols, rows: 24, buffer: { active: { length: 24, viewportY: 0, getLine: (y) => lines[y] } } },
+    agent: "claude", shell: false, composerSeen: true, openedAt: Date.now(), lastOutputAt: null,
+  };
+  const clipped = snapshotOf(pane);
+  assert.equal(clipped.rows[23], "Do you want to proceed?", "the visible portion still matches an approval dialog");
+  assert.equal(clipped.clippedVisible, true, "the answer controls are clipped beyond the viewport");
+  assert.equal(snapshotStatus({ ...clipped, clippedVisible: undefined }).waiting, true,
+    "the visible dialog would otherwise publish a definitive waiting status");
+  assert.deepEqual(snapshotStatus(clipped), { waiting: null, composerSeen: false },
+    "clipping keeps status unknown and does not advance composer evidence");
+  assert.equal(snapshotBusy(clipped), false, "a clipped screen is unknown, not busy");
+});
+
+test("a wide glyph starting at the last visible column marks the snapshot clipped", () => {
+  const cols = 40;
+  const line = {
+    length: cols,
+    translateToString: () => " ".repeat(cols - 1) + "漢",
+    getCell: (x) => x === cols - 1 ? {
+      getChars: () => "漢", getWidth: () => 2, isDim: () => 0, isInverse: () => 0,
+    } : undefined,
+  };
+  const blank = { length: cols, translateToString: () => "", getCell: () => undefined };
+  const pane = {
+    terminal: { cols, rows: 2, buffer: { active: { length: 2, viewportY: 0, getLine: (y) => y === 0 ? line : blank } } },
+    agent: "claude", shell: false, composerSeen: true, openedAt: Date.now(), lastOutputAt: null,
+  };
+  const snapshot = snapshotOf(pane);
+  assert.equal(snapshot.clippedVisible, true, "the glyph occupies one column beyond the visible edge");
+  assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+  assert.equal(snapshotBusy(snapshot), false);
+});
+
+test("a real xterm wide glyph retained across narrowing is marked clipped and held", async () => {
+  const id = "real-wide-glyph-retained-after-narrowing";
+  openVtPane(id, 120, 24, () => {}, "claude");
+  try {
+    writeVtPane(id, "\x1b[1;40H漢");
+    await settle();
+    resizeVtPane(id, 40, 24);
+    await settle();
+    const snapshot = snapshotOf(__testVtPane(id));
+    const edge = __testVtPane(id).terminal.buffer.active.getLine(0)?.getCell(39);
+    assert.equal(edge?.getChars(), "漢", "xterm retained the wide glyph at the narrowed edge");
+    assert.equal(edge?.getWidth(), 2, "its continuation extends beyond the last visible column");
+    assert.equal(snapshot.clippedVisible, true);
+    assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+    assert.equal(snapshotBusy(snapshot), false);
+  } finally {
+    closeVtPane(id);
+  }
+});
+
 test("wide content in scrollback does not mark the visible snapshot clipped", () => {
   const row = (text, length = 40, extra = []) => {
     const cells = new Map([...Array.from(text).map((char, x) => [x, [char, 0, 0]]), ...extra]);
@@ -272,7 +355,7 @@ test("wide content in scrollback does not mark the visible snapshot clipped", ()
         Array.from({ length: end - start }, (_, i) => cells.get(start + i)?.[0] ?? " ").join("").trimEnd(),
       getCell: (x) => {
         const cell = cells.get(x);
-        return cell ? { getChars: () => cell[0], isDim: () => cell[1], isInverse: () => cell[2] } : undefined;
+        return cell ? { getChars: () => cell[0], getWidth: () => 1, isDim: () => cell[1], isInverse: () => cell[2] } : undefined;
       },
     };
   };
