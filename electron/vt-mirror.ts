@@ -179,12 +179,13 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
   let generation = generations.get(pane);
   if (!generation) { generation = randomUUID(); generations.set(pane, generation); }
   const buffer = pane.terminal.buffer.active;
+  const cols = pane.terminal.cols;
   const rows: string[] = [], cells: VtSnapshot["cells"] = [];
   for (let y = 0; y < buffer.length; y++) {
     const line = buffer.getLine(y);
-    rows.push(line?.translateToString(true) ?? "");
+    rows.push(line?.translateToString(true, 0, cols) ?? "");
     const row: VtSnapshot["cells"][number] = [];
-    for (let x = 0; line && x < line.length; x++) {
+    for (let x = 0; line && x < line.length && x < cols; x++) {
       const c = line.getCell(x);
       if (c && (c.getChars() !== "" || c.isDim() || c.isInverse()))
         row.push([x, c.getChars(), c.isDim(), c.isInverse()]);
@@ -193,7 +194,7 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
   }
   const revision = appliedRevision(pane);
   return { generation, ...(revision ? {revision} : {}), ...(pane.recoveryUnknown?{recoveryUnknown:true}:{}), agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
-    openedAt: pane.openedAt, lastOutputAt: pane.lastOutputAt, rows, cells, cols: pane.terminal.cols };
+    openedAt: pane.openedAt, lastOutputAt: pane.lastOutputAt, rows, cells, cols };
 }
 export async function vtSnapshot(id: string): Promise<VtSnapshot | null> {
   const pane = panes.get(id);

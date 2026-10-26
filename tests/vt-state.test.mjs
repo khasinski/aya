@@ -15,7 +15,7 @@ import {
   vtPaneAltScreen,
   writeVtPane,
 } from "../dist-electron/vt-state.js";
-import { vtSnapshot } from "../dist-electron/vt-mirror.js";
+import { snapshotOf, vtSnapshot } from "../dist-electron/vt-mirror.js";
 import { asVtSnapshot } from "../dist-electron/pty-host-protocol.js";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "../dist-electron/constants.js";
 
@@ -140,6 +140,75 @@ test("the B4 cols-minus-one/back redraw nudge keeps applied mirror snapshots val
       assert.equal(snapshot.cells.length, snapshot.rows.length);
     }
   } finally { closeVtPane(id); }
+});
+
+test("snapshots stay within visible columns after resize across screen content shapes", async (t) => {
+  const sequences = [
+    { name: "wide-to-narrow", initialCols: 120, resize: [[40, 24]] },
+    { name: "narrow-to-wide", initialCols: 40, resize: [[120, 24]] },
+    { name: "narrow with wrapped long line", initialCols: 120, longLine: true, resize: [[40, 24]] },
+    { name: "alternate screen", initialCols: 120, enterAlt: true, resize: [[40, 24]] },
+  ];
+  const contents = [
+    {
+      name: "plain text at the edge",
+      writeAtEdge: (cols) => `\x1b[1;${cols}H P`,
+    },
+    {
+      name: "wide character at the edge",
+      writeAtEdge: (cols) => `\x1b[1;${Math.max(1, cols - 1)}H漢`,
+    },
+    {
+      name: "dim and inverse cells at the edge",
+      writeAtEdge: (cols) => `\x1b[1;${Math.max(1, cols - 1)}H\x1b[2mD\x1b[0m\x1b[1;${cols}H\x1b[7mI\x1b[0m`,
+    },
+  ];
+  let paneIndex = 0;
+  for (const sequence of sequences) {
+    for (const content of contents) {
+      await t.test(`${sequence.name} / ${content.name}`, async () => {
+        const id = `snapshot-cols-${paneIndex++}`;
+        openVtPane(id, sequence.initialCols, 24, () => {}, "claude");
+        try {
+          if (sequence.enterAlt) writeVtPane(id, "\x1b[?1049h");
+          if (sequence.longLine) writeVtPane(id, "L".repeat(240));
+          writeVtPane(id, content.writeAtEdge(sequence.initialCols));
+          await settle();
+          for (const [cols, rows] of sequence.resize) resizeVtPane(id, cols, rows);
+          await settle();
+          writeVtPane(id, content.writeAtEdge(__testVtPane(id).terminal.cols));
+          await settle();
+
+          const pane = __testVtPane(id);
+          const snapshot = snapshotOf(pane);
+          assert.ok(asVtSnapshot(snapshot), "producer output satisfies the strict snapshot validator");
+          assert.ok(snapshot.cells.flat().every(([column]) => column >= 0 && column < snapshot.cols));
+          assert.deepEqual(
+            snapshot.rows,
+            Array.from({ length: pane.terminal.buffer.active.length }, (_, y) =>
+              pane.terminal.buffer.active.getLine(y)?.translateToString(true, 0, pane.terminal.cols) ?? "",
+            ),
+            "row text contains only the visible screen columns",
+          );
+        } finally {
+          closeVtPane(id);
+        }
+      });
+    }
+  }
+});
+
+test("snapshot validation still rejects a cell beyond the reported columns", async () => {
+  const id = "snapshot-cols-validator-remains-strict";
+  openVtPane(id, 40, 24, () => {}, "claude");
+  try {
+    const snapshot = snapshotOf(__testVtPane(id));
+    const cells = snapshot.cells.map((row) => [...row]);
+    cells[0].push([snapshot.cols, "x", 0, 0]);
+    assert.equal(asVtSnapshot({ ...snapshot, cells }), null);
+  } finally {
+    closeVtPane(id);
+  }
 });
 
 test("closeAllVtPanes clears everything (host shutdown)", async () => {
