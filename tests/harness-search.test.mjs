@@ -5,7 +5,7 @@
 
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
+import { closeSync, ftruncateSync, mkdtempSync, mkdirSync, openSync, rmSync, writeSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -298,4 +298,44 @@ test("searchHarnessSessions filters Codex rollouts by session_meta cwd", async (
   assert.equal(hits[0].sessionId, "2026-07-01T10-00-00-abc");
   assert.equal(hits[0].role, "assistant");
   assert.ok(hits[0].snippet.includes("worker.ts"));
+});
+
+test("harness search finds a recent message in a sparse 1 GiB transcript without loading it whole", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-hsearch-sparse-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = writeClaudeSession(
+    root,
+    "sparse-session",
+    [claudeLine({
+      type: "assistant",
+      timestamp: "2026-10-26T09:00:00.000Z",
+      message: { role: "assistant", content: [{ type: "text", text: "temporary" }] },
+    })],
+    Math.floor(Date.now() / 1000),
+  );
+  const message = claudeLine({
+    type: "assistant",
+    timestamp: "2026-10-26T10:00:00.000Z",
+    message: { role: "assistant", content: [{ type: "text", text: "bounded sparse lookup target" }] },
+  });
+  const size = 1024 * 1024 * 1024;
+  const fd = openSync(file, "w+");
+  try {
+    ftruncateSync(fd, size);
+    const bytes = Buffer.from(`\n${message}\n`);
+    writeSync(fd, bytes, 0, bytes.length, size - bytes.length);
+  } finally {
+    closeSync(fd);
+  }
+  const before = process.memoryUsage().rss;
+  const hits = await searchHarnessSessions({
+    agent: "claude",
+    cwd: CWD,
+    configDir: root,
+    query: "bounded sparse lookup",
+  });
+  const after = process.memoryUsage().rss;
+  assert.equal(hits.length, 1);
+  assert.match(hits[0].text, /bounded sparse lookup target/);
+  assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
 });

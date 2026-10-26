@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { expandUserPath } from "./usage";
+import { scanJsonlTail } from "./bounded-file-read";
 
 /** The default Grok home - the env override, else ~/.grok. */
 export const DEFAULT_GROK_HOME =
@@ -15,6 +16,13 @@ export const DEFAULT_GROK_HOME =
 /** Rolling window the chip sums over. Grok's paid pool is weekly; 7 days is the
  *  honest local proxy (we don't know the server-side reset boundary). */
 export const GROK_USAGE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Per-session hard limit: only the newest bounded tail is parsed. */
+export const GROK_SESSION_TAIL_MAX_BYTES = 16 * 1024 * 1024;
+const MAX_GROK_SESSION_FILES = 256;
+const MAX_GROK_ROWS_PER_FILE = 2000;
+const MAX_GROK_TOTAL_ROWS = 20_000;
+const MAX_GROK_TOTAL_ROW_BYTES = 16 * 1024 * 1024;
+const MAX_GROK_ROW_CACHE_BYTES = 32 * 1024 * 1024;
 // Grok bills in ticks of 1e-10 USD (GrokUsage.costUsdTicks).
 export const USD_PER_GROK_TICK = 1e-10;
 // Epoch values below this are seconds (1e12 ms is 2001; 1e12 s is year 33658).
@@ -205,6 +213,8 @@ export function extractGrokUsageRow(line: string): GrokUsageRow | null {
   const models =
     typeof modelUsage === "object" && modelUsage !== null
       ? Object.keys(modelUsage as Record<string, unknown>)
+          .slice(0, 8)
+          .map((model) => model.slice(0, 128))
       : [];
   return {
     tsMs,
@@ -273,10 +283,19 @@ interface CachedRows {
   rows: GrokUsageRow[];
 }
 const rowCache = new Map<string, CachedRows>();
+let rowCacheBytes = 0;
 
 /** Test hook: forget cached per-file parses. */
 export function resetGrokUsageCache(): void {
   rowCache.clear();
+  rowCacheBytes = 0;
+}
+
+function grokRowsWeight(rows: GrokUsageRow[]): number {
+  return rows.reduce(
+    (total, row) => total + 96 + row.models.reduce((n, model) => n + model.length * 2, 0),
+    0,
+  );
 }
 
 /** updates.jsonl paths under a grok home whose file mtime is within the window
@@ -284,9 +303,9 @@ export function resetGrokUsageCache(): void {
 async function recentSessionLogs(
   home: string,
   sinceMs: number,
-): Promise<string[]> {
+): Promise<Array<{ file: string; mtimeMs: number }>> {
   const sessions = path.join(expandUserPath(home), "sessions");
-  const out: string[] = [];
+  const out: Array<{ file: string; mtimeMs: number }> = [];
   let cwds: string[];
   try {
     cwds = await fs.readdir(sessions);
@@ -305,13 +324,14 @@ async function recentSessionLogs(
       const file = path.join(cwdDir, uuid, "updates.jsonl");
       try {
         const st = await fs.stat(file);
-        if (st.isFile() && st.mtimeMs >= sinceMs) out.push(file);
+        if (st.isFile() && st.mtimeMs >= sinceMs) out.push({ file, mtimeMs: st.mtimeMs });
       } catch {
         // not a session dir / no log
       }
     }
   }
-  return out;
+  out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return out.slice(0, MAX_GROK_SESSION_FILES);
 }
 
 async function rowsForFile(file: string): Promise<GrokUsageRow[]> {
@@ -319,25 +339,47 @@ async function rowsForFile(file: string): Promise<GrokUsageRow[]> {
   try {
     mtimeMs = (await fs.stat(file)).mtimeMs;
   } catch {
+    const old = rowCache.get(file);
+    if (old) rowCacheBytes -= grokRowsWeight(old.rows);
     rowCache.delete(file);
     return [];
   }
   const cached = rowCache.get(file);
-  if (cached && cached.mtimeMs === mtimeMs) return cached.rows;
-  let raw: string;
+  if (cached && cached.mtimeMs === mtimeMs) {
+    rowCache.delete(file);
+    rowCache.set(file, cached);
+    return cached.rows;
+  }
+  const rows: GrokUsageRow[] = [];
   try {
-    raw = await fs.readFile(file, "utf-8");
+    await scanJsonlTail(file, (line) => {
+      if (!line.includes('"usage"')) return;
+      const row = extractGrokUsageRow(line);
+      if (!row) return;
+      rows.push(row);
+      return rows.length >= MAX_GROK_ROWS_PER_FILE;
+    }, { maxBytes: GROK_SESSION_TAIL_MAX_BYTES });
   } catch {
+    const old = rowCache.get(file);
+    if (old) rowCacheBytes -= grokRowsWeight(old.rows);
     rowCache.delete(file);
     return [];
   }
-  const rows: GrokUsageRow[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line) continue;
-    const row = extractGrokUsageRow(line);
-    if (row) rows.push(row);
+  const weight = grokRowsWeight(rows);
+  const old = rowCache.get(file);
+  if (old) rowCacheBytes -= grokRowsWeight(old.rows);
+  rowCache.delete(file);
+  if (weight <= MAX_GROK_ROW_CACHE_BYTES) {
+    rowCache.set(file, { mtimeMs, rows });
+    rowCacheBytes += weight;
   }
-  rowCache.set(file, { mtimeMs, rows });
+  while (rowCacheBytes > MAX_GROK_ROW_CACHE_BYTES || rowCache.size > MAX_GROK_SESSION_FILES) {
+    const oldest = rowCache.keys().next().value;
+    if (oldest === undefined) break;
+    const evicted = rowCache.get(oldest);
+    rowCache.delete(oldest);
+    if (evicted) rowCacheBytes -= grokRowsWeight(evicted.rows);
+  }
   return rows;
 }
 
@@ -358,15 +400,28 @@ export async function readGrokUsage(
   const sinceMs = nowMs - GROK_USAGE_WINDOW_MS;
   const seen = new Set<string>();
   const allRows: GrokUsageRow[] = [];
+  let allRowsWeight = 0;
   let limit: GrokLimit | null = null;
   for (const home of homes.length > 0 ? homes : [DEFAULT_GROK_HOME]) {
-    for (const file of await recentSessionLogs(home, sinceMs)) {
+    for (const candidate of await recentSessionLogs(home, sinceMs)) {
+      if (
+        allRows.length >= MAX_GROK_TOTAL_ROWS ||
+        allRowsWeight >= MAX_GROK_TOTAL_ROW_BYTES
+      ) break;
       // Read and cached under the real path too: a symlink retargeted to another log with the same mtime must not
       // get the old log's cached rows.
-      const real = await fs.realpath(file).catch(() => file);
+      const real = await fs.realpath(candidate.file).catch(() => candidate.file);
       if (seen.has(real)) continue;
       seen.add(real);
-      allRows.push(...(await rowsForFile(real)));
+      for (const row of await rowsForFile(real)) {
+        const weight = 96 + row.models.reduce((n, model) => n + model.length * 2, 0);
+        if (
+          allRows.length >= MAX_GROK_TOTAL_ROWS ||
+          allRowsWeight + weight > MAX_GROK_TOTAL_ROW_BYTES
+        ) break;
+        allRows.push(row);
+        allRowsWeight += weight;
+      }
     }
     const found = await readGrokLimit(home, nowMs);
     if (found && (!limit || loggedAfter(found, limit))) limit = found;

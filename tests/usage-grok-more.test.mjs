@@ -9,12 +9,16 @@ import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
+  ftruncateSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   rmSync,
   statSync,
   truncateSync,
   utimesSync,
+  writeSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,6 +141,28 @@ test("readGrokUsage sums every session under every cwd of a home", async (t) => 
   assert.deepEqual(usage.models, ["grok-4-fast", "grok-4.6-build"]);
   assert.equal(usage.updatedAt, new Date(NOW - 1000).toISOString());
   assert.equal(usage.limit, undefined);
+});
+
+test("Grok usage reads a sparse 1 GiB session from a bounded tail", async (t) => {
+  resetGrokUsageCache();
+  const home = tempHome(t);
+  const file = session(home, "cwd", "sparse", []);
+  const line = turnLine(NOW - 1000);
+  const size = 1024 * 1024 * 1024;
+  const fd = openSync(file, "w+");
+  try {
+    ftruncateSync(fd, size);
+    const bytes = Buffer.from(`\n${line}\n`);
+    writeSync(fd, bytes, 0, bytes.length, size - bytes.length);
+  } finally {
+    closeSync(fd);
+  }
+  const before = process.memoryUsage().rss;
+  const usage = await readGrokUsage([home], NOW);
+  const after = process.memoryUsage().rss;
+  assert.equal(usage.turns, 1);
+  assert.equal(usage.totalTokens, 150);
+  assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
 });
 
 test("a session log not written within the window is not read, whatever its rows say", async (t) => {

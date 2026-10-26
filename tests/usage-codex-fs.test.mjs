@@ -15,6 +15,10 @@ import {
   writeFileSync,
   utimesSync,
   rmSync,
+  openSync,
+  ftruncateSync,
+  writeSync,
+  closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +52,7 @@ const newer = join(sessions, "rollout-new.jsonl");
 
 const { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } =
   await import("../dist-electron/usage-codex.js");
+const { resetCodexUsageCaches } = await import("../dist-electron/usage-codex.js");
 
 // SOURCES mirrors codexUsageSources([]); accounts[0] is this test's
 // own adapter, standing in for the removed single-snapshot reader.
@@ -106,6 +111,37 @@ test("uses source ids when separate CODEX_HOME logs do not expose account ids", 
   assert.equal(out.length, 2);
   assert.equal(out[0].id, "codex");
   assert.equal(out[1].id, "codex-2");
+});
+
+test("a sparse 1 GiB rollout is read from its bounded tail", async () => {
+  resetCodexUsageCaches();
+  const root = mkdtempSync(join(tmpdir(), "aya-codex-sparse-"));
+  const dir = join(root, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-sparse.jsonl");
+  const line = snapshotLine(17, 29, "sparse-account", "Sparse Account");
+  const size = 1024 * 1024 * 1024;
+  const fd = openSync(file, "w+");
+  try {
+    ftruncateSync(fd, size);
+    const bytes = Buffer.from(`\n${line}`);
+    writeSync(fd, bytes, 0, bytes.length, size - bytes.length);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    const before = process.memoryUsage().rss;
+    const accounts = await readCodexUsageAccountsFromSources([
+      { id: "codex-sparse", label: "Sparse", home: root },
+    ]);
+    const after = process.memoryUsage().rss;
+    assert.equal(accounts.length, 1);
+    assert.equal(accounts[0].id, "sparse-account");
+    assert.equal(accounts[0].usage.fiveHour.pct, 17);
+    assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test.after(() => {
