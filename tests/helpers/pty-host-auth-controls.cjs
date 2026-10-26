@@ -3,6 +3,18 @@ const {PtyHostClient}=require('../../dist-electron/pty-host-client.js');
 const {writeAuthTransferTicket,authTransferTicketPath}=require('../../dist-electron/pty-host-auth-ticket.js');
 const {isPtyHostRequest}=require('../../dist-electron/pty-host-protocol.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{const end=Date.now()+8000;while(!await f()){if(Date.now()>end)throw Error('control fixture readiness timeout');await sleep(5);}};
+async function sendToParent(message){
+ if(typeof process.send!=='function'){
+  let hostStartIdentity=null;try{hostStartIdentity=require('../../dist-electron/pty-owner-client.js').ownerProcessStartIdentity(message.hostPid);}catch{/* test evidence below shows the identity was unavailable */}
+  process.stderr.write(`PTY_FIXTURE_PARENT_CHANNEL_MISSING ${JSON.stringify({hostPid:message.hostPid,hostStartIdentity})}\n`);
+  throw Error('controls fixture requires an IPC parent channel');
+ }
+ await new Promise((resolve,reject)=>process.send(message,error=>error?reject(error):resolve()));
+}
+function waitForChildExit(child,timeout=2000){
+ if(child.exitCode!==null||child.signalCode!==null)return Promise.resolve(true);
+ return new Promise(resolve=>{let timer;const finish=exited=>{clearTimeout(timer);child.removeListener('exit',onExit);resolve(exited);},onExit=()=>finish(true);child.once('exit',onExit);timer=setTimeout(()=>finish(child.exitCode!==null||child.signalCode!==null),timeout);});
+}
 (async()=>{
  const plannedLoss=process.argv[2]==='publish-planned-mixed-lost',lost=process.argv[2]==='publish-lost-completion'||plannedLoss;
  const completionFile=path.join(process.env.AYA_HOME,'transfer-completions-'+process.pid+'.jsonl');if(lost)process.env.AYA_TEST_COMPLETION_FILE=completionFile;
@@ -40,13 +52,13 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
   }
   if(mode==='publish-public'||refusal||mode==='publish-ended'){
    assert.equal(await c.announceOrdinaryQuit(),true);await c.write('kept','OUTPUT_DURING_ORDINARY_QUIT\n');await wait(async()=>(await c.getBuffer('kept')).includes('OUTPUT_DURING_ORDINARY_QUIT'));
-   const names=fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));assert.equal(names.length,1);keep=true;process.send({file:path.join(process.env.AYA_HOME,names[0]),pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});
+   const names=fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));assert.equal(names.length,1);await sendToParent({file:path.join(process.env.AYA_HOME,names[0]),pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});keep=true;
   }else if(mode==='publish'||mode==='publish-lost-completion'||mode==='publish-alive'||mode==='publish-empty'||mode==='publish-empty-recovered'){
    const deadline=null,nonce='a'.repeat(64),budget=performance.now()+2000;
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce,deadline});
    const t={format:2,...reserved,nonce},file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);
    await writeAuthTransferTicket(file,t,{deadline:budget});assert.equal(await c.request({id:0,type:'auth-transfer-activate',attempt:t.attempt}),true);
-   keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});
+   await sendToParent({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});keep=true;
    if(mode==='publish-alive')await new Promise(resolve=>process.once('message',resolve));
   }else if(mode==='ordinary-wins'){
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:null});
@@ -65,16 +77,29 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
    if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){
     const t={format:2,...reserved,nonce};file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);await writeAuthTransferTicket(file,t,{deadline:performance.now()+2000});
    }else assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:reserved.attempt}),'cancelled');
-   if(mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});return;}
+   if(mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){await sendToParent({file,pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});keep=true;return;}
    await c.cancelPlannedHandover();
    await c.write('kept','AFTER_PLANNED_ABORT\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_PLANNED_ABORT'));assert.equal(await c.getPid('kept'),pid);
    if(mode==='planned-cancel'){
-    keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid});await new Promise(resolve=>process.once('message',resolve));
+    await sendToParent({file,pid,hostPid:status.pid,ownerPid:status.owner.pid});keep=true;await new Promise(resolve=>process.once('message',resolve));
     assert.equal(await c.getPid('kept'),pid);assert.equal((await c.hostStatus()).owner.pid,status.owner.pid);assert.match(await c.getBuffer('kept'),/AFTER_PLANNED_ABORT/);
     await c.write('kept','AFTER_CANCEL_REDEMPTION\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_CANCEL_REDEMPTION'));
     process.send({verifiedAfterRejectedRedemption:true,pid,ownerPid:status.owner.pid});await c.shutdown();keep=false;
    }else process.send({ok:true});
   }else throw Error('unknown fixture mode');
   for(const type of ['auth-transfer-reserve','auth-transfer-activate','auth-transfer-cancel','auth-transfer-complete'])assert.equal(isPtyHostRequest({id:1,type,attempt:'a'.repeat(64),extra:true}),false);
- }finally{if(!keep)await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();if(custom&&!keep)fs.rmSync(script,{force:true});}
+ }finally{
+  if(!keep){
+   try{await c.shutdown();}catch{/* fall back to the exact child handle below */}
+   // The helper owns this exact ChildProcess object. If protocol shutdown
+   // failed, retire it through that handle rather than signaling a bare PID.
+   const child=c.pendingPlannedHost;
+   if(child&&child.exitCode===null&&child.signalCode===null){
+    try{child.kill('SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}
+    if(!await waitForChildExit(child,2000)&&child.exitCode===null&&child.signalCode===null){try{child.kill('SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}if(!await waitForChildExit(child,2000))throw Error(`fixture host ${child.pid} did not exit during cleanup`);}
+   }
+   await import('./pty-host.mjs').then(({cleanupNativeOwner})=>cleanupNativeOwner(process.env.AYA_HOME));
+  }
+  c.dispose();c.dropSocket();if(custom&&!keep)fs.rmSync(script,{force:true});
+ }
 })().catch(error=>{console.error(error);process.exitCode=1;});
