@@ -5,6 +5,7 @@ import {
   ftruncateSync,
   mkdtempSync,
   openSync,
+  renameSync,
   rmSync,
   writeSync,
   writeFileSync,
@@ -133,4 +134,57 @@ test("session JSONL tail reads stay byte- and memory-bounded across file shapes"
       if (scenario.size === "1gb-sparse") assert.equal(result.truncated, true);
     });
   }
+});
+
+test("a UTF-8 character split across reverse-read chunks is decoded intact", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "utf8.jsonl");
+  const expected = "a€z";
+  writeFileSync(file, `${expected}\n`); // 6 bytes; 4-byte reverse chunks split the euro sign.
+  const lines = [];
+  await scanJsonlTail(file, (line) => lines.push(line), { maxBytes: 64, chunkBytes: 4 });
+  assert.deepEqual(lines, [expected]);
+});
+
+test("a single line longer than the complete budget is discarded without excess copying", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "over-budget-line.jsonl");
+  writeFileSync(file, "x".repeat(MAX_BYTES * 2));
+  let copied = 0;
+  const lines = [];
+  const result = await scanJsonlTail(file, (line) => lines.push(line), {
+    maxBytes: MAX_BYTES,
+    chunkBytes: CHUNK_BYTES,
+    onCarryBytesCopied: (bytes) => { copied += bytes; },
+  });
+  assert.deepEqual(lines, []);
+  assert.equal(result.bytesRead, MAX_BYTES);
+  assert.equal(result.truncated, true);
+  assert.ok(copied <= MAX_BYTES, `copied ${copied} bytes for a ${MAX_BYTES}-byte budget`);
+});
+
+test("a maximum-budget newline-free line is assembled with linear copying", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "linear-line.jsonl");
+  writeFileSync(file, "x".repeat(MAX_BYTES));
+  let copied = 0;
+  const lines = [];
+  const result = await scanJsonlTail(file, (line) => lines.push(line), {
+    maxBytes: MAX_BYTES,
+    chunkBytes: CHUNK_BYTES,
+    onCarryBytesCopied: (bytes) => { copied += bytes; },
+  });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].length, MAX_BYTES);
+  assert.equal(result.bytesRead, MAX_BYTES);
+  assert.ok(copied <= MAX_BYTES, `copied ${copied} bytes for a ${MAX_BYTES}-byte line`);
+});
+
+test("the file handle closes when the visitor throws", async (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "visitor-error.jsonl");
+  const moved = join(dir, "visitor-error-moved.jsonl");
+  writeFileSync(file, "line\n");
+  await assert.rejects(scanJsonlTail(file, () => { throw new Error("visitor failed"); }));
+  renameSync(file, moved);
 });

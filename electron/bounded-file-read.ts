@@ -8,6 +8,8 @@ export interface JsonlTailOptions {
   maxBytes?: number;
   /** Read chunk size; exported options make boundary cases testable. */
   chunkBytes?: number;
+  /** Test instrumentation for bytes copied while assembling carried lines. */
+  onCarryBytesCopied?: (bytes: number) => void;
 }
 
 export interface JsonlTailResult {
@@ -41,7 +43,10 @@ export async function scanJsonlTail(
     const size = (await handle.stat()).size;
     const start = Math.max(0, size - maxBytes);
     let offset = size;
-    let carry = Buffer.alloc(0);
+    // Keep partial lines as views into the chunks already read. A long line
+    // can span the entire budget; concatenating its growing prefix on every
+    // iteration turns one scan into quadratic copying.
+    let carryChunks: Buffer[] = [];
     let firstChunk = true;
     let stopped = false;
 
@@ -52,9 +57,15 @@ export async function scanJsonlTail(
       const { bytesRead: count } = await handle.read(chunk, 0, length, chunkStart);
       if (count <= 0) break;
       bytesRead += count;
-      const combined = carry.length === 0
-        ? chunk.subarray(0, count)
-        : Buffer.concat([chunk.subarray(0, count), carry]);
+      const current = chunk.subarray(0, count);
+      const hasNewline = current.includes(0x0a);
+      let combined = current;
+      let completedAtByteZero = false;
+      if (hasNewline && carryChunks.length > 0) {
+        const totalBytes = carryChunks.reduce((sum, part) => sum + part.length, current.length);
+        options.onCarryBytesCopied?.(totalBytes);
+        combined = Buffer.concat([current, ...carryChunks], totalBytes);
+      }
       let end = combined.length;
 
       // The final line may not end in LF. It is complete at EOF, unless this
@@ -70,6 +81,7 @@ export async function scanJsonlTail(
           end = newline;
         } else if (chunkStart === 0) {
           if (end && visit(combined.toString("utf8")) === true) stopped = true;
+          completedAtByteZero = true;
           end = 0;
         }
         firstChunk = false;
@@ -85,17 +97,30 @@ export async function scanJsonlTail(
         }
         end = newline;
       }
-      // Keep the delimiter that ends the oldest completed line in carry. The
-      // next earlier chunk then supplies that line's beginning, allowing it
-      // to be emitted once the preceding delimiter (or byte zero) is found.
-      carry = stopped ? Buffer.alloc(0) : Buffer.from(combined.subarray(0, Math.min(combined.length, end + 1)));
+      if (stopped) {
+        carryChunks = [];
+      } else if (completedAtByteZero) {
+        carryChunks = [];
+      } else if (hasNewline) {
+        // Keep a view through the oldest delimiter. Earlier chunks can extend
+        // that one unfinished line without copying it on every read.
+        carryChunks = [combined.subarray(0, Math.min(combined.length, end + 1))];
+      } else {
+        carryChunks.unshift(current);
+      }
       offset = chunkStart;
     }
 
     // The remaining prefix is a complete first line only if scanning reached
     // byte zero. A prefix at the cap boundary is intentionally ignored.
-    if (!stopped && offset === 0 && carry.length) {
-      const firstLine = carry.toString("utf8");
+    if (!stopped && offset === 0 && carryChunks.length) {
+      const firstLine = carryChunks.length === 1
+        ? carryChunks[0].toString("utf8")
+        : (() => {
+          const totalBytes = carryChunks.reduce((sum, part) => sum + part.length, 0);
+          options.onCarryBytesCopied?.(totalBytes);
+          return Buffer.concat(carryChunks, totalBytes).toString("utf8");
+        })();
       const withoutTrailingLf = firstLine.endsWith("\n")
         ? firstLine.slice(0, -1)
         : firstLine;

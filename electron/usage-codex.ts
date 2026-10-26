@@ -444,8 +444,9 @@ async function parseRollout(
   if (cached && cached.mtimeMs === mtimeMs) return cached;
   let latestUsage: UsageData | null = null;
   const latestByAccount = new Map<string, UsageAccount>();
+  let scan: Awaited<ReturnType<typeof scanJsonlTail>>;
   try {
-    await scanJsonlTail(file, (line) => {
+    scan = await scanJsonlTail(file, (line) => {
       if (!line.includes('"rate_limits"')) return;
       if (!latestUsage) latestUsage = latestUsageFromLines([line], mtimeMs);
       for (const account of latestUsageAccountsFromLines([line], mtimeMs)) {
@@ -457,6 +458,16 @@ async function parseRollout(
     }, { maxBytes: CODEX_USAGE_TAIL_MAX_BYTES });
   } catch {
     return null;
+  }
+  // Rollouts are append-only, but an old snapshot can fall outside the hard
+  // tail budget. Keep this file's last parsed value rather than letting a
+  // different, older rollout appear to be the current account state. A first
+  // read of such a truncated file still has no result to preserve.
+  if (scan.truncated && !latestUsage && latestByAccount.size === 0 && cached) {
+    const preserved = { ...cached, mtimeMs };
+    rolloutParseCache.delete(file);
+    rolloutParseCache.set(file, preserved);
+    return preserved;
   }
   const parsed: ParsedRollout = {
     mtimeMs,

@@ -53,6 +53,7 @@ const newer = join(sessions, "rollout-new.jsonl");
 const { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } =
   await import("../dist-electron/usage-codex.js");
 const { resetCodexUsageCaches } = await import("../dist-electron/usage-codex.js");
+const { CODEX_USAGE_TAIL_MAX_BYTES } = await import("../dist-electron/usage-codex.js");
 
 // SOURCES mirrors codexUsageSources([]); accounts[0] is this test's
 // own adapter, standing in for the removed single-snapshot reader.
@@ -141,6 +142,67 @@ test("a sparse 1 GiB rollout is read from its bounded tail", async () => {
     assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a truncated rollout with no tail snapshot preserves its previous same-file usage", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-cached-truncated-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-current.jsonl");
+  try {
+    writeFileSync(file, snapshotLine(41, 62, "current", "Current"));
+    const t = Date.now() / 1000;
+    utimesSync(file, t - 5, t - 5);
+    const initial = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.equal(initial.length, 1);
+    assert.equal(initial[0].usage.fiveHour.pct, 41);
+
+    const fd = openSync(file, "w+");
+    try {
+      const size = CODEX_USAGE_TAIL_MAX_BYTES + 64;
+      ftruncateSync(fd, size);
+      const oldSnapshot = Buffer.from(snapshotLine(9, 19, "current", "Current"));
+      const tailNoise = Buffer.from(noSnapshotLine);
+      writeSync(fd, oldSnapshot, 0, oldSnapshot.length, 0);
+      writeSync(fd, tailNoise, 0, tailNoise.length, size - tailNoise.length);
+    } finally {
+      closeSync(fd);
+    }
+    utimesSync(file, t + 5, t + 5);
+
+    const afterGrowth = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.equal(afterGrowth.length, 1);
+    assert.equal(afterGrowth[0].id, "current");
+    assert.equal(afterGrowth[0].usage.fiveHour.pct, 41);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
+  }
+});
+
+test("a first read of a truncated rollout without a tail snapshot has no usage", async () => {
+  resetCodexUsageCaches();
+  const home = mkdtempSync(join(tmpdir(), "aya-codex-first-truncated-"));
+  const dir = join(home, "sessions", "2026", "10", "26");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "rollout-current.jsonl");
+  const fd = openSync(file, "w+");
+  try {
+    const size = CODEX_USAGE_TAIL_MAX_BYTES + 64;
+    ftruncateSync(fd, size);
+    const tailNoise = Buffer.from(noSnapshotLine);
+    writeSync(fd, tailNoise, 0, tailNoise.length, size - tailNoise.length);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    const accounts = await readCodexUsageAccountsFromSources([{ id: "codex", label: "Codex", home }]);
+    assert.deepEqual(accounts, []);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    resetCodexUsageCaches();
   }
 });
 
