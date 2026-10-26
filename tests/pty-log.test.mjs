@@ -50,6 +50,17 @@ test("append writes one parseable JSON line with ts/pid/ev plus fields", () => {
   assert.equal(lines[1].exitCode, 0);
 });
 
+test("the active and rotated log are owner-only even when existing files were broad", () => {
+  const file = path.join(tmp(), "diagnostics.log");
+  fs.writeFileSync(file, "old\n", { mode: 0o644 });
+  fs.chmodSync(file, 0o644);
+  const log = createPtyLog(file, 120);
+  log.append("update-handoff", { stage: "downloaded" });
+  log.append("update-handoff", { stage: "squirrel" });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(`${file}.1`).mode & 0o777, 0o600);
+});
+
 test("append creates the parent directory when missing", () => {
   const file = path.join(tmp(), "nested", "deeper", "pty-events.log");
   createPtyLog(file, PTY_LOG_MAX_BYTES).append("host-start", { version: "0.0.0" });
