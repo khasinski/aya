@@ -9,10 +9,13 @@ const require = createRequire(import.meta.url);
 const script = path.resolve('shared/op-session.cjs');
 const probe = path.resolve('tests/helpers/op-session-probe.py');
 
-const runtimes = [process.execPath];
-if (process.platform === 'darwin') runtimes.push(path.resolve('node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'));
+const runtimes = [
+  { name: 'node', command: [process.execPath, script, 'launch', '--'] },
+  { name: 'aya CLI', command: ['/bin/sh', path.resolve('bin/aya'), 'op-session', '--'] },
+];
+if (process.platform === 'darwin') runtimes.push({ name: 'Electron', command: [path.resolve('node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'), script, 'launch', '--'] });
 for (const runtime of runtimes) {
-test(`op commands reuse one terminal (${path.basename(runtime)}), with private cleanup`, { skip: process.platform === 'win32', timeout: 15000 }, () => {
+test(`op commands reuse one terminal (${runtime.name}), with private cleanup`, { skip: process.platform === 'win32', timeout: 15000 }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aya-op-test-'));
   try {
     fs.writeFileSync(path.join(root, 'op'), `#!/usr/bin/env python3
@@ -21,7 +24,7 @@ fd = os.open('/dev/tty', os.O_RDONLY)
 print(json.dumps({'tty': subprocess.check_output(['/bin/ps', '-o', 'tty=', '-p', str(os.getpid())]).decode().strip(), 'args': sys.argv[1:], 'stdin': sys.stdin.read(), 'cwd': os.getcwd(), 'sessionVar': os.environ.get('AYA_OP_SESSION_TOKEN')}))
 os.close(fd)
 `, { mode: 0o700 });
-    const result = spawnSync('python3', [probe, 'outer', runtime, script, 'launch', '--', 'python3', probe, 'agent'], {
+    const result = spawnSync('python3', [probe, 'outer', ...runtime.command, 'python3', probe, 'agent'], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: root + path.delimiter + process.env.PATH }, encoding: 'utf8', timeout: 12000,
     });
     assert.equal(result.status, 0, result.stderr + result.stdout);
