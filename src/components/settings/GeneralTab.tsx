@@ -1,10 +1,10 @@
 import { type Dispatch, type SetStateAction, type RefObject } from "react";
 import { PRESET_ID_SHELL } from "../../preset-ids";
-import { type CliStatus, type MicPermissionStatus, type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus, type WebConfigureRequest, type WebServerStatus } from "../../types";
+import { type CliStatus, type MicPermissionStatus, type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus } from "../../types";
 import { type MacOptionKeyMode } from "../../terminal-option-key";
 import { type TerminalSoundCue } from "../../terminal-sound-prefs";
-import { allNetworksWarning, WEB_LOOPBACK_HOST, webHostOptions } from "../../web-host-options";
 import { SettingsHeader, SettingsRow } from "./parts";
+import { AyaWebRow } from "./AyaWebRow";
 import { WINDOW_LAYOUTS, type WindowLayout } from "../../window-layout";
 
 interface GeneralTabProps {
@@ -28,17 +28,6 @@ interface GeneralTabProps {
   onWindowLayoutChange: (layout: WindowLayout) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
-  ayaWeb: WebServerStatus | null;
-  ayaWebBusy: boolean;
-  applyAyaWeb: (req: WebConfigureRequest) => Promise<void>;
-  ayaWebError: string | null;
-  regenerateAyaWebPassword: () => Promise<void>;
-  ayaWebPortDraft: string;
-  setAyaWebPortDraft: Dispatch<SetStateAction<string>>;
-  ayaWebUserDraft: string;
-  setAyaWebUserDraft: Dispatch<SetStateAction<string>>;
-  ayaWebPasswordDraft: string;
-  setAyaWebPasswordDraft: Dispatch<SetStateAction<string>>;
   usageHook: UsageHookStatus | null;
   disableUsageHook: () => Promise<void>;
   consentOpenerRef: RefObject<HTMLElement | null>;
@@ -84,17 +73,6 @@ export function GeneralTab({
   onWindowLayoutChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
-  ayaWeb,
-  ayaWebBusy,
-  applyAyaWeb,
-  ayaWebError,
-  regenerateAyaWebPassword,
-  ayaWebPortDraft,
-  setAyaWebPortDraft,
-  ayaWebUserDraft,
-  setAyaWebUserDraft,
-  ayaWebPasswordDraft,
-  setAyaWebPasswordDraft,
   usageHook,
   disableUsageHook,
   consentOpenerRef,
@@ -378,200 +356,7 @@ export function GeneralTab({
     keep on disk for the tab's directory, so hits survive TUI redraws
     and restarts. Local files only; nothing is indexed or uploaded.
     </SettingsRow>
-    <SettingsRow
-    icon="captive_portal"
-    title={
-    <>
-      Aya Web{" "}
-      <span className="aya-settings-experimental">Experimental</span>
-    </>
-    }
-    control={isWeb ? (
-    <span className="aya-modal-hint">Available in the desktop app.</span>
-    ) : (
-    <div className="aya-settings-segmented" aria-label="Aya Web">
-      {([
-        [true, "On"],
-        [false, "Off"],
-      ] as const).map(([enabled, label]) => (
-        <button
-          key={String(enabled)}
-          type="button"
-          className={`aya-settings-segment ${
-            (ayaWeb?.enabled ?? false) === enabled
-              ? "aya-settings-segment--active"
-              : ""
-          }`}
-          disabled={ayaWebBusy || !ayaWeb}
-          onClick={() => void applyAyaWeb({ enabled })}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-    )}
-    >
-    {isWeb ? (
-    "Aya Web server settings can only be changed from the desktop app."
-    ) : (
-    <>Use Aya from a browser, behind a user and password. Signing in
-      gives full shell access to this machine. A new setup listens on
-      this computer only: from another one, use an SSH tunnel, or choose
-      a network below. There is no TLS, so on a network the password and
-      your terminals travel unencrypted; choose only one you trust
-      (Tailscale, WireGuard or your own LAN).</>
-    )}
-    {(ayaWebError ?? ayaWeb?.error) && (
-    <div style={{ color: "#f85149", marginTop: 6 }}>
-      {ayaWebError ?? ayaWeb?.error}
-    </div>
-    )}
-    {ayaWeb && !isWeb && (
-    <label
-      style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}
-    >
-      Listen on
-      <select
-        className="aya-modal-input"
-        aria-label="Aya Web listen address"
-        value={ayaWeb.host}
-        disabled={ayaWebBusy}
-        onChange={(e) => void applyAyaWeb({ host: e.target.value })}
-      >
-        {webHostOptions(ayaWeb).map(([host, label]) => (
-          <option key={host} value={host}>
-            {label}
-          </option>
-        ))}
-      </select>
-    </label>
-    )}
-    {/* role=status: read out when it appears after a change, not on every open of Settings. */}
-    {ayaWeb && !isWeb && allNetworksWarning(ayaWeb) && (
-    <div role="status" style={{ marginTop: 6 }}>
-      <strong>Warning:</strong> {allNetworksWarning(ayaWeb)}{" "}
-      <button
-        className="aya-modal-btn"
-        type="button"
-        disabled={ayaWebBusy}
-        onClick={() => void applyAyaWeb({ host: WEB_LOOPBACK_HOST })}
-      >
-        This computer only
-      </button>
-    </div>
-    )}
-    {isWeb ? (
-    <div className="aya-modal-hint" role="status">
-      Aya Web server settings are available in the desktop app.
-    </div>
-    ) : ayaWeb?.enabled && (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 6,
-        marginTop: 8,
-      }}
-    >
-      <div>
-        {ayaWeb.running ? (
-          <>
-            Running at{" "}
-            {ayaWeb.urls.map((url, i) => (
-              <span key={url}>
-                {i > 0 && ", "}
-                <a
-                  href={url}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    void window.aya.openUrl(url);
-                  }}
-                >
-                  {url}
-                </a>
-              </span>
-            ))}
-            {" — "}
-            {ayaWeb.clients} client{ayaWeb.clients === 1 ? "" : "s"}{" "}
-            connected.
-          </>
-        ) : (
-          "Enabled but not running."
-        )}
-      </div>
-      <div>
-        Sign in as <code>{ayaWeb.user}</code> with{" "}
-        {ayaWeb.generatedPassword ? (
-          <>
-            password <code>{ayaWeb.generatedPassword}</code>
-          </>
-        ) : (
-          "your custom password"
-        )}
-        {"  "}
-        <button
-          className="aya-modal-btn"
-          type="button"
-          disabled={ayaWebBusy}
-          onClick={() => void regenerateAyaWebPassword()}
-          style={{ marginLeft: 8 }}
-        >
-          Regenerate password
-        </button>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          gap: 6,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <input
-          className="aya-modal-input"
-          style={{ width: 70 }}
-          aria-label="Aya Web port"
-          value={ayaWebPortDraft}
-          onChange={(e) => setAyaWebPortDraft(e.target.value)}
-          placeholder="Port"
-        />
-        <input
-          className="aya-modal-input"
-          style={{ width: 120 }}
-          aria-label="Aya Web user"
-          value={ayaWebUserDraft}
-          onChange={(e) => setAyaWebUserDraft(e.target.value)}
-          placeholder="User"
-        />
-        <input
-          className="aya-modal-input"
-          style={{ width: 160 }}
-          aria-label="Aya Web custom password"
-          type="password"
-          value={ayaWebPasswordDraft}
-          onChange={(e) => setAyaWebPasswordDraft(e.target.value)}
-          placeholder="New password (optional)"
-        />
-        <button
-          className="aya-modal-btn"
-          type="button"
-          disabled={ayaWebBusy}
-          onClick={() =>
-            void applyAyaWeb({
-              port: Number(ayaWebPortDraft),
-              user: ayaWebUserDraft,
-              ...(ayaWebPasswordDraft
-                ? { password: ayaWebPasswordDraft }
-                : {}),
-            })
-          }
-        >
-          Apply
-        </button>
-      </div>
-    </div>
-    )}
-    </SettingsRow>
+    <AyaWebRow isWeb={isWeb} />
     <SettingsRow
     icon="donut_large"
     title="Claude usage chip"

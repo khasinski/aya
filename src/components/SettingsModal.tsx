@@ -13,8 +13,6 @@ import {
   type UsageHookStatus,
   type StatusHookStatus,
   type OmarchyStatus,
-  type WebConfigureRequest,
-  type WebServerStatus,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { MachinesSettings } from "./MachinesSettings";
@@ -179,12 +177,6 @@ export function SettingsModal({
   >(null);
   // Aya Web (experimental): status is main-process state (web.json + the
   // running server), loaded on open and refreshed after every change.
-  const [ayaWeb, setAyaWeb] = useState<WebServerStatus | null>(null);
-  const [ayaWebBusy, setAyaWebBusy] = useState(false);
-  const [ayaWebError, setAyaWebError] = useState<string | null>(null);
-  const [ayaWebPortDraft, setAyaWebPortDraft] = useState("");
-  const [ayaWebUserDraft, setAyaWebUserDraft] = useState("");
-  const [ayaWebPasswordDraft, setAyaWebPasswordDraft] = useState("");
   // PATH-scan result cached once per modal open. Derived `suggested` below
   // is the not-yet-added subset; recomputed each render against the live
   // draft so a row added via the suggestions immediately drops from the
@@ -223,18 +215,6 @@ export function SettingsModal({
     void window.aya.micStatus().then((status) => {
       if (!cancelled) setMicStatus(status);
     });
-    void window.aya
-      .webStatus()
-      .then((status) => {
-        if (cancelled) return;
-        setAyaWeb(status);
-        setAyaWebPortDraft(String(status.port));
-        setAyaWebUserDraft(status.user);
-      })
-      // A web.json Aya cannot read now (permissions) is reported, not replaced: say why the controls stay off.
-      .catch((err: unknown) => {
-        if (!cancelled) setAyaWebError(err instanceof Error ? err.message : String(err));
-      });
     if (window.aya.platform === "darwin") {
       setLocalSummaryStatus("checking");
       void window.aya
@@ -260,34 +240,6 @@ export function SettingsModal({
       stopOmarchyWatch();
     };
   }, []);
-
-  const applyAyaWeb = async (req: WebConfigureRequest) => {
-    setAyaWebBusy(true);
-    setAyaWebError(null);
-    try {
-      const status = await window.aya.configureWeb(req);
-      setAyaWeb(status);
-      setAyaWebPortDraft(String(status.port));
-      setAyaWebUserDraft(status.user);
-      setAyaWebPasswordDraft("");
-    } catch (err) {
-      setAyaWebError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAyaWebBusy(false);
-    }
-  };
-
-  const regenerateAyaWebPassword = async () => {
-    setAyaWebBusy(true);
-    setAyaWebError(null);
-    try {
-      setAyaWeb(await window.aya.regenerateWebPassword());
-    } catch (err) {
-      setAyaWebError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAyaWebBusy(false);
-    }
-  };
 
   const installCli = async () => {
     setCliInstalling(true);
@@ -979,17 +931,6 @@ export function SettingsModal({
                 onWindowLayoutChange={onWindowLayoutChange}
                 harnessSearchEnabled={harnessSearchEnabled}
                 onHarnessSearchEnabledChange={onHarnessSearchEnabledChange}
-                ayaWeb={ayaWeb}
-                ayaWebBusy={ayaWebBusy}
-                applyAyaWeb={applyAyaWeb}
-                ayaWebError={ayaWebError}
-                regenerateAyaWebPassword={regenerateAyaWebPassword}
-                ayaWebPortDraft={ayaWebPortDraft}
-                setAyaWebPortDraft={setAyaWebPortDraft}
-                ayaWebUserDraft={ayaWebUserDraft}
-                setAyaWebUserDraft={setAyaWebUserDraft}
-                ayaWebPasswordDraft={ayaWebPasswordDraft}
-                setAyaWebPasswordDraft={setAyaWebPasswordDraft}
                 usageHook={usageHook}
                 disableUsageHook={disableUsageHook}
                 consentOpenerRef={consentOpenerRef}
