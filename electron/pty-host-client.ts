@@ -698,6 +698,8 @@ export class PtyHostClient {
   private refuseMissingAnnouncedHost():Error{
     const transfer=this.receivedAuthTransfer;
     if(transfer?.retirementOwner){
+      // Synchronous on purpose: a confirmed-gone reader is what hands recovery to the retained owner, decided in the
+      // same turn as the probe. Bounded to 200 ms and only reached when an announced host is missing.
       const reader=readProcInfo(transfer.ticket.hostPid,200);
       if(!reader.alive&&!reader.probeFailed){
         this.recoveryOwner={...transfer.retirementOwner};this.ownerContinuityUnavailable=true;

@@ -19,6 +19,8 @@ export function refusedHostStatus(peer:HostAuthPeer|null):RefusedHostStatus{
     authentication:{required:true,inventoryKnown:false,targetVerified:false,reason:HOST_AUTH_REFUSAL_REASON}};
   if(!peer)return status;
   try{
+    // Synchronous on purpose: this probe and the owner-record read below decide targetVerified together, with no
+    // await between them for the peer to change under. Runs only when authentication was refused.
     const observed=readProcInfo(peer.pid);
     if(observed.probeFailed||!observed.alive||!observed.startTime||ownerProcessStartIdentity(peer.pid)!==peer.startIdentity)return status;
     const record=readOwnerRecord();

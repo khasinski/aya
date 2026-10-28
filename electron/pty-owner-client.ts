@@ -40,6 +40,8 @@ export function ownerProcessStartIdentity(pid: number): string | null { return r
 export function ownerProcessGroupExists(pid: number): boolean {
   return recoveryBridge().recoveryGroupExists(pid);
 }
+// Synchronous on purpose: snapshotOwnerRecoveryMembers brackets this listing between two leader identity checks in
+// one turn, so the inventory it signals cannot belong to a reused group. Recovery and retirement paths only.
 export function ownerGroupMemberPids(group: number): number[] {
   const listing = execFileSync("/bin/ps", ["-axo", "pid=,pgid="], { encoding: "utf8", timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
   return listing.split("\n").flatMap(line => {

@@ -24,6 +24,7 @@ import { waitFor } from "./helpers/wait-for.mjs";
 const require = createRequire(import.meta.url);
 const cp = require("node:child_process");
 const realExecFileSync = cp.execFileSync;
+const realExecFile = cp.execFile;
 
 const home = mkdtempSync(join(tmpdir(), "aya-pty-host-sweep-more-"));
 process.env.AYA_HOME = home;
@@ -49,7 +50,9 @@ const {
   readSnapshot,
   readSnapshotAsync,
   readEnvProbe,
+  readEnvProbeAsync,
   readLeaderGone,
+  readLeaderGoneAsync,
   sweepLegacyAyaProcesses,
   PS_SNAPSHOT_MAX_BUFFER_BYTES,
   PS_ENV_PROBE_MAX_BUFFER_BYTES,
@@ -83,6 +86,31 @@ function withFakePs(fake, fn) {
   }
 }
 
+/** fake(file, args, opts) as execFile: its return is stdout, a throw is the callback's error, both delivered on a
+ *  later turn as a real ps would. */
+const asExecFile = (fake) => (file, args, opts, cb) => {
+  let out, error = null;
+  try {
+    out = fake(file, args, opts);
+  } catch (e) {
+    error = e;
+  }
+  setImmediate(() => (error ? cb(error, "", "") : cb(null, out, "")));
+  return { pid: 0 };
+};
+
+/** withFakePs for the async readers: both execFileSync and execFile answer from fake until fn's promise settles. */
+async function withFakePsAsync(fake, fn) {
+  cp.execFileSync = fake;
+  cp.execFile = asExecFile(fake);
+  try {
+    return await fn();
+  } finally {
+    cp.execFileSync = realExecFileSync;
+    cp.execFile = realExecFile;
+  }
+}
+
 /** A node child that idles until killed; resolves once it has a pid. */
 function spawnIdle(args, opts) {
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", ...args], {
@@ -100,13 +128,13 @@ const exited = (child) =>
 
 // --- a kill that throws ---------------------------------------------------
 
-test("S1: a stray host whose group kill throws is skipped, not swept, and the next host is still swept", () => {
+test("S1: a stray host whose group kill throws is skipped, not swept, and the next host is still swept", async () => {
   const rows = [
     row({ pid: 900, pgid: 900, command: HOST_CMD }),
     row({ pid: 901, pgid: 901, command: HOST_CMD }),
   ];
   const attempts = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     injectedDeps({
       snapshot: () => rows,
@@ -122,10 +150,10 @@ test("S1: a stray host whose group kill throws is skipped, not swept, and the ne
   assert.deepEqual(summary.skipped, [900]);
 });
 
-test("S2: an orphan whose kill throws is skipped, not swept, and the next orphan is still swept", () => {
+test("S2: an orphan whose kill throws is skipped, not swept, and the next orphan is still swept", async () => {
   const rows = [row({ pid: 200, pgid: 7777 }), row({ pid: 201, pgid: 7777 })];
   const attempts = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     injectedDeps({
       snapshot: () => rows,
@@ -227,7 +255,7 @@ test("real ps end to end: in a dead-leader group only the member with both termi
   const self = readEnvProbe(process.pid);
   assert.ok(self, "this process can be probed");
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(new Set(), {
+  const summary = await sweepLegacyAyaProcesses(new Set(), {
     // Only the two members are offered, so nothing else on the machine is probed.
     snapshot: () => readSnapshot().filter((r) => ours.has(r.pid)),
     envProbe: readEnvProbe,
@@ -348,7 +376,7 @@ test("readEnvProbe: output without a leading pgid, or a failing ps, is null; a m
 
 // --- the default deps, on a fake ps and a recording process.kill ------------
 
-test("default deps: uid from process.getuid, AYA_HOME scope, our own group from ps, kills through process.kill", () => {
+test("default deps: uid from process.getuid, AYA_HOME scope, our own group from ps, kills through process.kill", async () => {
   const uid = process.getuid();
   const selfPgid = 4242;
   const table = [
@@ -385,7 +413,7 @@ test("default deps: uid from process.getuid, AYA_HOME scope, our own group from 
   };
   let summary;
   try {
-    summary = withFakePs(fakePs, () => sweepLegacyAyaProcesses(new Set()));
+    summary = await withFakePsAsync(fakePs, () => sweepLegacyAyaProcesses(new Set()));
   } finally {
     process.kill = realKill;
   }
@@ -401,13 +429,13 @@ test("default deps: uid from process.getuid, AYA_HOME scope, our own group from 
   assert.ok(!psCalls.some((c) => c.startsWith("eww -p 9930")), "a member of our own group is never probed");
 });
 
-test("default deps: without process.getuid (no uid) the sweep takes no snapshot and kills nothing", () => {
+test("default deps: without process.getuid (no uid) the sweep takes no snapshot and kills nothing", async () => {
   const realGetuid = process.getuid;
   const psCalls = [];
   process.getuid = undefined;
   let summary;
   try {
-    summary = withFakePs(
+    summary = await withFakePsAsync(
       (file, args) => {
         psCalls.push(args.join(" "));
         if (args[0] === "eww") return `${process.pid} node PATH=/bin`;
@@ -422,7 +450,7 @@ test("default deps: without process.getuid (no uid) the sweep takes no snapshot 
   assert.ok(!psCalls.some((c) => c.startsWith("-A ")), "no process table is read");
 });
 
-test("default deps: a self probe that fails does not stop the sweep", () => {
+test("default deps: a self probe that fails does not stop the sweep", async () => {
   const uid = process.getuid();
   const realKill = process.kill;
   const signals = [];
@@ -434,7 +462,7 @@ test("default deps: a self probe that fails does not stop the sweep", () => {
   };
   let summary;
   try {
-    summary = withFakePs(
+    summary = await withFakePsAsync(
       (file, args) => {
         if (args[0] === "-A") return `${uid} 9920 1 7777 claude`;
         if (args[0] === "eww" && args[2] === "9920") return `7777 ${ORPHAN_ENV}`;
@@ -448,4 +476,143 @@ test("default deps: a self probe that fails does not stop the sweep", () => {
   assert.deepEqual(kernelProbes,[7777]);
   assert.deepEqual(signals, [[9920, "SIGKILL"]]);
   assert.deepEqual(summary.sweptOrphans, [9920]);
+});
+
+// --- the async readers the startup sweep uses by default ---------------------
+
+test("readEnvProbeAsync and readLeaderGoneAsync give what the sync readers give, live and gone", async () => {
+  const child = spawnIdle([], { detached: true, env: { ...process.env, AYA_SWEEP_ASYNC_MARK: "seen" } });
+  const probe = await waitFor(() => readEnvProbe(child.pid));
+  assert.deepEqual(await readEnvProbeAsync(child.pid), probe);
+  assert.deepEqual(await readEnvProbeAsync(process.pid), readEnvProbe(process.pid));
+  assert.equal(await readLeaderGoneAsync(process.pid), false);
+  assert.equal(await readLeaderGoneAsync(child.pid), false);
+  child.kill("SIGKILL");
+  await exited(child);
+  assert.equal(readEnvProbe(child.pid), null);
+  assert.equal(await readEnvProbeAsync(child.pid), null);
+  assert.equal(readLeaderGone(child.pid), true);
+  assert.equal(await readLeaderGoneAsync(child.pid), true);
+});
+
+test("readEnvProbeAsync and readLeaderGoneAsync leave the event loop running while ps runs", async () => {
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 0);
+  try {
+    let before = ticks;
+    await readEnvProbeAsync(process.pid);
+    assert.ok(ticks > before, "timers fired during the env probe");
+    before = ticks;
+    await readLeaderGoneAsync(process.pid);
+    assert.ok(ticks > before, "timers fired during the leader probe");
+  } finally {
+    clearInterval(timer);
+  }
+});
+
+test("async readers fail closed exactly like the sync ones, with the same ps arguments and buffer", async () => {
+  const kill = process.kill;
+  let kernelError = "EAGAIN";
+  process.kill = (_pid, signal) => {
+    assert.equal(signal, 0);
+    if (kernelError) throw Object.assign(new Error("injected presence"), { code: kernelError });
+    return true;
+  };
+  try {
+    const cases = [
+      () => { throw Object.assign(new Error("spawn ps ENOENT"), { code: "ENOENT" }); },
+      () => { throw Object.assign(new Error("Command failed: ps"), { status: 1 }); },
+      () => "  \n",
+      () => " 4321\n",
+    ];
+    for (kernelError of [null, "ESRCH", "EPERM", "EAGAIN"]) {
+      for (const fake of cases) {
+        const expected = withFakePs(fake, () => readLeaderGone(4321));
+        assert.equal(await withFakePsAsync(fake, () => readLeaderGoneAsync(4321)), expected);
+      }
+    }
+  } finally {
+    process.kill = kill;
+  }
+  for (const fake of [
+    () => "",
+    () => "zsh AYA_TERMINAL_ID=t1",
+    () => { throw new Error("ps failed"); },
+    () => { throw Object.assign(new Error("stdout maxBuffer length exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }); },
+  ]) {
+    assert.equal(await withFakePsAsync(fake, () => readEnvProbeAsync(4321)), null);
+  }
+  let call;
+  const probe = await withFakePsAsync((file, args, opts) => {
+    call = { file, args, opts };
+    return "  77 zsh A=1\nB=two lines AYA_TERMINAL_ID=t1\n";
+  }, () => readEnvProbeAsync(4321));
+  assert.deepEqual(probe, { pgid: 77, commandWithEnv: "zsh A=1\nB=two lines AYA_TERMINAL_ID=t1" });
+  assert.equal(call.file, "ps");
+  assert.deepEqual(call.args, ["eww", "-p", "4321", "-o", "pgid=,command="]);
+  assert.equal(call.opts.maxBuffer, PS_ENV_PROBE_MAX_BUFFER_BYTES);
+  assert.equal(call.opts.env.LC_ALL, "C");
+});
+
+test("sweep with async probes: each kill follows its own fresh probe in the same turn", async (t) => {
+  const rows = [row({ pid: 900, pgid: 900, command: HOST_CMD }), row({ pid: 200, pgid: 7777 }), row({ pid: 201, pgid: 7777 })];
+  // `turn` counts event-loop turns: a kill on a later turn than the probe that justified it means an await
+  // (a gap another process could use) came between them.
+  let turn = 0;
+  let spinning = true;
+  const spin = () => {
+    turn++;
+    if (spinning) setImmediate(spin);
+  };
+  setImmediate(spin);
+  t.after(() => (spinning = false));
+  const later = (value) => new Promise((r) => setImmediate(() => r(value)));
+  let probeTurn = -1;
+  const events = [];
+  const summary = await sweepLegacyAyaProcesses(
+    new Set(),
+    injectedDeps({
+      snapshot: () => later(rows),
+      leaderGone: (pgid) => later(true).then((v) => (events.push(`leader ${pgid}`), v)),
+      envProbe: async (pid) => {
+        const probe = await later(pid === 900 ? { pgid: 900, commandWithEnv: HOST_ENV } : { pgid: 7777, commandWithEnv: ORPHAN_ENV });
+        events.push(`probe ${pid}`);
+        probeTurn = turn;
+        return probe;
+      },
+      kill: (pid) => {
+        assert.equal(turn, probeTurn, "no await between the verifying probe and the kill");
+        events.push(`kill ${pid}`);
+      },
+    }),
+  );
+  assert.deepEqual(events, ["probe 900", "kill -900", "leader 7777", "probe 200", "kill 200", "probe 201", "kill 201"]);
+  assert.deepEqual([summary.sweptHosts, summary.sweptOrphans], [[900], [200, 201]]);
+});
+
+test("sweep: once the caller cancels (the app is quitting), no further candidate is signalled", async () => {
+  const rows = [row({ pid: 200, pgid: 7777 }), row({ pid: 201, pgid: 7777 })];
+  let quitting = false;
+  const killed = [];
+  const summary = await sweepLegacyAyaProcesses(
+    new Set(),
+    injectedDeps({
+      snapshot: async () => rows,
+      envProbe: async (pid) => {
+        if (pid === 201) quitting = true; // quit begins while this probe runs
+        return { pgid: 7777, commandWithEnv: ORPHAN_ENV };
+      },
+      kill: (pid) => killed.push(pid),
+    }),
+    { strayHosts: true, cancelled: () => quitting },
+  );
+  assert.deepEqual(killed, [200]);
+  assert.deepEqual(summary.sweptOrphans, [200]);
+  quitting = true;
+  const none = await sweepLegacyAyaProcesses(
+    new Set(),
+    injectedDeps({ snapshot: async () => rows, envProbe: () => assert.fail("no probe once cancelled") }),
+    { strayHosts: true, cancelled: () => quitting },
+  );
+  assert.deepEqual(none, { sweptHosts: [], sweptOrphans: [], skipped: [], truncated: 0 });
 });

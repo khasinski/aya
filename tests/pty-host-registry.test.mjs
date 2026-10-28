@@ -128,21 +128,21 @@ test("readHostRecords: missing dir -> [], malformed files skipped", () => {
 
 const EXPECTED = { version: "0.8.0", scriptHash: "new" };
 
-function withReg(recs, fn) {
+async function withReg(recs, fn) {
   const dir = mkdtempSync(join(tmpdir(), "aya-reap-"));
   try {
     for (const r of recs) writeHostRecord(r, dir);
-    return fn(dir);
+    return await fn(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-test("reap: a stale, verified host has its whole tree SIGKILLed + record removed", () => {
+test("reap: a stale, verified host has its whole tree SIGKILLed + record removed", async () => {
   const stale = { pid: 5000, pgid: 5000, version: "0.7.0", scriptHash: "old", startTime: "T1", nonce: "x" };
-  withReg([stale], (dir) => {
+  await withReg([stale], async (dir) => {
     const killed = [];
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: (pid) => (pid === 5000 ? { alive: true, startTime: "T1", command: `Aya ${SCRIPT}` } : { alive: false, startTime: null, command: null }),
       listProcs: () => [
@@ -163,11 +163,11 @@ test("reap: a stale, verified host has its whole tree SIGKILLed + record removed
   });
 });
 
-test("reap: a compatible (same-build) live host is KEPT, never killed (#28 survive)", () => {
+test("reap: a compatible (same-build) live host is KEPT, never killed (#28 survive)", async () => {
   const same = { pid: 7000, pgid: 7000, version: "0.8.0", scriptHash: "new", startTime: "T2", nonce: "y" };
-  withReg([same], (dir) => {
+  await withReg([same], async (dir) => {
     const killed = [];
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: true, startTime: "T2", command: `Aya ${SCRIPT}` }),
       listProcs: () => [{ pid: 7000, ppid: 1 }],
@@ -179,11 +179,11 @@ test("reap: a compatible (same-build) live host is KEPT, never killed (#28 survi
   });
 });
 
-test("reap: a stale record whose pid was REUSED (start-time mismatch) is GC'd, NOT killed", () => {
+test("reap: a stale record whose pid was REUSED (start-time mismatch) is GC'd, NOT killed", async () => {
   const stale = { pid: 8000, pgid: 8000, version: "0.7.0", scriptHash: "old", startTime: "T-orig", nonce: "z" };
-  withReg([stale], (dir) => {
+  await withReg([stale], async (dir) => {
     const killed = [];
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       // pid 8000 is alive but with a DIFFERENT start time -> reused by something else
       readProcInfo: () => ({ alive: true, startTime: "T-different", command: "/usr/bin/unrelated" }),
@@ -197,11 +197,11 @@ test("reap: a stale record whose pid was REUSED (start-time mismatch) is GC'd, N
   });
 });
 
-test("reap: a compatible record whose pid was REUSED is GC'd, not kept, not killed", () => {
+test("reap: a compatible record whose pid was REUSED is GC'd, not kept, not killed", async () => {
   const same = { pid: 7100, pgid: 7100, version: "0.8.0", scriptHash: "new", startTime: "T-was", nonce: "q" };
-  withReg([same], (dir) => {
+  await withReg([same], async (dir) => {
     const killed = [];
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       // alive but different start time -> pid reused by something unrelated
       readProcInfo: () => ({ alive: true, startTime: "T-now", command: "/usr/bin/other" }),
@@ -214,11 +214,11 @@ test("reap: a compatible record whose pid was REUSED is GC'd, not kept, not kill
   });
 });
 
-test("reap: a dead compatible record is GC'd", () => {
+test("reap: a dead compatible record is GC'd", async () => {
   const dead = { pid: 9000, pgid: 9000, version: "0.8.0", scriptHash: "new", startTime: "T3", nonce: "w" };
-  withReg([dead], (dir) => {
+  await withReg([dead], async (dir) => {
     const killed = [];
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: false, startTime: null, command: null }),
       listProcs: () => [],
@@ -230,9 +230,9 @@ test("reap: a dead compatible record is GC'd", () => {
   });
 });
 
-test("reap: empty registry is a no-op", () => {
-  withReg([], (dir) => {
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+test("reap: empty registry is a no-op", async () => {
+  await withReg([], async (dir) => {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: false, probeFailed: false, startTime: null, command: null }),
       listProcs: () => [],
@@ -267,10 +267,10 @@ test("classifyIdentity: same version needs BOTH hashes known to decide", () => {
   );
 });
 
-test("reap: a LIVE indeterminate record is skipped - never killed, record kept", () => {
+test("reap: a LIVE indeterminate record is skipped - never killed, record kept", async () => {
   const rec = { pid: 5100, pgid: 5100, version: "0.8.0", scriptHash: "unknown", startTime: "T", nonce: "n" };
-  withReg([rec], (dir) => {
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+  await withReg([rec], async (dir) => {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: true, probeFailed: false, startTime: "T", command: `Aya ${SCRIPT}` }),
       listProcs: () => [],
@@ -281,10 +281,10 @@ test("reap: a LIVE indeterminate record is skipped - never killed, record kept",
   });
 });
 
-test("reap: a DEAD indeterminate record is GC'd (no kill) so unknown-hash records can't pile up", () => {
+test("reap: a DEAD indeterminate record is GC'd (no kill) so unknown-hash records can't pile up", async () => {
   const rec = { pid: 5150, pgid: 5150, version: "0.8.0", scriptHash: "unknown", startTime: "T", nonce: "n" };
-  withReg([rec], (dir) => {
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+  await withReg([rec], async (dir) => {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: false, probeFailed: false, startTime: null, command: null }),
       listProcs: () => [],
@@ -295,10 +295,10 @@ test("reap: a DEAD indeterminate record is GC'd (no kill) so unknown-hash record
   });
 });
 
-test("reap: a kill failing with EPERM KEEPS the record (live host must stay reapable)", () => {
+test("reap: a kill failing with EPERM KEEPS the record (live host must stay reapable)", async () => {
   const stale = { pid: 5300, pgid: 5300, version: "0.7.0", scriptHash: "old", startTime: "T", nonce: "n" };
-  withReg([stale], (dir) => {
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+  await withReg([stale], async (dir) => {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: true, probeFailed: false, startTime: "T", command: `Aya ${SCRIPT}` }),
       listProcs: () => [{ pid: 5300, ppid: 1 }],
@@ -314,10 +314,10 @@ test("reap: a kill failing with EPERM KEEPS the record (live host must stay reap
   });
 });
 
-test("reap: a kill failing with ESRCH (group vanished mid-reap) still drops the record", () => {
+test("reap: a kill failing with ESRCH (group vanished mid-reap) still drops the record", async () => {
   const stale = { pid: 5400, pgid: 5400, version: "0.7.0", scriptHash: "old", startTime: "T", nonce: "n" };
-  withReg([stale], (dir) => {
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+  await withReg([stale], async (dir) => {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: true, probeFailed: false, startTime: "T", command: `Aya ${SCRIPT}` }),
       listProcs: () => [],
@@ -332,10 +332,10 @@ test("reap: a kill failing with ESRCH (group vanished mid-reap) still drops the 
   });
 });
 
-test("reap: a failed probe (ps could not run) keeps the record - no kill, no GC", () => {
+test("reap: a failed probe (ps could not run) keeps the record - no kill, no GC", async () => {
   const stale = { pid: 5200, pgid: 5200, version: "0.7.0", scriptHash: "old", startTime: "T", nonce: "n" };
-  withReg([stale], (dir) => {
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+  await withReg([stale], async (dir) => {
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
       readProcInfo: () => ({ alive: false, probeFailed: true, startTime: null, command: null }),
       listProcs: () => [],
@@ -420,7 +420,7 @@ test("a real spawned host retains its record through SIGTERM exit until verified
     assert.equal(exited, true, "SIGTERM terminates the host (no suppressed-default zombie)");
     assert.equal(readHostRecords(regDir).length,1,"only an external observer may certify death");
     const kill=process.kill;let signals=0,summary;
-    try{process.kill=(pid,signal)=>{if(signal===0){assert.equal(pid,host.pid);return kill(pid,0);}signals++;throw Error('verified-dead GC must not signal');};summary=reapStaleHostRecords({version:recs[0].version,scriptHash:recs[0].scriptHash},join(process.cwd(),'dist-electron/pty-host.js'),regDir);}
+    try{process.kill=(pid,signal)=>{if(signal===0){assert.equal(pid,host.pid);return kill(pid,0);}signals++;throw Error('verified-dead GC must not signal');};summary=await reapStaleHostRecords({version:recs[0].version,scriptHash:recs[0].scriptHash},join(process.cwd(),'dist-electron/pty-host.js'),regDir);}
     finally{process.kill=kill;}
     assert.equal(signals,0);assert.deepEqual(summary.gc,[host.pid]);assert.deepEqual(summary.reaped,[]);
     assert.deepEqual(readHostRecords(regDir), [], "verified-dead GC removes the retained record without signalling");
@@ -465,11 +465,11 @@ const SOCKET_HOST_REAPS = [
 ];
 
 for (const [name, version, socketHost, killedIt, kept] of SOCKET_HOST_REAPS) {
-  test(`reap with a socket host: ${name}`, () => {
+  test(`reap with a socket host: ${name}`, async () => {
     const rec = { pid: 5100, pgid: 5100, version, scriptHash: version === "0.8.0" ? "new" : "old", startTime: "T5", nonce: "s" };
-    withReg([rec], (dir) => {
+    await withReg([rec], async (dir) => {
       const killed = [];
-      reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+      await reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
         selfPid: 1,
         readProcInfo: () => ({ alive: true, startTime: "T5", command: `Aya ${SCRIPT}` }),
         listProcs: () => [{ pid: 5100, ppid: 1 }],

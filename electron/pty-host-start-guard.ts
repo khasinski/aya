@@ -75,6 +75,8 @@ export function hostCreationProof(directory=path.join(AYA_HOME,"pty-hosts"),prob
     return {state:unknown?"unknown":hosts.some(host=>host.state==="alive")?"alive":"gone",hosts};
   }catch{return {state:"unknown",hosts};}
 }
+// Stays synchronous: the proof is the last check before the fork (startHost calls it again right before spawn), and
+// an await inside it would let a host appear between the probe and the fork it permits. Per host start, ~2 ms per record.
 export function assertHostCreationSafe():void{
   const proof=hostCreationProof();if(proof.state!=="gone")throw new HostCreationBlockedError(proof);
 }

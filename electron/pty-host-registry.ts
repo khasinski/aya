@@ -13,7 +13,7 @@
 // recorded at spawn (the classic stale-PID-file defense), and its command line
 // still looks like our host script. All three must hold.
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync, type ExecFileOptions } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { atomicTempPath, TMP_SUFFIX } from "./atomic-temp";
@@ -259,44 +259,85 @@ export const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 /** A failed/empty ps is not an absence proof. Only independent kernel ESRCH
  * permits dead; signalable or inaccessible PIDs retain unknown identity. */
 export function readProcInfo(pid: number, timeoutMs?:number): ProcInfo {
-  const absentOrUnknown=():ProcInfo=>{
-    try{process.kill(pid,0);return {alive:true,probeFailed:true,startTime:null,command:null};}
-    catch(error){
-      const code=(error as NodeJS.ErrnoException).code;
-      return code==="ESRCH"?{alive:false,probeFailed:false,startTime:null,command:null}:
-        {alive:code==="EPERM",probeFailed:true,startTime:null,command:null};
-    }
-  };
   try {
-    const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart=,command="], {
+    const out = execFileSync("ps", procInfoArgs(pid), {
       encoding: "utf8",
       env: PS_ENV,
       ...(timeoutMs===undefined?{}:{timeout:timeoutMs,killSignal:"SIGKILL" as const}),
-    }).trim();
-    if (!out) return absentOrUnknown();
-    // lstart is a fixed 24-char ctime string; the rest is the command.
-    const lstart = out.slice(0, PS_LSTART_WIDTH).trim();
-    const command = out.slice(PS_LSTART_WIDTH).trim();
-    return { alive: true, probeFailed: false, startTime: lstart, command };
-  } catch {return absentOrUnknown();}
+    });
+    return procInfoFromPs(pid, out);
+  } catch {return procAbsentOrUnknown(pid);}
+}
+
+/** readProcInfo without blocking the event loop: same ps, same environment, same fail-closed answers. */
+export async function readProcInfoAsync(pid: number, timeoutMs?:number): Promise<ProcInfo> {
+  let out: string;
+  try {
+    out = await execPs(procInfoArgs(pid), timeoutMs===undefined?{}:{timeout:timeoutMs,killSignal:"SIGKILL"});
+  } catch {return procAbsentOrUnknown(pid);}
+  // Decided after ps returned, with no further await: the kernel check below is as fresh as in readProcInfo.
+  return procInfoFromPs(pid, out);
+}
+
+const procInfoArgs = (pid: number): string[] => ["-p", String(pid), "-o", "lstart=,command="];
+
+function procAbsentOrUnknown(pid: number): ProcInfo {
+  try{process.kill(pid,0);return {alive:true,probeFailed:true,startTime:null,command:null};}
+  catch(error){
+    const code=(error as NodeJS.ErrnoException).code;
+    return code==="ESRCH"?{alive:false,probeFailed:false,startTime:null,command:null}:
+      {alive:code==="EPERM",probeFailed:true,startTime:null,command:null};
+  }
+}
+
+function procInfoFromPs(pid: number, raw: string): ProcInfo {
+  const out = raw.trim();
+  if (!out) return procAbsentOrUnknown(pid);
+  // lstart is a fixed 24-char ctime string; the rest is the command.
+  const lstart = out.slice(0, PS_LSTART_WIDTH).trim();
+  const command = out.slice(PS_LSTART_WIDTH).trim();
+  return { alive: true, probeFailed: false, startTime: lstart, command };
+}
+
+/** `ps` under PS_ENV without blocking: resolves stdout, rejects on any failure (spawn error, non-zero exit,
+ *  timeout, maxBuffer). execFile is read off the module at each call, as execFileSync is, so tests can fake it. */
+export function execPs(args: string[], opts: Pick<ExecFileOptions, "timeout" | "killSignal" | "maxBuffer"> = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("ps", args, { encoding: "utf8", env: PS_ENV, ...opts }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(String(stdout));
+    });
+  });
 }
 
 /** Snapshot of (pid, ppid) for every process (descendant LOGGING only). */
 export function listProcs(): Array<{ pid: number; ppid: number }> {
   try {
-    const out = execFileSync("ps", ["-Ao", "pid=,ppid="], {
+    return parseProcs(execFileSync("ps", ["-Ao", "pid=,ppid="], {
       encoding: "utf8",
       env: PS_ENV,
-    });
-    const rows: Array<{ pid: number; ppid: number }> = [];
-    for (const line of out.split("\n")) {
-      const m = line.trim().match(/^(\d+)\s+(\d+)$/);
-      if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]) });
-    }
-    return rows;
+    }));
   } catch {
     return [];
   }
+}
+
+/** listProcs without blocking the event loop. */
+export async function listProcsAsync(): Promise<Array<{ pid: number; ppid: number }>> {
+  try {
+    return parseProcs(await execPs(["-Ao", "pid=,ppid="]));
+  } catch {
+    return [];
+  }
+}
+
+function parseProcs(out: string): Array<{ pid: number; ppid: number }> {
+  const rows: Array<{ pid: number; ppid: number }> = [];
+  for (const line of out.split("\n")) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]) });
+  }
+  return rows;
 }
 
 /** Own OS start time, recorded so a later reaper can verify identity. Empty
@@ -320,9 +361,10 @@ export function ownPgid(): number | null {
   }
 }
 
+/** Probes may answer synchronously or with a promise; the reaper awaits both. */
 export interface ReapDeps {
-  readProcInfo: (pid: number) => ProcInfo;
-  listProcs: () => Array<{ pid: number; ppid: number }>;
+  readProcInfo: (pid: number) => ProcInfo | Promise<ProcInfo>;
+  listProcs: () => Array<{ pid: number; ppid: number }> | Promise<Array<{ pid: number; ppid: number }>>;
   kill: (pid: number, signal: NodeJS.Signals) => void;
   selfPid: number;
 }
@@ -336,8 +378,8 @@ export interface ReapSummary {
 }
 
 const defaultDeps = (): ReapDeps => ({
-  readProcInfo,
-  listProcs,
+  readProcInfo: (pid) => readProcInfoAsync(pid),
+  listProcs: listProcsAsync,
   kill: (pid, signal) => process.kill(pid, signal),
   selfPid: process.pid,
 });
@@ -345,13 +387,13 @@ const defaultDeps = (): ReapDeps => ({
 /** On launch: KEEP a matching host, kill the GROUP of a verified stale one (kill(-pgid) reaches the leader
  *  too, so no unverified kill(pid)), GC gone or reused pids unsignalled, SKIP what cannot be judged this launch.
  *  The stale host holding the socket (`socketHost`) is skipped: handleStaleHost asks before stopping its panes' work. */
-export function reapStaleHostRecords(
+export async function reapStaleHostRecords(
   expected: { version: string; scriptHash: string },
   hostScript: string,
   dir: string = HOST_REGISTRY_DIR,
   deps: ReapDeps = defaultDeps(),
   socketHost?: number,
-): ReapSummary {
+): Promise<ReapSummary> {
   const summary: ReapSummary = {
     reaped: [],
     killedDescendants: [],
@@ -367,7 +409,7 @@ export function reapStaleHostRecords(
   let procs: Array<{ pid: number; ppid: number }> | null = null;
 
   for (const rec of records) {
-    const info = deps.readProcInfo(rec.pid);
+    let info = await deps.readProcInfo(rec.pid);
     if (info.probeFailed) {
       // ps itself failed - the pid's state is unknown. Keep the record; a live
       // stale host must not lose its only reapability pointer to a transient
@@ -408,8 +450,23 @@ export function reapStaleHostRecords(
       summary.gc.push(rec.pid);
       continue;
     }
-    procs ??= deps.listProcs();
+    if (procs === null) {
+      procs = await deps.listProcs();
+      // That await is a gap after the identity probe above: probe again, so the kill below follows the probe that
+      // justifies it with no await in between.
+      info = await deps.readProcInfo(rec.pid);
+      if (info.probeFailed) {
+        summary.skipped.push(rec.pid);
+        continue;
+      }
+      if (!isReapableHost(rec, info, hostScript, deps.selfPid)) {
+        removeHostRecord(rec.pid, dir);
+        summary.gc.push(rec.pid);
+        continue;
+      }
+    }
     const observed = collectDescendants(rec.pid, procs); // log only, never a kill target
+    // No await from the probe to this kill.
     try {
       deps.kill(-rec.pgid, "SIGKILL");
     } catch (err) {
