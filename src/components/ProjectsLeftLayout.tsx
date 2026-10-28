@@ -24,6 +24,8 @@ import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { paneRoles, unreadTotal } from "../team-view";
 import { TeamRoleChip, TeamRoleMenuItems, TeamUnread } from "./TeamRole";
 import { CommandRailUsage } from "./CommandRailLayout";
+import { compactDir } from "../project-path";
+import { RecentProjectsMenu } from "./RecentProjectsMenu";
 
 // Project rail width bounds (px) for the drag-resize handle.
 const RAIL_MIN_WIDTH_PX = 160;
@@ -103,14 +105,6 @@ interface Props {
 
   // The shared terminal-panes / empty / loading body.
   body: ReactNode;
-}
-
-function compactDir(directory: string, home: string): string {
-  if (!directory) return "";
-  if (!home) return directory;
-  if (directory === home) return "~";
-  if (directory.startsWith(home + "/")) return "~" + directory.slice(home.length);
-  return directory;
 }
 
 /** Alternative window layout: project tabs in a left rail, terminal tabs along
@@ -485,17 +479,6 @@ function ProjectsLeftLayoutImpl({
     };
   }, [onRailResize]);
 
-  const [showRecent, setShowRecent] = useState(false);
-  const recentRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showRecent) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!recentRef.current?.contains(e.target as Node)) setShowRecent(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [showRecent]);
-
   const topbarNode = (
       <header className="aya-topbar aya-topbar--alt">
         {!commandRail && <MacWindowControls
@@ -783,51 +766,13 @@ function ProjectsLeftLayoutImpl({
               <span>{isDev ? "Aya Dev" : "Aya"}</span>
             </div>
             )}
-            <div className="aya-recent-projects" ref={recentRef}>
-              <button
-                className="aya-iconbtn"
-                title={
-                  blockChrome
-                    ? "Recent projects (close the open dialog first)"
-                    : "Recent projects"
-                }
-                aria-label="Recent projects"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setShowRecent((v) => !v)}
-                disabled={blockChrome}
-                aria-haspopup="menu"
-                aria-expanded={showRecent}
-              >
-                <span style={{ fontFamily: "Material Symbols Outlined" }}>
-                  folder_open
-                </span>
-              </button>
-              {showRecent && (
-                <div className="aya-recent-menu" role="menu">
-                  <div className="aya-recent-menu-title">Recent projects</div>
-                  {closedProjects.length === 0 ? (
-                    <div className="aya-recent-menu-empty">No closed projects</div>
-                  ) : (
-                    closedProjects.map((p) => (
-                      <button
-                        key={p.slug}
-                        className="aya-recent-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          setShowRecent(false);
-                          onOpenProject(p.slug);
-                        }}
-                      >
-                        <span className="aya-recent-menu-name">{p.name}</span>
-                        <span className="aya-recent-menu-path">
-                          {compactDir(p.directory, homeDir)}
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
+            <RecentProjectsMenu
+              closedProjects={closedProjects}
+              homeDir={homeDir}
+              blockChrome={blockChrome}
+              onOpenProject={onOpenProject}
+              buttonClassName="aya-iconbtn"
+            />
           </div>
           <div className="aya-projectrail-list" role="list" aria-label="Projects">
             {projects.map((p) => {
