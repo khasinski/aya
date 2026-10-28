@@ -2601,11 +2601,6 @@
   font-size: 12px;
   line-height: 1.4;
 }
-.aya-settings-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
 .aya-settings-icon-input {
   text-align: center;
   font-family: var(--font-mono);

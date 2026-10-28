@@ -951,17 +951,6 @@ body {
 }
 
 /* terminal body */
-.aya-term {
-  flex: 1;
-  overflow-y: auto;
-  font-family: var(--font-mono);
-  font-size: var(--term-font-size, 13px);
-  line-height: 1.55;
-  color: var(--aya-pane-fg);
-  padding: 16px 20px 100px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 @keyframes aya-blink { 50% { opacity: 0; } }
 
 /* ============================================================
@@ -1443,18 +1432,11 @@ body {
 }
 
 /* faint scrollbars */
-.aya-sidebar-list::-webkit-scrollbar,
-.aya-term::-webkit-scrollbar { width: 10px; }
-.aya-sidebar-list::-webkit-scrollbar-thumb,
-.aya-term::-webkit-scrollbar-thumb {
+.aya-sidebar-list::-webkit-scrollbar { width: 10px; }
+.aya-sidebar-list::-webkit-scrollbar-thumb {
   background: color-mix(in oklab, var(--fg-tertiary) 30%, transparent);
   border-radius: 5px;
   border: 2px solid transparent;
-  background-clip: padding-box;
-}
-.aya-term::-webkit-scrollbar-thumb {
-  background: color-mix(in oklab, var(--aya-pane-muted) 54%, transparent);
-  border: 2px solid var(--aya-pane-bg);
   background-clip: padding-box;
 }
 
