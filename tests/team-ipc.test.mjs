@@ -172,6 +172,7 @@ test("teams:save edits an existing team unless asked to create; teams:assign rep
     await t.invoke("teams:save", "game", team, true);
     await assert.rejects(() => t.invoke("teams:save", "game", team, true), /already exists/);
     await t.invoke("teams:save", "game", team);
+    assert.equal((await t.invoke("teams:list", "game"))[0].name, "ux-review");
     assert.equal(await t.invoke("teams:assign", "game", "ux-review", "tester", "pane-t"), null);
     assert.equal(await t.invoke("teams:assign", "game", "ux-review", "implementer", "pane-i"), null);
     assert.equal((await t.invoke("teams:start", "game", "ux-review")).started, true);

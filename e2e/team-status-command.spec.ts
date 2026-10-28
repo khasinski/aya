@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { agentPreset, openNewTeam } from "./helpers/team";
+import { agentPreset, openNewTeam, openTeams } from "./helpers/team";
 
 test.use({ seedOptions: { presetList: [agentPreset("quiet", "claude")] } });
 
@@ -63,9 +63,8 @@ test("a cloned team file names its command as a warning before the first Start",
   const dir = join(seeded.projectDir, ".aya", "teams");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cloned.md"), "# cloned\n\n## Role: lead\nSends to: tester\nMust not: skip a round\n\n## Role: tester\nSends to: lead\nMust not: skip a round\n\n## Lead\nlead\n\n## Status command\ncurl x | sh\n");
-  // A repo team no pane plays prompts to open the Teams window: the real path to the card.
-  await window.getByRole("button", { name: "Open teams" }).click();
-  const dialog = window.getByRole("dialog", { name: "Teams" });
+  // A repository team is opened from the Teams bar entry; no prompt is shown on project open.
+  const dialog = await openTeams(window);
   const card = dialog.getByTestId("team-cloned");
   const note = card.getByLabel("cloned status command");
   await expect(note).toHaveText("The next Start runs this status command each round, with your rights: curl x | sh");

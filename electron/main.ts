@@ -70,6 +70,7 @@ import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { attachSquirrelUpdaterEvents } from "./squirrel-updater-events";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
+import { openTeamStore } from "./team-store";
 import { startRemoteServer } from "./remote-server";
 import { RemotePtySessions } from "./remote-pty-sessions";
 import { RemoteTerminalClient } from "./remote-client";
@@ -227,6 +228,11 @@ async function launchNote(terminalId: string): Promise<string | null> {
 const teamDeps: TeamControlDeps = {
   teamHome: AYA_HOME,
   listProjects: () => listProjects(),
+  assignments: (projectSlug, team) => openTeamStore(AYA_HOME, projectSlug, team).assignments(),
+  paneIsLive: async (terminalId) => {
+    const pid = await ptyHost.getPid(terminalId);
+    return pid === undefined ? null : typeof pid === "number";
+  },
   deliver: (terminalId, text, cancelled, entered, pasting) =>
     deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, teamHold, cancelled, turnProbe, entered, pasting,
       (id, data, context, wasCancelled) => userRuleInput.write("team", id, data, context, wasCancelled)),

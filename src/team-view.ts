@@ -27,16 +27,6 @@ export function unreadTotal(teams: TeamSummary[]): number {
   return teams.reduce((sum, t) => sum + Object.values(t.unread).reduce((a, b) => a + b, 0), 0);
 }
 
-/** Teams whose roles all lack a pane: the project-open prompt offers these. */
-export function unassignedTeams(teams: TeamSummary[]): TeamSummary[] {
-  return teams.filter((t) => t.definition && !t.agentAuthored && Object.keys(t.assignments).length === 0);
-}
-
-/** The key a dismissed "assign roles?" prompt is remembered under. */
-export function teamPromptKey(slug: string, team: string): string {
-  return `${slug}/${team}`;
-}
-
 /** How far a logged message got: typed into the pane, or why not yet. */
 export function messageDeliveryText(m: Pick<TeamMessage, "from" | "delivered" | "held" | "typedOnly" | "afterEnter" | "viaInbox">): string {
   if (m.typedOnly) return m.afterEnter && m.held ? m.held : `typed, Enter withheld: ${m.held}`;

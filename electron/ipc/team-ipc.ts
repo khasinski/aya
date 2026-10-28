@@ -73,9 +73,11 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   });
   for (const action of ["pause", "resume", "remove"] as const) {
     const channel = `teams:${action}`;
-    ipcMain.handle(channel, (_e, slug: unknown, team: unknown) =>
-      teamRunner[action](requireString(slug, `${channel}.projectSlug`), requireString(team, `${channel}.team`)),
-    );
+    ipcMain.handle(channel, async (_e, slug: unknown, team: unknown) => {
+      const projectSlug = requireString(slug, `${channel}.projectSlug`);
+      const teamName = requireString(team, `${channel}.team`);
+      await teamRunner[action](projectSlug, teamName);
+    });
   }
   const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> =>
     projectBySlug(await teamDeps.listProjects(), requireString(slug, `${channel}.projectSlug`));

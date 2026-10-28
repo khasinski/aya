@@ -45,7 +45,11 @@ function setup({ remote = false } = {}) {
   mkdirSync(other.directory);
   const project = remote ? { ...t.project, remote: { host: "box" } } : t.project;
   const refreshed = [];
-  const deps = { teamHome: t.teamHome, listProjects: async () => [project, other] };
+  const deps = {
+    teamHome: t.teamHome,
+    listProjects: async () => [project, other],
+    assignments: async (slug, name) => new TeamStore(teamDir(t.teamHome, slug, name)).assignments(),
+  };
   const run = (request, callerId = "pane-1") =>
     handleTeamAuthorRequest(request, callerId, deps, async (slug, name) => void refreshed.push(`${slug}/${name}`));
   const save = (text, extra = {}) => run({ type: "team-save", text, replace: false, ...extra });
@@ -77,8 +81,72 @@ authorTest("a valid file is written, saved in Aya, and the running team refreshe
   assert.equal(
     output,
     `saved team ux-fix: 2 roles (reviewer, fixer); reviewer -> fixer (findings with proof), fixer -> reviewer (the commit to check)\n` +
-      `written to ${file}; saved in Aya, so its roles can be given panes and started from the Teams window\n`,
+      `written to ${file}; saved in Aya, so its roles can be given panes and started from the Teams window\n` +
+      `roles without a pane: reviewer, fixer; propose panes and, after the user's yes, run aya team open ux-fix reviewer=<pane or preset> fixer=<pane or preset>\n`,
   );
+});
+
+authorTest("the CLI only suggests assigning roles that do not have panes", async (t) => {
+  const unassigned = await t.save(GOOD.replace("# ux-fix", "# unassigned"));
+  assert.match(unassigned.output, /roles without a pane: reviewer, fixer; propose panes and, after the user's yes, run aya team open unassigned reviewer=<pane or preset> fixer=<pane or preset>\n$/);
+
+  const partial = await t.save(GOOD.replace("# ux-fix", "# partial"));
+  const partialStore = new TeamStore(teamDir(t.teamHome, "game", "partial"));
+  await partialStore.assign("reviewer", "pane-1");
+  const editedPartial = await t.save(GOOD.replace("# ux-fix", "# partial").replace("Must not: edit code", "Must not: change the review"), { replace: true });
+  assert.match(editedPartial.output, /roles without a pane: fixer; propose panes and, after the user's yes, run aya team open partial fixer=<pane or preset>\n/);
+  assert.doesNotMatch(editedPartial.output, /reviewer=<pane or preset>/);
+
+  await t.save(GOOD);
+  t.project.tabs.push({ id: "pane-2" });
+  const store = new TeamStore(teamDir(t.teamHome, "game", "ux-fix"));
+  await store.assign("reviewer", "pane-1");
+  await store.assign("fixer", "pane-2");
+  const assigned = await t.save(GOOD.replace("Must not: edit code", "Must not: leave the review clear"), { replace: true });
+  assert.doesNotMatch(assigned.output, /roles without a pane/);
+});
+
+authorTest("an exited tab does not count as a live assignment when saving a team", async (t) => {
+  const teamHome = t.teamHome;
+  const project = t.project;
+  const deps = {
+    teamHome,
+    listProjects: async () => [project],
+    paneIsLive: async () => false,
+    assignments: async (slug, name) => new TeamStore(teamDir(teamHome, slug, name)).assignments(),
+  };
+  const { output } = await handleTeamAuthorRequest(
+    { type: "team-save", text: GOOD.replace("# ux-fix", "# exited-pane"), replace: false },
+    "pane-1",
+    deps,
+    async () => {},
+  );
+  const store = new TeamStore(teamDir(teamHome, "game", "exited-pane"));
+  await store.assign("reviewer", "pane-1");
+  const reassigned = await handleTeamAuthorRequest(
+    { type: "team-save", text: GOOD.replace("# ux-fix", "# exited-pane"), replace: true },
+    "pane-1",
+    deps,
+    async () => {},
+  );
+  assert.match(reassigned.output, /roles without a pane: reviewer, fixer/);
+  assert.match(output, /roles without a pane: reviewer, fixer/);
+});
+
+authorTest("an agent's unassigned role advice requires the user's consent before opening panes", async (t) => {
+  const { output } = await t.save(GOOD.replace("# ux-fix", "# agent-team"));
+  assert.match(output, /propose panes and, after the user's yes, run aya team open agent-team reviewer=<pane or preset> fixer=<pane or preset>/);
+});
+
+authorTest("a user's unassigned role advice keeps the direct assignment command", async (t) => {
+  const { output } = await t.run({
+    type: "team-save",
+    text: GOOD.replace("# ux-fix", "# user-team"),
+    replace: false,
+    cwd: t.directory,
+  }, null);
+  assert.match(output, /roles without a pane: reviewer, fixer; assign them in Teams or with aya team open user-team reviewer=<pane or preset> fixer=<pane or preset>/);
+  assert.doesNotMatch(output, /after the user's yes/);
 });
 
 authorTest("a role that sends nothing shows as sending to nobody", async (t) => {
@@ -168,7 +236,7 @@ authorTest("outside a pane: the slug, else the project the cwd is in", async (t)
 authorTest("the cwd matches through symlinks, at the project root too, and the innermost project wins", async (t) => {
   const engine = { slug: "engine", name: "engine", directory: join(t.directory, "engine"), tabs: [] };
   mkdirSync(join(engine.directory, "src"), { recursive: true });
-  const deps = { teamHome: t.teamHome, listProjects: async () => [t.project, engine] };
+  const deps = { teamHome: t.teamHome, listProjects: async () => [t.project, engine], assignments: async () => ({}) };
   const save = (cwd) => handleTeamAuthorRequest({ type: "team-save", text: GOOD, replace: true, cwd }, null, deps, async () => {});
   await save(join(engine.directory, "src"));
   assert.ok(existsSync(t.repoFile("ux-fix", engine.directory)));
@@ -272,10 +340,12 @@ test("through the real CLI and control server: saved, summarized, the runner tol
     assert.equal(saved.status, 0, saved.stderr);
     assert.match(saved.stdout, /^saved team ux-fix: 2 roles \(reviewer, fixer\)/);
     assert.deepEqual(refreshed, ["game/ux-fix"]);
+    assert.match(saved.stdout, /roles without a pane: reviewer, fixer; propose panes and, after the user's yes, run aya team open ux-fix reviewer=<pane or preset> fixer=<pane or preset>\n/);
     const again = await aya("save", draft);
     assert.equal(again.status, 1);
     assert.match(again.stderr, /^aya: team "ux-fix" already exists in .*; nothing was saved\. Run aya team save again with --replace to overwrite it\n$/);
     assert.equal((await aya("save", draft, "--replace")).status, 0);
+    assert.match((await aya("save", draft, "--replace")).stdout, /roles without a pane: reviewer, fixer; propose panes and, after the user's yes, run aya team open ux-fix reviewer=<pane or preset> fixer=<pane or preset>\n/);
     const guide = await aya("new", "fix", "the", "UX");
     assert.equal(guide.status, 0);
     assert.match(guide.stdout, /^The user asked for: fix the UX\n[\s\S]*Teams this project already has: ux-fix\./);
@@ -322,12 +392,13 @@ test("a team file's own text in a save error reaches the terminal as text, not a
   }
 });
 
-authorTest("a team saved from a pane is marked as the agent's, so the window does not ask to assign it too; one saved outside a pane is not", async (t) => {
+authorTest("a team saved from a pane is marked as the agent's; an outside save is not", async (t) => {
   await t.save(GOOD);
   await t.run({ type: "team-save", text: GOOD.replace("# ux-fix", "# other"), replace: false, projectSlug: "game" }, null);
   const byName = Object.fromEntries((await listTeams(t.teamHome, t.project)).map((team) => [team.name, team]));
   assert.equal(byName["ux-fix"].agentAuthored, true);
   assert.equal(byName.other.agentAuthored, false);
+  assert.equal(byName.other.assignments.reviewer, undefined);
 });
 
 test("the agent's mark goes with the first role given a pane, or a save from the window", async () => {
@@ -352,8 +423,7 @@ test("the agent's mark goes with the first role given a pane, or a save from the
   }
 });
 
-// The window lists a team once Aya holds its saved copy; from then on a team with no pane and no
-// agent mark gets the "assign roles?" prompt that the agent's own proposal of panes would compete with.
+// A saved team must already carry its authorship marker whenever the window can list the saved copy.
 for (const [from, callerId] of [["a pane", "pane-1"], ["outside a pane", null]]) {
   authorTest(`a new team saved ${from} is never visible in the window without its authorship, however the polls fall`, async (t) => {
     let seenUnmarked = 0;

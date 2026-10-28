@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { PresetChoice, ProjectConfig, TeamDefinition, TeamStartResult, TeamSummary, WaitingPanes } from "../types";
+import type { PresetChoice, ProjectConfig, TeamDefinition, TeamStartResult, TeamSummary, TerminalState, WaitingPanes } from "../types";
 import { TeamChat } from "./TeamChat";
 import {
   NEW_PANE_PREFIX,
@@ -35,6 +35,7 @@ export function TeamCard({
   presetNames,
   plays,
   waiting,
+  terminals = {},
   onEdit,
   onChanged,
   onRestartPane,
@@ -48,6 +49,7 @@ export function TeamCard({
   /** The role each pane of the project plays, in any team. */
   plays: Record<string, PaneRole>;
   waiting: WaitingPanes;
+  terminals?: Record<string, TerminalState>;
   onEdit: (definition: TeamDefinition) => void;
   onChanged: () => Promise<void>;
   /** Restarts a pane of this window as its tab menu's Restart terminal does: it asks first when that stops work, and
@@ -284,11 +286,17 @@ export function TeamCard({
                   onChange={(e) => setPicks((prev) => ({ ...prev, [role.id]: e.target.value }))}
                 >
                   <option value="">No pane</option>
-                  {project.tabs.map((tab) => (
-                    <option key={tab.id} value={tab.id}>
-                      {paneOptionLabel(tab.name, plays[tab.id], team.name, role.id)}
-                    </option>
-                  ))}
+                  {project.tabs.map((tab) => {
+                    const terminal = terminals[tab.id];
+                    const state = terminal?.spawnFailure ? " (failed to start)" :
+                      terminal?.exitCode !== null && terminal?.exitCode !== undefined ? " (exited)" :
+                        terminal?.stopped ? " (stopped)" : "";
+                    return (
+                      <option key={tab.id} value={tab.id}>
+                        {paneOptionLabel(tab.name, plays[tab.id], team.name, role.id)}{state}
+                      </option>
+                    );
+                  })}
                   {installed.length > 0 && (
                     <optgroup label="New session">
                       {installed.map((p) => (

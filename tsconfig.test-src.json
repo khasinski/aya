@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "CommonJS",
     "moduleResolution": "Node",
     "jsx": "react-jsx",
@@ -21,6 +21,7 @@
     "src/attention.ts",
     "src/components/TerminalStatusDot.tsx",
     "src/components/TerminalView.tsx",
+    "src/components/TeamsModal.tsx",
     "src/components/FindBarCoverageLine.tsx",
     "src/colors.ts",
     "src/control-status-target.ts",
@@ -37,6 +38,7 @@
     "src/harness-search-coverage.ts",
     "src/harness-search-sequence.ts",
     "src/hooks/usePersistentPreference.ts",
+    "src/hooks/useTeams.ts",
     "src/machines-view.ts",
     "src/local-summaries.ts",
     "src/main-mirrors.ts",

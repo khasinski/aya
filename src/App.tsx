@@ -28,7 +28,6 @@ import {
 import { PaneGrid } from "./components/PaneGrid";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { TeamsModal } from "./components/TeamsModal";
-import { TeamAssignPrompt } from "./components/TeamRole";
 import { StatusRail } from "./components/StatusRail";
 import { EmptyState, LoadingState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -976,9 +975,7 @@ export function App() {
   const {
     teamsByProject,
     activeTeams,
-    teamToPrompt,
     onAssignTeamRole,
-    dismissTeamPrompt,
     onTeamsWindowClosed,
   } = useTeams({ projects, activeProjectId, activeProjectRemote: !!activeProject?.remote });
 
@@ -991,7 +988,6 @@ export function App() {
     showSearch ||
     showAttentionCenter ||
     showTeams ||
-    !!teamToPrompt ||
     !!pendingRepoImport;
   const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
   const closeTabQueue = useRef(Promise.resolve());
@@ -1500,23 +1496,13 @@ export function App() {
         <TeamsModal
           project={activeProject}
           waiting={waitingPanes}
+          terminals={terminals}
           intelligence={ayaIntelligence}
           onRestartPane={forceRestartTerminal}
           onClose={() => {
             setShowTeams(false);
             onTeamsWindowClosed(activeProject.slug);
           }}
-        />
-      )}
-      {!showTeams && teamToPrompt && activeProject && !chromeBlocked && (
-        <TeamAssignPrompt
-          project={activeProject}
-          team={teamToPrompt}
-          onOpenTeams={() => {
-            dismissTeamPrompt(activeProject.slug, teamToPrompt.name);
-            setShowTeams(true);
-          }}
-          onDismiss={() => dismissTeamPrompt(activeProject.slug, teamToPrompt.name)}
         />
       )}
       {showAttentionCenter && (

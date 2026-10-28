@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { DEFAULT_CADENCE_MINUTES } from "../team-edit";
 import { paneRoles } from "../team-view";
-import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition, TeamSummary, WaitingPanes } from "../types";
+import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition, TeamSummary, TerminalState, WaitingPanes } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { TeamCard } from "./TeamCard";
 import { TeamEditor } from "./TeamEditor";
-import { ErrorLine, useAsyncAction } from "./use-async-action";
+import { ErrorLine, ipcMessage } from "./use-async-action";
 
 // While open, the log and assignments refresh at this pace.
 const REFRESH_MS = 3000;
@@ -74,24 +74,57 @@ interface Props {
   project: ProjectConfig;
   intelligence: AyaIntelligenceConfig;
   waiting: WaitingPanes;
+  terminals?: Record<string, TerminalState>;
   onClose: () => void;
   /** Restart terminal for a pane of this window: offered where a restart gives a role its note. */
   onRestartPane?: (paneId: string) => Promise<void>;
 }
 
-export function TeamsModal({ project, intelligence, waiting, onClose, onRestartPane }: Props) {
-  const [teams, setTeams] = useState<TeamSummary[]>([]);
+export function TeamsModal({ project, intelligence, waiting, terminals = {}, onClose, onRestartPane }: Props) {
+  const [teamListState, setTeamListState] = useState<{ slug: string; teams: TeamSummary[] }>({ slug: project.slug, teams: [] });
+  const teams = useMemo(
+    () => teamListState.slug === project.slug ? teamListState.teams : [],
+    [teamListState, project.slug],
+  );
   const [editing, setEditing] = useState<{ team: TeamDefinition; isNew: boolean } | null>(null);
+  const [savedTeamReturn, setSavedTeamReturn] = useState<{
+    projectSlug: string;
+    name: string;
+    definition: TeamDefinition;
+    afterGeneration: number;
+  } | null>(null);
+  const [teamsGeneration, setTeamsGeneration] = useState(0);
   const [presets, setPresets] = useState<PresetChoice[]>([]);
-  const list = useAsyncAction();
-  const { run } = list;
+  const [listError, setListError] = useState<{ slug: string; error: string | null }>({ slug: project.slug, error: null });
+  const reloadGeneration = useRef(0);
+  const refreshesInFlight = useRef(0);
+  const currentProjectSlug = useRef(project.slug);
+  currentProjectSlug.current = project.slug;
   const body = useRef<HTMLDivElement>(null);
   useFitFirstLog(body, editing ? null : teams.map((t) => t.name).join("\n"));
 
-  const reload = useCallback(async () => {
-    const next = await run(() => window.aya.teamList(project.slug));
-    if (next) setTeams(next);
-  }, [project.slug, run]);
+  const reload = useCallback((force = false) => {
+    const slug = project.slug;
+    // An action from a previously rendered project card must not supersede the current project's list request.
+    if (slug !== currentProjectSlug.current) return Promise.resolve(null);
+    if (!force && refreshesInFlight.current > 0) return Promise.resolve(null);
+    const request = ++reloadGeneration.current;
+    const isCurrent = () => request === reloadGeneration.current && slug === currentProjectSlug.current;
+    setListError({ slug, error: null });
+    refreshesInFlight.current++;
+    return window.aya.teamList(slug)
+      .then((next) => {
+        if (!isCurrent() || !next) return null;
+        setTeamListState({ slug, teams: next });
+        setTeamsGeneration(request);
+        return next;
+      })
+      .catch((error: unknown) => {
+        if (isCurrent()) setListError({ slug, error: ipcMessage(error) });
+        return null;
+      })
+      .finally(() => { refreshesInFlight.current--; });
+  }, [project.slug]);
 
   useEffect(() => {
     void window.aya
@@ -101,10 +134,41 @@ export function TeamsModal({ project, intelligence, waiting, onClose, onRestartP
   }, []);
 
   useEffect(() => {
-    void reload();
+    void reload(true);
     const id = window.setInterval(() => void reload(), REFRESH_MS);
     return () => window.clearInterval(id);
   }, [reload]);
+
+  useEffect(() => {
+    setSavedTeamReturn((pending) => pending?.projectSlug === project.slug ? pending : null);
+  }, [project.slug]);
+
+  useEffect(() => {
+    if (editing || !savedTeamReturn || savedTeamReturn.projectSlug !== project.slug || teamListState.slug !== project.slug || teamsGeneration < savedTeamReturn.afterGeneration) return;
+    const savedSummary = teams.find((candidate) => candidate.name === savedTeamReturn.name);
+    if (!savedSummary?.definition) return;
+    const requestedRoleIds = savedTeamReturn.definition.roles.map((role) => role.id);
+    if (requestedRoleIds.some((roleId) => !savedSummary.definition?.roles.some((role) => role.id === roleId))) return;
+    const card = Array.from(body.current?.querySelectorAll<HTMLElement>("[data-testid]") ?? []).find(
+      (element) => element.dataset.testid === `team-${savedTeamReturn.name}`,
+    );
+    if (!card) return;
+    card.scrollIntoView({ block: "nearest" });
+    const firstUnassigned = savedSummary.definition.roles.find((role) => {
+      const assignedPane = savedSummary.assignments[role.id];
+      if (!assignedPane || !project.tabs.some((tab) => tab.id === assignedPane)) return true;
+      const state = terminals[assignedPane];
+      return state ? state.exitCode !== null || state.stopped === true || Boolean(state.spawnFailure) : false;
+    });
+    if (firstUnassigned) {
+      const pane = Array.from(card.querySelectorAll<HTMLSelectElement>("select[aria-label]")).find(
+        (element) => element.getAttribute("aria-label") === `Pane for ${firstUnassigned.id}`,
+      );
+      if (!pane) return;
+      pane.focus();
+    }
+    setSavedTeamReturn(null);
+  }, [editing, savedTeamReturn, teams, teamsGeneration, teamListState.slug, project.slug, project.tabs, terminals]);
 
   return (
     <div
@@ -128,8 +192,14 @@ export function TeamsModal({ project, intelligence, waiting, onClose, onRestartP
             onCancel={() => setEditing(null)}
             onSave={async (team) => {
               await window.aya.teamSave(project.slug, team, editing.isNew);
+              setSavedTeamReturn({
+                projectSlug: project.slug,
+                name: team.name,
+                definition: team,
+                afterGeneration: reloadGeneration.current + 1,
+              });
               setEditing(null);
-              await reload();
+              await reload(true);
             }}
           />
           </div>
@@ -139,7 +209,7 @@ export function TeamsModal({ project, intelligence, waiting, onClose, onRestartP
             <div className="aya-modal-hint">
               Defined by the project. Which pane plays which role stays on this machine.
             </div>
-            <ErrorLine error={list.error} />
+            <ErrorLine error={listError.slug === project.slug ? listError.error : null} />
             {/* Only the cards scroll: the title and the buttons stay on screen. */}
             <div ref={body} className="aya-teams-body">
             {teams.length === 0 && <div className="aya-modal-hint">No team yet.</div>}
@@ -152,8 +222,9 @@ export function TeamsModal({ project, intelligence, waiting, onClose, onRestartP
                 presetNames={Object.fromEntries(presets.map((p) => [p.id, p.name]))}
                 plays={paneRoles(teams)}
                 waiting={waiting}
+                terminals={terminals}
                 onEdit={(definition) => setEditing({ team: definition, isNew: false })}
-                onChanged={reload}
+                onChanged={async () => { await reload(true); }}
                 onRestartPane={onRestartPane}
               />
             ))}
