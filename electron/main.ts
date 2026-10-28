@@ -113,7 +113,7 @@ import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
 import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { createPtyHostHealth, probeSocketPid } from "./pty-host-health";
 import { HOOK_VIA } from "./constants";
-import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
+import { defaultSweepDeps, readSnapshotAsync, sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
 import { createWindowProjectState } from "./window-slices";
@@ -1203,7 +1203,9 @@ app.whenReady().then(async () => {
             );
           }
         }
-        const summary = sweepLegacyAyaProcesses(exclude, undefined, { strayHosts });
+        const rows = await readSnapshotAsync();
+        if (appQuitting) return;
+        const summary = sweepLegacyAyaProcesses(exclude, { ...defaultSweepDeps(), snapshot: () => rows }, { strayHosts });
         if (summary.sweptHosts.length > 0 || summary.sweptOrphans.length > 0) {
           console.log(
             `[aya] legacy sweep: killed ${summary.sweptHosts.length} stray host group(s) ${JSON.stringify(summary.sweptHosts)} + ${summary.sweptOrphans.length} orphaned terminal process(es)`,

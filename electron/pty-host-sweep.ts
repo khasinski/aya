@@ -20,7 +20,8 @@
 //    re-verification (a reused pid shows a different env / group).
 // Any probe failure, scope mismatch, or ambiguity -> skip, never kill.
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AYA_DEV_HOME_DIRNAME, AYA_DEV_ON, AYA_DEV_VAR, AYA_HOME, AYA_HOME_DIRNAME } from "./paths";
@@ -171,7 +172,7 @@ export interface SweepSummary {
   truncated: number; // orphan candidates beyond the probe cap (retried next launch)
 }
 
-const defaultDeps = (): SweepDeps => ({
+export const defaultSweepDeps = (): SweepDeps => ({
   snapshot: readSnapshot,
   envProbe: readEnvProbe,
   leaderGone: readLeaderGone,
@@ -196,7 +197,7 @@ const defaultDeps = (): SweepDeps => ({
  *  hosts without that exclusion would risk sweeping the live one. */
 export function sweepLegacyAyaProcesses(
   excludePids: ReadonlySet<number>,
-  deps: SweepDeps = defaultDeps(),
+  deps: SweepDeps = defaultSweepDeps(),
   passes: { strayHosts: boolean } = { strayHosts: true },
 ): SweepSummary {
   const summary: SweepSummary = { sweptHosts: [], sweptOrphans: [], skipped: [], truncated: 0 };
@@ -288,6 +289,22 @@ export function readSnapshot(): ProcRow[] {
       maxBuffer: PS_SNAPSHOT_MAX_BUFFER_BYTES,
     });
     return parseSnapshot(out);
+  } catch {
+    return [];
+  }
+}
+
+/** readSnapshot without blocking the main process: the 30-60 ms full-table `ps` is the sweep's one big call. The
+ *  sweep re-verifies every candidate with a fresh per-pid probe, so a snapshot read just before it is as good as
+ *  one read inside it. */
+export async function readSnapshotAsync(): Promise<ProcRow[]> {
+  try {
+    const { stdout } = await promisify(execFile)("ps", ["-A", "-o", "uid=,pid=,ppid=,pgid=,command="], {
+      encoding: "utf8",
+      env: PS_ENV,
+      maxBuffer: PS_SNAPSHOT_MAX_BUFFER_BYTES,
+    });
+    return parseSnapshot(stdout);
   } catch {
     return [];
   }

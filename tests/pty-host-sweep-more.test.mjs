@@ -47,6 +47,7 @@ test.after(() => {
 
 const {
   readSnapshot,
+  readSnapshotAsync,
   readEnvProbe,
   readLeaderGone,
   sweepLegacyAyaProcesses,
@@ -252,6 +253,17 @@ test("real ps end to end: in a dead-leader group only the member with both termi
 });
 
 // --- the readers when ps fails or prints nothing usable --------------------
+
+test("readSnapshotAsync returns the same table as readSnapshot without blocking", async () => {
+  const sync = readSnapshot();
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 1);
+  const rows = await readSnapshotAsync();
+  clearInterval(timer);
+  assert.ok(ticks > 0, "the event loop kept running while ps ran");
+  assert.ok(rows.some((r) => r.pid === process.pid && r.uid === process.getuid()), "this process is in the table");
+  assert.equal(new Set(rows.map((r) => r.pid)).has(sync.find((r) => r.pid === process.pid).pid), true);
+});
 
 test("readSnapshot asks ps for the whole table in the C locale with the large buffer, and a failing ps gives []", () => {
   const calls = [];
