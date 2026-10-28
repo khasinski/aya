@@ -27,14 +27,16 @@ export function unreadTotal(teams: TeamSummary[]): number {
   return teams.reduce((sum, t) => sum + Object.values(t.unread).reduce((a, b) => a + b, 0), 0);
 }
 
-/** Teams whose roles all lack a pane: the project-open prompt offers these. */
-export function unassignedTeams(teams: TeamSummary[]): TeamSummary[] {
-  return teams.filter((t) => t.definition && !t.agentAuthored && Object.keys(t.assignments).length === 0);
-}
-
-/** The key a dismissed "assign roles?" prompt is remembered under. */
-export function teamPromptKey(slug: string, team: string): string {
-  return `${slug}/${team}`;
+/** Applies only the newest async team-list refresh, so an earlier poll cannot replace post-save definitions. */
+export function createTeamRefreshGate() {
+  let generation = 0;
+  return {
+    async run<T>(load: () => Promise<T>, apply: (result: T) => void): Promise<void> {
+      const request = ++generation;
+      const result = await load();
+      if (request === generation) apply(result);
+    },
+  };
 }
 
 /** How far a logged message got: typed into the pane, or why not yet. */

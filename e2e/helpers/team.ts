@@ -171,17 +171,23 @@ export function teamSeed(
     assignments = { tester: "tab-left", implementer: "tab-right" },
     ayaHomeFiles = {},
     seed = {},
-  }: { presetList?: Preset[]; assignments?: Record<string, string> | null; ayaHomeFiles?: Record<string, string>; seed?: SeedOptions } = {},
+    repoDefined = true,
+    savedInAya = true,
+  }: { presetList?: Preset[]; assignments?: Record<string, string> | null; ayaHomeFiles?: Record<string, string>; seed?: SeedOptions; repoDefined?: boolean; savedInAya?: boolean } = {},
 ) {
+  const projectFiles = {
+    ...(repoDefined ? { ".aya/teams/ux-review.md": team } : {}),
+    ...seed.projectFiles,
+  };
+  const savedTeamFiles = savedInAya ? { [`${TEAM_STATE_DIR}/saved.md`]: team } : {};
   return {
     seedOptions: {
       ...seed,
       launchEnv: { AYA_E2E_TEAM_REDELIVERY_MS: String(E2E_REDELIVERY_MS), ...seed.launchEnv },
       ...(presetList ? { presetList } : {}),
-      projectFiles: { ".aya/teams/ux-review.md": team },
+      projectFiles,
       ayaHomeFiles: {
-        // Saved in Aya, as a team made in the Teams window is: a bare repo file does not run.
-        [`${TEAM_STATE_DIR}/saved.md`]: team,
+        ...savedTeamFiles,
         ...(assignments ? { [`${TEAM_STATE_DIR}/assignments.json`]: JSON.stringify(assignments) } : {}),
         ...ayaHomeFiles,
       },

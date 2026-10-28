@@ -56,6 +56,7 @@ async function setup(paneState, { start = true } = {}) {
   const deps = {
     teamHome,
     listProjects: async () => [project],
+    assignments: async (slug, name) => new TeamStore(teamDir(teamHome, slug, name)).assignments(),
     deliver: async (pane, text) => void typed.push({ pane, text }),
     holdReason: async (pane) => (held.has(pane) ? HELD : null),
     headCommit: async () => null,

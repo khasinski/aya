@@ -18,6 +18,10 @@ import { oneLine } from "./printable";
 export interface TeamControlDeps {
   teamHome: string;
   listProjects: () => Promise<ProjectConfig[]>;
+  /** True only when a project tab currently has a live PTY behind it. */
+  paneIsLive?: (terminalId: string) => Promise<boolean | null>;
+  /** Current pane assignments for a saved team (CLI guidance after team save). */
+  assignments?: (projectSlug: string, team: string) => Promise<Record<string, string>>;
   /** Pastes text into a pane and presses Enter (PaneHeldError when held by then); resolves to why the Enter started no
    *  turn, if so. `pasting` runs once the pane lock is held, `entered` once the Enter is written, before that look. */
   deliver: (terminalId: string, text: string, cancelled?: () => boolean, entered?: () => Promise<void>, pasting?: () => Promise<void>) => Promise<string | null | void>;

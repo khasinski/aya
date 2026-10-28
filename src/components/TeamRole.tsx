@@ -1,6 +1,5 @@
 import type { PaneRole } from "../team-view";
-import type { ProjectConfig, TeamSummary } from "../types";
-import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+import type { TeamSummary } from "../types";
 
 /** "tester · ux-review" under a tab name, with the waiting-message count. */
 export function TeamRoleChip({ role }: { role: PaneRole }) {
@@ -74,44 +73,5 @@ export function TeamRoleMenuItems({
         </button>
       )}
     </>
-  );
-}
-
-/** Offered once per team when a project with roles but no panes opens. */
-export function TeamAssignPrompt({
-  project,
-  team,
-  onOpenTeams,
-  onDismiss,
-}: {
-  project: ProjectConfig;
-  team: TeamSummary;
-  onOpenTeams: () => void;
-  onDismiss: () => void;
-}) {
-  const roles = team.definition?.roles.map((r) => r.id).join(", ") ?? "";
-  return (
-    <div className="aya-modal-backdrop" onMouseDown={markBackdropMouseDown} onClick={(e) => closeFromBackdropClick(e, onDismiss)}>
-      <section
-        className="aya-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Assign team roles"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="aya-modal-title">Assign team roles?</div>
-        <div className="aya-modal-hint">
-          {project.name} has the team {team.name} ({roles}). No pane plays its roles yet.
-        </div>
-        <div className="aya-modal-actions">
-          <button className="aya-modal-btn" onClick={onDismiss}>
-            Not now
-          </button>
-          <button className="aya-modal-btn aya-modal-btn--primary" onClick={onOpenTeams}>
-            Open teams
-          </button>
-        </div>
-      </section>
-    </div>
   );
 }

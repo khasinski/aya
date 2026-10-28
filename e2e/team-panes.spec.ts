@@ -122,7 +122,7 @@ test.describe("one Claude Code pane, where the user asks for a team", () => {
     for (const role of ["reviewer", "fixer", "tester"]) {
       await expect(card.getByLabel(`Pane for ${role}`).locator("option:checked")).toHaveText(`Claude Code - ${role}`);
     }
-    // Marked the agent's by aya team save, cleared once a role got a pane.
+    // The team remains agent-authored after its role panes are opened.
     expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toEqual({});
     await expect.poll(() => Object.values(ids).every((id) => started(seeded.projectDir, id)), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
 
@@ -143,17 +143,12 @@ test.describe("one Claude Code pane, where the user asks for a team", () => {
 });
 
 test.describe("a team saved with no panes", () => {
-  test.use(teamSeed(HANDOFF_TEAM, { presetList: PRESETS, assignments: null }));
+  test.use(teamSeed(`${HANDOFF_TEAM}\n## Lead\ntester\n`, { presetList: PRESETS, assignments: null }));
 
   test("aya team open refuses an uninstalled preset and opens nothing, then gives the calling pane one role and a new session the other", async ({ window, seeded }) => {
     test.setTimeout(AGENT_TEST_TIMEOUT_MS);
     await firstTerminalShown(window);
     const aya = cli(seeded.ayaHome);
-    // The window offers the unassigned team; the user's "Not now" frees the pane to type into.
-    const offer = window.getByRole("dialog", { name: "Assign team roles" });
-    await offer.getByRole("button", { name: "Not now" }).click();
-    await expect(offer).toHaveCount(0);
-
     const presets = aya(["presets"]);
     expect(presets.stdout).toMatch(/^missing +Missing CLI +custom +no +unknown$/m);
     // The same command from a process that only borrows the pane's id is refused, nothing opened.
@@ -206,9 +201,7 @@ test.describe("a team saved with no panes", () => {
   test("Apply panes in the Teams window: a new session per role from installed presets only", async ({ window, seeded }) => {
     test.setTimeout(AGENT_TEST_TIMEOUT_MS);
     await firstTerminalShown(window);
-    // A team with no panes brings its own prompt; it leads to the Teams window.
-    await window.getByRole("dialog", { name: "Assign team roles" }).getByRole("button", { name: "Open teams" }).click();
-    const dialog = window.getByRole("dialog", { name: "Teams" });
+    const dialog = await openTeams(window);
     const tester = dialog.getByLabel("Pane for tester");
     await expect(tester.locator("option")).toHaveText(["No pane", "shell 1", "shell 2", "New: Shell", "New: Claude Code"]);
     await tester.selectOption({ label: "New: Claude Code" });

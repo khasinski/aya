@@ -1,9 +1,9 @@
 // `aya team new|save`: a guide any agent CLI can follow to write a team file,
 // and a save through the Teams window's own Save team.
 
+import type { TeamAuthorRequest } from "./control-protocol";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type { TeamAuthorRequest } from "./control-protocol";
 import { TeamExistsError, saveTeam } from "./team-admin";
 import type { TeamControlDeps } from "./team-control";
 import { WHAT_WORDS } from "./team-draft";
@@ -149,7 +149,7 @@ async function saveTeamText(
   request: Extract<TeamAuthorRequest, { type: "team-save" }>,
   project: ProjectConfig | null,
   callerId: string | undefined,
-  deps: Pick<TeamControlDeps, "teamHome">,
+  deps: Pick<TeamControlDeps, "teamHome" | "paneIsLive" | "assignments">,
   refresh: (slug: string, name: string, changed: string[]) => Promise<void>,
   underPane: boolean,
 ): Promise<string> {
@@ -160,11 +160,10 @@ async function saveTeamText(
   const name = teamTitle(request.text);
   if (name === null) throw new Error('the team file must start with "# <team-name>"');
   const team = parseTeamFile(name, request.text);
+  // The process tree counts too: an agent can unset AYA_TERMINAL_ID, and a save it makes must not set the status command.
+  const byAgent = underPane || project.tabs.some((t) => t.id === callerId);
   let changed: string[] = [];
   try {
-    // The agent that saved it proposes its panes; the window's assign prompt would compete. The process tree
-    // counts too: an agent can unset AYA_TERMINAL_ID, and a save it makes must not set the status command.
-    const byAgent = underPane || project.tabs.some((t) => t.id === callerId);
     changed = await saveTeam(deps.teamHome, project, team, { create: !request.replace, byAgent });
   } catch (err) {
     if (!(err instanceof TeamExistsError)) throw err;
@@ -172,7 +171,26 @@ async function saveTeamText(
   }
   await refresh(project.slug, name, changed);
   const told = changed.length ? `aya team whoami changed for ${changed.join(", ")}: Aya tells ${changed.length === 1 ? "its pane" : "their panes"} to run it again while the team runs\n` : "";
-  return savedSummary(team, teamFile(project, name)) + told;
+  const assignments = await deps.assignments?.(project.slug, name) ?? {};
+  const livePanes = new Set<string>();
+  for (const tab of project.tabs) {
+    const live = deps.paneIsLive ? await deps.paneIsLive(tab.id) : true;
+    // Unknown host state is not evidence that a tab exited; only a confirmed
+    // missing PTY makes the saved assignment unassigned.
+    if (live === null) {
+      livePanes.add(tab.id);
+      continue;
+    }
+    if (live) livePanes.add(tab.id);
+  }
+  const missingRoles = team.roles.filter((role) => {
+    const pane = assignments[role.id];
+    return !pane || !livePanes.has(pane);
+  });
+  const assignment = missingRoles.length
+    ? `roles without a pane: ${missingRoles.map((role) => role.id).join(", ")}; ${byAgent ? "propose panes and, after the user's yes, run" : "assign them in Teams or with"} aya team open ${name} ${missingRoles.map((role) => `${role.id}=<pane or preset>`).join(" ")}\n`
+    : "";
+  return savedSummary(team, teamFile(project, name)) + assignment + told;
 }
 
 /** `refresh` re-arms a running team's rounds, as the Teams window's Save does.
@@ -180,7 +198,7 @@ async function saveTeamText(
 export async function handleTeamAuthorRequest(
   request: TeamAuthorRequest,
   callerId: string | undefined,
-  deps: Pick<TeamControlDeps, "teamHome" | "listProjects">,
+  deps: Pick<TeamControlDeps, "teamHome" | "listProjects" | "paneIsLive" | "assignments">,
   refresh: (slug: string, name: string, changed: string[]) => Promise<void>,
   underPane = false,
 ): Promise<{ output: string }> {

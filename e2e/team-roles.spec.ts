@@ -1,8 +1,7 @@
 // Team roles on the tab lists (both layouts), the tab menu's Team role items,
-// unread badges, and the prompt when a project brings a team with no panes.
+// and unread badges.
 
 import { test, expect } from "./fixtures";
-import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
 import { reloadInProjectsLeftLayout } from "./helpers/layout";
 import { TEAM_STATE_DIR, readAssignments, teamSeed, BARE_TEAM } from "./helpers/team";
 import { firstTerminalShown } from "./helpers/terminal";
@@ -54,27 +53,5 @@ test.describe("experimental layout", () => {
     const tab = window.locator(".aya-termtab-main").filter({ hasText: "shell 1" });
     await tab.click({ button: "right" });
     await expect(window.locator(".aya-context-menu").getByText("Remove team role")).toBeVisible();
-  });
-});
-
-test.describe("a project that brings a team with no panes", () => {
-  test.use(teamSeed(BARE_TEAM, { assignments: null }));
-
-  test("offers to assign the roles; Open teams shows them", async ({ window }) => {
-    await firstTerminalShown(window);
-    const prompt = window.getByRole("dialog", { name: "Assign team roles" });
-    await expect(prompt).toContainText("ux-review (tester, implementer)");
-    await prompt.getByRole("button", { name: "Open teams" }).click();
-    await expect(window.getByRole("dialog", { name: "Teams" }).getByTestId("team-ux-review")).toBeVisible();
-  });
-
-  test("Not now keeps it away for the session", async ({ window }) => {
-    await firstTerminalShown(window);
-    const prompt = window.getByRole("dialog", { name: "Assign team roles" });
-    await prompt.getByRole("button", { name: "Not now" }).click();
-    await expect(prompt).toHaveCount(0);
-    // Long enough for a full teams refresh, which would bring the prompt back.
-    await window.waitForTimeout(TEAMS_REFRESH_MS + 1_000);
-    await expect(prompt).toHaveCount(0);
   });
 });

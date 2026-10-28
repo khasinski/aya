@@ -27,6 +27,7 @@ test("a team saved with aya team save shows in the open Teams window, saved and 
   expect(saved.stderr).toBe("");
   expect(saved.stdout).toMatch(/^saved team ux-fix: 3 roles \(reviewer, fixer, tester\); reviewer -> fixer /);
   expect(existsSync(join(seeded.ayaHome, "teams", "e2e-proj", "ux-fix", "saved.md"))).toBe(true);
+  await expect(window.getByRole("dialog", { name: "Assign team roles" })).toHaveCount(0);
   const card = dialog.getByTestId("team-ux-fix");
   await expect(card).toBeVisible();
   await expect(card.getByText("must not edit code")).toBeVisible();
