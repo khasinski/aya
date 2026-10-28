@@ -192,6 +192,8 @@ export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
   const launchArgs = [
     join(APP_ROOT, "dist-electron", "main.js"),
     `--user-data-dir=${seeded.userDataDir}`,
+    // A hidden test window must not beep or play terminal sound cues at whoever is at the machine.
+    "--mute-audio",
   ];
   launchArgs.push(...ciElectronFlags());
   return electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
