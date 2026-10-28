@@ -1,7 +1,33 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test, expect, expectHeadlessUiEvents } from "./fixtures";
+import { test, expect, expectHeadlessUiEvents, rendererDialogHandler, type RendererDialogResponse } from "./fixtures";
 import { appEnv } from "./helpers/seed";
+
+test("visible renderer dialog responses are one-shot", async () => {
+  const responses: Partial<Record<"renderer.alert" | "renderer.confirm" | "renderer.prompt", RendererDialogResponse>> = {
+    "renderer.confirm": { message: "Restart this terminal?", response: true },
+  };
+  const events: Array<{ kind: string; message: string }> = [];
+  const listener = rendererDialogHandler(responses, events);
+  const outcomes: string[] = [];
+  const fire = async () => {
+    await listener({
+      type: () => "confirm",
+      message: () => "Restart this terminal?",
+      accept: async () => { outcomes.push("accepted"); },
+      dismiss: async () => { outcomes.push("dismissed"); },
+    });
+  };
+
+  await fire();
+  await fire();
+
+  expect(outcomes).toEqual(["accepted", "dismissed"]);
+  expect(events).toEqual([
+    { kind: "renderer.confirm", message: "Restart this terminal?" },
+    { kind: "renderer.confirm", message: "Restart this terminal?" },
+  ]);
+});
 
 test("headless Electron records and cancels native UI requests without showing them", async ({ app, window, seeded }) => {
   test.skip(appEnv(seeded).AYA_E2E_HEADLESS !== "1", "router probe is only meaningful in headless mode; CI uses Xvfb");

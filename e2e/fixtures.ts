@@ -259,9 +259,28 @@ export function expectHeadlessUiEvents(seeded: SeededEnv, events: HeadlessUiEven
 /** Handle renderer JS dialogs in both local-headless runs and visible CI/Xvfb runs. */
 export type RendererDialogResponse = { message?: string; messagePrefix?: string; response: boolean | string | null | undefined };
 type RendererDialogKind = "renderer.alert" | "renderer.confirm" | "renderer.prompt";
+type RendererDialogLike = { type(): string; message(): string; accept(): Promise<void>; dismiss(): Promise<void> };
 function rendererDialogMatches(configured: RendererDialogResponse | undefined, message: string): boolean {
   return configured?.message === message
     || (configured?.messagePrefix !== undefined && message.startsWith(configured.messagePrefix));
+}
+
+export function rendererDialogHandler(
+  responses: Partial<Record<RendererDialogKind, RendererDialogResponse>>,
+  events: Array<{ kind: string; message: string }>,
+): (dialog: RendererDialogLike) => Promise<void> {
+  return async (dialog) => {
+    const kind = `renderer.${dialog.type()}`;
+    events.push({ kind, message: dialog.message() });
+    const configured = responses[kind as keyof typeof responses];
+    const matches = rendererDialogMatches(configured, dialog.message());
+    if (matches) delete responses[kind as RendererDialogKind];
+    const response = matches ? configured?.response : undefined;
+    if (dialog.type() === "confirm" && response === true) await dialog.accept();
+    else if (dialog.type() === "prompt" && typeof response === "string") await dialog.accept(response);
+    else if (dialog.type() === "alert") await dialog.accept();
+    else await dialog.dismiss();
+  };
 }
 
 export async function handleRendererDialogs(
@@ -293,17 +312,7 @@ export async function handleRendererDialogs(
     return { read: () => page.evaluate(() => (window as Window & { __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> }).__ayaE2eRendererEvents ?? []), respond };
   }
   const events: Array<{ kind: string; message: string }> = [];
-  page.on("dialog", async (dialog) => {
-    const kind = `renderer.${dialog.type()}`;
-    events.push({ kind, message: dialog.message() });
-    const configured = responses[kind as keyof typeof responses];
-    const matches = rendererDialogMatches(configured, dialog.message());
-    const response = matches ? configured?.response : undefined;
-    if (dialog.type() === "confirm" && response === true) await dialog.accept();
-    else if (dialog.type() === "prompt" && typeof response === "string") await dialog.accept(response);
-    else if (dialog.type() === "alert") await dialog.accept();
-    else await dialog.dismiss();
-  });
+  page.on("dialog", rendererDialogHandler(responses, events));
   return { read: async () => events, respond };
 }
 
