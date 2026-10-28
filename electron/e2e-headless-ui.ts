@@ -1,4 +1,5 @@
 import { appendFileSync } from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { App, BrowserWindow, BrowserWindowConstructorOptions, Dialog, IpcMain } from "electron";
 
 export const E2E_HEADLESS_UI_LOG_ENV = "AYA_E2E_HEADLESS_UI_LOG";
@@ -10,7 +11,7 @@ type DialogApi = Pick<Dialog,
 >;
 type WindowConstructor = {
   new(options: BrowserWindowConstructorOptions): Pick<BrowserWindow, "isVisible" | "destroy">;
-  prototype: { show?: (...args: unknown[]) => unknown; showInactive?: (...args: unknown[]) => unknown };
+  prototype: { show?: (...args: unknown[]) => unknown; showInactive?: (...args: unknown[]) => unknown; getTitle?: () => string };
   getAllWindows?: () => Array<Pick<BrowserWindow, "webContents" | "isDestroyed">>;
 };
 type NotificationClass = { prototype: { show?: (...args: unknown[]) => unknown } };
@@ -22,6 +23,18 @@ type EventKind =
 
 const installed = new WeakSet<object>();
 const ipcInstalled = new WeakSet<object>();
+
+export interface HeadlessUiEventExpectation { kind: string; detail?: string }
+export interface HeadlessUiEventRecord { kind: string; detail?: string; expected?: boolean }
+
+/** Compare unhandled headless requests with exact per-call declarations. */
+export function headlessUiEventMismatch(logged: HeadlessUiEventRecord[], expected: HeadlessUiEventExpectation[]): string | null {
+  const actual = logged.filter((event) => event.expected !== true)
+    .map(({ kind, detail }) => detail === undefined ? { kind } : { kind, detail });
+  return JSON.stringify(actual) === JSON.stringify(expected)
+    ? null
+    : `expected ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`;
+}
 
 /** In unpackaged headless e2e, route every native UI request to a log and a safe default. */
 export function installHeadlessUiRouter(deps: {
@@ -42,16 +55,16 @@ export function installHeadlessUiRouter(deps: {
 
   const alreadyInstalled = installed.has(deps.dialog);
   const append = deps.append ?? ((path, line) => appendFileSync(path, line, { encoding: "utf8", mode: 0o600 }));
-  const record = (kind: EventKind, expected = false) => append(logPath, `${JSON.stringify({ kind, expected, at: new Date().toISOString() })}\n`);
+  const record = (kind: EventKind, expected = false, detail?: string) => append(logPath, `${JSON.stringify({ kind, ...(detail === undefined ? {} : { detail }), expected, at: new Date().toISOString() })}\n`);
   const rendererResponses = new Map<EventKind, unknown>();
   const headlessWindowOptions = (options: BrowserWindowConstructorOptions): BrowserWindowConstructorOptions => {
     if (options.show === false) return options;
-    record("window.construct-visible");
+    record("window.construct-visible", false, options.title || "(untitled window)");
     return { ...options, show: false };
   };
 
   if (!alreadyInstalled) {
-    routeDialogMethod(deps.dialog, "showMessageBox", "dialog.showMessageBox", (args) => messageBoxDefault(args), record);
+    routeDialogMethod(deps.dialog, "showMessageBox", "dialog.showMessageBox", (args) => Promise.resolve(messageBoxDefault(args)), record);
     routeDialogMethod(deps.dialog, "showMessageBoxSync", "dialog.showMessageBoxSync", (args) => messageBoxDefault(args).response, record);
     routeDialogMethod(deps.dialog, "showErrorBox", "dialog.showErrorBox", () => undefined, record);
     routeDialogMethod(deps.dialog, "showOpenDialog", "dialog.showOpenDialog", () => Promise.resolve({ canceled: true, filePaths: [] }), record);
@@ -60,8 +73,8 @@ export function installHeadlessUiRouter(deps: {
     routeDialogMethod(deps.dialog, "showSaveDialogSync", "dialog.showSaveDialogSync", () => undefined, record);
     routeWindowMethod(deps.BrowserWindow.prototype, "show", "window.show", record);
     routeWindowMethod(deps.BrowserWindow.prototype, "showInactive", "window.showInactive", record);
-    routeWindowMethod(deps.Notification.prototype, "show", "notification.show", record);
-    routeObjectMethod(deps.app, "showAboutPanel", "app.showAboutPanel", record);
+    routeNotificationMethod(deps.Notification.prototype, record);
+    routeObjectMethod(deps.app, "showAboutPanel", "app.showAboutPanel", record, "About panel");
     installed.add(deps.dialog);
   }
 
@@ -69,16 +82,12 @@ export function installHeadlessUiRouter(deps: {
     const isAyaSender = (sender: unknown) => deps.BrowserWindow.getAllWindows?.().some((win) => {
       try { return !win.isDestroyed() && win.webContents === sender; } catch { return false; }
     }) === true;
-    deps.ipcMain.on("e2e:headless-ui-renderer", (event, kind: unknown) => {
+    deps.ipcMain.on("e2e:headless-ui-renderer", (event, kind: unknown, message: unknown) => {
       if (!isAyaSender(event.sender)) { event.returnValue = null; return; }
       if (kind === "renderer.alert" || kind === "renderer.confirm" || kind === "renderer.prompt") {
-        record(kind, rendererResponses.has(kind));
+        record(kind, rendererResponses.has(kind), String(message ?? ""));
         event.returnValue = rendererResponses.has(kind) ? rendererResponses.get(kind)
           : kind === "renderer.confirm" ? false : kind === "renderer.prompt" ? null : undefined;
-      } else if (kind === "window.construct-visible") {
-        const probe = new deps.BrowserWindow(headlessWindowOptions({ width: 100, height: 100, show: true }));
-        event.returnValue = probe.isVisible();
-        probe.destroy();
       } else {
         event.returnValue = null;
       }
@@ -110,21 +119,30 @@ function routeDialogMethod<K extends keyof DialogApi>(
   method: K,
   kind: EventKind,
   fallback: (args: unknown[]) => unknown,
-  record: (kind: EventKind, expected?: boolean) => void,
+  record: (kind: EventKind, expected?: boolean, detail?: string) => void,
 ): void {
   const descriptor = Object.getOwnPropertyDescriptor(target, method);
   let override: ((...args: unknown[]) => unknown) | undefined;
-  let inOverride = false;
-  let overrideFellThrough = false;
+  const overrideCall = new AsyncLocalStorage<{ delegated: boolean }>();
+  const detail = (args: unknown[]) => {
+    if (method === "showErrorBox") return `${String(args[0] ?? "")}: ${String(args[1] ?? "")}`;
+    const options = args.at(-1) as { message?: unknown; title?: unknown; detail?: unknown; defaultPath?: unknown } | undefined;
+    return String(options?.message ?? options?.detail ?? options?.title ?? options?.defaultPath ?? "(no message)");
+  };
   const routed = (...args: unknown[]) => {
-    if (inOverride) { overrideFellThrough = true; return fallback(args); }
-    if (!override) { record(kind, false); return fallback(args); }
-    overrideFellThrough = false;
-    inOverride = true;
+    const activeCall = overrideCall.getStore();
+    if (activeCall) { activeCall.delegated = true; return fallback(args); }
+    const callDetail = detail(args);
+    if (!override) { record(kind, false, callDetail); return fallback(args); }
+    const call = { delegated: false };
     let result: unknown;
-    try { result = override.apply(target, args); }
-    finally { inOverride = false; }
-    record(kind, !overrideFellThrough);
+    try { result = overrideCall.run(call, () => override!.apply(target, args)); }
+    catch (error) { record(kind, !call.delegated, callDetail); throw error; }
+    const finish = () => record(kind, !call.delegated, callDetail);
+    if (result && typeof (result as { then?: unknown }).then === "function") {
+      return Promise.resolve(result).then((value) => { finish(); return value; }, (error) => { finish(); throw error; });
+    }
+    finish();
     return result;
   };
   Object.defineProperty(target, method, {
@@ -136,17 +154,33 @@ function routeDialogMethod<K extends keyof DialogApi>(
 }
 
 function routeWindowMethod(
-  prototype: { show?: (...args: unknown[]) => unknown; showInactive?: (...args: unknown[]) => unknown },
+  prototype: { show?: (...args: unknown[]) => unknown; showInactive?: (...args: unknown[]) => unknown; getTitle?: () => string },
   method: "show" | "showInactive",
   kind: EventKind,
-  record: (kind: EventKind, expected?: boolean) => void,
+  record: (kind: EventKind, expected?: boolean, detail?: string) => void,
 ): void {
   const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
   Object.defineProperty(prototype, method, {
     configurable: true,
     enumerable: descriptor?.enumerable ?? false,
     writable: false,
-    value: (..._args: unknown[]) => { record(kind, false); return undefined; },
+    value: function (this: { getTitle?: () => string }) { record(kind, false, this.getTitle?.() || "(untitled window)"); return undefined; },
+  });
+}
+
+function routeNotificationMethod(
+  prototype: { show?: (...args: unknown[]) => unknown },
+  record: (kind: EventKind, expected?: boolean, detail?: string) => void,
+): void {
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "show");
+  Object.defineProperty(prototype, "show", {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? false,
+    writable: false,
+    value: function (this: { title?: unknown; body?: unknown }) {
+      record("notification.show", false, `${String(this.title ?? "")}: ${String(this.body ?? "")}`);
+      return undefined;
+    },
   });
 }
 
@@ -154,10 +188,11 @@ function routeObjectMethod(
   target: object,
   method: string,
   kind: EventKind,
-  record: (kind: EventKind, expected?: boolean) => void,
+  record: (kind: EventKind, expected?: boolean, detail?: string) => void,
+  detail: string,
 ): void {
   Object.defineProperty(target, method, {
     configurable: true,
-    value: (..._args: unknown[]) => { record(kind, false); return undefined; },
+    value: (..._args: unknown[]) => { record(kind, false, detail); return undefined; },
   });
 }

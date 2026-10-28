@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test, expect, cleanUpSeeded, closeAndWait, hostPidsForHome, launchApp } from "./fixtures";
+import { test, expect, cleanUpSeeded, closeAndWait, hostPidsForHome, launchApp, assertHeadlessUiEvents } from "./fixtures";
 import { seedEnv } from "./helpers/seed";
 
 test.use({
@@ -106,6 +106,7 @@ test("a real host Aya relaunch restores a remote PTY and replays the exact gap",
   } finally {
     if (clientApp) await closeAndWait(clientApp);
     if (hostApp) await closeAndWait(hostApp);
-    await cleanUpSeeded(hostSeed);
+    try { assertHeadlessUiEvents(hostSeed); }
+    finally { await cleanUpSeeded(hostSeed); }
   }
 });

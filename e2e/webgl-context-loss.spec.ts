@@ -51,7 +51,8 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
   app,
   seeded,
 }) => {
-  expectHeadlessUiEvents(seeded, ["window.show"]);
+  const windowTitle = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle() || "(untitled window)");
+  expectHeadlessUiEvents(seeded, [{ kind: "window.show", detail: windowTitle }]);
   await window.emulateMedia({ colorScheme: "dark" }); // match the reporter's setup
   // Before reload(): its context teardown lets V8 collect the pending promise of
   // a main-process evaluate ("Resulting promise was garbage collected" on CI).

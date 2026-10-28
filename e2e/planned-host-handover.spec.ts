@@ -198,7 +198,7 @@ test('trimmed replay resets the captured display once and explains history loss 
 
 
 test('the real Restart to update IPC announces handover and preserves a foreground command without asking to stop it',async({seeded})=>{
- expectHeadlessUiEvents(seeded,['notification.show']);
+ expectHeadlessUiEvents(seeded,[{kind:'notification.show',detail:'Aya update ready: Restart Aya to install the update.'}]);
  test.setTimeout(45000);const first=await launch(seeded,1,false,true);await waitForShellReady(first.window);
  await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'ACTUAL_UPDATE_ROUTE\\n'; sleep 1000\r"));
  await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('ACTUAL_UPDATE_ROUTE\r\n');
@@ -218,7 +218,7 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
 });
 
 test('terminal creation is disabled and safely refused while update preparation later fails',async({seeded})=>{
- expectHeadlessUiEvents(seeded,['notification.show']);
+ expectHeadlessUiEvents(seeded,[{kind:'notification.show',detail:'Aya update ready: Restart Aya to install the update.'}]);
  test.setTimeout(45000);const first=await launch(seeded,1,false,true,false,0,false,false,true);await waitForShellReady(first.window);
  await first.window.evaluate(()=>window.aya.ptyWrite('tab-left','exit\r'));
  await expect(visiblePane(first.window,'shell 1').locator('.xterm-rows')).toContainText(/process exited with code/);
@@ -423,7 +423,7 @@ test('a capped renderer capture restores with a visible oldest-history-cut notic
 });
 
 for(const yes of [false,true])test(`real Restart to update asks about the ineligible pane before installer handoff, yes=${yes}`,async({seeded})=>{
- expectHeadlessUiEvents(seeded,['notification.show']);
+ expectHeadlessUiEvents(seeded,[{kind:'notification.show',detail:'Aya update ready: Restart Aya to install the update.'}]);
  test.setTimeout(45000);
  appendFileSync(hostScript,`\nconst UpdateTestAdapter=require('./pty-owner-adapter').OwnerPty,updateFreeze=UpdateTestAdapter.prototype.freezeForHandover;UpdateTestAdapter.prototype.freezeForHandover=function(...args){if(this.pane.id==='tab-right')throw Error('test update route ineligible process');return updateFreeze.apply(this,args);};\n`);
  const first=await launch(seeded,yes?0:1,false,true);await waitForShellReady(first.window);await expect.poll(()=>inventory(seeded.ayaHome).panes.length).toBe(2);

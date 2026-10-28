@@ -5,12 +5,19 @@ import { appEnv } from "./helpers/seed";
 
 test("headless Electron records and cancels native UI requests without showing them", async ({ app, window, seeded }) => {
   test.skip(appEnv(seeded).AYA_E2E_HEADLESS !== "1", "router probe is only meaningful in headless mode; CI uses Xvfb");
+  const title = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle() || "(untitled window)");
   const expectedUnhandled = [
-    "dialog.showMessageBox", "dialog.showMessageBoxSync", "dialog.showErrorBox", "dialog.showOpenDialog", "dialog.showOpenDialogSync",
-    "dialog.showSaveDialog", "dialog.showSaveDialogSync", "window.show", "window.showInactive", "window.construct-visible",
-    "app.showAboutPanel", "notification.show", "renderer.alert", "renderer.confirm",
+    { kind: "dialog.showMessageBox", detail: "headless router probe" },
+    { kind: "dialog.showMessageBoxSync", detail: "sync probe" },
+    { kind: "dialog.showErrorBox", detail: "headless router probe: must not show" },
+    { kind: "dialog.showOpenDialog", detail: "(no message)" },
+    { kind: "dialog.showOpenDialogSync", detail: "(no message)" },
+    { kind: "dialog.showSaveDialog", detail: "(no message)" },
+    { kind: "dialog.showSaveDialogSync", detail: "(no message)" },
+    { kind: "window.show", detail: title }, { kind: "window.showInactive", detail: title },
+    { kind: "app.showAboutPanel", detail: "About panel" }, { kind: "notification.show", detail: "headless: must not show" },
+    { kind: "renderer.alert", detail: "headless renderer probe" }, { kind: "renderer.confirm", detail: "default cancel" },
   ];
-  const expectedRecorded = [...expectedUnhandled, "renderer.confirm", "renderer.prompt"];
   expectHeadlessUiEvents(seeded, expectedUnhandled);
   await expect(window.locator("body")).toBeVisible();
   const pageDialogs: string[] = [];
@@ -30,9 +37,9 @@ test("headless Electron records and cancels native UI requests without showing t
     const save = await dialog.showSaveDialog({});
     const saveSync = dialog.showSaveDialogSync({});
     const window = BrowserWindow.getAllWindows()[0];
+    // Exercise show() on Aya's real main window created by createAyaWindows.
     window.show();
     window.showInactive();
-    const constructedVisible = await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.probeVisibleWindow()");
     app.showAboutPanel();
     new Notification({ title: "headless", body: "must not show" }).show();
     await window.webContents.executeJavaScript("window.alert('headless renderer probe')");
@@ -41,7 +48,7 @@ test("headless Electron records and cancels native UI requests without showing t
     const accepted = await window.webContents.executeJavaScript("window.confirm('test accepted')");
     await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.prompt', 'safe answer')");
     const prompt = await window.webContents.executeJavaScript("window.prompt('headless prompt')");
-    return { message, syncMessage, open, openSync, save, saveSync, constructedVisible, visible: BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()), cancelled, accepted, prompt };
+    return { message, syncMessage, open, openSync, save, saveSync, visible: BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()), cancelled, accepted, prompt };
   });
   expect(result.message.response).toBe(1);
   expect(result.syncMessage).toBe(2);
@@ -49,7 +56,6 @@ test("headless Electron records and cancels native UI requests without showing t
   expect(result.openSync).toBeUndefined();
   expect(result.save).toEqual({ canceled: true });
   expect(result.saveSync).toBeUndefined();
-  expect(result.constructedVisible).toBe(false);
   expect(result.visible).toBe(false);
   await expect.poll(() => window.evaluate(() => (window as Window & { headlessDialogEvents: Array<{ kind: string; message: string }> }).headlessDialogEvents)).toEqual([
     { kind: "renderer.alert", message: "headless renderer probe" },
@@ -61,6 +67,10 @@ test("headless Electron records and cancels native UI requests without showing t
   expect(result.accepted).toBe(true);
   expect(result.prompt).toBe("safe answer");
   expect(pageDialogs).toEqual([]);
-  const lines = readFileSync(join(seeded.root, "e2e-headless-ui.log"), "utf8").trim().split("\n");
-  expect(lines.map((line) => JSON.parse(line).kind)).toEqual(expectedRecorded);
+  const lines = readFileSync(join(seeded.root, "e2e-headless-ui.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  expect(lines.map(({ kind, detail }) => ({ kind, detail }))).toEqual([
+    ...expectedUnhandled,
+    { kind: "renderer.confirm", detail: "test accepted" },
+    { kind: "renderer.prompt", detail: "headless prompt" },
+  ]);
 });

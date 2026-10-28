@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const { installHeadlessUiRouter } = await import("../dist-electron/e2e-headless-ui.js");
+const { installHeadlessUiRouter, headlessUiEventMismatch } = await import("../dist-electron/e2e-headless-ui.js");
 
 test("headless UI routing records and suppresses every native dialog and BrowserWindow show path", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-"));
@@ -144,6 +144,55 @@ test("a targeted dialog override is expected only when it handles the request", 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("async dialog overrides that await before delegating are recorded as unhandled", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-async-fallthrough-"));
+  try {
+    const logPath = join(dir, "ui.jsonl");
+    const native = [];
+    class FakeWindow { static getAllWindows() { return []; } show() {} showInactive() {} }
+    class FakeNotification { show() {} }
+    const app = { isPackaged: false, showAboutPanel() {}, on() {} };
+    const dialog = { async showMessageBox(options) { native.push(options.message); return { response: 1 }; }, showErrorBox() {}, showOpenDialog() {} };
+    installHeadlessUiRouter({ env: { AYA_E2E_HEADLESS: "1", AYA_E2E_HEADLESS_UI_LOG: logPath }, app, dialog, BrowserWindow: FakeWindow, Notification: FakeNotification });
+    const original = dialog.showMessageBox.bind(dialog);
+    dialog.showMessageBox = async (...args) => {
+      await Promise.resolve();
+      return original(...args);
+    };
+    await dialog.showMessageBox({ message: "unexpected async delegation" });
+    assert.deepEqual(native, [], "the delegated original stays suppressed");
+    assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line).expected), [false]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("async native dialog fallbacks preserve their Promise APIs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-promises-"));
+  try {
+    class FakeWindow { static getAllWindows() { return []; } show() {} showInactive() {} }
+    class FakeNotification { show() {} }
+    const dialog = { async showMessageBox() { throw Error("native called"); }, async showSaveDialog() { throw Error("native called"); }, showErrorBox() {}, showOpenDialog() {} };
+    installHeadlessUiRouter({ env: { AYA_E2E_HEADLESS: "1", AYA_E2E_HEADLESS_UI_LOG: join(dir, "ui.jsonl") }, app: { isPackaged: false, showAboutPanel() {}, on() {} }, dialog, BrowserWindow: FakeWindow, Notification: FakeNotification });
+    const message = dialog.showMessageBox({ cancelId: 2 });
+    const save = dialog.showSaveDialog({});
+    assert.equal(message instanceof Promise, true);
+    assert.equal(save instanceof Promise, true);
+    assert.deepEqual(await message, { response: 2, checkboxChecked: false });
+    assert.deepEqual(await save, { canceled: true });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("an unexpected headless event makes the fixture's shared check fail", () => {
+  assert.match(headlessUiEventMismatch([
+    { kind: "dialog.showMessageBox", detail: "unexpected prompt", expected: false },
+  ], []), /unexpected prompt/);
+  assert.equal(headlessUiEventMismatch([
+    { kind: "dialog.showMessageBox", detail: "declared prompt", expected: false },
+  ], [{ kind: "dialog.showMessageBox", detail: "declared prompt" }]), null);
+  assert.match(headlessUiEventMismatch([
+    { kind: "dialog.showMessageBox", detail: "different prompt", expected: false },
+  ], [{ kind: "dialog.showMessageBox", detail: "declared prompt" }]), /different prompt/);
+});
+
 test("main installs the router before app windows and all Electron e2e launches use the shared headless gate", () => {
   const main = readFileSync(join(root, "electron/main.ts"), "utf8");
   assert.match(main, /installHeadlessUiRouter\(\{\s*env:\s*process\.env,\s*app,\s*dialog,\s*BrowserWindow,\s*Notification,\s*ipcMain\s*\}\)/);
@@ -154,23 +203,24 @@ test("main installs the router before app windows and all Electron e2e launches 
   const electronFiles = readdirSync(join(root, "electron"), { recursive: true })
     .filter((name) => typeof name === "string" && name.endsWith(".ts"));
   const dialogMethods = new Set();
-  let browserWindowCreations = 0;
+  const browserWindowCreations = [];
   let hasAboutPanelCall = false;
   for (const name of electronFiles) {
     const source = readFileSync(join(root, "electron", name), "utf8");
     for (const match of source.matchAll(/\b(?:deps\.)?dialog\.(showMessageBox|showMessageBoxSync|showErrorBox|showOpenDialog|showOpenDialogSync|showSaveDialog|showSaveDialogSync)\s*\(/g)) {
       dialogMethods.add(match[1]);
     }
-    browserWindowCreations += [...source.matchAll(/new\s+BrowserWindow\s*\(/g)].length;
+    for (const match of source.matchAll(/new\s+BrowserWindow\s*\(([^\n]*)/g)) browserWindowCreations.push({ name, call: match[1] });
     if (/\bapp\.showAboutPanel\s*\(/.test(source)) hasAboutPanelCall = true;
   }
   for (const method of dialogMethods) assert.ok(router.includes(`routeDialogMethod(deps.dialog, "${method}"`), `${method} call sites must be routed`);
-  assert.equal(browserWindowCreations, 2, "all BrowserWindow construction call sites must remain accounted for");
+  assert.deepEqual(browserWindowCreations.map(({ name }) => name).sort(), ["main.ts", "windows.ts"], "new main-process BrowserWindows must use one of the guarded Aya factories");
+  assert.ok(browserWindowCreations.some(({ name, call }) => name === "main.ts" && call.includes("headlessWindowOptions(options)")));
+  assert.ok(browserWindowCreations.some(({ name, call }) => name === "windows.ts" && call.includes("deps.headlessWindowOptions")));
   assert.match(router, /routeWindowMethod\(deps\.BrowserWindow\.prototype, "show", "window\.show"/);
   assert.match(router, /routeWindowMethod\(deps\.BrowserWindow\.prototype, "showInactive", "window\.showInactive"/);
-  assert.match(router, /routeWindowMethod\(deps\.Notification\.prototype, "show", "notification\.show"/);
+  assert.match(router, /routeNotificationMethod\(deps\.Notification\.prototype/);
   if (hasAboutPanelCall) assert.match(router, /routeObjectMethod\(deps\.app, "showAboutPanel", "app\.showAboutPanel"/);
-  assert.match(router, /headlessWindowOptions\(\{ width: 100, height: 100, show: true \}\)/, "the headless probe must exercise a requested visible constructor safely");
   const bootstrap = readFileSync(join(root, "e2e/helpers/headless-main.cjs"), "utf8");
   assert.ok(bootstrap.indexOf("installHeadlessUiRouter(") < bootstrap.indexOf("require(main)"), "headless router must install before wrapper or app main code");
   const e2eFiles = readdirSync(join(root, "e2e"), { recursive: true }).filter((name) => typeof name === "string" && name.endsWith(".ts"));
@@ -188,4 +238,7 @@ test("main installs the router before app windows and all Electron e2e launches 
   const fixtures = readFileSync(join(root, "e2e/fixtures.ts"), "utf8");
   assert.match(fixtures, /export function launchE2eElectron[\s\S]*?args\[0\] = join\(APP_ROOT, "e2e", "helpers", "headless-main\.cjs"\)/);
   assert.match(fixtures, /export function spawnE2eElectron[\s\S]*?args\[0\] = join\(APP_ROOT, "e2e", "helpers", "headless-main\.cjs"\)/);
+  const routerSpec = readFileSync(join(root, "e2e/headless-ui-router.spec.ts"), "utf8");
+  assert.match(routerSpec, /BrowserWindow\.getAllWindows\(\)\[0\][\s\S]*?window\.show\(\)/, "the probe must call show on Aya's real main window");
+  assert.doesNotMatch(readFileSync(join(root, "electron/preload.ts"), "utf8"), /probeVisibleWindow/);
 });

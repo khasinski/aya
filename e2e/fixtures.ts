@@ -8,6 +8,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
+import { headlessUiEventMismatch, type HeadlessUiEventExpectation, type HeadlessUiEventRecord } from "../dist-electron/e2e-headless-ui.js";
 import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
 export const {spawnAuthenticatedHost,authenticateFixtureSocket,redeemFixtureQuit,forgetFixtureAuthority}=require("../tests/helpers/pty-host-launch.cjs") as {
@@ -228,6 +229,16 @@ export function spawnE2eElectron(
   if (env.AYA_E2E_RUN === "1" && !process.env.CI && env.AYA_E2E_HEADLESS !== "1") {
     throw new Error("Local e2e must launch Aya with hidden windows");
   }
+  // Electron-run-as-Node helpers (the prestart host ticket issuer) do not load
+  // Aya main or create windows. Keep the local headless check above, then avoid
+  // wrapping this plain Node entry in the Electron UI bootstrap.
+  if (env.ELECTRON_RUN_AS_NODE === "1") {
+    delete env.AYA_E2E_HEADLESS;
+    delete env.AYA_E2E_HEADLESS_UI_LOG;
+    delete env.AYA_E2E_HEADLESS_UI_MODULE;
+    delete env.AYA_E2E_HEADLESS_UI_ACTIVE;
+    return spawn(binary, [...inputArgs], { ...options, env });
+  }
   const args = [...inputArgs];
   if (env.AYA_E2E_HEADLESS === "1") {
     if (!env.AYA_E2E_HEADLESS_UI_LOG) throw new Error("Headless e2e launch is missing its UI event log");
@@ -241,8 +252,8 @@ export function spawnE2eElectron(
 }
 
 /** Declare the native UI requests a test intentionally exercises in headless mode. */
-export function expectHeadlessUiEvents(seeded: SeededEnv, kinds: string[]): void {
-  writeFileSync(join(seeded.root, "e2e-headless-ui-expected.json"), JSON.stringify(kinds), { mode: 0o600 });
+export function expectHeadlessUiEvents(seeded: SeededEnv, events: HeadlessUiEventExpectation[]): void {
+  writeFileSync(join(seeded.root, "e2e-headless-ui-expected.json"), JSON.stringify(events), { mode: 0o600 });
 }
 
 /** Handle renderer JS dialogs in both local-headless runs and visible CI/Xvfb runs. */
@@ -277,15 +288,14 @@ function headlessUiFailure(seeded: SeededEnv): Error | null {
   const env = appEnv(seeded);
   if (env.AYA_E2E_HEADLESS !== "1") return null;
   const logPath = env.AYA_E2E_HEADLESS_UI_LOG;
+  if (!logPath) return new Error("Headless e2e has no native UI event log path");
   const logged = existsSync(logPath)
-    ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string; expected?: boolean })
+    ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as HeadlessUiEventRecord)
     : [];
-  const actual = logged.filter((event) => event.expected !== true).map((event) => event.kind);
   const expectedPath = join(seeded.root, "e2e-headless-ui-expected.json");
-  const expected = existsSync(expectedPath) ? JSON.parse(readFileSync(expectedPath, "utf8")) as string[] : [];
-  return JSON.stringify(actual) === JSON.stringify(expected)
-    ? null
-    : new Error(`Headless e2e requested native UI: expected ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`);
+  const expected = existsSync(expectedPath) ? JSON.parse(readFileSync(expectedPath, "utf8")) as HeadlessUiEventExpectation[] : [];
+  const mismatch = headlessUiEventMismatch(logged, expected);
+  return mismatch ? new Error(`Headless e2e requested native UI: ${mismatch}`) : null;
 }
 
 export function assertHeadlessUiEvents(seeded: SeededEnv): void {
@@ -391,7 +401,7 @@ export const test = base.extend<{
     if (seedOptions.preStartPtyHost) {
       // Match main's startHost: the Node/Electron runtime is part of the host content identity.
       const issuer=spawnE2eElectron(require("electron") as string,[join(APP_ROOT,'tests/helpers/pty-prestart-announced.cjs')],{
-        env:{...appEnv(seeded,process.env,false),ELECTRON_RUN_AS_NODE:'1',AYA_TEST_HOST_SCRIPT:PTY_HOST_SCRIPT},stdio:['ignore','ignore','pipe'],
+        env:{...appEnv(seeded),ELECTRON_RUN_AS_NODE:'1',AYA_TEST_HOST_SCRIPT:PTY_HOST_SCRIPT},stdio:['ignore','ignore','pipe'],
       });
       let issuerError='';issuer.stderr?.on('data',chunk=>{issuerError+=String(chunk);});
       await new Promise<void>((resolve,reject)=>{issuer.once('error',reject);issuer.once('exit',code=>code===0?resolve():reject(Error('Announced prestart issuer failed: '+issuerError)));});
