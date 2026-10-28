@@ -238,7 +238,6 @@ body {
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   user-select: none;
-  -webkit-app-region: drag;
 }
 .aya-brand {
   display: flex; align-items: center; gap: 8px;
@@ -254,9 +253,6 @@ body {
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 25%, transparent);
 }
 .aya-tabs {
-  display: flex;
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
 }
 .aya-project-tablist,
@@ -286,7 +282,7 @@ body {
 }
 .aya-tab--active::after {
   content: "";
-  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  position: absolute; left: 0; right: 0; height: 2px;
   background: var(--accent);
 }
 .aya-tab-name {
