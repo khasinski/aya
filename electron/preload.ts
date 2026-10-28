@@ -21,8 +21,8 @@ if (process.env[E2E_HEADLESS_UI_ACTIVE_ENV] === "1") {
   contextBridge.exposeInMainWorld("__ayaE2eHeadlessUi", {
     request: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", message: string) =>
       ipcRenderer.sendSync("e2e:headless-ui-renderer", kind, message),
-    setResponse: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", response: boolean | string | null | undefined) =>
-      ipcRenderer.sendSync("e2e:headless-ui-response", kind, response),
+    setResponse: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", matcher: { message?: string; messagePrefix?: string }, response: boolean | string | null | undefined) =>
+      ipcRenderer.sendSync("e2e:headless-ui-response", kind, matcher, response),
   });
   contextBridge.executeInMainWorld({
     func: () => {

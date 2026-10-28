@@ -44,9 +44,9 @@ test("headless Electron records and cancels native UI requests without showing t
     new Notification({ title: "headless", body: "must not show" }).show();
     await window.webContents.executeJavaScript("window.alert('headless renderer probe')");
     const cancelled = await window.webContents.executeJavaScript("window.confirm('default cancel')");
-    await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.confirm', true)");
+    await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.confirm', { message: 'test accepted' }, true)");
     const accepted = await window.webContents.executeJavaScript("window.confirm('test accepted')");
-    await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.prompt', 'safe answer')");
+    await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.prompt', { message: 'headless prompt' }, 'safe answer')");
     const prompt = await window.webContents.executeJavaScript("window.prompt('headless prompt')");
     return { message, syncMessage, open, openSync, save, saveSync, visible: BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()), cancelled, accepted, prompt };
   });

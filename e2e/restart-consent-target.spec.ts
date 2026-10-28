@@ -4,7 +4,7 @@ import {test,expect,hostPidsForHome,handleRendererDialogs} from './fixtures';
 import {waitForShellReady,visiblePane} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
 test('a changed restart target asks again; Cancel keeps Aya open and a later crash recovers',async({app,window,seeded})=>{
- await handleRendererDialogs(window,seeded,{'renderer.confirm':true});
+ await handleRendererDialogs(window,seeded,{'renderer.confirm':{message:'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.',response:true}});
  await waitForShellReady(window);const before=JSON.parse(readFileSync(join(seeded.ayaHome,'pty-owner/record.json'),'utf8')),hosts=hostPidsForHome(seeded.ayaHome);
  await app.evaluate(({dialog},root)=>{
   const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');

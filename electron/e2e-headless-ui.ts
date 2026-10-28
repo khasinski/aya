@@ -23,6 +23,7 @@ type EventKind =
 
 const installed = new WeakSet<object>();
 const ipcInstalled = new WeakSet<object>();
+type RendererResponse = { message?: string; messagePrefix?: string; response: unknown; sender: unknown };
 
 export interface HeadlessUiEventExpectation { kind: string; detail?: string }
 export interface HeadlessUiEventRecord { kind: string; detail?: string; expected?: boolean }
@@ -56,7 +57,7 @@ export function installHeadlessUiRouter(deps: {
   const alreadyInstalled = installed.has(deps.dialog);
   const append = deps.append ?? ((path, line) => appendFileSync(path, line, { encoding: "utf8", mode: 0o600 }));
   const record = (kind: EventKind, expected = false, detail?: string) => append(logPath, `${JSON.stringify({ kind, ...(detail === undefined ? {} : { detail }), expected, at: new Date().toISOString() })}\n`);
-  const rendererResponses = new Map<EventKind, unknown>();
+  const rendererResponses = new Map<EventKind, RendererResponse>();
   const headlessWindowOptions = (options: BrowserWindowConstructorOptions): BrowserWindowConstructorOptions => {
     if (options.show === false) return options;
     record("window.construct-visible", false, options.title || "(untitled window)");
@@ -85,18 +86,29 @@ export function installHeadlessUiRouter(deps: {
     deps.ipcMain.on("e2e:headless-ui-renderer", (event, kind: unknown, message: unknown) => {
       if (!isAyaSender(event.sender)) { event.returnValue = null; return; }
       if (kind === "renderer.alert" || kind === "renderer.confirm" || kind === "renderer.prompt") {
-        record(kind, rendererResponses.has(kind), String(message ?? ""));
-        event.returnValue = rendererResponses.has(kind) ? rendererResponses.get(kind)
+        const detail = String(message ?? "");
+        const configured = rendererResponses.get(kind);
+        const configuredForSender = configured?.sender === event.sender;
+        if (configuredForSender) rendererResponses.delete(kind);
+        const matched = configuredForSender && (configured?.message === detail
+          || (configured?.messagePrefix !== undefined && detail.startsWith(configured.messagePrefix)));
+        record(kind, matched, detail);
+        event.returnValue = matched ? configured!.response
           : kind === "renderer.confirm" ? false : kind === "renderer.prompt" ? null : undefined;
       } else {
         event.returnValue = null;
       }
     });
-    deps.ipcMain.on("e2e:headless-ui-response", (event, kind: unknown, response: unknown) => {
+    deps.ipcMain.on("e2e:headless-ui-response", (event, kind: unknown, matcher: unknown, response: unknown) => {
       if (!isAyaSender(event.sender)) { event.returnValue = false; return; }
-      if (kind === "renderer.alert") rendererResponses.set(kind, undefined);
-      else if (kind === "renderer.confirm" && typeof response === "boolean") rendererResponses.set(kind, response);
-      else if (kind === "renderer.prompt" && (typeof response === "string" || response === null)) rendererResponses.set(kind, response);
+      const rule = matcher && typeof matcher === "object" ? matcher as { message?: unknown; messagePrefix?: unknown } : {};
+      const hasExact = typeof rule.message === "string" && rule.message.length <= 4096;
+      const hasPrefix = typeof rule.messagePrefix === "string" && rule.messagePrefix.length > 0 && rule.messagePrefix.length <= 4096;
+      if (hasExact === hasPrefix) { event.returnValue = false; return; }
+      const match = hasExact ? { message: rule.message as string } : { messagePrefix: rule.messagePrefix as string };
+      if (kind === "renderer.alert" && response === undefined) rendererResponses.set(kind, { ...match, response: undefined, sender: event.sender });
+      else if (kind === "renderer.confirm" && typeof response === "boolean") rendererResponses.set(kind, { ...match, response, sender: event.sender });
+      else if (kind === "renderer.prompt" && (typeof response === "string" || response === null)) rendererResponses.set(kind, { ...match, response, sender: event.sender });
       else { event.returnValue = false; return; }
       event.returnValue = true;
     });
@@ -123,7 +135,7 @@ function routeDialogMethod<K extends keyof DialogApi>(
 ): void {
   const descriptor = Object.getOwnPropertyDescriptor(target, method);
   let override: ((...args: unknown[]) => unknown) | undefined;
-  const overrideCall = new AsyncLocalStorage<{ delegated: boolean }>();
+  const overrideCall = new AsyncLocalStorage<{ active: boolean; delegated: boolean; recorded: boolean }>();
   const detail = (args: unknown[]) => {
     if (method === "showErrorBox") return `${String(args[0] ?? "")}: ${String(args[1] ?? "")}`;
     const options = args.at(-1) as { message?: unknown; title?: unknown; detail?: unknown; defaultPath?: unknown } | undefined;
@@ -131,14 +143,26 @@ function routeDialogMethod<K extends keyof DialogApi>(
   };
   const routed = (...args: unknown[]) => {
     const activeCall = overrideCall.getStore();
-    if (activeCall) { activeCall.delegated = true; return fallback(args); }
+    if (activeCall?.active) {
+      activeCall.delegated = true;
+      activeCall.recorded = true;
+      record(kind, false, detail(args));
+      return fallback(args);
+    }
     const callDetail = detail(args);
     if (!override) { record(kind, false, callDetail); return fallback(args); }
-    const call = { delegated: false };
+    const call = { active: true, delegated: false, recorded: false };
     let result: unknown;
     try { result = overrideCall.run(call, () => override!.apply(target, args)); }
-    catch (error) { record(kind, !call.delegated, callDetail); throw error; }
-    const finish = () => record(kind, !call.delegated, callDetail);
+    catch (error) {
+      call.active = false;
+      if (!call.recorded) record(kind, !call.delegated, callDetail);
+      throw error;
+    }
+    const finish = () => {
+      call.active = false;
+      if (!call.recorded) { call.recorded = true; record(kind, !call.delegated, callDetail); }
+    };
     if (result && typeof (result as { then?: unknown }).then === "function") {
       return Promise.resolve(result).then((value) => { finish(); return value; }, (error) => { finish(); throw error; });
     }

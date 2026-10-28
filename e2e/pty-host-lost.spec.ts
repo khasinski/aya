@@ -88,7 +88,7 @@ test("a refused kill explains why restart stopped and keeps the disconnected pan
     ipcMain.removeHandler("pty:spawn");
     ipcMain.handle("pty:spawn", (_event, req) => { g.unexpectedSpawns.push(req); });
   });
-  const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.alert':undefined});
+  const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.alert':{messagePrefix:'Aya did not restart shell 1:',response:undefined}});
   await row.click({ button: "right" });
   await window.locator(".aya-context-menu-item", { hasText: "Restart terminal" }).click();
   await expect.poll(()=>rendererDialogs.read()).toContainEqual(expect.objectContaining({kind:"renderer.alert"}));
@@ -173,7 +173,7 @@ test.describe("a pane mounted after its host disconnected", () => {
 test('Diagnostics separately confirms stopping a retained owner after unavailable continuity and JS death',async({app,window,seeded})=>{
   const {before}=await loseHost(window,seeded.ayaHome);
   const pageErrors:string[]=[];window.on('pageerror',error=>pageErrors.push(String(error)));
-  const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.confirm':true});
+  const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.confirm':{message:'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.',response:true}});
   await app.evaluate(({dialog})=>{
     const original=dialog.showMessageBox.bind(dialog),g=globalThis as any;g.ownerAnswer=1;g.ownerQuestions=[];
     dialog.showMessageBox=(async(...args:Parameters<typeof dialog.showMessageBox>)=>{
@@ -191,7 +191,9 @@ test('Diagnostics separately confirms stopping a retained owner after unavailabl
   for(const pane of before.panes){expect(question).toContain(`PID ${pane.pid}`);expect(alive(pane.pid)).toBe(true);}
   expect(alive(before.pid)).toBe(true);expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);
   await expect.poll(async()=> (await rendererDialogs.read()).filter((event)=>event.kind==='renderer.confirm').length).toBe(1);
-  await app.evaluate(()=>{(globalThis as any).ownerAnswer=0;});await restart.click();
+  await app.evaluate(()=>{(globalThis as any).ownerAnswer=0;});
+  await rendererDialogs.respond('renderer.confirm',{message:'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.',response:true});
+  await restart.click();
   await expect.poll(()=>app.evaluate(()=>(globalThis as any).ownerQuestions.length)).toBe(2);
   await expect.poll(()=>alive(before.pid)).toBe(false);
   await expect.poll(async()=> (await rendererDialogs.read()).filter((event)=>event.kind==='renderer.confirm').length).toBe(2);

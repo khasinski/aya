@@ -104,7 +104,7 @@ test("removing a snippet (native confirm) drops it from disk", async ({
   app,
   seeded,
 }) => {
-  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": { messagePrefix: 'Remove snippet "', response: true } });
   const settings = await openSnippets(app, window);
   const rows = settings.locator(".aya-settings-snippet-row");
   const before = await rows.count();

@@ -5,7 +5,7 @@ import {waitForShellReady} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
 
 for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${action} cancels its unsent attach while display or visibility is pending`,async({app,window,seeded})=>{
- const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.alert':undefined});
+ const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.alert':{messagePrefix:'Aya did not close ',response:undefined}});
  await waitForShellReady(window);
  const record=()=>JSON.parse(readFileSync(join(seeded.ayaHome,'pty-owner/record.json'),'utf8'));
  await expect.poll(()=>record().panes.length).toBe(2);

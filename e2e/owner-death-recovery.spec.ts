@@ -9,7 +9,7 @@ test.use({ seedOptions: { singleTab: { presetId: "survivor", name: "Survivor" },
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 test("a dead owner's survivor stays blocked on Cancel and explicit confirmed recovery stops it before a new spawn", async ({ app, window, seeded }) => {
-  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
+  const rendererDialogs = await handleRendererDialogs(window, seeded, { "renderer.confirm": { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true } });
   const file = join(seeded.ayaHome, "pty-owner/record.json");
   let original: { pid: number; panes: Array<{ id: string; pid: number; startIdentity: string }> } | undefined;
   try {
@@ -69,6 +69,7 @@ test("a dead owner's survivor stays blocked on Cancel and explicit confirmed rec
     expect(JSON.parse(readFileSync(file,"utf8")).panes[0].pid).toBe(pane.pid);
     await fireShortcut(app,"open-settings");await settings.getByTestId("settings-tab").filter({hasText:"Diagnostics"}).click();
     await app.evaluate(() => { (globalThis as unknown as { recoveryAnswer: number }).recoveryAnswer = 0; });
+    await rendererDialogs.respond("renderer.confirm", { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true });
     await restart.click();
     await expect.poll(() => alive(pane.pid), { timeout: 15000 }).toBe(false);
     await expect.poll(() => existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).panes.some((p: { pid: number }) => p.pid === pane.pid) : false).toBe(false);

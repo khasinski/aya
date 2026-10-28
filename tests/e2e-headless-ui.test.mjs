@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,6 +111,50 @@ test("a router preloaded before main later attaches renderer dialog IPC", () => 
   }
 });
 
+test("renderer responses are one-shot and matched to the exact message", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-renderer-once-"));
+  try {
+    class FakeWindow {
+      static windows = [];
+      static getAllWindows() { return this.windows; }
+      constructor() { this.webContents = {}; FakeWindow.windows.push(this); }
+      isDestroyed() { return false; }
+      show() {} showInactive() {}
+    }
+    class FakeNotification { show() {} }
+    const handlers = new Map();
+    const ipcMain = { on: (channel, callback) => handlers.set(channel, callback) };
+    const logPath = join(dir, "ui.jsonl");
+    installHeadlessUiRouter({
+      env: { AYA_E2E_HEADLESS: "1", AYA_E2E_HEADLESS_UI_LOG: logPath },
+      app: { isPackaged: false, showAboutPanel() {} },
+      dialog: { showMessageBox() {}, showMessageBoxSync() {}, showErrorBox() {}, showOpenDialog() {}, showOpenDialogSync() {}, showSaveDialog() {}, showSaveDialogSync() {} },
+      BrowserWindow: FakeWindow,
+      Notification: FakeNotification,
+      ipcMain,
+    });
+    new FakeWindow();
+    const sender = FakeWindow.windows[0].webContents;
+    const responseEvent = { sender, returnValue: false };
+    handlers.get("e2e:headless-ui-response")(responseEvent, "renderer.confirm", { message: "Restart this terminal?" }, true);
+    assert.equal(responseEvent.returnValue, true);
+    const request = (message) => {
+      const event = { sender, returnValue: undefined };
+      handlers.get("e2e:headless-ui-renderer")(event, "renderer.confirm", message);
+      return event.returnValue;
+    };
+    assert.equal(request("Restart this terminal?"), true);
+    assert.equal(request("Stop every terminal?"), false, "a response cannot approve another message");
+    assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n").map((line) => {
+      const event = JSON.parse(line);
+      return { detail: event.detail, expected: event.expected };
+    }), [
+      { detail: "Restart this terminal?", expected: true },
+      { detail: "Stop every terminal?", expected: false },
+    ]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("packaged apps ignore inherited headless env and expose no renderer controls", () => {
   class FakeWindow { static getAllWindows() { return []; } show() {} showInactive() {} }
   class FakeNotification { show() {} }
@@ -165,6 +210,61 @@ test("async dialog overrides that await before delegating are recorded as unhand
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a delayed callback after an async override settles is an independent UI request", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-late-delegation-"));
+  try {
+    const logPath = join(dir, "ui.jsonl");
+    class FakeWindow { static getAllWindows() { return []; } show() {} showInactive() {} }
+    class FakeNotification { show() {} }
+    const dialog = { async showMessageBox() { return { response: 1 }; }, showMessageBoxSync() {}, showErrorBox() {}, showOpenDialog() {}, showOpenDialogSync() {}, showSaveDialog() {}, showSaveDialogSync() {} };
+    installHeadlessUiRouter({ env: { AYA_E2E_HEADLESS: "1", AYA_E2E_HEADLESS_UI_LOG: logPath }, app: { isPackaged: false, showAboutPanel() {} }, dialog, BrowserWindow: FakeWindow, Notification: FakeNotification });
+    const original = dialog.showMessageBox.bind(dialog);
+    dialog.showMessageBox = async (...args) => {
+      const message = args.at(-1)?.message;
+      if (message !== "intended confirm") return original(...args);
+      setTimeout(() => { void dialog.showMessageBox({ message: "late unrelated confirm" }); }, 0);
+      return { response: 0 };
+    };
+    await dialog.showMessageBox({ message: "intended confirm" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    void original;
+    assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n").map((line) => {
+      const event = JSON.parse(line);
+      return { detail: event.detail, expected: event.expected };
+    }), [
+      { detail: "intended confirm", expected: true },
+      { detail: "late unrelated confirm", expected: false },
+    ]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a delegated dialog is recorded before an async override settles", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-delegation-time-"));
+  try {
+    const logPath = join(dir, "ui.jsonl");
+    class FakeWindow { static getAllWindows() { return []; } show() {} showInactive() {} }
+    class FakeNotification { show() {} }
+    const dialog = { async showMessageBox() { return { response: 1 }; }, showMessageBoxSync() {}, showErrorBox() {}, showOpenDialog() {}, showOpenDialogSync() {}, showSaveDialog() {}, showSaveDialogSync() {} };
+    installHeadlessUiRouter({ env: { AYA_E2E_HEADLESS: "1", AYA_E2E_HEADLESS_UI_LOG: logPath }, app: { isPackaged: false, showAboutPanel() {} }, dialog, BrowserWindow: FakeWindow, Notification: FakeNotification });
+    const original = dialog.showMessageBox.bind(dialog);
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    dialog.showMessageBox = async (...args) => {
+      const response = await original(...args);
+      await pending;
+      return response;
+    };
+    const request = dialog.showMessageBox({ message: "delegated before wrapper settles" });
+    await new Promise((resolve) => setImmediate(resolve));
+    const rows = readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(rows.map(({ detail, expected }) => ({ detail, expected })), [
+      { detail: "delegated before wrapper settles", expected: false },
+    ]);
+    release();
+    await request;
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("async native dialog fallbacks preserve their Promise APIs", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-promises-"));
   try {
@@ -191,6 +291,71 @@ test("an unexpected headless event makes the fixture's shared check fail", () =>
   assert.match(headlessUiEventMismatch([
     { kind: "dialog.showMessageBox", detail: "different prompt", expected: false },
   ], [{ kind: "dialog.showMessageBox", detail: "declared prompt" }]), /different prompt/);
+});
+
+test("the seeded Playwright fixture fails the test on an unexpected UI event", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-fixture-failure-"));
+  const spec = join(root, "e2e", `headless-ui-fixture-probe-${process.pid}-${Date.now()}.spec.ts`);
+  const marker = join(dir, "seed-root.txt");
+  t.after(() => {
+    rmSync(spec, { force: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  writeFileSync(spec, `
+    import { appendFileSync, writeFileSync } from "node:fs";
+    import { test } from "./fixtures";
+    import { appEnv } from "./helpers/seed";
+    test("unexpected native request fails through seeded teardown", async ({ seeded }) => {
+      const env = appEnv(seeded);
+      writeFileSync(process.env.E2E_HEADLESS_UI_PROBE_ROOT_FILE!, seeded.root);
+      appendFileSync(env.AYA_E2E_HEADLESS_UI_LOG!, JSON.stringify({ kind: "dialog.showMessageBox", detail: "unexpected fixture prompt", expected: false }) + "\\n");
+    });
+  `);
+  const result = spawnSync(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", spec,
+    "--project=isolated", "--no-deps", "--workers=1", "--reporter=line"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env, CI: "", E2E_HEADLESS_UI_PROBE_ROOT_FILE: marker },
+  });
+  assert.notEqual(result.status, 0, `child Playwright run unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
+  assert.match(`${result.stdout}\n${result.stderr}`, /Headless e2e requested native UI:.*unexpected fixture prompt/);
+});
+
+test("malformed headless UI logs still clean the seeded fixture root", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-malformed-"));
+  const spec = join(root, "e2e", `headless-ui-malformed-probe-${process.pid}-${Date.now()}.spec.ts`);
+  const marker = join(dir, "seed-root.txt");
+  let seededRoot;
+  t.after(() => {
+    rmSync(spec, { force: true });
+    if (seededRoot) rmSync(seededRoot, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  writeFileSync(spec, `
+    import { appendFileSync, writeFileSync } from "node:fs";
+    import { test } from "./fixtures";
+    import { appEnv } from "./helpers/seed";
+    test("malformed native log is a fixture failure", async ({ seeded }) => {
+      const env = appEnv(seeded);
+      writeFileSync(process.env.E2E_HEADLESS_UI_PROBE_ROOT_FILE!, seeded.root);
+      appendFileSync(env.AYA_E2E_HEADLESS_UI_LOG!, "{not-json}\\n");
+    });
+  `);
+  const result = spawnSync(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", spec,
+    "--project=isolated", "--no-deps", "--workers=1", "--reporter=line"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env, CI: "", E2E_HEADLESS_UI_PROBE_ROOT_FILE: marker },
+  });
+  assert.notEqual(result.status, 0, `malformed UI log should fail the Playwright test:\n${result.stdout}\n${result.stderr}`);
+  assert.ok(existsSync(marker), "probe should report its seeded root");
+  seededRoot = readFileSync(marker, "utf8");
+  assert.equal(existsSync(seededRoot), false, "fixture cleanup must remove the seeded root after a corrupt log");
+  assert.match(`${result.stdout}\n${result.stderr}`, /Headless e2e UI log is invalid/);
 });
 
 test("main installs the router before app windows and all Electron e2e launches use the shared headless gate", () => {

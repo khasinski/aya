@@ -33,7 +33,7 @@ for (const answer of [1, 0]) test(`legacy migration ${answer ? "Cancel preserves
       expect(alive(before.child)).toBe(true);expect(alive(before.unknownChild)).toBe(true); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(false);
       await fireShortcut(apps.at(-1)!, "open-settings"); const settings = window.locator(".aya-modal--settings");
       await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
-      await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
+      await handleRendererDialogs(window, seeded, { "renderer.confirm": { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true } });
       await settings.locator(".aya-settings-general-row", { hasText: "PTY host" }).getByRole("button", { name: "Restart" }).click();
       await expect.poll(() => questions(seeded.ayaHome).length).toBe(2);
       expect(questions(seeded.ayaHome)[1].detail).toContain("reported by the old host");
@@ -81,7 +81,7 @@ for (const action of ["restart", "close pane", "close project"]) test(`a real in
     (globalThis as unknown as { watchOwnerSpawnRequests(): void }).watchOwnerSpawnRequests();
   });
   const row = second.window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');
-  const rendererDialogs = await handleRendererDialogs(second.window, seeded, { "renderer.alert": undefined });
+  const rendererDialogs = await handleRendererDialogs(second.window, seeded, { "renderer.alert": { messagePrefix: "Aya did not ", response: undefined } });
   if (action === "close project") await second.window.getByTitle(/^Close project /).click();
   else {
     await row.click({ button: "right" });

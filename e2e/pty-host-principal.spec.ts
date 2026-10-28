@@ -28,7 +28,7 @@ for(const scenario of ['takeover','deadline','close','quit'])test(`a still-closi
   await waiting.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','not-delivered-paste\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
   expect(await next.evaluate(()=>(globalThis as any).principalWrites)).toBe(0);
   if(scenario==='close'){
-   const rendererDialogs=await handleRendererDialogs(view,seeded,{'renderer.alert':undefined});
+   const rendererDialogs=await handleRendererDialogs(view,seeded,{'renderer.alert':{messagePrefix:'Aya did not close shell 1:',response:undefined}});
    await view.locator('.aya-sidebar-row[data-terminal-name="shell 1"]').click({button:'right'});
    await view.locator('.aya-context-menu-item',{hasText:'Close terminal'}).click();
    await expect.poll(async()=> (await rendererDialogs.read()).map((event)=>event.message).join('\n')).toContain('Aya did not close shell 1');

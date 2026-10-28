@@ -28,7 +28,7 @@ const isAlive = (pid: number) => {
 };
 
 test("a host with no pty-host.sock is warned about, and Restart puts things right", async ({ window, app, seeded }) => {
-  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true } });
   const settings = await openDiagnostics(app, window);
   const refresh = settings.locator(".aya-modal-btn", { hasText: "Refresh" });
   const report = async () => {

@@ -257,31 +257,54 @@ export function expectHeadlessUiEvents(seeded: SeededEnv, events: HeadlessUiEven
 }
 
 /** Handle renderer JS dialogs in both local-headless runs and visible CI/Xvfb runs. */
+export type RendererDialogResponse = { message?: string; messagePrefix?: string; response: boolean | string | null | undefined };
+type RendererDialogKind = "renderer.alert" | "renderer.confirm" | "renderer.prompt";
+function rendererDialogMatches(configured: RendererDialogResponse | undefined, message: string): boolean {
+  return configured?.message === message
+    || (configured?.messagePrefix !== undefined && message.startsWith(configured.messagePrefix));
+}
+
 export async function handleRendererDialogs(
   page: Page,
   seeded: SeededEnv,
-  responses: Partial<Record<"renderer.alert" | "renderer.confirm" | "renderer.prompt", boolean | string | null>> = {},
-): Promise<{ read: () => Promise<Array<{ kind: string; message: string }>> }> {
+  responses: Partial<Record<RendererDialogKind, RendererDialogResponse>> = {},
+): Promise<{ read: () => Promise<Array<{ kind: string; message: string }>>; respond: (kind: RendererDialogKind, response: RendererDialogResponse) => Promise<void> }> {
   const headless = appEnv(seeded).AYA_E2E_HEADLESS === "1";
+  const respond = async (kind: RendererDialogKind, response: RendererDialogResponse) => {
+    if ((response.message === undefined) === (response.messagePrefix === undefined)) {
+      throw new Error("A renderer dialog response needs exactly one exact message or message prefix");
+    }
+    responses[kind] = response;
+    if (headless) {
+      await page.evaluate(({ kind, response }) => {
+        const w = window as Window & { __ayaE2eHeadlessUi: { setResponse: (kind: string, matcher: { message?: string; messagePrefix?: string }, response: unknown) => void } };
+        const matcher = response.message !== undefined ? { message: response.message } : { messagePrefix: response.messagePrefix };
+        w.__ayaE2eHeadlessUi.setResponse(kind, matcher, response.response);
+      }, { kind, response });
+    }
+  };
   if (headless) {
-    await page.evaluate((values) => {
-      const w = window as Window & { __ayaE2eHeadlessUi: { setResponse: (kind: string, response: unknown) => void }; __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> };
+    await page.evaluate(() => {
+      const w = window as Window & { __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> };
       w.__ayaE2eRendererEvents = [];
       window.addEventListener("aya:e2e-headless-dialog", (event) => w.__ayaE2eRendererEvents?.push((event as CustomEvent).detail));
-      for (const [kind, response] of Object.entries(values)) w.__ayaE2eHeadlessUi.setResponse(kind, response);
-    }, responses);
-    return { read: () => page.evaluate(() => (window as Window & { __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> }).__ayaE2eRendererEvents ?? []) };
+    });
+    for (const [kind, response] of Object.entries(responses)) await respond(kind as RendererDialogKind, response);
+    return { read: () => page.evaluate(() => (window as Window & { __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> }).__ayaE2eRendererEvents ?? []), respond };
   }
   const events: Array<{ kind: string; message: string }> = [];
   page.on("dialog", async (dialog) => {
     const kind = `renderer.${dialog.type()}`;
     events.push({ kind, message: dialog.message() });
-    const response = responses[kind as keyof typeof responses];
-    if (dialog.type() === "confirm" && response === false) await dialog.dismiss();
+    const configured = responses[kind as keyof typeof responses];
+    const matches = rendererDialogMatches(configured, dialog.message());
+    const response = matches ? configured?.response : undefined;
+    if (dialog.type() === "confirm" && response === true) await dialog.accept();
     else if (dialog.type() === "prompt" && typeof response === "string") await dialog.accept(response);
-    else await dialog.accept();
+    else if (dialog.type() === "alert") await dialog.accept();
+    else await dialog.dismiss();
   });
-  return { read: async () => events };
+  return { read: async () => events, respond };
 }
 
 function headlessUiFailure(seeded: SeededEnv): Error | null {
@@ -289,13 +312,18 @@ function headlessUiFailure(seeded: SeededEnv): Error | null {
   if (env.AYA_E2E_HEADLESS !== "1") return null;
   const logPath = env.AYA_E2E_HEADLESS_UI_LOG;
   if (!logPath) return new Error("Headless e2e has no native UI event log path");
-  const logged = existsSync(logPath)
-    ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as HeadlessUiEventRecord)
-    : [];
-  const expectedPath = join(seeded.root, "e2e-headless-ui-expected.json");
-  const expected = existsSync(expectedPath) ? JSON.parse(readFileSync(expectedPath, "utf8")) as HeadlessUiEventExpectation[] : [];
-  const mismatch = headlessUiEventMismatch(logged, expected);
-  return mismatch ? new Error(`Headless e2e requested native UI: ${mismatch}`) : null;
+  try {
+    const logged = existsSync(logPath)
+      ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as HeadlessUiEventRecord)
+      : [];
+    const expectedPath = join(seeded.root, "e2e-headless-ui-expected.json");
+    const expected = existsSync(expectedPath) ? JSON.parse(readFileSync(expectedPath, "utf8")) as HeadlessUiEventExpectation[] : [];
+    const mismatch = headlessUiEventMismatch(logged, expected);
+    return mismatch ? new Error(`Headless e2e requested native UI: ${mismatch}`) : null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Error(`Headless e2e UI log is invalid: ${message}`);
+  }
 }
 
 export function assertHeadlessUiEvents(seeded: SeededEnv): void {
@@ -345,19 +373,23 @@ export const test = base.extend<{
     const s = seedEnv(seedOptions);
     await use(s);
     const uiError = headlessUiFailure(s);
-    // Attach the PTY lifecycle log before the root is wiped: the only record.
-    if (testInfo.status !== testInfo.expectedStatus) {
-      for (const name of ["pty-events.log", "pty-events.log.1", "e2e-headless-ui.log"]) {
-        const p = join(s.ayaHome, name);
-        const uiLog = join(s.root, name);
-        const evidence = name === "e2e-headless-ui.log" ? uiLog : p;
-        if (existsSync(evidence)) {
-          await testInfo.attach(name, { path: evidence, contentType: "text/plain" });
+    try {
+      // Attach logs before the root is wiped, including malformed UI logs that
+      // turn an otherwise passing test into a teardown failure.
+      if (testInfo.status !== testInfo.expectedStatus || uiError) {
+        for (const name of ["pty-events.log", "pty-events.log.1", "e2e-headless-ui.log"]) {
+          const p = join(s.ayaHome, name);
+          const uiLog = join(s.root, name);
+          const evidence = name === "e2e-headless-ui.log" ? uiLog : p;
+          if (existsSync(evidence)) {
+            await testInfo.attach(name, { path: evidence, contentType: "text/plain" });
+          }
         }
       }
+    } finally {
+      // Here, not in `app`: this teardown also runs when launching the app failed.
+      try { await cleanUpSeeded(s); } finally { forgetFixtureAuthority(s.ayaHome); }
     }
-    // Here, not in `app`: this teardown also runs when launching the app failed.
-    try{await cleanUpSeeded(s);}finally{forgetFixtureAuthority(s.ayaHome);}
     if (uiError) throw uiError;
   },
 

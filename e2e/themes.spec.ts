@@ -11,7 +11,7 @@ test("deleting the active theme falls back to a valid theme and persists", async
   app,
   seeded,
 }) => {
-  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": { messagePrefix: 'Delete theme "', response: true } });
   await fireShortcut(app, "open-settings");
   const settings = window.locator(".aya-modal--settings");
   await expect(settings).toBeVisible();

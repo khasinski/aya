@@ -78,7 +78,7 @@ function sleeping(): number[] {
 }
 
 test("a host restart asks about an agent mid-turn and a shell running a command", async ({ app, window, seeded }) => {
-  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
+  const rendererDialogs = await handleRendererDialogs(window, seeded, { "renderer.confirm": { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true } });
   const buffer = (id: string) => window.evaluate((terminalId) => window.aya.ptyBuffer(terminalId), id);
   await waitForShellReady(window);
   await expect.poll(() => buffer("tab-right"), { timeout: 15_000 }).toContain("esc to interrupt");
@@ -102,6 +102,7 @@ test("a host restart asks about an agent mid-turn and a shell running a command"
 
   // Restart: asked again, and the restart stops the command and the agent's process.
   await answerDialogs(app, 0);
+  await rendererDialogs.respond("renderer.confirm", { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true });
   await restartHost(settings);
   await expect.poll(() => asked(app)).toEqual([QUESTION, QUESTION]);
   await expect.poll(sleeping, { timeout: 15_000 }).toEqual([]);
@@ -109,7 +110,7 @@ test("a host restart asks about an agent mid-turn and a shell running a command"
 });
 
 test("a restart whose question cannot be asked does not go ahead", async ({ app, window, seeded }) => {
-  const rendererDialogs = await handleRendererDialogs(window, seeded, { "renderer.alert": undefined });
+  const rendererDialogs = await handleRendererDialogs(window, seeded, { "renderer.alert": { messagePrefix: "Aya did not restart shell 1:", response: undefined } });
   await waitForShellReady(window);
   const shell = visiblePane(window, "shell 1").getByTestId("xterm-host");
   await shell.click();
