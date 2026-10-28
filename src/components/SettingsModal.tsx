@@ -1,4 +1,4 @@
-import { agentBriefHint, effectiveAutoResume, inferAgent } from "../agentPreset";
+import { agentBriefHint, inferAgent } from "../agentPreset";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../ollama-defaults";
 import { PRESET_ID_SHELL } from "../preset-ids";
 import { uuid } from "../uuid";
@@ -21,22 +21,30 @@ import {
   type WebConfigureRequest,
   type WebServerStatus,
   looksNonInteractive,
-  presetSlug,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { MachinesSettings } from "./MachinesSettings";
 import { DiagnosticsTab } from "./settings/DiagnosticsTab";
 import { UpdatesTab } from "./settings/UpdatesTab";
 import { SettingsHeader, SettingsIcon, SettingsRow } from "./settings/parts";
+import {
+  DEFAULT_CLAUDE_CONFIG_DIR,
+  DEFAULT_CODEX_CONFIG_DIR,
+  agentCommand,
+  fromDraft,
+  snippetFromDraft,
+  snippetToDraft,
+  toDraft,
+  type DraftPreset,
+  type DraftSnippet,
+} from "./settings/drafts";
+import { ThemeSwatch } from "./settings/ThemeSwatch";
 import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { HOOK_THROTTLE_MINUTES } from "../main-mirrors";
 import { allNetworksWarning, WEB_LOOPBACK_HOST, webHostOptions } from "../web-host-options";
-
-const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
-const DEFAULT_CODEX_CONFIG_DIR = "~/.codex";
 
 interface Props {
   presets: Preset[];
@@ -92,134 +100,6 @@ interface Props {
    *  button confirms first. Resolves the reason when the restart did not finish, else null. */
   onRestartPtyHost: () => Promise<string | null> | void;
   initialTab?: SettingsTab;
-}
-
-interface DraftPreset extends Preset {
-  __key: string;
-}
-
-function toDraft(p: Preset): DraftPreset {
-  const agent = p.agent ?? inferAgent(p);
-  return {
-    ...p,
-    agent,
-    configDir: p.configDir ?? inferConfigDir(p.command, agent),
-    unsafeMode: p.unsafeMode ?? inferUnsafeMode(p.command, agent),
-    // Same default the runtime uses, so the toggle the user sees matches the
-    // flag the spawn actually applies (single source: effectiveAutoResume).
-    autoResume: effectiveAutoResume(p),
-    __key: uuid(),
-  };
-}
-
-function fromDraft(p: DraftPreset): Preset {
-  const id = p.id.trim() || presetSlug(p.name);
-  const themeId = p.themeId && p.themeId.trim() ? p.themeId : undefined;
-  const agent = p.agent;
-  const configDir =
-    p.configDir && p.configDir.trim() ? p.configDir.trim() : undefined;
-  return {
-    id,
-    name: p.name,
-    icon: p.icon,
-    color: p.color,
-    command: p.command,
-    ...(agent ? { agent } : {}),
-    ...(configDir ? { configDir } : {}),
-    ...(p.unsafeMode ? { unsafeMode: true } : {}),
-    // Persist autoResume explicitly (incl. false) so a deliberate opt-out
-    // survives - absence is treated as "default on" for agent presets.
-    ...(typeof p.autoResume === "boolean" ? { autoResume: p.autoResume } : {}),
-    ...(p.agentBrief ? { agentBrief: true } : {}),
-    ...(themeId ? { themeId } : {}),
-  };
-}
-
-function inferConfigDir(command: string, agent: Preset["agent"]): string | undefined {
-  const key =
-    agent === "claude"
-      ? "CLAUDE_CONFIG_DIR"
-      : agent === "codex"
-        ? "CODEX_HOME"
-        : null;
-  if (!key) return undefined;
-  const value = command.match(new RegExp(`(?:^|\\s)${key}=("[^"]*"|'[^']*'|\\S+)`))?.[1];
-  if (!value) return undefined;
-  const unquoted = value.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
-  return unquoted.replace(/^\$HOME(?=\/|$)/, "~");
-}
-
-function inferUnsafeMode(command: string, agent: Preset["agent"]): boolean {
-  if (agent === "claude") {
-    return /\s--dangerously-skip-permissions(?:\s|$)/.test(` ${command} `);
-  }
-  if (agent === "codex") {
-    return /\s(?:--dangerously-bypass-approvals-and-sandbox|--yolo)(?:\s|$)/.test(
-      ` ${command} `,
-    );
-  }
-  return false;
-}
-
-function quoteEnv(value: string): string {
-  const trimmed = value.trim();
-  if (/^~(?=\/|$)/.test(trimmed)) {
-    const suffix = trimmed.slice(1).replace(/(["\\$`])/g, "\\$1");
-    return `"$HOME${suffix}"`;
-  }
-  return `"${trimmed.replace(/(["\\$`])/g, "\\$1")}"`;
-}
-
-function isDefaultAgentConfigDir(
-  agent: Preset["agent"],
-  configDir: string | undefined,
-): boolean {
-  const trimmed = configDir?.trim();
-  if (!trimmed) return true;
-  if (agent === "claude") {
-    return trimmed === DEFAULT_CLAUDE_CONFIG_DIR || trimmed === "$HOME/.claude";
-  }
-  if (agent === "codex") {
-    return trimmed === DEFAULT_CODEX_CONFIG_DIR || trimmed === "$HOME/.codex";
-  }
-  return false;
-}
-
-function agentCommand(
-  agent: Preset["agent"],
-  configDir: string | undefined,
-  unsafeMode: boolean | undefined,
-): string {
-  if (agent === "claude") {
-    const base = configDir?.trim() && !isDefaultAgentConfigDir(agent, configDir)
-      ? `CLAUDE_CONFIG_DIR=${quoteEnv(configDir)} claude`
-      : "claude";
-    return unsafeMode ? `${base} --dangerously-skip-permissions` : base;
-  }
-  if (agent === "codex") {
-    const base = configDir?.trim() && !isDefaultAgentConfigDir(agent, configDir)
-      ? `CODEX_HOME=${quoteEnv(configDir)} codex`
-      : "codex";
-    return unsafeMode ? `${base} --dangerously-bypass-approvals-and-sandbox` : base;
-  }
-  return "";
-}
-
-interface DraftSnippet extends Snippet {
-  __key: string;
-}
-
-function snippetToDraft(c: Snippet): DraftSnippet {
-  return { ...c, __key: uuid() };
-}
-
-function snippetFromDraft(c: DraftSnippet): Snippet {
-  return {
-    id: c.id.trim() || presetSlug(c.name || c.text),
-    name: c.name,
-    text: c.text,
-    autoRun: c.autoRun,
-  };
 }
 
 export function SettingsModal({
@@ -2487,24 +2367,5 @@ export function SettingsModal({
         </div>
       </div>
     </div>
-  );
-}
-
-/** A tiny inline strip of the theme's six most distinctive colors so the user
- *  can spot themes at a glance without picking each one. */
-function ThemeSwatch({ theme }: { theme: Theme }) {
-  const { background, foreground, red, green, blue, magenta } = theme.colors;
-  return (
-    <span
-      className="aya-theme-swatch"
-      title={`${theme.name}`}
-      style={{ background }}
-    >
-      <span style={{ background: foreground }} />
-      <span style={{ background: red }} />
-      <span style={{ background: green }} />
-      <span style={{ background: blue }} />
-      <span style={{ background: magenta }} />
-    </span>
   );
 }
