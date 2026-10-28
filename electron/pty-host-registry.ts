@@ -207,6 +207,26 @@ export function liveHostRecords(
   return readHostRecords(dir).filter((rec) => isSameRecordedProcess(rec, probe(rec.pid), hostScript));
 }
 
+/** liveHostRecords off the event loop (Diagnostics, the launch check, Stop other hosts): each record's ps is awaited.
+ *  A caller that signals a returned pid must first re-check that pid's kernel identity, with no await before kill. */
+export async function liveHostRecordsAsync(
+  hostScript: string,
+  dir: string = HOST_REGISTRY_DIR,
+  probe: (pid: number) => ProcInfo | Promise<ProcInfo> = readProcInfoAsync,
+): Promise<HostRecord[]> {
+  const live: HostRecord[] = [];
+  for (const rec of readHostRecords(dir)) {
+    let info: ProcInfo;
+    try {
+      info = await probe(rec.pid);
+    } catch {
+      continue; // an unknown probe is never "same"
+    }
+    if (isSameRecordedProcess(rec, info, hostScript)) live.push(rec);
+  }
+  return live;
+}
+
 /** FAIL-CLOSED gate for kill(-pgid): never our pid or init, and only a detached group leader (pgid ==
  *  pid), so a corrupted record cannot name another group. */
 export function isReapableHost(

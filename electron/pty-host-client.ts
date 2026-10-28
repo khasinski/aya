@@ -43,8 +43,8 @@ import {ownerArtifactPaths,ownerProcessStartIdentity} from "./pty-owner-client";
 import {PtyCrashRecovery,CRASH_RECOVERY_POLICY,type CrashRecoveryPolicy,type RecoveryAttemptResult} from "./pty-crash-recovery";
 import {parseRecoveryBootstrap,type RecoveryBootstrap,type RecoveryPane} from "./pty-recovery-bootstrap";
 import {MAX_PTY_PANES} from "./pty-pane-limits";
-import {readProcInfo} from "./pty-host-registry";
-import {ownerRecordIsLive,ownerReaderIsLive,readOwnerRecord} from "./pty-owner-registry";
+import {readProcInfoAsync} from "./pty-host-registry";
+import {ownerRecordIsLiveAsync,ownerReaderIsLiveAsync,readOwnerRecord,type OwnerRecord} from "./pty-owner-registry";
 import type {RecoveryOwnerIdentity} from "./pty-owner-runtime";
 import {ownerBinaryHash} from "./pty-owner-registry";
 import {classifyIdentity} from "./pty-host-staleness";
@@ -64,7 +64,7 @@ import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
 import {OrdinaryAuthAnnouncement} from "./pty-host-auth-announcement";
 import type {AuthTransferTicket} from "./pty-host-auth-ticket";
 import {redeemHostCapability} from "./pty-host-auth-redemption";
-import {assertHostCreationSafe,waitForHostShutdown} from "./pty-host-start-guard";
+import {assertHostCreationSafe,hostCreationPermit,waitForHostShutdown,type HostCreationPermit} from "./pty-host-start-guard";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
 export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
@@ -587,11 +587,11 @@ export class PtyHostClient {
       };
     } catch(error) {
       if((error as {code?:string})?.code==="PTY_HOST_PRINCIPAL_BUSY"){
-        const {authentication:_authentication,...status}=refusedHostStatus(this.principalBusyPeer??null);
+        const {authentication:_authentication,...status}=await refusedHostStatus(this.principalBusyPeer??null);
         return {...status,principalBusy:true,recoveryReason:HOST_PRINCIPAL_BUSY_REASON};
       }
       if(!this.ownerContinuityUnavailable&&(this.authRefusalPeer!==undefined||(error as {code?:string})?.code==="PTY_HOST_START_BLOCKED")){
-        const peer=this.authRefusalPeer??null,status=refusedHostStatus(peer);
+        const peer=this.authRefusalPeer??null,status=await refusedHostStatus(peer);
         if(peer&&status.authentication.targetVerified&&!status.owner){
           const legacy=await probeLegacyInventory(peer,this.legacyPaneIds);
           if(legacy){status.authentication.legacy=legacy;status.ptyCount=legacy.total;this.unannouncedRefusal=false;}
@@ -695,12 +695,14 @@ export class PtyHostClient {
     if(transfer.ticket.purpose==="ordinary-quit"){this.ordinaryQuitHandoverCompleted=true;if(transfer.ticket.replacedBuild)this.replacedBuildHandoverCompleted=true;}
     this.receivedAuthTransfer=null;
   }
-  private refuseMissingAnnouncedHost():Error{
+  private async refuseMissingAnnouncedHost():Promise<Error>{
     const transfer=this.receivedAuthTransfer;
     if(transfer?.retirementOwner){
-      // Synchronous on purpose: a confirmed-gone reader is what hands recovery to the retained owner, decided in the
-      // same turn as the probe. Bounded to 200 ms and only reached when an announced host is missing.
-      const reader=readProcInfo(transfer.ticket.hostPid,200);
+      // A confirmed-gone reader hands recovery to the retained owner. Gone is final for that process instance, so
+      // the ps may run off the event loop; what can change while it runs is this client, re-checked with no await
+      // before the hand-over. Owner retirement still re-inspects the reader before any signal. Bounded to 200 ms.
+      const reader=await readProcInfoAsync(transfer.ticket.hostPid,200);
+      if(this.disposed||this.receivedAuthTransfer!==transfer||!transfer.retirementOwner)return new HostAuthError();
       if(!reader.alive&&!reader.probeFailed){
         this.recoveryOwner={...transfer.retirementOwner};this.ownerContinuityUnavailable=true;
         return this.blockUnavailableOwner();
@@ -819,8 +821,9 @@ export class PtyHostClient {
           try{committed=await call({id:0,type:"handover-detach",consented:state.consented});}catch(error){commitError=error;}
           // No successor while the recorded old process instance still lives.
           if(!await waitForExit(ticket.hostPid,8000)){if(commitError)throw commitError;throw new Error("The old terminal host has not exited; no successor was started");}
+          const permit=await hostCreationPermit(); // never throws; startHost confirms it before unlink and fork
           detached=true;this.retireReceivedTransfer(transfer,{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity});this.dropSocket();key.copy(this.ownerSecret);
-          const child=this.startHost({format:1,core:state.core});
+          const child=this.startHost({format:1,core:state.core},permit);
           try{await this.openStartedHostSocket();}catch(error){
             // A socketless partial successor must not keep a lease or compete
             // with a later host. This is our unreaped JS child, never the owner.
@@ -1230,7 +1233,7 @@ export class PtyHostClient {
     const paneId=request.type==="spawn"?request.req.ptyId:undefined;
     if(paneId){pending=new AbortController();this.principalAttaches.set(paneId,(this.principalAttaches.get(paneId)??new Set()).add(pending));}
     try{
-      try{if(duringReplace&&this.receivedAuthTransfer){if(!this.isConnected())try{await this.openSocket();}catch(error){if(["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw this.refuseMissingAnnouncedHost();throw error;}}else await this.connect();}catch(error){
+      try{if(duringReplace&&this.receivedAuthTransfer){if(!this.isConnected())try{await this.openSocket();}catch(error){if(["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw await this.refuseMissingAnnouncedHost();throw error;}}else await this.connect();}catch(error){
         if((error as {code?:string})?.code!=="PTY_HOST_PRINCIPAL_BUSY"||!paneId)throw error;
         if(pending?.signal.aborted)throw new HostPrincipalBusyError();
         this.principalBusyPanes.add(paneId);this.authRefusedPanes.set(paneId,HOST_PRINCIPAL_BUSY_REASON);
@@ -1367,7 +1370,7 @@ export class PtyHostClient {
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       if(!["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw error;
       if(this.principalBusyPeer!==undefined)throw new HostPrincipalBusyError();
-      if(this.receivedAuthTransfer)throw this.refuseMissingAnnouncedHost();
+      if(this.receivedAuthTransfer)throw await this.refuseMissingAnnouncedHost();
       const prior=this.pendingPlannedHost;
       if(prior&&prior.exitCode===null&&prior.signalCode===null){
         await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);prior.removeListener("exit",done);resolve();};const timer=setTimeout(done,1000);prior.once("exit",done);});
@@ -1376,8 +1379,10 @@ export class PtyHostClient {
       if(this.ownerContinuityUnavailable)throw this.blockUnavailableOwner();
       try{await waitForHostShutdown(PTY_HOST_SOCKET_PATH,this.startupCancelled.signal);}catch(error){if(this.disposed)throw new Error(DISPOSED_MESSAGE);throw error;}
       if(this.disposed)throw new Error(DISPOSED_MESSAGE);
+      const permit=await hostCreationPermit();
+      if(this.disposed)throw new Error(DISPOSED_MESSAGE);
       this.hostAuthKey??=newHostAuthCapability();
-      this.startHost();
+      this.startHost(undefined,permit);
       await this.openStartedHostSocket();
       this.reusedHost = this.plannedReusedBoot;
     }
@@ -1427,9 +1432,11 @@ export class PtyHostClient {
     });
   }
 
-  private startHost(bootstrap?:HandoverBootstrap|RecoveryBootstrap): ChildProcess {
+  /** permit: a host-creation proof whose ps ran asynchronously; its spawn-free confirm() replaces the synchronous
+   *  proof at both checks below. Without one (tests, scripts) the synchronous proof runs. */
+  private startHost(bootstrap?:HandoverBootstrap|RecoveryBootstrap,permit?:HostCreationPermit): ChildProcess {
     if(this.ownerContinuityUnavailable)throw this.blockUnavailableOwner();
-    assertHostCreationSafe();
+    assertHostCreationSafe(permit);
     if(!this.hostAuthKey)throw new HostAuthError();
     if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null)throw new Error("The previous terminal successor has not exited; another host was not started");
     try {
@@ -1440,8 +1447,8 @@ export class PtyHostClient {
     const stderr = openHostStderr();
     try {
       // Re-prove absence after opening stderr, immediately before the fork.
-      // A grace result or an earlier pre-unlink check is not a reusable permit.
-      assertHostCreationSafe();
+      // A grace result or the pre-unlink check is not enough: confirm again.
+      assertHostCreationSafe(permit);
       const child = spawn(process.execPath, [this.hostScript], {
         detached: true,
         stdio: ["ignore", "ignore", stderr, "pipe", bootstrap?"pipe":"ignore", "pipe"],
@@ -1718,11 +1725,21 @@ export class PtyHostClient {
     signal.addEventListener("abort",stop,{once:true});
     try{
       this.recoveryFailure="The previous host or its native owner could not be verified.";
-      const previous=readProcInfo(context.pid);
+      // The ps probes run off the event loop. What they establish is re-checked without a process spawn, and with no
+      // await, right before startHost below: previousStillDead() and an unchanged owner record.
+      const previous=await readProcInfoAsync(context.pid);
       if(previous.probeFailed)return "blocked";
-      if(previous.alive){const identity=ownerProcessStartIdentity(context.pid);if(!identity||identity===context.start)return "blocked";} // socket loss alone is not death
+      // Socket loss alone is not death: a live previous host, or one whose identity is unknown, blocks recovery.
+      const previousStillDead=():boolean=>{
+        try{process.kill(context.pid,0);}catch(error){if((error as NodeJS.ErrnoException).code==="ESRCH")return true;}
+        let identity:string|null=null;try{identity=ownerProcessStartIdentity(context.pid);}catch{/* unknown blocks */}
+        return !!identity&&identity!==context.start;
+      };
+      if(previous.alive&&!previousStillDead())return "blocked";
       const record=readOwnerRecord(),expected=context.owner;
-      if(!record||record.pid!==expected.pid||record.startTime!==expected.startTime||record.instanceId!==expected.instanceId||record.binaryHash!==expected.binaryHash||!ownerRecordIsLive(record)||ownerReaderIsLive(record)||ownerBinaryHash(ownerArtifactPaths().executable)!==expected.binaryHash)return "blocked";
+      if(!record||record.pid!==expected.pid||record.startTime!==expected.startTime||record.instanceId!==expected.instanceId||record.binaryHash!==expected.binaryHash)return "blocked";
+      // A dead reader stays dead; a live owner that dies after this is refused by the new host's own owner check.
+      if(!await ownerRecordIsLiveAsync(record)||await ownerReaderIsLiveAsync(record)||ownerBinaryHash(ownerArtifactPaths().executable)!==expected.binaryHash)return "blocked";
       const panes:RecoveryPane[]=[];
       for(const pane of record.panes){
         const launch=this.recoveryLaunches.get(pane.id);
@@ -1737,7 +1754,12 @@ export class PtyHostClient {
         await new Promise<void>(resolve=>{const timer=setTimeout(resolve,1000);this.pendingPlannedHost!.once("exit",()=>{clearTimeout(timer);resolve();});});
       }
       if(this.disposed||signal.aborted)return "blocked";
-      child=this.startHost(bootstrap);if(signal.aborted)stop();
+      const permit=await hostCreationPermit();
+      if(this.disposed||signal.aborted)return "blocked";
+      // Spawn-free re-checks, no await before the fork: the previous host is still not running under its recorded
+      // identity, and the owner record the probes verified is still the one on disk.
+      if(!previousStillDead()||!sameOwnerRecord(record,readOwnerRecord()))return "blocked";
+      child=this.startHost(bootstrap,permit);if(signal.aborted)stop();
       await this.openStartedHostSocket(signal,child);
       if(signal.aborted||this.disposed)throw Error("Crash recovery cancelled");
       const socket=this.socket;if(!socket)throw Error("Crash recovery did not connect");
@@ -1778,6 +1800,12 @@ export class PtyHostClient {
       this.dropSocket();return signal.aborted||this.disposed?"blocked":"retry";
     }finally{signal.removeEventListener("abort",stop);}
   }
+}
+
+/** The owner and reader instance a crash-recovery probe verified are still the ones the record names. */
+function sameOwnerRecord(a:OwnerRecord,b:OwnerRecord|null):boolean{
+  return !!b&&a.pid===b.pid&&a.startTime===b.startTime&&a.startIdentity===b.startIdentity&&a.instanceId===b.instanceId&&a.binaryHash===b.binaryHash&&
+    a.executable===b.executable&&a.jsPid===b.jsPid&&a.jsStartTime===b.jsStartTime;
 }
 
 /** `attachOnly` always attaches; `attachIfReused` only on a host this client did not spawn (a fresh host

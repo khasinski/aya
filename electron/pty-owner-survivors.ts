@@ -1,6 +1,6 @@
 // The shared B2 process-instance policy. Main may use it only after owner
 // retirement and separate survivor consent; no helper JS host is needed.
-import {ownerProcessGroupExists,ownerRecoverySupported,snapshotOwnerRecoveryMembers,recoverOwnerProcess,ownerGroupMemberPids,type OwnerPane} from "./pty-owner-client";
+import {ownerProcessGroupExists,ownerRecoverySupported,snapshotOwnerRecoveryMembersAsync,recoverOwnerProcess,ownerGroupMemberPidsAsync,type OwnerPane} from "./pty-owner-client";
 import type {OwnerRecord} from "./pty-owner-registry";
 export interface OwnerSurvivorState {
   record:OwnerRecord;inventory:Map<string,OwnerPane>;disconnected:Map<string,OwnerPane>;persist():void;
@@ -15,7 +15,7 @@ export async function settleOwnerSurvivors(state:OwnerSurvivorState,orderlyExit:
           if (!ownerRecoverySupported()) throw new Error("this kernel/process environment does not support process-instance-safe recovery; its listed processes were not stopped");
           if (!pane.startIdentity) throw new Error("its kernel start identity was not recorded");
           if (!pane.recoveryMembers) {
-            pane.recoveryMembers = snapshotOwnerRecoveryMembers(pane.pid, pane.startIdentity);
+            pane.recoveryMembers = await snapshotOwnerRecoveryMembersAsync(pane.pid, pane.startIdentity);
             // Persist the exact members before the first signal: a partially
             // completed recovery must not invent new targets on retry.
             state.persist();
@@ -27,7 +27,7 @@ export async function settleOwnerSurvivors(state:OwnerSurvivorState,orderlyExit:
           }
           const deadline = Date.now() + 5000;
           while (ownerProcessGroupExists(pane.pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-          const left = ownerGroupMemberPids(pane.pid);
+          const left = await ownerGroupMemberPidsAsync(pane.pid);
           if (left.length) failures.push(`group members still present or unverified: ${left.join(", ")}`);
           if (failures.length) throw new Error(failures.join("; "));
         }

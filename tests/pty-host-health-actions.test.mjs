@@ -30,7 +30,7 @@ function setup(t, over = {}) {
   const item = { icon: "initial" };
   const state = {
     expected: EXPECTED, identity: EXPECTED, connected: true, socketExists: true, socketPid: 100,
-    records: [record(100)], parent: null, response: 0, restartAnswer: true,
+    records: [record(100)], parent: null, response: 0, restartAnswer: true, identities: new Map(),
     confirmAnswer: true, askAnswer: true, menuInstalled: true, keepRecoveryInventory: false,
     owner: { pid: 99, incompatible: false, disconnected: [] },
   };
@@ -70,6 +70,7 @@ function setup(t, over = {}) {
     socketExists: async () => (log.push(["socket-exists"]), state.socketExists),
     probeSocket: async () => (log.push(["probe"]), state.socketPid),
     liveRecords: () => (log.push(["records"]), state.records),
+    processIdentity: (pid) => (state.identities.has(pid) ? state.identities.get(pid) : `kernel-${pid}`),
     kill: (pid, signal) => { log.push(["kill", pid, signal]); state.records = state.records.filter((r) => r.pid !== pid); },
     waitForExit: async (pid, ms) => (log.push(["wait", pid, ms]), true),
     ...over,
@@ -389,4 +390,44 @@ for(const targetVerified of [true,false])test(`unannounced loss opens without a 
  f.state.askAnswer=false;await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
  assert.equal(f.log.filter(([op])=>op=== (targetVerified?'ask-restart':'dialog')).length,1);
  assert.equal(f.log.filter(([op])=>['restart','kill','wait'].includes(op)).length,0);
+});
+
+test("Stop other hosts probes asynchronously, then signals only a pid whose kernel identity held across that probe", async (t) => {
+  const { d, state, log } = setup(t);
+  state.socketPid = 200;
+  state.records.push(record(200), record(300), record(301), record(302));
+  let ticks = 0, release;
+  const timer = setInterval(() => ticks++, 1);
+  t.after(() => clearInterval(timer));
+  const probed = new Promise((resolve) => { release = resolve; });
+  let probes = 0;
+  d.liveRecords = async () => {
+    // The second call is the re-check right before the signals; the first is the health report behind the question.
+    if (++probes === 2) {
+      await probed;
+      state.identities.set(300, "kernel-reused"); // exited and its pid passed on while ps ran
+      state.identities.set(301, null); // identity unknown now
+    }
+    log.push(["records"]);
+    return state.records;
+  };
+  const wired = createPtyHostHealth(d);
+  const stopping = wired.stopOtherHostsFromWindow();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(ticks > 0, "the event loop ran while the probe was outstanding");
+  assert.deepEqual(operations(log).filter(([op]) => op === "kill"), [], "no signal before the probe answered");
+  release();
+  assert.deepEqual(await stopping, [302]);
+  assert.deepEqual(operations(log).filter(([op]) => op === "kill"), [["kill", 302, "SIGTERM"]]);
+});
+
+test("Stop other hosts never signals a pid whose kernel identity was unknown before the probe", async (t) => {
+  const { d, state, log } = setup(t);
+  state.socketPid = 200;
+  state.records.push(record(200), record(300));
+  state.identities.set(300, null);
+  d.processIdentity = (pid) => { if (pid === 300) throw new Error("injected identity failure"); return `kernel-${pid}`; };
+  const wired = createPtyHostHealth(d);
+  assert.deepEqual(await wired.stopOtherHostsFromWindow(), []);
+  assert.deepEqual(operations(log).filter(([op]) => op === "kill"), []);
 });

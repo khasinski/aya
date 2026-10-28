@@ -79,3 +79,26 @@ test('a changed recorded native-owner kernel identity requires fresh consent eve
  await assert.rejects(restartRefusedHost({target:a,confirmChanged:async current=>{questions++;assert.equal(current.owner.startIdentity,'8:2');return false;}},f.deps),/restart cancelled/);
  assert.equal(questions,1);assert.deepEqual(f.signals,[]);
 });
+
+test('the default process-group probe runs off the event loop and answers null for a failed, empty, odd or timed-out ps',async()=>{
+ const {refusedRestartDeps}=require('../dist-electron/pty-host-auth-restart.js');const deps=refusedRestartDeps(()=>false,()=>{});
+ const execFile=childProcess.execFile,execFileSync=childProcess.execFileSync;let ticks=0;const timer=setInterval(()=>ticks++,1);
+ try{
+  childProcess.execFileSync=()=>{throw Error('the group probe must not block on ps');};
+  assert.equal(await deps.group(process.pid),Number(execFileSync('ps',['-p',String(process.pid),'-o','pgid='],{encoding:'utf8'}).trim()));
+  const answers={error:[Object.assign(Error('injected'),{code:'EAGAIN'}),''],empty:[null,''],odd:[null,'12 13\n'],init:[null,'1\n'],
+   timeout:[Object.assign(Error('timed out'),{killed:true,signal:'SIGKILL'}),'']};
+  for(const [name,[error,stdout]] of Object.entries(answers)){
+   let options;
+   childProcess.execFile=(_command,_args,opts,callback)=>{options=opts;setTimeout(()=>callback(error,stdout,''),5);return {pid:0};};
+   const before=ticks;assert.equal(await deps.group(4242),null,name);assert.ok(ticks>before,`${name}: timers ran during the probe`);
+   assert.equal(options.timeout,500);assert.equal(options.killSignal,'SIGKILL');
+  }
+ }finally{clearInterval(timer);childProcess.execFile=execFile;childProcess.execFileSync=execFileSync;}
+});
+test('an async process-group probe is still followed by a fresh inspection before the signal',async()=>{
+ const a=target(100,'1:1'),b=target(200,'2:2','c'),f=fixture([a,b]);let questions=0;
+ f.deps.group=async()=>{await new Promise(resolve=>setTimeout(resolve,5));return 700;};
+ await assert.rejects(restartRefusedHost({target:a,confirmChanged:async()=>{questions++;return false;}},f.deps),/restart cancelled/);
+ assert.equal(questions,1);assert.deepEqual(f.signals,[]);assert.equal(f.inspections,2);
+});

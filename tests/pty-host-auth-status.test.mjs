@@ -21,48 +21,49 @@ function record(){
  registry.writeOwnerRecord(r);return r;
 }
 after(()=>fs.rmSync(home,{recursive:true,force:true}));
-test('auth refusal uses only private retained inventory bound to the observed peer instance',()=>{
- record();const spawn=childProcess.spawn,exec=childProcess.execFileSync;let spawns=0;
+test('auth refusal uses only private retained inventory bound to the observed peer instance',async()=>{
+ record();const spawn=childProcess.spawn,exec=childProcess.execFileSync,execAsync=childProcess.execFile;let spawns=0;
  try{
   childProcess.spawn=()=>{spawns++;throw Error('no owner spawn permitted');};
-  childProcess.execFileSync=(command,...args)=>{assert.equal(command,'ps','only host identity observation is allowed');return exec(command,...args);};
-  const status=refusedHostStatus(peer);
+  childProcess.execFileSync=()=>{throw Error('the refused-host status must not block on ps');};
+  childProcess.execFile=(command,...args)=>{assert.equal(command,'ps','only host identity observation is allowed');return execAsync(command,...args);};
+  const status=await refusedHostStatus(peer);
   assert.equal(status.authentication.inventoryKnown,true);assert.equal(status.authentication.targetVerified,true);
   assert.equal(status.ptyCount,2);assert.equal(status.pid,peer.pid);assert.equal(status.startTime,peer.startIdentity);
   assert.deepEqual(status.owner.inventory,[{id:pane.id,pid:pane.pid,startIdentity:pane.startIdentity}]);
   assert.deepEqual(status.owner.uncertain,['pending-pane']);assert.equal(status.owner.instanceId,'b'.repeat(32));assert.equal(spawns,0);
- }finally{childProcess.spawn=spawn;childProcess.execFileSync=exec;}
+ }finally{childProcess.spawn=spawn;childProcess.execFileSync=exec;childProcess.execFile=execAsync;}
 });
-test('absent peer, changed reader or changed kernel instance never turns unknown inventory into empty verified inventory',()=>{
+test('absent peer, changed reader or changed kernel instance never turns unknown inventory into empty verified inventory',async()=>{
  for(const kind of ['no-peer','reader','kernel']){
   const r=record();if(kind==='reader'){r.jsStartTime='another-start';registry.writeOwnerRecord(r);}
-  const status=refusedHostStatus(kind==='no-peer'?null:kind==='kernel'?{...peer,startIdentity:'0:0'}:peer);
+  const status=await refusedHostStatus(kind==='no-peer'?null:kind==='kernel'?{...peer,startIdentity:'0:0'}:peer);
   assert.equal(status.authentication.inventoryKnown,false,kind);assert.equal(status.owner,undefined,kind);assert.equal(status.ptyCount,0);
  }
 });
-test('failed identity probes, including the final check, discard a partially assembled inventory',()=>{
+test('failed identity probes, including the final check, discard a partially assembled inventory',async()=>{
  const probe=ownerClient.ownerProcessStartIdentity;
  try{
-  for(const failAt of [1,2]){
+  for(const failAt of [1,2,3]){
    record();let calls=0;ownerClient.ownerProcessStartIdentity=(pid)=>{if(++calls===failAt)throw Error('injected identity failure');return probe(pid);};
-   const status=refusedHostStatus(peer);assert.equal(status.authentication.inventoryKnown,false);assert.equal(status.authentication.targetVerified,false);assert.equal(status.owner,undefined);
+   const status=await refusedHostStatus(peer);assert.equal(status.authentication.inventoryKnown,false,`identity probe ${failAt}`);assert.equal(status.authentication.targetVerified,false);assert.equal(status.owner,undefined);
   }
  }finally{ownerClient.ownerProcessStartIdentity=probe;}
 });
-test('legacy private host record can verify a target but cannot supply a fabricated pane inventory',()=>{
+test('legacy private host record can verify a target but cannot supply a fabricated pane inventory',async()=>{
  fs.rmSync(path.dirname(file),{recursive:true,force:true});
  const directory=path.join(home,'pty-hosts');fs.mkdirSync(directory,{mode:0o700,recursive:true});
  fs.writeFileSync(path.join(directory,`${peer.pid}.json`),JSON.stringify({pid:peer.pid,pgid:peer.pid,startTime:hostRegistry.readProcInfo(peer.pid).startTime}),{mode:0o600});
- const status=refusedHostStatus(peer);assert.equal(status.authentication.targetVerified,true);assert.equal(status.authentication.inventoryKnown,false);assert.equal(status.owner,undefined);
+ const status=await refusedHostStatus(peer);assert.equal(status.authentication.targetVerified,true);assert.equal(status.authentication.inventoryKnown,false);assert.equal(status.owner,undefined);
  fs.rmSync(directory,{recursive:true,force:true});
 });
-test('retained owner records refuse symlinks and broad permissions without reading an unsafe payload',()=>{
+test('retained owner records refuse symlinks and broad permissions without reading an unsafe payload',async()=>{
  for(const kind of ['symlink','permissions']){
   record();
   if(kind==='symlink'){fs.renameSync(file,file+'.real');fs.symlinkSync(file+'.real',file);}
   if(kind==='permissions')fs.chmodSync(file,0o644);
   assert.throws(()=>registry.readOwnerRecord(),undefined,kind);
-  const status=refusedHostStatus(peer);assert.equal(status.authentication.inventoryKnown,false,kind);assert.equal(status.owner,undefined,kind);
+  const status=await refusedHostStatus(peer);assert.equal(status.authentication.inventoryKnown,false,kind);assert.equal(status.owner,undefined,kind);
  }
 });
 test('a FIFO record is promptly refused instead of blocking a question indefinitely',()=>{
@@ -95,4 +96,30 @@ test('writer refuses an over-limit retained record before replacing the prior in
  assert.throws(()=>registry.writeOwnerRecord({...r,padding:'x'.repeat(65536)}),/record length limit/);
  assert.deepEqual(fs.readFileSync(file),before);
  assert.deepEqual(fs.readdirSync(path.dirname(file)),['record.json']);
+});
+
+test('the refused-host probe lets the event loop run, and a peer replaced while ps ran verifies nothing',async()=>{
+ const execAsync=childProcess.execFile,probe=ownerClient.ownerProcessStartIdentity;let ticks=0,swapDuringPs=false,replaced=false;
+ const timer=setInterval(()=>ticks++,1);
+ try{
+  // The real ps, answered 20 ms late; with swapDuringPs the peer pid gets another kernel identity meanwhile.
+  childProcess.execFile=(command,args,options,callback)=>execAsync(command,args,options,(...result)=>setTimeout(()=>{if(swapDuringPs)replaced=true;callback(...result);},20));
+  ownerClient.ownerProcessStartIdentity=pid=>replaced&&pid===peer.pid?'9:9':probe(pid);
+  record();const status=await refusedHostStatus(peer);
+  assert.ok(ticks>0,'timers ran while ps was outstanding');
+  assert.equal(status.authentication.targetVerified,true);assert.equal(status.authentication.inventoryKnown,true);
+  record();swapDuringPs=true;const swapped=await refusedHostStatus(peer);
+  assert.equal(replaced,true);assert.equal(swapped.authentication.targetVerified,false);assert.equal(swapped.authentication.inventoryKnown,false);assert.equal(swapped.owner,undefined);
+ }finally{clearInterval(timer);childProcess.execFile=execAsync;ownerClient.ownerProcessStartIdentity=probe;}
+});
+test('failed, empty or timed-out refused-host ps never verifies a target',async()=>{
+ const execAsync=childProcess.execFile;
+ try{
+  for(const outcome of ['error','empty','timeout']){
+   record();
+   childProcess.execFile=(_command,_args,_options,callback)=>{setImmediate(()=>outcome==='empty'?callback(null,'',''):callback(Object.assign(Error(outcome),outcome==='timeout'?{killed:true,signal:'SIGKILL'}:{code:'EAGAIN'}),'',''));return {pid:0};};
+   const status=await refusedHostStatus(peer);
+   assert.equal(status.authentication.targetVerified,false,outcome);assert.equal(status.authentication.inventoryKnown,false,outcome);assert.equal(status.owner,undefined,outcome);
+  }
+ }finally{childProcess.execFile=execAsync;}
 });

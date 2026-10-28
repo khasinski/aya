@@ -109,7 +109,7 @@ import { PtyHostClient, waitForExit } from "./pty-host-client";
 import { MAX_PTY_PANES, paneLimitFailureMessage } from "./pty-pane-limits";
 import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
-import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
+import { liveHostRecordsAsync, reapStaleHostRecords } from "./pty-host-registry";
 import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { createPtyHostHealth, probeSocketPid } from "./pty-host-health";
 import { HOOK_VIA } from "./constants";
@@ -394,7 +394,8 @@ const { EXPECTED_HOST_VERSION, handleStaleHost, hostHealth, restartHostFromWindo
   setStaleMenuIcon: () => setStaleMenuIcon(applicationMenuDeps),
   socketExists: () => pathExists(PTY_HOST_SOCKET_PATH),
   probeSocket: () => probeSocketPid(PTY_HOST_SOCKET_PATH),
-  liveRecords: () => liveHostRecords(PTY_HOST_SCRIPT),
+  liveRecords: () => liveHostRecordsAsync(PTY_HOST_SCRIPT),
+  processIdentity: (pid) => ownerProcessStartIdentity(pid),
   kill: (pid, signal) => process.kill(pid, signal),
   waitForExit,
 });

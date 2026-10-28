@@ -3,7 +3,7 @@
 // status. Only an exact, rechecked private-record target may get
 // an individual SIGTERM; this path never force-kills or starts either host.
 import net from "node:net";
-import {execFileSync} from "node:child_process";
+import {execFile} from "node:child_process";
 import {PTY_HOST_SOCKET_PATH} from "./pty-host-paths";
 import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,type RefusedHostStatus} from "./pty-host-auth-status";
@@ -14,7 +14,7 @@ import {probeLegacyInventory} from "./pty-host-legacy-status";
 export interface RefusedRestartTarget extends HostRestartTarget {authentication:RefusedHostStatus["authentication"]}
 export interface RefusedRestartDeps {
   inspect():Promise<RefusedRestartTarget>;
-  group(pid:number):number|null;
+  group(pid:number):number|null|Promise<number|null>;
   signal(pid:number,startIdentity:string,group:number):"absent"|"mismatch"|"unknown"|"signalled";
   waitGone(pid:number,startIdentity:string):Promise<boolean>;
   cancelled():boolean;
@@ -30,7 +30,7 @@ export async function inspectRefusedHost(legacyPaneIds:readonly string[]=[]):Pro
     const socket=net.createConnection(PTY_HOST_SOCKET_PATH,()=>{try{done(handoverPeer(socket));}catch{done(null);}});
     socket.on("error",()=>done(null));socket.on("close",()=>done(null));
   });
-  const status=refusedHostStatus(peer);
+  const status=await refusedHostStatus(peer);
   if(peer&&status.authentication.targetVerified&&!status.owner){const legacy=await probeLegacyInventory(peer,legacyPaneIds);if(legacy){status.authentication.legacy=legacy;status.ptyCount=legacy.total;}}
   return {...status,pid:status.pid??null};
 }
@@ -46,7 +46,7 @@ export async function restartRefusedHost(consent:HostRestartConsent,deps:Refused
       if(!await consent.confirmChanged(target))throw Error("restart cancelled");
       approved=target;continue;
     }
-    const group=deps.group(target.pid);
+    const group=await deps.group(target.pid);
     if(!group)throw Error("The terminal host process identity could not be verified. Nothing was stopped.");
     // Re-open the socket and re-read its bound private inventory after the
     // process-group probe and after every asynchronous confirmation.
@@ -69,12 +69,14 @@ export async function restartRefusedHost(consent:HostRestartConsent,deps:Refused
 export function refusedRestartDeps(cancelled:()=>boolean,log:RefusedRestartDeps["log"],legacyPaneIds:readonly string[]=[]):RefusedRestartDeps{
   return {
     inspect:()=>inspectRefusedHost(legacyPaneIds),cancelled,log,
-    group(pid){
-      try{
-        const value=execFileSync("ps",["-p",String(pid),"-o","pgid="],{encoding:"utf8",timeout:500,stdio:["ignore","pipe","ignore"]}).trim();
-        return /^\d+$/.test(value)&&Number.isSafeInteger(Number(value))&&Number(value)>1?Number(value):null;
-      }catch{return null;}
-    },
+    // Off the event loop: the group only names what terminateVerifiedProcess must still find, and the caller
+    // re-inspects the target after this probe and before the signal.
+    group:pid=>new Promise<number|null>(resolve=>{
+      execFile("ps",["-p",String(pid),"-o","pgid="],{encoding:"utf8",timeout:500,killSignal:"SIGKILL"},(error,stdout)=>{
+        const value=error?"":String(stdout).trim();
+        resolve(/^\d+$/.test(value)&&Number.isSafeInteger(Number(value))&&Number(value)>1?Number(value):null);
+      });
+    }),
     signal:(pid,startIdentity,group)=>terminateVerifiedProcess({pid,startIdentity},group),
     async waitGone(pid,startIdentity){
       const deadline=Date.now()+5000;

@@ -49,3 +49,19 @@ test('separate survivor yes grants only B2 verified per-process settlement, and 
  const stalled=fixture([a]);stalled.deps.waitGone=async()=>false;
  assert.equal(await retireUnavailableOwner({target:a.target,confirmChanged:async()=>true},stalled.deps),false);assert.equal(stalled.calls.filter(c=>Array.isArray(c)&&c[0]==='signal').length,1);assert.ok(!stalled.calls.includes('owner-gone'));
 });
+test('async prepare, group and survivor probes keep the order: inventory, group, re-inspection, then the one signal',async()=>{
+ const a=inspection(),f=fixture([a]);const later=value=>new Promise(resolve=>setTimeout(()=>resolve(value),5));
+ f.deps.prepare=async()=>{await later();f.calls.push('prepare');};
+ f.deps.group=async()=>{f.calls.push('group');return later(700);};
+ const inspect=f.deps.inspect;f.deps.inspect=async()=>{f.calls.push('inspect');return inspect();};
+ f.deps.survivors=async r=>{await later();return {needed:false,target:inspection(r.pid,r.startIdentity).target};};
+ assert.equal(await retireUnavailableOwner({target:a.target,confirmChanged:async()=>{throw Error('same target');}},f.deps),true);
+ const order=f.calls.map(c=>Array.isArray(c)?c[0]:c);
+ assert.deepEqual(order.slice(0,6),['inspect','prepare','group','inspect','signal','log']);
+ assert.equal(order.filter(c=>c==='signal').length,1);
+});
+test('an async group probe that finds nothing refuses without a signal',async()=>{
+ const a=inspection(),f=fixture([a]);let questions=0;f.deps.group=async()=>null;
+ await assert.rejects(retireUnavailableOwner({target:a.target,confirmChanged:async()=>{questions++;return true;}},f.deps),/could not be verified/);
+ assert.equal(questions,1);assert.ok(!f.calls.some(c=>Array.isArray(c)&&c[0]==='signal'));
+});

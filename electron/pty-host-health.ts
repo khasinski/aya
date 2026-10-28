@@ -59,7 +59,7 @@ export interface HostHealthDeps {
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
-  liveRecords(): HostRecord[];
+  liveRecords(): HostRecord[] | Promise<HostRecord[]>;
   ownerExists?(): boolean;
 }
 
@@ -71,8 +71,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
   const pid = typeof status.pid === "number" ? status.pid : null;
   const socketPid = socketExists ? await deps.probeSocket() : null;
   const known = new Set([pid, socketPid]);
-  const otherHosts = deps
-    .liveRecords()
+  const otherHosts = (await deps.liveRecords())
     .filter((rec) => !known.has(rec.pid))
     .map((rec) => ({ pid: rec.pid, startTime: rec.startTime, version: rec.version }));
   const health: Omit<HostHealth, "warnings"> = {
@@ -166,7 +165,9 @@ export interface PtyHostHealthDeps {
   setStaleMenuIcon: () => void;
   socketExists: () => Promise<boolean>;
   probeSocket: () => Promise<number | null>;
-  liveRecords: () => HostRecord[];
+  liveRecords: () => HostRecord[] | Promise<HostRecord[]>;
+  /** Kernel start identity (native, no process spawn); null when unknown. Brackets the async liveRecords probe. */
+  processIdentity: (pid: number) => string | null;
   kill: (pid: number, signal: "SIGTERM") => unknown;
   waitForExit: (pid: number, timeoutMs: number) => Promise<boolean>;
 }
@@ -292,9 +293,15 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
    *  gone, so a refreshed report no longer lists them. */
   async function stopHosts(pids: number[]): Promise<number[]> {
     // Checked again right before the signal: a host may have exited, and its pid passed on, while Aya asked.
-    const stillHosts = new Set(deps.liveRecords().map((rec) => rec.pid));
+    // The ps behind liveRecords runs off the event loop, so each pid's kernel identity is read before it and again,
+    // with no await, right before that pid's kill: unchanged and known, the verified host is the one signalled.
+    const identity = (pid: number): string | null => { try { return deps.processIdentity(pid); } catch { return null; } };
+    const before = new Map(pids.map((pid) => [pid, identity(pid)]));
+    const stillHosts = new Set((await deps.liveRecords()).map((rec) => rec.pid));
     const stopped: number[] = [];
     for (const pid of pids.filter((p) => stillHosts.has(p))) {
+      const known = before.get(pid);
+      if (!known || identity(pid) !== known) continue;
       try {
         kill(pid, "SIGTERM");
         stopped.push(pid);

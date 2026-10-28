@@ -1,6 +1,6 @@
 // Typed transport for the stable native PTY owner.
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { MAX_PTY_PANES } from "./pty-pane-limits";
 
 export const OWNER_PROTOCOL = 2;
@@ -40,19 +40,39 @@ export function ownerProcessStartIdentity(pid: number): string | null { return r
 export function ownerProcessGroupExists(pid: number): boolean {
   return recoveryBridge().recoveryGroupExists(pid);
 }
-// Synchronous on purpose: snapshotOwnerRecoveryMembers brackets this listing between two leader identity checks in
-// one turn, so the inventory it signals cannot belong to a reused group. Recovery and retirement paths only.
-export function ownerGroupMemberPids(group: number): number[] {
-  const listing = execFileSync("/bin/ps", ["-axo", "pid=,pgid="], { encoding: "utf8", timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
-  return listing.split("\n").flatMap(line => {
+const GROUP_LISTING_ARGS = ["-axo", "pid=,pgid="];
+const GROUP_LISTING_OPTIONS = { encoding: "utf8" as const, timeout: 5000, maxBuffer: 4 * 1024 * 1024 };
+/** Members of one process group from a full `ps` table. A table with no parsable row (an empty or garbled ps) is no
+ *  evidence that the group is empty, so it throws like a failed ps does. */
+function groupMembersFromListing(listing: string, group: number): number[] {
+  let rows = 0;
+  const members = listing.split("\n").flatMap(line => {
     const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (match) rows++;
     return match && Number(match[2]) === group && Number(match[1]) > 1 ? [Number(match[1])] : [];
   });
+  if (!rows) throw new Error("The process table could not be read");
+  return members;
 }
-export function snapshotOwnerRecoveryMembers(pid: number, startIdentity: string): RecoveryMember[] {
-  const bridge = recoveryBridge();
-  if (bridge.recoveryIdentity(pid) !== startIdentity) throw new Error("The recorded group leader's process identity no longer matches");
-  const pids = ownerGroupMemberPids(pid);
+/** Kept for the PTY host process and test cleanup; main uses ownerGroupMemberPidsAsync. */
+export function ownerGroupMemberPids(group: number): number[] {
+  return groupMembersFromListing(execFileSync("/bin/ps", GROUP_LISTING_ARGS, GROUP_LISTING_OPTIONS), group);
+}
+/** ownerGroupMemberPids without blocking the event loop (~30 ms for the full table). Rejects on spawn failure,
+ *  non-zero exit, timeout, maxBuffer overflow and an unparsable table. */
+export function ownerGroupMemberPidsAsync(group: number): Promise<number[]> {
+  return new Promise((resolve, reject) => {
+    execFile("/bin/ps", GROUP_LISTING_ARGS, GROUP_LISTING_OPTIONS, (error, stdout) => {
+      if (error) { reject(error); return; }
+      try { resolve(groupMembersFromListing(String(stdout), group)); } catch (failure) { reject(failure); }
+    });
+  });
+}
+type RecoveryIdentityReader = Pick<RecoveryBridge, "recoveryIdentity">;
+/** The members must not belong to a reused group: the leader's kernel identity is checked before the listing, and
+ *  again after it in the same turn that reads every member's identity. */
+function membersOfVerifiedLeader(bridge: RecoveryIdentityReader, pid: number, startIdentity: string, pids: number[]): RecoveryMember[] {
+  if (bridge.recoveryIdentity(pid) !== startIdentity) throw new Error("The recorded group leader exited during recovery inventory");
   if (!pids.includes(pid) || pids.length > 32) throw new Error("Cannot establish a bounded recovery inventory through the recorded group leader");
   const members = pids.map(member => {
     let identity: string | null = null;
@@ -61,6 +81,21 @@ export function snapshotOwnerRecoveryMembers(pid: number, startIdentity: string)
   });
   if (bridge.recoveryIdentity(pid) !== startIdentity) throw new Error("The recorded group leader exited during recovery inventory");
   return members;
+}
+export function snapshotOwnerRecoveryMembers(pid: number, startIdentity: string): RecoveryMember[] {
+  const bridge = recoveryBridge();
+  if (bridge.recoveryIdentity(pid) !== startIdentity) throw new Error("The recorded group leader's process identity no longer matches");
+  return membersOfVerifiedLeader(bridge, pid, startIdentity, ownerGroupMemberPids(pid));
+}
+/** snapshotOwnerRecoveryMembers with the slow table read off the event loop. The leader identity brackets the listing
+ *  exactly as in the sync form: checked before it, re-checked after it, with no await between that re-check, the member
+ *  identity reads and the final leader check. A leader that changed while ps ran fails closed. */
+export async function snapshotOwnerRecoveryMembersAsync(pid: number, startIdentity: string,
+  deps: { bridge?: RecoveryIdentityReader; list?: (group: number) => number[] | Promise<number[]> } = {}): Promise<RecoveryMember[]> {
+  const bridge = deps.bridge ?? recoveryBridge(), list = deps.list ?? ownerGroupMemberPidsAsync;
+  if (bridge.recoveryIdentity(pid) !== startIdentity) throw new Error("The recorded group leader's process identity no longer matches");
+  const pids = await list(pid);
+  return membersOfVerifiedLeader(bridge, pid, startIdentity, pids);
 }
 export function recoverOwnerProcess(member: RecoveryMember, group: number): ReturnType<RecoveryBridge["recoverProcess"]> {
   return member.startIdentity ? recoveryBridge().recoverProcess(member.pid, member.startIdentity, group) : "unknown";
