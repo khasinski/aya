@@ -1,10 +1,11 @@
-import { type Dispatch, type SetStateAction, type RefObject } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction, type RefObject } from "react";
 import { PRESET_ID_SHELL } from "../../preset-ids";
-import { type CliStatus, type MicPermissionStatus, type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus } from "../../types";
+import { type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus } from "../../types";
 import { type MacOptionKeyMode } from "../../terminal-option-key";
 import { type TerminalSoundCue } from "../../terminal-sound-prefs";
 import { SettingsHeader, SettingsRow } from "./parts";
 import { AyaWebRow } from "./AyaWebRow";
+import { CliRow, MicrophoneRow, NotificationsRow } from "./SystemRows";
 import { WINDOW_LAYOUTS, type WindowLayout } from "../../window-layout";
 
 interface GeneralTabProps {
@@ -16,14 +17,10 @@ interface GeneralTabProps {
   macOptionKeyMode: MacOptionKeyMode;
   onMacOptionKeyModeChange: (mode: MacOptionKeyMode) => void;
   isWeb: boolean;
-  installCli: () => Promise<void>;
-  cliInstalling: boolean;
-  cliStatus: CliStatus | null;
   showUsageHarnessName: boolean;
   onShowUsageHarnessNameChange: (show: boolean) => void;
   showGitHubLink: boolean;
   onShowGitHubLinkChange: (show: boolean) => void;
-  ghAvailable: boolean | null;
   windowLayout: WindowLayout;
   onWindowLayoutChange: (layout: WindowLayout) => void;
   harnessSearchEnabled: boolean;
@@ -37,8 +34,6 @@ interface GeneralTabProps {
   disableStatusHook: () => Promise<void>;
   setShowStatusConsent: Dispatch<SetStateAction<boolean>>;
   statusHookBusy: boolean;
-  refreshNotificationPermission: () => Promise<void>;
-  notificationPermission: NotificationPermission;
   terminalSoundsEnabled: boolean;
   onTerminalSoundsEnabledChange: (enabled: boolean) => void;
   customWaitingSound: string | null;
@@ -47,9 +42,6 @@ interface GeneralTabProps {
   presets: Preset[];
   terminalSoundOverrides: Record<string, boolean>;
   onTerminalSoundOverridesChange: (overrides: Record<string, boolean>) => void;
-  micStatus: MicPermissionStatus | null;
-  handleMicAction: () => Promise<void>;
-  micBusy: boolean;
 }
 
 export function GeneralTab({
@@ -61,14 +53,10 @@ export function GeneralTab({
   macOptionKeyMode,
   onMacOptionKeyModeChange,
   isWeb,
-  installCli,
-  cliInstalling,
-  cliStatus,
   showUsageHarnessName,
   onShowUsageHarnessNameChange,
   showGitHubLink,
   onShowGitHubLinkChange,
-  ghAvailable,
   windowLayout,
   onWindowLayoutChange,
   harnessSearchEnabled,
@@ -82,8 +70,6 @@ export function GeneralTab({
   disableStatusHook,
   setShowStatusConsent,
   statusHookBusy,
-  refreshNotificationPermission,
-  notificationPermission,
   terminalSoundsEnabled,
   onTerminalSoundsEnabledChange,
   customWaitingSound,
@@ -92,10 +78,18 @@ export function GeneralTab({
   presets,
   terminalSoundOverrides,
   onTerminalSoundOverridesChange,
-  micStatus,
-  handleMicAction,
-  micBusy,
 }: GeneralTabProps) {
+  const [ghAvailable, setGhAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void window.aya.githubCliAvailable().then((available) => {
+      if (!cancelled) setGhAvailable(available);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <section className="aya-settings-pane">
       <SettingsHeader icon="tune" title="General" />
@@ -202,30 +196,7 @@ export function GeneralTab({
     >
     Left Option as Meta, right Option for accents.
     </SettingsRow>
-    <SettingsRow
-    icon="terminal"
-    title="aya command-line tool"
-    control={isWeb ? (
-    <span className="aya-modal-hint">Available in the desktop app.</span>
-    ) : (
-    <button
-    className="aya-modal-btn"
-    onClick={installCli}
-    disabled={cliInstalling}
-    >
-    {cliInstalling
-      ? "Installing..."
-      : cliStatus?.installed
-        ? "Reinstall"
-        : "Install"}
-    </button>
-    )}
-    >
-    {cliStatus?.message ??
-    (cliStatus?.installed
-      ? `Installed at ${cliStatus.path}`
-      : "Not installed")}
-    </SettingsRow>
+    <CliRow isWeb={isWeb} />
     <SettingsRow
     icon="donut_large"
     title="Display harness name in usage icons"
@@ -419,24 +390,7 @@ export function GeneralTab({
       : "On. Claude Code and Codex report their turn state into each pane."
     : "Off. Claude Code + Codex report each pane's status automatically."}
     </SettingsRow>
-    <SettingsRow
-    icon="notifications"
-    title="Notifications"
-    control={(
-    <button
-    className="aya-modal-btn"
-    onClick={refreshNotificationPermission}
-    >
-    {notificationPermission === "denied"
-      ? "Open System Settings"
-      : notificationPermission === "default"
-        ? "Enable"
-        : "Enabled"}
-    </button>
-    )}
-    >
-    macOS permission: {notificationPermission}
-    </SettingsRow>
+    <NotificationsRow />
     <SettingsRow
     icon="volume_up"
     title="Terminal sounds"
@@ -523,34 +477,7 @@ export function GeneralTab({
     </div>
     )}
     </SettingsRow>
-    {micStatus && micStatus !== "unsupported" && (
-    <SettingsRow
-    icon="mic"
-    title="Microphone"
-    control={(
-      isWeb ? (
-        <span className="aya-modal-hint">Available in the desktop app.</span>
-      ) : (
-        <button
-          className="aya-modal-btn"
-          onClick={handleMicAction}
-          disabled={micBusy}
-        >
-          {micBusy
-            ? "Working..."
-            : micStatus === "not-determined"
-              ? "Allow…"
-              : micStatus === "granted"
-                ? "Manage"
-                : "Open System Settings"}
-        </button>
-      )
-    )}
-    >
-    Aya never records. Used only by terminal tools you run (e.g. a
-    /voice plugin). macOS permission: {micStatus}
-    </SettingsRow>
-    )}
+    <MicrophoneRow isWeb={isWeb} />
       </div>
     </section>
   );

@@ -4,14 +4,10 @@ import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useRef, useState } from "react";
 import {
   type AyaIntelligenceConfig,
-  type CliStatus,
   type HarnessDef,
-  type MicPermissionStatus,
   type Preset,
   type Snippet,
   type Theme,
-  type UsageHookStatus,
-  type StatusHookStatus,
   type OmarchyStatus,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
@@ -31,6 +27,7 @@ import {
   type DraftSnippet,
 } from "./settings/drafts";
 import { GeneralTab } from "./settings/GeneralTab";
+import { useAgentHooks } from "./settings/useAgentHooks";
 import { IntelligenceTab } from "./settings/IntelligenceTab";
 import { PresetsTab } from "./settings/PresetsTab";
 import { SnippetsTab } from "./settings/SnippetsTab";
@@ -156,22 +153,10 @@ export function SettingsModal({
   const [importError, setImportError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
-  const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
-  const [cliInstalling, setCliInstalling] = useState(false);
-  const [ghAvailable, setGhAvailable] = useState<boolean | null>(null);
-  const [usageHook, setUsageHook] = useState<UsageHookStatus | null>(null);
-  const [usageHookBusy, setUsageHookBusy] = useState(false);
+  const { usageHook, usageHookBusy, enableUsageHook, disableUsageHook, statusHook, statusHookBusy, enableStatusHook, disableStatusHook } = useAgentHooks();
   const [showUsageConsent, setShowUsageConsent] = useState(false);
-  const [statusHook, setStatusHook] = useState<StatusHookStatus | null>(null);
-  const [statusHookBusy, setStatusHookBusy] = useState(false);
   const [showStatusConsent, setShowStatusConsent] = useState(false);
   const [omarchy, setOmarchy] = useState<OmarchyStatus | null>(null);
-  const [notificationPermission, setNotificationPermission] =
-    useState<NotificationPermission>(() =>
-      typeof Notification === "undefined" ? "default" : Notification.permission,
-    );
-  const [micStatus, setMicStatus] = useState<MicPermissionStatus | null>(null);
-  const [micBusy, setMicBusy] = useState(false);
   const [localSummaryStatus, setLocalSummaryStatus] = useState<
     "checking" | "available" | "unavailable" | null
   >(null);
@@ -191,18 +176,6 @@ export function SettingsModal({
     void window.aya.scanHarnesses().then((all) => {
       if (!cancelled) setAllHarnesses(all);
     });
-    void window.aya.cliStatus().then((status) => {
-      if (!cancelled) setCliStatus(status);
-    });
-    void window.aya.githubCliAvailable().then((available) => {
-      if (!cancelled) setGhAvailable(available);
-    });
-    void window.aya.usageHookStatus().then((status) => {
-      if (!cancelled) setUsageHook(status);
-    });
-    void window.aya.statusHookStatus().then((status) => {
-      if (!cancelled) setStatusHook(status);
-    });
     // On mount AND on theme change: `omarchy-theme-set` can run with Settings
     // open, leaving a mount-only read naming the previous theme.
     const refreshOmarchy = () => {
@@ -212,9 +185,6 @@ export function SettingsModal({
     };
     refreshOmarchy();
     const stopOmarchyWatch = window.aya.onOmarchyThemeChange(refreshOmarchy);
-    void window.aya.micStatus().then((status) => {
-      if (!cancelled) setMicStatus(status);
-    });
     if (window.aya.platform === "darwin") {
       setLocalSummaryStatus("checking");
       void window.aya
@@ -241,86 +211,13 @@ export function SettingsModal({
     };
   }, []);
 
-  const installCli = async () => {
-    setCliInstalling(true);
-    try {
-      setCliStatus(await window.aya.installCli());
-    } finally {
-      setCliInstalling(false);
-    }
-  };
-
-  // Enabling writes a hook + script into ~/.claude (after the consent dialog);
-  // disabling removes both. The Aya process itself never reads a token or hits
-  // the endpoint — that only happens later in the script, run by Claude Code.
-  const enableUsageHook = async () => {
+  const confirmUsageHook = () => {
     closeConsent(() => setShowUsageConsent(false));
-    setUsageHookBusy(true);
-    try {
-      setUsageHook(await window.aya.installUsageHook());
-    } finally {
-      setUsageHookBusy(false);
-    }
+    void enableUsageHook();
   };
-
-  const disableUsageHook = async () => {
-    setUsageHookBusy(true);
-    try {
-      setUsageHook(await window.aya.uninstallUsageHook());
-    } finally {
-      setUsageHookBusy(false);
-    }
-  };
-
-  // Automatic status (#38): enabling writes Claude Code Notification/PostToolUse/
-  // Stop hooks + a script into ~/.claude (after consent); disabling removes both.
-  // The generated script only reports into the current Aya pane and no-ops in any
-  // Claude session run outside Aya.
-  const enableStatusHook = async () => {
+  const confirmStatusHook = () => {
     closeConsent(() => setShowStatusConsent(false));
-    setStatusHookBusy(true);
-    try {
-      setStatusHook(await window.aya.installStatusHook());
-    } finally {
-      setStatusHookBusy(false);
-    }
-  };
-
-  const disableStatusHook = async () => {
-    setStatusHookBusy(true);
-    try {
-      setStatusHook(await window.aya.uninstallStatusHook());
-    } finally {
-      setStatusHookBusy(false);
-    }
-  };
-
-  const refreshNotificationPermission = async () => {
-    if (typeof Notification === "undefined") return;
-    if (Notification.permission === "default") {
-      await Notification.requestPermission();
-    } else if (Notification.permission === "denied") {
-      await window.aya.openNotificationSettings();
-    }
-    setNotificationPermission(Notification.permission);
-  };
-
-  // Aya never records; CLI tools the user runs (e.g. a /voice plugin) may. macOS
-  // owns the grant: when undecided we trigger its prompt, otherwise we deep-link
-  // to System Settings where the user can grant or revoke. We only re-read the
-  // status — we never claim to toggle it ourselves.
-  const handleMicAction = async () => {
-    setMicBusy(true);
-    try {
-      if (micStatus === "not-determined") {
-        await window.aya.requestMicAccess();
-      } else {
-        await window.aya.openMicrophoneSettings();
-      }
-      setMicStatus(await window.aya.micStatus());
-    } finally {
-      setMicBusy(false);
-    }
+    void enableStatusHook();
   };
 
   const patchAyaIntelligence = (patch: Partial<AyaIntelligenceConfig>) => {
@@ -795,7 +692,7 @@ export function SettingsModal({
                 </button>
                 <button
                   className="aya-modal-btn aya-modal-btn--primary"
-                  onClick={enableUsageHook}
+                  onClick={confirmUsageHook}
                 >
                   Enable
                 </button>
@@ -865,7 +762,7 @@ export function SettingsModal({
                 </button>
                 <button
                   className="aya-modal-btn aya-modal-btn--primary"
-                  onClick={enableStatusHook}
+                  onClick={confirmStatusHook}
                 >
                   Enable
                 </button>
@@ -919,14 +816,10 @@ export function SettingsModal({
                 macOptionKeyMode={macOptionKeyMode}
                 onMacOptionKeyModeChange={onMacOptionKeyModeChange}
                 isWeb={isWeb}
-                installCli={installCli}
-                cliInstalling={cliInstalling}
-                cliStatus={cliStatus}
                 showUsageHarnessName={showUsageHarnessName}
                 onShowUsageHarnessNameChange={onShowUsageHarnessNameChange}
                 showGitHubLink={showGitHubLink}
                 onShowGitHubLinkChange={onShowGitHubLinkChange}
-                ghAvailable={ghAvailable}
                 windowLayout={windowLayout}
                 onWindowLayoutChange={onWindowLayoutChange}
                 harnessSearchEnabled={harnessSearchEnabled}
@@ -940,8 +833,6 @@ export function SettingsModal({
                 disableStatusHook={disableStatusHook}
                 setShowStatusConsent={setShowStatusConsent}
                 statusHookBusy={statusHookBusy}
-                refreshNotificationPermission={refreshNotificationPermission}
-                notificationPermission={notificationPermission}
                 terminalSoundsEnabled={terminalSoundsEnabled}
                 onTerminalSoundsEnabledChange={onTerminalSoundsEnabledChange}
                 customWaitingSound={customWaitingSound}
@@ -950,9 +841,6 @@ export function SettingsModal({
                 presets={presets}
                 terminalSoundOverrides={terminalSoundOverrides}
                 onTerminalSoundOverridesChange={onTerminalSoundOverridesChange}
-                micStatus={micStatus}
-                handleMicAction={handleMicAction}
-                micBusy={micBusy}
               />
             )}
 
