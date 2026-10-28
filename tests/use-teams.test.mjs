@@ -152,6 +152,46 @@ test("a project added during an in-flight poll is loaded without another interva
   } finally { hook.cleanup(); }
 });
 
+test("an assignment started before the project list changed cannot supersede the new project batch", async () => {
+  const assignment = deferred();
+  const currentGame = deferred();
+  const addedProject = deferred();
+  const calls = [];
+  const hook = mount(
+    (slug) => {
+      calls.push(slug);
+      if (calls.length === 1) return Promise.resolve([summary("initial")]);
+      if (calls.length === 2) return currentGame.promise;
+      if (calls.length === 3) return addedProject.promise;
+      return Promise.resolve([summary(`late-${slug}`)]);
+    },
+    [{ slug: "game", directory: "/project" }],
+    "game",
+    () => assignment.promise,
+  );
+  try {
+    await settle(hook);
+    hook.render().onAssignTeamRole("ux-review", "reviewer", "pane-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    hook.updateProjects([
+      { slug: "game", directory: "/project" },
+      { slug: "added", directory: "/added" },
+    ]);
+    assert.deepEqual(calls, ["game", "game", "added"]);
+    assignment.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    currentGame.resolve([summary("current-game")]);
+    addedProject.resolve([summary("added-project")]);
+    await settle(hook);
+    assert.equal(hook.render().teamsByProject.added?.[0]?.definition.roles[0].id, "added-project");
+  } finally {
+    assignment.resolve();
+    currentGame.resolve([summary("current-game")]);
+    addedProject.resolve([summary("added-project")]);
+    hook.cleanup();
+  }
+});
+
 test("an assignment during a poll starts a fresh chip refresh without another tick", async () => {
   const poll = deferred();
   const fresh = deferred();

@@ -10,7 +10,6 @@ import {
   messageDeliveryText,
   paneRoles,
   startSummary as startNote,
-  createTeamRefreshGate,
   unreadTotal,
 } from "../dist-test/team-view.js";
 
@@ -45,20 +44,6 @@ test("a role with no unread entry shows zero, not undefined", () => {
 
 test("unread messages add up across a project's teams", () => {
   assert.equal(unreadTotal([team("a", {}, { x: 2, y: 1 }), team("b", {}, { z: 4 })]), 7);
-});
-
-test("a deferred pre-save team-list response cannot replace the latest saved definition", async () => {
-  const gate = createTeamRefreshGate();
-  let resolveBeforeSave;
-  let resolveAfterSave;
-  const visible = { value: null };
-  const beforeSave = gate.run(() => new Promise((resolve) => { resolveBeforeSave = resolve; }), (value) => { visible.value = value; });
-  const afterSave = gate.run(() => new Promise((resolve) => { resolveAfterSave = resolve; }), (value) => { visible.value = value; });
-  resolveAfterSave([{ name: "ux-review", roles: ["new"] }]);
-  await afterSave;
-  resolveBeforeSave([{ name: "ux-review", roles: ["old"] }]);
-  await beforeSave;
-  assert.deepEqual(visible.value, [{ name: "ux-review", roles: ["new"] }]);
 });
 
 test("a logged message says how far it got, in the teams window's words", () => {

@@ -33,6 +33,10 @@ for (const [source, options] of SOURCES) {
         await page.waitForTimeout(TEAM_POLL_INTERVAL_MS + 100);
         await expect(page.getByRole("dialog", { name: "Assign team roles" })).toHaveCount(0);
       };
+      const expectNoPromptAfterSavePoll = async (page: typeof window) => {
+        await page.waitForTimeout(TEAM_POLL_INTERVAL_MS + 100);
+        await expect(page.getByRole("dialog", { name: "Assign team roles" })).toHaveCount(0);
+      };
       await expectNoPromptAfterSettledTeams(window);
 
       await closeAndWait(app);
@@ -71,7 +75,7 @@ for (const [source, options] of SOURCES) {
         expect(agentSave.status, agentSave.stderr).toBe(0);
         expect(agentSave.stdout).toContain("roles without a pane: tester, implementer;");
         expect(agentSave.stdout).toContain("aya team open ux-review tester=<pane or preset> implementer=<pane or preset>");
-        await expect(relaunchedWindow.getByRole("dialog", { name: "Assign team roles" })).toHaveCount(0);
+        await expectNoPromptAfterSavePoll(relaunchedWindow);
         await expect(card).toBeVisible();
         await teams.getByRole("button", { name: "Close" }).click();
         const settledTeams = await openTeams(relaunchedWindow);

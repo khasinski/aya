@@ -46,12 +46,15 @@ export function useTeams({ projects, activeProjectId, activeProjectRemote }: Tea
   const assignTeamRole = useCallback(
     (team: string, role: string, paneId: string | null) => {
       if (!activeProjectId) return;
+      const projectScope = projectSlugsKey;
       void window.aya
         .teamAssign(activeProjectId, team, role, paneId)
         .catch((err) => console.warn("[aya] team role not assigned:", err))
-        .then(() => refreshTeams(true));
+        .then(() => {
+          if (projectScope === currentProjectSlugs.current) return refreshTeams(true);
+        });
     },
-    [activeProjectId, refreshTeams],
+    [activeProjectId, projectSlugsKey, refreshTeams],
   );
   const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || EMPTY_TEAMS;
   // Closing the Teams window refreshes definitions and role chips.

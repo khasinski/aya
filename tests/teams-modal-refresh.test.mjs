@@ -84,7 +84,7 @@ function deferred() {
 }
 
 function summary(roleIds, assignments = {}, name = "ux-review") {
-  const definition = { name, roles: roleIds.map((id) => ({ id })), lead: roleIds[0] };
+  const definition = { name, roles: roleIds.map((id) => ({ id, sendsTo: [], mustNot: "skip no rounds" })), lead: roleIds[0] };
   return {
     name,
     definition,
@@ -105,7 +105,7 @@ function summary(roleIds, assignments = {}, name = "ux-review") {
     olderRoles: {},
     unread: {},
     unsent: [],
-    liveness: { status: "never started" },
+    liveness: { status: "never started", blocked: [], unreached: null, stalledSince: null },
     log: [],
   };
 }
@@ -146,6 +146,33 @@ function findEditor(node) {
   return null;
 }
 
+function findNode(node, predicate) {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findNode(child, predicate);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!node || typeof node !== "object") return null;
+  if (predicate(node)) return node;
+  return findNode(node.props?.children, predicate);
+}
+
+function renderComponent(element) {
+  const state = { index: 0, slots: [], pendingEffects: [] };
+  rendering = state;
+  let tree;
+  try { tree = element.type(element.props); }
+  finally { rendering = null; }
+  for (const effect of state.pendingEffects.splice(0)) effect();
+  return tree;
+}
+
+function findButton(node, label) {
+  return findNode(node, (element) => element.type === "button" && element.props.children === label);
+}
+
 function findTeamsBody(node) {
   if (Array.isArray(node)) {
     for (const child of node) {
@@ -159,7 +186,7 @@ function findTeamsBody(node) {
   return findTeamsBody(node.props?.children);
 }
 
-function mount(teamList, teamSave, tabs = [], project = { slug: "game", name: "Game", directory: "/project" }) {
+function mount(teamList, teamSave, tabs = [], project = { slug: "game", name: "Game", directory: "/project" }, terminals = {}, api = {}) {
   const state = { index: 0, slots: [], pendingEffects: [], tree: null };
   const intervals = [];
   let currentProject = project;
@@ -167,7 +194,7 @@ function mount(teamList, teamSave, tabs = [], project = { slug: "game", name: "G
   globalThis.window = {
     setInterval: (callback) => { intervals.push(callback); return intervals.length - 1; },
     clearInterval: () => {},
-    aya: { teamList, teamSave, teamPresets: async () => [] },
+    aya: { teamList, teamSave, teamPresets: async () => [], ...api },
   };
   const render = () => {
     state.index = 0;
@@ -177,6 +204,7 @@ function mount(teamList, teamSave, tabs = [], project = { slug: "game", name: "G
         project: { ...currentProject, tabs },
         intelligence: {},
         waiting: {},
+        terminals,
         onClose: () => {},
       });
     } finally { rendering = null; }
@@ -188,6 +216,7 @@ function mount(teamList, teamSave, tabs = [], project = { slug: "game", name: "G
   return {
     render,
     updateProject: (next) => { currentProject = next; return render(); },
+    updateTerminals: (next) => { terminals = next; return render(); },
     tick: () => intervals[0]?.(),
     cleanup: () => { globalThis.window = originalWindow; },
   };
@@ -231,6 +260,66 @@ test("a pre-save periodic reload cannot replace the post-save team card", async 
   } finally { hook.cleanup(); }
 });
 
+test("an action from the old project cannot invalidate the current project's poll", async () => {
+  const oldAction = deferred();
+  const projectB = deferred();
+  const calls = [];
+  const hook = mount(
+    (slug) => {
+      calls.push(slug);
+      if (slug === "a" && calls.filter((item) => item === "a").length === 1) return Promise.resolve([summary(["role"], {}, "team-a")]);
+      if (slug === "a") return oldAction.promise;
+      return projectB.promise;
+    },
+    async () => {},
+    [],
+    { slug: "a", name: "Project A", directory: "/a" },
+  );
+  try {
+    await settle(hook);
+    const oldRefresh = findTeamCard(hook.render(), "team-a").props.onChanged;
+    hook.updateProject({ slug: "b", name: "Project B", directory: "/b" });
+    const lateActionRefresh = oldRefresh();
+    await new Promise((resolve) => setImmediate(resolve));
+    oldAction.resolve([summary(["role"], {}, "team-a")]);
+    projectB.resolve([summary(["role"], {}, "team-b")]);
+    await lateActionRefresh;
+    await settle(hook);
+    assert.ok(findTeamCard(hook.render(), "team-b"), "B's response remains the current generation");
+  } finally {
+    oldAction.resolve([summary(["role"], {}, "team-a")]);
+    projectB.resolve([summary(["role"], {}, "team-b")]);
+    hook.cleanup();
+  }
+});
+
+test("an old project's list failure does not show beside the current project's cards", async () => {
+  let aCalls = 0;
+  const hook = mount(
+    async (slug) => {
+      if (slug === "a") {
+        if (aCalls++ === 0) return [summary(["role"], {}, "team-a")];
+        throw new Error("old project failed");
+      }
+      return [summary(["role"], {}, "team-b")];
+    },
+    async () => {},
+    [],
+    { slug: "a", name: "Project A", directory: "/a" },
+  );
+  try {
+    await settle(hook);
+    const oldRefresh = findTeamCard(hook.render(), "team-a").props.onChanged;
+    hook.updateProject({ slug: "b", name: "Project B", directory: "/b" });
+    await settle(hook);
+    await oldRefresh();
+    await settle(hook);
+    const error = findNode(hook.render(), (node) => node.type?.name === "ErrorLine");
+    assert.equal(error?.props.error ?? null, null, "the stale failure is not shown for project B");
+    assert.ok(findTeamCard(hook.render(), "team-b"));
+  } finally { hook.cleanup(); }
+});
+
 test("two interval ticks do not start more window polls while teamList is pending", async () => {
   const slow = deferred();
   let calls = 0;
@@ -252,27 +341,36 @@ test("two interval ticks do not start more window polls while teamList is pendin
   }
 });
 
-test("removing a team during a poll starts a fresh refresh without another tick", async () => {
+test("the real Remove team action refreshes during a poll without waiting for another tick", async () => {
   const stalePoll = deferred();
   const removalRefresh = deferred();
   let calls = 0;
+  const repoGone = summary(["tester", "implementer"]);
+  repoGone.repoGone = true;
   const hook = mount(
     () => {
       calls++;
-      if (calls === 1) return Promise.resolve([summary(["tester", "implementer"])]);
+      if (calls === 1) return Promise.resolve([repoGone]);
       if (calls === 2) return stalePoll.promise;
       return removalRefresh.promise;
     },
     async () => {},
+    [],
+    undefined,
+    {},
+    { teamRemove: async () => {} },
   );
   try {
     await settle(hook);
     hook.tick();
     await new Promise((resolve) => setImmediate(resolve));
-    const card = findTeamCard(hook.render());
-    const removal = card.props.onChanged();
+    const card = renderComponent(findTeamCard(hook.render()));
+    const remove = findButton(card, "Remove team");
+    assert.ok(remove, "the real remove action is rendered");
+    const removal = remove.props.onClick();
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(calls, 3, "the removal action starts a new request immediately");
-    stalePoll.resolve([summary(["tester", "implementer"])]);
+    stalePoll.resolve([repoGone]);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(calls, 3, "the requested trailing refresh starts as soon as the old poll settles");
     removalRefresh.resolve([]);
@@ -280,9 +378,35 @@ test("removing a team during a poll starts a fresh refresh without another tick"
     await settle(hook);
     assert.equal(findTeamCard(hook.render()), null, "the removed team disappears without waiting for the next interval");
   } finally {
-    stalePoll.resolve([summary(["tester", "implementer"])]);
+    stalePoll.resolve([repoGone]);
     removalRefresh.resolve([]);
     hook.cleanup();
+  }
+});
+
+test("the real Pause and Resume card actions each refresh immediately with interval polling off", async () => {
+  for (const action of [
+    { name: "Pause", configure: (value) => { value.running = true; }, api: "teamPause" },
+    { name: "Resume", configure: (value) => { value.paused = true; }, api: "teamResume" },
+  ]) {
+    let calls = 0;
+    const value = summary(["tester", "implementer"]);
+    action.configure(value);
+    const hook = mount(
+      async () => { calls++; return [value]; },
+      async () => {},
+      [],
+      undefined,
+      {},
+      { [action.api]: async () => {} },
+    );
+    try {
+      await settle(hook);
+      const button = findButton(renderComponent(findTeamCard(hook.render())), action.name);
+      assert.ok(button, `${action.name} is a real card action`);
+      await button.props.onClick();
+      assert.equal(calls, 2, `${action.name} refreshes without an interval tick`);
+    } finally { hook.cleanup(); }
   }
 });
 
@@ -400,6 +524,60 @@ test("the Pane selector is chosen from the refreshed team card after Save", asyn
   }
 });
 
+test("a pane with confirmed spawn failure is unassigned when Save returns focus", async () => {
+  const oldDocument = globalThis.document;
+  const oldResizeObserver = globalThis.ResizeObserver;
+  globalThis.document = { activeElement: null };
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+  const paneSelects = ["tester", "implementer"].map((role) => ({
+    getAttribute: (name) => name === "aria-label" ? `Pane for ${role}` : null,
+    focus() { globalThis.document.activeElement = this; },
+  }));
+  const card = { dataset: { testid: "team-ux-review" }, scrollIntoView() {}, querySelectorAll: () => paneSelects };
+  const body = { querySelectorAll: () => [card], querySelector: () => null, children: [], scrollTop: 0, clientHeight: 500 };
+  const failedPane = {
+    id: "failed-pane", projectSlug: "game", presetId: "claude", name: "shell 1", cwd: "/project", status: "error",
+    bell: false, exitCode: null, stopped: false, spawnFailure: { reason: "spawn-failed", detail: "could not start" },
+  };
+  const hook = mount(
+    async () => [summary(["tester", "implementer"], { tester: "failed-pane" })],
+    async () => {},
+    [{ id: "failed-pane", name: "shell 1" }],
+    undefined,
+    { "failed-pane": failedPane },
+  );
+  try {
+    findTeamsBody(hook.render()).current = body;
+    await settle(hook);
+    findTeamCard(hook.render()).props.onEdit(findTeamCard(hook.render()).props.team.definition);
+    await findEditor(hook.render()).props.onSave(findEditor(hook.render()).props.initial);
+    await settle(hook);
+    assert.equal(globalThis.document.activeElement, paneSelects[0], "the failed tester pane is treated as unassigned");
+  } finally {
+    hook.cleanup();
+    globalThis.document = oldDocument;
+    globalThis.ResizeObserver = oldResizeObserver;
+  }
+});
+
+test("the card labels an assigned but exited pane in its Pane selector", async () => {
+  const hook = mount(
+    async () => [summary(["tester"], { tester: "pane-exited" })],
+    async () => {},
+    [{ id: "pane-exited", name: "shell 1" }],
+    undefined,
+    { "pane-exited": { id: "pane-exited", exitCode: 0, stopped: true } },
+  );
+  try {
+    await settle(hook);
+    const cardElement = findTeamCard(hook.render());
+    const card = renderComponent(cardElement);
+    const select = findNode(card, (node) => node.type === "select" && node.props["aria-label"] === "Pane for tester");
+    const option = findNode(select, (node) => node.type === "option" && node.props.value === "pane-exited");
+    assert.equal(Array.isArray(option?.props.children) ? option.props.children.join("") : option?.props.children, "shell 1 (exited)");
+  } finally { hook.cleanup(); }
+});
+
 test("a pre-save poll with the same roles cannot consume the post-save focus request", async () => {
   const oldPoll = deferred();
   const saveRefresh = deferred();
@@ -442,7 +620,8 @@ test("a pre-save poll with the same roles cannot consume the post-save focus req
     // Same role IDs, but this stale read predates a reassignment in another window.
     oldPoll.resolve([summary(["tester", "implementer"], { implementer: "pane-2" })]);
     await new Promise((resolve) => setImmediate(resolve));
-    hook.render(); // Let the stale accepted response run the focus effect before the trailing result.
+    hook.render();
+    assert.equal(globalThis.document.activeElement, null, "the pre-save response cannot consume the focus request");
     saveRefresh.resolve([summary(["tester", "implementer"], { tester: "pane-1" })]);
     await saving;
     await settle(hook);
@@ -452,6 +631,87 @@ test("a pre-save poll with the same roles cannot consume the post-save focus req
   } finally {
     oldPoll.resolve([summary(["tester", "implementer"], { implementer: "pane-2" })]);
     saveRefresh.resolve([summary(["tester", "implementer"], { tester: "pane-1" })]);
+    hook.cleanup();
+    globalThis.document = oldDocument;
+    globalThis.ResizeObserver = oldResizeObserver;
+  }
+});
+
+test("the focus request starts only after teamSave succeeds", async () => {
+  const save = deferred();
+  const oldDocument = globalThis.document;
+  const oldResizeObserver = globalThis.ResizeObserver;
+  globalThis.document = { activeElement: null };
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+  const pane = { getAttribute: (name) => name === "aria-label" ? "Pane for tester" : null, focus() { globalThis.document.activeElement = this; } };
+  const card = { dataset: { testid: "team-ux-review" }, scrollIntoView() {}, querySelectorAll: () => [pane] };
+  const body = { querySelectorAll: () => [card], querySelector: () => null, children: [], scrollTop: 0, clientHeight: 500 };
+  let listCalls = 0;
+  const hook = mount(
+    async () => { listCalls++; return [summary(["tester"])]; },
+    () => save.promise,
+    [],
+  );
+  try {
+    findTeamsBody(hook.render()).current = body;
+    await settle(hook);
+    const teamCard = findTeamCard(hook.render());
+    teamCard.props.onEdit(teamCard.props.team.definition);
+    const editor = findEditor(hook.render());
+    const pendingSave = editor.props.onSave(editor.props.initial);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(listCalls, 1, "no focus-refresh starts before the save returns");
+    assert.equal(globalThis.document.activeElement, null);
+    save.resolve();
+    await pendingSave;
+    await settle(hook);
+    assert.equal(listCalls, 2);
+    assert.equal(globalThis.document.activeElement, pane);
+  } finally {
+    save.resolve();
+    hook.cleanup();
+    globalThis.document = oldDocument;
+    globalThis.ResizeObserver = oldResizeObserver;
+  }
+});
+
+test("a pane that exits while teamSave is pending is considered unassigned for the returned focus", async () => {
+  const save = deferred();
+  const oldDocument = globalThis.document;
+  const oldResizeObserver = globalThis.ResizeObserver;
+  globalThis.document = { activeElement: null };
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+  const paneSelects = ["tester", "implementer"].map((role) => ({
+    getAttribute: (name) => name === "aria-label" ? `Pane for ${role}` : null,
+    focus() { globalThis.document.activeElement = this; },
+  }));
+  const card = { dataset: { testid: "team-ux-review" }, scrollIntoView() {}, querySelectorAll: () => paneSelects };
+  const body = { querySelectorAll: () => [card], querySelector: () => null, children: [], scrollTop: 0, clientHeight: 500 };
+  const running = { id: "pane-1", exitCode: null, stopped: false };
+  const hook = mount(
+    async () => [summary(["tester", "implementer"], { tester: "pane-1", implementer: "pane-2" })],
+    () => save.promise,
+    [{ id: "pane-1" }, { id: "pane-2" }],
+    undefined,
+    { "pane-1": running, "pane-2": { id: "pane-2", exitCode: null, stopped: false } },
+  );
+  try {
+    findTeamsBody(hook.render()).current = body;
+    await settle(hook);
+    const teamCard = findTeamCard(hook.render());
+    teamCard.props.onEdit(teamCard.props.team.definition);
+    const pendingSave = findEditor(hook.render()).props.onSave(findEditor(hook.render()).props.initial);
+    await new Promise((resolve) => setImmediate(resolve));
+    hook.updateTerminals({
+      "pane-1": { id: "pane-1", exitCode: 0, stopped: true },
+      "pane-2": { id: "pane-2", exitCode: null, stopped: false },
+    });
+    save.resolve();
+    await pendingSave;
+    await settle(hook);
+    assert.equal(globalThis.document.activeElement, paneSelects[0], "the newly exited first pane is selected for reassignment");
+  } finally {
+    save.resolve();
     hook.cleanup();
     globalThis.document = oldDocument;
     globalThis.ResizeObserver = oldResizeObserver;

@@ -27,18 +27,6 @@ export function unreadTotal(teams: TeamSummary[]): number {
   return teams.reduce((sum, t) => sum + Object.values(t.unread).reduce((a, b) => a + b, 0), 0);
 }
 
-/** Applies only the newest async team-list refresh, so an earlier poll cannot replace post-save definitions. */
-export function createTeamRefreshGate() {
-  let generation = 0;
-  return {
-    async run<T>(load: () => Promise<T>, apply: (result: T) => void): Promise<void> {
-      const request = ++generation;
-      const result = await load();
-      if (request === generation) apply(result);
-    },
-  };
-}
-
 /** How far a logged message got: typed into the pane, or why not yet. */
 export function messageDeliveryText(m: Pick<TeamMessage, "from" | "delivered" | "held" | "typedOnly" | "afterEnter" | "viaInbox">): string {
   if (m.typedOnly) return m.afterEnter && m.held ? m.held : `typed, Enter withheld: ${m.held}`;

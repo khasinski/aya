@@ -5,7 +5,7 @@ import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { TeamCard } from "./TeamCard";
 import { TeamEditor } from "./TeamEditor";
-import { ErrorLine, useAsyncAction } from "./use-async-action";
+import { ErrorLine, ipcMessage } from "./use-async-action";
 
 // While open, the log and assignments refresh at this pace.
 const REFRESH_MS = 3000;
@@ -95,8 +95,7 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
   } | null>(null);
   const [teamsGeneration, setTeamsGeneration] = useState(0);
   const [presets, setPresets] = useState<PresetChoice[]>([]);
-  const list = useAsyncAction();
-  const { run } = list;
+  const [listError, setListError] = useState<{ slug: string; error: string | null }>({ slug: project.slug, error: null });
   const reloadGeneration = useRef(0);
   const refreshesInFlight = useRef(0);
   const currentProjectSlug = useRef(project.slug);
@@ -105,19 +104,27 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
   useFitFirstLog(body, editing ? null : teams.map((t) => t.name).join("\n"));
 
   const reload = useCallback((force = false) => {
+    const slug = project.slug;
+    // An action from a previously rendered project card must not supersede the current project's list request.
+    if (slug !== currentProjectSlug.current) return Promise.resolve(null);
     if (!force && refreshesInFlight.current > 0) return Promise.resolve(null);
     const request = ++reloadGeneration.current;
-    const slug = project.slug;
+    const isCurrent = () => request === reloadGeneration.current && slug === currentProjectSlug.current;
+    setListError({ slug, error: null });
     refreshesInFlight.current++;
-    return run(() => window.aya.teamList(slug))
+    return window.aya.teamList(slug)
       .then((next) => {
-        if (request !== reloadGeneration.current || slug !== currentProjectSlug.current || !next) return null;
+        if (!isCurrent() || !next) return null;
         setTeamListState({ slug, teams: next });
         setTeamsGeneration(request);
         return next;
       })
+      .catch((error: unknown) => {
+        if (isCurrent()) setListError({ slug, error: ipcMessage(error) });
+        return null;
+      })
       .finally(() => { refreshesInFlight.current--; });
-  }, [project.slug, run]);
+  }, [project.slug]);
 
   useEffect(() => {
     void window.aya
@@ -151,7 +158,7 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
       const assignedPane = savedSummary.assignments[role.id];
       if (!assignedPane || !project.tabs.some((tab) => tab.id === assignedPane)) return true;
       const state = terminals[assignedPane];
-      return state ? state.exitCode !== null || state.stopped === true : false;
+      return state ? state.exitCode !== null || state.stopped === true || Boolean(state.spawnFailure) : false;
     });
     if (firstUnassigned) {
       const pane = Array.from(card.querySelectorAll<HTMLSelectElement>("select[aria-label]")).find(
@@ -202,7 +209,7 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
             <div className="aya-modal-hint">
               Defined by the project. Which pane plays which role stays on this machine.
             </div>
-            <ErrorLine error={list.error} />
+            <ErrorLine error={listError.slug === project.slug ? listError.error : null} />
             {/* Only the cards scroll: the title and the buttons stay on screen. */}
             <div ref={body} className="aya-teams-body">
             {teams.length === 0 && <div className="aya-modal-hint">No team yet.</div>}
@@ -215,6 +222,7 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
                 presetNames={Object.fromEntries(presets.map((p) => [p.id, p.name]))}
                 plays={paneRoles(teams)}
                 waiting={waiting}
+                terminals={terminals}
                 onEdit={(definition) => setEditing({ team: definition, isNew: false })}
                 onChanged={async () => { await reload(true); }}
                 onRestartPane={onRestartPane}
