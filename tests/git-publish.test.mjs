@@ -165,8 +165,11 @@ test("publish status disables Git prompts and aborting it kills its Git child", 
   const hold = join(state, "hold-publish-status");
   const waitForPid = async () => {
     const until = Date.now() + 2_000;
-    while (!existsSync(childPidPath) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.ok(existsSync(childPidPath), "the hanging Git child started");
+    // The file exists the moment the shell opens it, before the pid is written: wait for the pid, not the file
+    // (an empty read is pid 0, and kill(0, 0) signals our own group, which is always alive).
+    const written = () => existsSync(childPidPath) && /^\d+/.test(readFileSync(childPidPath, "utf8"));
+    while (!written() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(written(), "the hanging Git child started");
     return Number(readFileSync(childPidPath, "utf8"));
   };
   const expectDead = async (pid) => {

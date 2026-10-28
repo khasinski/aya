@@ -24,6 +24,7 @@ import {
   tailForPaneRead,
 } from "./pane-target";
 import { AYA_HOME, CONTROL_SOCKET_PATH, IS_E2E_HEADLESS } from "./paths";
+import { quietWhenTesting } from "./native-ui-text";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
 import { callerProject, handleTeamAuthorRequest } from "./team-author";
@@ -693,7 +694,7 @@ async function handleRequest(
     const notification = new Notification({
       title: printable(request.title || "Aya"),
       body: printable(request.body),
-      silent: IS_E2E_HEADLESS, // a hidden test run must not ding at the person at the machine
+      silent: quietWhenTesting({ silent: false }, IS_E2E_HEADLESS).silent,
     });
     notification.on("click", () => {
       const current = options.getWindow();

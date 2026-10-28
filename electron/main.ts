@@ -142,7 +142,7 @@ import {
   validateLocalSummaryRequest,
   validateOllamaModelName,
 } from "./aya-intelligence";
-import { restartDialog } from "./native-ui-text";
+import { quietWhenTesting, restartDialog } from "./native-ui-text";
 import { UPDATE_SPAWN_REFUSAL } from "./update-spawn";
 import type {
   ControlStatusUpdate,
@@ -553,7 +553,7 @@ const updates = createUpdates({
   shell: externalShell,
   notifications: {
     isSupported: () => Notification.isSupported(),
-    create: (options) => new Notification(IS_E2E_HEADLESS ? { ...options, silent: true } : options), // a hidden test run must not ding at the person at the machine
+    create: (options) => new Notification(quietWhenTesting(options, IS_E2E_HEADLESS)),
   },
   relaunchDeps,
   askRestart,
@@ -865,7 +865,7 @@ function registerIpc(): TeamRunner {
     platform: process.platform,
     notifications: {
       isSupported: () => Notification.isSupported(),
-      create: (options) => new Notification(IS_E2E_HEADLESS ? { ...options, silent: true } : options), // a hidden test run must not ding at the person at the machine
+      create: (options) => new Notification(quietWhenTesting(options, IS_E2E_HEADLESS)),
     },
     shell: externalShell,
     systemPreferences,
