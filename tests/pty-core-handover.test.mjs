@@ -11,7 +11,7 @@ for(const variant of ['osc','vt','utf8','abort','exit-gap','prepare-abort','prep
   const child=spawn(process.execPath,['tests/helpers/pty-core-handover.cjs',mode,variant==='abort'?'vt':variant],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1',AYA_HOME:home,HOME:home,AYA_PTY_OWNER_FD:'3'},stdio:['ignore','ignore','pipe','pipe','ipc']});children.push(child);
   child.stdio[3].on('error',()=>{});child.stdio[3].end(key);
   let error='',message;child.stderr.on('data',b=>{error+=b;});child.on('message',m=>{message=m;});
-  return new Promise((resolve,reject)=>child.on('exit',(code,signal)=>code===0&&message?resolve(message):reject(Error(`${mode} failed ${code}/${signal}: ${error}`))));
+  return new Promise((resolve,reject)=>{let exit,gone=false;const settle=()=>{if(!exit||!gone)return;const[code,signal]=exit;code===0&&message?resolve(message):reject(Error(`${mode} failed ${code}/${signal}: ${error}`));};child.on('exit',(code,signal)=>{exit=[code,signal];settle();});/* 'exit' can beat the last IPC message: settle once the channel has closed too */child.on('disconnect',()=>{gone=true;settle();});});
  }
  try{
   const old=await reader(variant==='abort'?'abort':'old');
