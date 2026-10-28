@@ -1,14 +1,25 @@
 import {captureMainPtyClient} from "./helpers/main-pty-client";
-import {_electron} from '@playwright/test';
 import {appEnv} from './helpers/seed';
 import {askControl} from './helpers/control';
 import {teamSeed,BARE_TEAM,teamLog} from './helpers/team';
 import {agentBin} from './helpers/agent-bin';
 import {readFileSync,writeFileSync,existsSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
-import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags} from './fixtures';
+import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags,launchE2eElectron} from './fixtures';
 import {waitForShellReady,visiblePane} from './helpers/terminal';
 test.use({seedOptions:{launchEnv:{AYA_E2E_PTY_SHUTDOWN:'0'}}});
+const survivorCleanupTest=test.extend({seeded:async({seeded},use)=>{
+ await use(seeded);
+ const pidFile=join(seeded.root,'pty-owner-survivor.pid');
+ if(!existsSync(pidFile))return;
+ const pid=Number(readFileSync(pidFile,'utf8'));
+ if(!Number.isInteger(pid)||pid<=1)return;
+ let command='';try{command=execFileSync('ps',['-p',String(pid),'-o','command='],{encoding:'utf8'});}catch{return;}
+ if(!command.includes(join(__dirname,'helpers/pty-owner-survivor.cjs')))return;
+ try{process.kill(pid,'SIGTERM');}catch{return;}
+ await expect.poll(()=>alive(pid),{timeout:2000}).toBe(false);
+}});
 type Record={pid:number;panes:Array<{id:string;pid:number;generation:number;cols:number;rows:number}>};
 const record=(home:string):Record=>JSON.parse(readFileSync(join(home,'pty-owner/record.json'),'utf8'));
 const identities=(home:string)=>record(home).panes.map(p=>({id:p.id,pid:p.pid,generation:p.generation})).sort((a,b)=>a.id.localeCompare(b.id));
@@ -155,7 +166,7 @@ for(const gap of [false,true])test(`real exit23 ${gap?'during the no-JS gap':'af
  expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
 });
 
-const quitTest=test.extend({app:async({seeded},use)=>{const root=join(__dirname,'..');const app=await _electron.launch({cwd:root,args:[join(root,'dist-electron/main.js'),`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}})}),pid=app.process().pid!;await use(app);if(alive(pid))await closeAndWait(app);}});
+const quitTest=test.extend({app:async({seeded},use)=>{const root=join(__dirname,'..');const app=await launchE2eElectron({cwd:root,args:[join(root,'dist-electron/main.js'),`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}})}),pid=app.process().pid!;await use(app);if(alive(pid))await closeAndWait(app);}});
 quitTest('app quit during a real pending recovery cancels it without starting another JS reader',async({app,window,seeded})=>{
  await waitForShellReady(window);const before=identities(seeded.ayaHome),owner=record(seeded.ayaHome).pid,attemptFile=join(seeded.root,'unexpected-successors');
  await app.evaluate((_electron,{root,file})=>{
@@ -214,13 +225,13 @@ test('failed Try again returns its reason with one counted attempt and leaves ev
  expect(await app.evaluate(()=>(globalThis as unknown as {manualFailureCalls:number}).manualFailureCalls)).toBe(baseline+1);expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);expect(identities(seeded.ayaHome)).toEqual(before);expect(record(seeded.ayaHome).pid).toBe(owner);for(const p of before)expect(alive(p.pid)).toBe(true);
 });
 
-test('restarting an ended pane after another pane loses its owner is a friendly single refusal',async({app,window,seeded})=>{
+survivorCleanupTest('restarting an ended pane after another pane loses its owner is a friendly single refusal',async({app,window,seeded})=>{
  await waitForShellReady(window);const errors:string[]=[];window.on('pageerror',error=>errors.push(String(error)));
  await window.evaluate(()=>{const w=window as unknown as {attachRejections:string[]};w.attachRejections=[];window.addEventListener('unhandledrejection',e=>w.attachRejections.push(String(e.reason)));});
  await window.evaluate(()=>window.aya.ptyWrite('tab-left','exit 0\r'));
  const ended=visiblePane(window,'shell 1').getByTestId('xterm-host');await expect(ended).toContainText('process exited with code 0');
- const quote=(s:string)=>`'${s.replace(/'/g,"'\\''")}'`;
- await window.evaluate(command=>window.aya.ptyWrite('tab-right',command+'\r'),`exec ${quote(process.execPath)} ${quote(join(__dirname,'helpers/pty-owner-survivor.cjs'))}`);
+ const quote=(s:string)=>`'${s.replace(/'/g,"'\\''")}'`,survivorPidFile=join(seeded.root,'pty-owner-survivor.pid');
+ await window.evaluate(command=>window.aya.ptyWrite('tab-right',command+'\r'),`exec env AYA_TEST_SURVIVOR_PID_FILE=${quote(survivorPidFile)} ${quote(process.execPath)} ${quote(join(__dirname,'helpers/pty-owner-survivor.cjs'))}`);
  await expect(visiblePane(window,'shell 2').getByTestId('xterm-host')).toContainText('SURVIVOR_READY');
  const before=record(seeded.ayaHome),survivor=before.panes.find(p=>p.id==='tab-right')!;
  await app.evaluate((_electron,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),spawn=PtyHostClient.prototype.spawn,g=globalThis as unknown as {endedRestartCalls:number};g.endedRestartCalls=0;PtyHostClient.prototype.spawn=async function(...args:Parameters<typeof spawn>){if(args[0].ptyId==='tab-left')g.endedRestartCalls++;return spawn.apply(this,args);};},join(__dirname,'..'));

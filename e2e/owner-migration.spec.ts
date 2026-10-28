@@ -1,9 +1,9 @@
-import { _electron as electron, type ElectronApplication } from "@playwright/test";
+import { type ElectronApplication } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test, expect, ciElectronFlags, closeAndWait, hostPidsForHome, delay } from "./fixtures";
+import { test, expect, ciElectronFlags, closeAndWait, hostPidsForHome, delay, launchE2eElectron } from "./fixtures";
 import { appEnv, type SeededEnv } from "./helpers/seed";
 import { waitForShellReady } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
@@ -11,7 +11,7 @@ const root = join(__dirname, "..");
 const apps: ElectronApplication[] = [];
 test.afterEach(async () => { for (const app of apps.splice(0)) await closeAndWait(app); });
 async function launch(seeded: SeededEnv, answer: number) {
-  const app = await electron.launch({ cwd: root, args: [join(__dirname, "helpers/owner-question-main.cjs"), `--user-data-dir=${seeded.userDataDir}`, ...ciElectronFlags()],
+  const app = await launchE2eElectron({ cwd: root, args: [join(__dirname, "helpers/owner-question-main.cjs"), `--user-data-dir=${seeded.userDataDir}`, ...ciElectronFlags()],
     env: { ...appEnv(seeded), AYA_E2E_PTY_SHUTDOWN: "0", AYA_OWNER_TEST_ANSWER: String(answer) } });
   apps.push(app); return { app, window: await app.firstWindow() };
 }

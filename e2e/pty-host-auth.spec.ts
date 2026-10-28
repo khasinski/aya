@@ -1,9 +1,8 @@
 import {readFileSync,writeFileSync,unlinkSync,readdirSync,mkdirSync,existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
-import {_electron} from '@playwright/test';
 import {appEnv} from './helpers/seed';
-import {test as base,expect,launchApp,closeAndWait,hostPidsForHome,ciElectronFlags} from './fixtures';
+import {test as base,expect,launchApp,launchE2eElectron,closeAndWait,hostPidsForHome,ciElectronFlags} from './fixtures';
 import {waitForShellReady} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
 import {envWithoutAya} from './helpers/env';
@@ -71,9 +70,14 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
    const client=(globalThis as any).authClient,restart=client.restart.bind(client);(globalThis as any).authRestarts=0;
    client.restart=(...args:unknown[])=>{(globalThis as any).authRestarts++;return restart(...args);};
   });
+  await window.evaluate(()=>{
+   const w=window as any;w.headlessUiEvents=[];
+   window.addEventListener('aya:e2e-headless-dialog',event=>w.headlessUiEvents.push((event as CustomEvent).detail));
+   w.__ayaE2eHeadlessUi.setResponse('renderer.confirm',true);
+  });
   await fireShortcut(app,'open-settings');const settings=window.locator('.aya-modal--settings');await settings.getByTestId('settings-tab').filter({hasText:'Diagnostics'}).click();
-  window.once('dialog',dialog=>void dialog.accept());
   await settings.locator('.aya-settings-general-row',{hasText:'PTY host'}).getByRole('button',{name:'Restart'}).click();
+  await expect.poll(()=>window.evaluate(()=>(window as any).headlessUiEvents)).toContainEqual({kind:'renderer.confirm',message:'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.'});
   await expect.poll(()=>app.evaluate(()=>(globalThis as any).authQuestions.length)).toBe(1);
   const question=await app.evaluate(()=>(globalThis as any).authQuestions[0]);
   if(fault==='unknown identity'){
@@ -104,9 +108,14 @@ for(const loss of ['main crash'] as const)test(`${loss} opens a window without a
  const child=app.process();child.kill('SIGKILL');await expect.poll(()=>alive(child.pid!)).toBe(false);
  expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(0);
  const entry=join(seeded.root,'unannounced-main.cjs');writeFileSync(entry,`const electron=require('electron'),original=electron.dialog.showMessageBox.bind(electron.dialog);global.authQuestions=[];global.authAnswer=1;electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);if(!['Work in progress will stop','Aya cannot safely restart this terminal host'].includes(options.message))return original(...args);global.authQuestions.push(options);return{response:options.buttons?.length===1?0:global.authAnswer,checkboxChecked:false};};require(require('path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/main.js'));`);
- const next=await _electron.launch({cwd:root,args:[entry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root}})});
+ const next=await launchE2eElectron({cwd:root,args:[entry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root}})});
  try{
   const view=await next.firstWindow(),errors:string[]=[];view.on('pageerror',error=>errors.push(String(error)));
+  await view.evaluate(()=>{
+   const w=window as any;w.headlessUiEvents=[];
+   window.addEventListener('aya:e2e-headless-dialog',event=>w.headlessUiEvents.push((event as CustomEvent).detail));
+   w.__ayaE2eHeadlessUi.setResponse('renderer.confirm',true);
+  });
   expect(await next.evaluate(()=>(globalThis as any).authQuestions)).toEqual([]);
   await next.evaluate(({ipcMain})=>{const original=(ipcMain as any)._invokeHandlers.get('pty:write');(globalThis as any).unannouncedWrites=0;ipcMain.removeHandler('pty:write');ipcMain.handle('pty:write',(event,...args)=>{(globalThis as any).unannouncedWrites++;return original(event,...args);});});
   for(const oldPane of before.panes){
@@ -120,8 +129,9 @@ for(const loss of ['main crash'] as const)test(`${loss} opens a window without a
   for(const pane of before.panes)expect(alive(pane.pid)).toBe(true);
   expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(record(seeded.ayaHome).pid).toBe(before.pid);expect(record(seeded.ayaHome).panes).toEqual(before.panes);expect(errors).toEqual([]);
   expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
-  view.on('dialog',dialog=>void dialog.accept());await fireShortcut(next,'open-settings');const settings=view.locator('.aya-modal--settings');await settings.getByTestId('settings-tab').filter({hasText:'Diagnostics'}).click();
+  await fireShortcut(next,'open-settings');const settings=view.locator('.aya-modal--settings');await settings.getByTestId('settings-tab').filter({hasText:'Diagnostics'}).click();
   const restart=settings.locator('.aya-settings-general-row',{hasText:'PTY host'}).getByRole('button',{name:'Restart'});await restart.click();
+  await expect.poll(()=>view.evaluate(()=>(window as any).headlessUiEvents)).toContainEqual({kind:'renderer.confirm',message:'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.'});
   await expect.poll(()=>next.evaluate(()=>(globalThis as any).authQuestions.length)).toBe(1);
   const question=await next.evaluate(()=>(globalThis as any).authQuestions[0]);expect(question.message).toBe('Work in progress will stop');for(const pane of before.panes)expect(question.detail).toContain(`PID ${pane.pid}`);
   expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(alive(before.pid)).toBe(true);for(const pane of before.panes)expect(alive(pane.pid)).toBe(true);
@@ -140,7 +150,7 @@ test('normal quit keeps its one-use transfer across six simulated months before 
  writeFileSync(hostEntry,`const path=require('node:path'),fs=require('node:fs'),perf=require('node:perf_hooks').performance,mod=require(path.join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host-auth-transfer.js')),Original=mod.HostAuthTransfer,offset=()=>Number(fs.readFileSync(process.env.AYA_TEST_AUTH_CLOCK,'utf8'));mod.HostAuthTransfer=class extends Original{constructor(key){super(key,{wall:()=>Date.now()+offset(),monotonic:()=>perf.now()+offset()});}};`);
  writeFileSync(mainEntry,`const path=require('node:path'),cp=require('node:child_process'),spawn=cp.spawn;cp.spawn=function(executable,args,options){const target=path.join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host.js');return spawn.call(this,executable,args?.[0]===target?['--require',process.env.AYA_TEST_AUTH_HOST,...args]:args,options);};const electron=require('electron'),original=electron.dialog.showMessageBox.bind(electron.dialog);global.authQuestions=[];electron.dialog.showMessageBox=async(...args)=>{global.authQuestions.push(args.at(-1));return original(...args);};require(path.join(process.env.AYA_TEST_APP_ROOT,'dist-electron/main.js'));`);
  const env=appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,AYA_TEST_AUTH_CLOCK:clockFile,AYA_TEST_AUTH_HOST:hostEntry}});
- const launch=()=>_electron.launch({cwd:root,args:[mainEntry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env});
+ const launch=()=>launchE2eElectron({cwd:root,args:[mainEntry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env});
  const first=await launch(),firstPid=first.process().pid!;let next:Awaited<ReturnType<typeof launch>>|null=null;
  try{
   await waitForShellReady(await first.firstWindow());await expect.poll(()=>record(seeded.ayaHome).panes.length).toBe(2);

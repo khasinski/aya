@@ -1,7 +1,7 @@
 import {appendFileSync,readFileSync,writeFileSync,existsSync,readdirSync} from "node:fs";
 import {join} from "node:path";
-import {_electron,type ElectronApplication,type Page} from "@playwright/test";
-import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags} from "./fixtures";
+import {type ElectronApplication,type Page} from "@playwright/test";
+import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags,launchE2eElectron} from "./fixtures";
 import {appEnv,type SeededEnv} from "./helpers/seed";
 import {waitForShellReady,visiblePane} from "./helpers/terminal";
 const root=join(__dirname,'..'),hostScript=join(root,'dist-electron/pty-host.js'),built=readFileSync(hostScript);
@@ -53,7 +53,7 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
  if(offset){const now=Date.now;Date.now=()=>now()+offset;}
  require(path.join(root,'dist-electron/main.js'));
  `);
- const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
+ const app=await launchE2eElectron({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
   AYA_TEST_HANDOVER_CHOICE:String(choice),AYA_TEST_PLAIN_HOST:plainHost?'1':'0',AYA_TEST_PLAIN_NODE:process.execPath,AYA_TEST_PLAIN_RUNTIME:JSON.stringify({node:process.versions.node,electron:null}),
   AYA_TEST_BLOCK_DISPLAY:blockDisplay?'1':'0',AYA_TEST_DISPLAY_RELEASE:join(seeded.root,'release-display'),AYA_TEST_REAL_UPDATE:realUpdate?'1':'0',
   AYA_TEST_DATE_OFFSET_MS:String(dateOffsetMs),AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT:failOrdinaryAnnouncement?'1':'0',AYA_TEST_FAIL_STATUS_AFTER_REPLACED_TRANSFER:failStatusAfterReplacedTransfer?'1':'0',AYA_TEST_BLOCK_UPDATE_PREPARE:blockUpdatePrepare?'1':'0',AYA_TEST_UPDATE_PREPARE_READY:join(seeded.root,'update-prepare-ready'),AYA_TEST_UPDATE_PREPARE_RELEASE:join(seeded.root,'release-update-prepare'),AYA_TEST_QUESTIONS_FILE:join(seeded.root,'handover-questions.json'),AYA_TEST_ORDINARY_RESULT:join(seeded.root,'ordinary-result'),

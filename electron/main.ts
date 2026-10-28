@@ -93,6 +93,7 @@ import {
   PANE_LAUNCH_ROLES_FILE,
   AGENT_BRIEF_FILES_FILE,
 } from "./paths";
+import { installHeadlessUiRouter } from "./e2e-headless-ui";
 import { createPtyLog } from "./pty-log";
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
@@ -150,6 +151,8 @@ import type {
   PtyEvent,
   SpawnRequest,
 } from "./types";
+
+installHeadlessUiRouter({ env: process.env, dialog, BrowserWindow, ipcMain });
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");

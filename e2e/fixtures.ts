@@ -5,7 +5,7 @@ import {
   type Page,
 } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
 import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
@@ -194,7 +194,48 @@ export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
     `--user-data-dir=${seeded.userDataDir}`,
   ];
   launchArgs.push(...ciElectronFlags());
-  return electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
+  return launchE2eElectron({ args: launchArgs, cwd: APP_ROOT, env });
+}
+
+/** Every Electron e2e launch, including wrapper-main launches, shares this local headless gate. */
+export function launchE2eElectron(options: Parameters<typeof electron.launch>[0]): Promise<ElectronApplication> {
+  const env = { ...(options.env as NodeJS.ProcessEnv | undefined) };
+  if (env.AYA_E2E_RUN === "1" && !process.env.CI && env.AYA_E2E_HEADLESS !== "1") {
+    throw new Error("Local e2e must launch Aya with hidden windows");
+  }
+  if (env.AYA_E2E_HEADLESS === "1") {
+    if (!env.AYA_E2E_HEADLESS_UI_LOG) throw new Error("Headless e2e launch is missing its UI event log");
+    const args = [...(options.args ?? [])];
+    const originalMain = args[0];
+    if (!originalMain || originalMain.startsWith("-")) {
+      throw new Error("Headless e2e launch must name its Electron main entry as the first argument");
+    }
+    env.AYA_E2E_REAL_MAIN = originalMain;
+    env.AYA_E2E_HEADLESS_UI_MODULE = join(APP_ROOT, "dist-electron", "e2e-headless-ui.js");
+    args[0] = join(APP_ROOT, "e2e", "helpers", "headless-main.cjs");
+    return electron.launch({ ...options, args, env });
+  }
+  return electron.launch({ ...options, env });
+}
+
+/** Declare the native UI requests a test intentionally exercises in headless mode. */
+export function expectHeadlessUiEvents(seeded: SeededEnv, kinds: string[]): void {
+  writeFileSync(join(seeded.root, "e2e-headless-ui-expected.json"), JSON.stringify(kinds), { mode: 0o600 });
+}
+
+function headlessUiFailure(seeded: SeededEnv): Error | null {
+  const env = appEnv(seeded);
+  if (env.AYA_E2E_HEADLESS !== "1") return null;
+  const logPath = env.AYA_E2E_HEADLESS_UI_LOG;
+  const logged = existsSync(logPath)
+    ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string; expected?: boolean })
+    : [];
+  const actual = logged.filter((event) => event.expected !== true).map((event) => event.kind);
+  const expectedPath = join(seeded.root, "e2e-headless-ui-expected.json");
+  const expected = existsSync(expectedPath) ? JSON.parse(readFileSync(expectedPath, "utf8")) as string[] : [];
+  return JSON.stringify(actual) === JSON.stringify(expected)
+    ? null
+    : new Error(`Headless e2e requested native UI: expected ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`);
 }
 
 export async function closeAndWait(app: ElectronApplication): Promise<void> {
@@ -238,6 +279,7 @@ export const test = base.extend<{
   seeded: async ({ seedOptions }, use, testInfo) => {
     const s = seedEnv(seedOptions);
     await use(s);
+    const uiError = headlessUiFailure(s);
     // Attach the PTY lifecycle log before the root is wiped: the only record.
     if (testInfo.status !== testInfo.expectedStatus) {
       for (const name of ["pty-events.log", "pty-events.log.1"]) {
@@ -249,6 +291,7 @@ export const test = base.extend<{
     }
     // Here, not in `app`: this teardown also runs when launching the app failed.
     try{await cleanUpSeeded(s);}finally{forgetFixtureAuthority(s.ayaHome);}
+    if (uiError) throw uiError;
   },
 
   app: async ({ seeded, seedOptions }, use) => {

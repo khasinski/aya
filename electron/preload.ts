@@ -16,6 +16,30 @@ import type {
   UpdateStatus,
 } from "./types";
 
+if (process.env.AYA_E2E_HEADLESS === "1") {
+  contextBridge.exposeInMainWorld("__ayaE2eHeadlessUi", {
+    request: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt") =>
+      ipcRenderer.sendSync("e2e:headless-ui-renderer", kind),
+    setResponse: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", response: boolean | string | null) =>
+      ipcRenderer.sendSync("e2e:headless-ui-response", kind, response),
+  });
+  contextBridge.executeInMainWorld({
+    func: () => {
+      const bridge = (window as unknown as Window & { __ayaE2eHeadlessUi: { request(kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt"): unknown } }).__ayaE2eHeadlessUi;
+      const notify = (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", message: unknown) => {
+        window.dispatchEvent(new CustomEvent("aya:e2e-headless-dialog", { detail: { kind, message: String(message ?? "") } }));
+        return bridge.request(kind);
+      };
+      window.alert = (message?: string) => { void notify("renderer.alert", message); };
+      window.confirm = (message?: string) => notify("renderer.confirm", message) as boolean;
+      window.prompt = (message?: unknown, defaultValue?: string) => {
+        void defaultValue;
+        return notify("renderer.prompt", message) as string | null;
+      };
+    },
+  });
+}
+
 installWheelZoom();
 
 // Keep OS paths and the clipboard behind the preload event boundary. A page
