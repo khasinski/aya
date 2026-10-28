@@ -552,7 +552,7 @@ const updates = createUpdates({
   shell: externalShell,
   notifications: {
     isSupported: () => Notification.isSupported(),
-    create: (options) => new Notification(options),
+    create: (options) => new Notification(IS_E2E_HEADLESS ? { ...options, silent: true } : options), // a hidden test run must not ding at the person at the machine
   },
   relaunchDeps,
   askRestart,
@@ -864,7 +864,7 @@ function registerIpc(): TeamRunner {
     platform: process.platform,
     notifications: {
       isSupported: () => Notification.isSupported(),
-      create: (options) => new Notification(options),
+      create: (options) => new Notification(IS_E2E_HEADLESS ? { ...options, silent: true } : options), // a hidden test run must not ding at the person at the machine
     },
     shell: externalShell,
     systemPreferences,

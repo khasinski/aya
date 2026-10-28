@@ -9,6 +9,11 @@ const {capture}=require('../../dist-electron/vt-checkpoint-binding.js');
 const {OwnerPty}=require('../../dist-electron/pty-owner-adapter.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitFor(predicate){const end=Date.now()+6000;while(!predicate()){if(Date.now()>end)throw Error('core handover readiness timeout');await sleep(2);}}
+// A failed send used to exit 0 silently, which the test saw as "failed 0/null" with an empty stderr.
+let stage='start',sent=false;
+// The loop emptying while an awaited promise is still pending exits 0 with no output; name where it stopped.
+process.on('exit',code=>{if(!sent&&code===0)console.error(`exited 0 without reporting; last stage: ${stage}`);});
+const sendDone=(error)=>{sent=true;if(error){console.error('process.send failed:',error);process.exit(2);}process.exit(0);};
 const home=process.env.AYA_HOME,mode=process.argv[2],scenario=process.argv[3],variant=scenario==='mount-legacy-modes'?'legacy-modes':scenario.startsWith('mount-')?'vt':['exit-late','dropped-view'].includes(scenario)?'exit-gap':scenario;let output='',exits=[],events=[];
 const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='data')output+=e.chunk;if(e.type==='exit')exits.push(e);}};
 (async()=>{
@@ -17,18 +22,18 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
   const script="stty -echo; printf 'READY\\n'; while IFS= read -r line; do case \"$line\" in quit) exit 23 ;; *) printf 'R:%s\\n' \"$line\" ;; esac; done";
   const prepared={argv:['/bin/sh','-c',script],env:{HOME:home,PATH:'/usr/bin:/bin'},command:script,launch:{command:script,cwd:home},ownSessionId:null,spawnedAt:12345};
   const spawning=core.spawnPty({ptyId:'flight',command:script,cwd:home,cols:80,rows:24},sink,{prepare:()=>{entered=true;return new Promise(r=>{release=r;});}});
-  await waitFor(()=>entered);const queued=core.writePty('flight','queued-original\n');
+  stage='prepare entered';await waitFor(()=>entered);stage='entered seen';const queued=core.writePty('flight','queued-original\n');
   const freezing=core.freezePtyCore(variant==='prepare-abort'?30:1000);
-  await assert.rejects(core.writePty('flight','forbidden\n'),/handover/);
+  stage='freezing';await assert.rejects(core.writePty('flight','forbidden\n'),/handover/);stage='forbidden rejected';
   if(variant==='prepare-abort')await assert.rejects(freezing,/drain timed out/);
-  release(prepared);await spawning;assert.equal(await queued,true);
+  release(prepared);stage='released';await spawning;stage='spawned';assert.equal(await queued,true);stage='queued written';
   if(variant==='prepare-success'){
    const result=await freezing;assert.deepEqual(result.ineligible,[]);assert.equal(result.eligible[0].id,'flight');core.abortPtyCoreHandover();
   }
-  await waitFor(()=>output.includes('R:queued-original'));
-  await core.writePty('flight','quit\n');await waitFor(()=>exits.length===1);
+  stage='waiting for queued echo';await waitFor(()=>output.includes('R:queued-original'));
+  stage='writing quit';await core.writePty('flight','quit\n');stage='waiting for exit';await waitFor(()=>exits.length===1);stage='exited';
   assert.equal(exits[0].exitCode,23);assert.equal(output.split('R:queued-original').length-1,1);assert.ok(!output.includes('forbidden'));
-  await shutdownOwnerRuntime();process.send({preparation:true},()=>process.exit(0));return;
+  stage='shutting down owner';await shutdownOwnerRuntime();stage='sending';process.send({preparation:true},sendDone);return;
  }
  if(mode==='old'||mode==='abort'){
   const prefix={osc:"\\033]9001;aya.status=active:bu",vt:"\\033[3",utf8:"\\360\\237",'exit-gap':"",'legacy-modes':""}[variant];
@@ -83,12 +88,12 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
    core.abortPtyCoreHandover();fs.writeFileSync(path.join(home,'release'),'go');
    await core.writePty('core','after\nquit\n');await waitFor(()=>exits.length===1);
    assert.equal(exits[0].exitCode,23);assert.ok(output.includes(`R:${pid}:after`));assert.ok(!output.includes('MUST_NOT_DELIVER'));
-   await shutdownOwnerRuntime();process.send({aborted:true,pid},()=>process.exit(0));return;
+   await shutdownOwnerRuntime();process.send({aborted:true,pid},sendDone);return;
   }
   fs.writeFileSync(path.join(home,'core.json'),JSON.stringify(checkpoint),{mode:0o600});
   fs.writeFileSync(path.join(home,'expected.json'),JSON.stringify({before,search,output,vt:checkpoint.vt,ownerPid:owner.record.pid,pid}));
   await core.detachPtyCoreForHandover();
-  process.send({pid,ownerPid:owner.record.pid},()=>process.exit(0));
+  process.send({pid,ownerPid:owner.record.pid},sendDone);
  }else{
   const checkpoint=JSON.parse(fs.readFileSync(path.join(home,'core.json'),'utf8')),expected=JSON.parse(fs.readFileSync(path.join(home,'expected.json'),'utf8'));
   let attaches=0;const attach=OwnerPty.attach;
@@ -135,14 +140,14 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
     assert.equal(core.acknowledgePtyRestoration('core',generation,'replacement-view'),true);
     await core.spawnPty(replacement,mountSink,services);
     assert.equal(mountEvents.filter(e=>e.type==='exit').length,1);
-    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
+    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},sendDone);return;
    }
    if(scenario==='mount-empty'){
     await core.spawnPty(request,mountSink,services);
     assert.deepEqual(mountEvents.filter(e=>e.type==='data'),[{type:'data',ptyId:'core',chunk:'',replay:true,reset:false}]);
     assert.equal(core.acknowledgePtyRestoration('core',generation),true);
     fs.writeFileSync(path.join(home,'release'),'go');await core.writePty('core','quit\n');await waitFor(()=>exits.length===1);
-    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
+    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},sendDone);return;
    }
    fs.writeFileSync(path.join(home,'release'),'go');
    if(scenario==='exit-late'){
@@ -200,7 +205,7 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
     }
     await core.writePty('core','quit\n');await waitFor(()=>exits.length===1);assert.equal(exits[0].exitCode,23);
    }
-   await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
+   await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},sendDone);return;
   }
   await core.spawnPty({...checkpoint.request,attachOnly:true,replayAfter:{generation:checkpoint.vt.metadata.generation,offset:checkpoint.output.end}},sink,{prepare:()=>{throw Error('must never respawn');}});
   core.acknowledgePtyRestoration('core',checkpoint.vt.metadata.generation);
@@ -212,6 +217,6 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
   if(variant!=='exit-gap'){assert.ok(output.includes(`R:${expected.pid}:after`));assert.equal((expected.output+output).split('TAIL').length-1,1);}
   if(variant==='utf8')assert.equal((expected.output+output).split('😀').length-1,1);
   if(variant==='osc'){assert.ok(events.some(e=>e.type==='osc-status'&&e.level==='active'&&e.text==='busy'));assert.ok(!output.includes('aya.status'));}
-  await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:exits.length},()=>process.exit(0));
+  await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:exits.length},sendDone);
  }
 })().catch(e=>{console.error(e);process.exit(1);});

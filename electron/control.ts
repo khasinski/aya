@@ -23,7 +23,7 @@ import {
   resolvePaneTarget,
   tailForPaneRead,
 } from "./pane-target";
-import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
+import { AYA_HOME, CONTROL_SOCKET_PATH, IS_E2E_HEADLESS } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
 import { callerProject, handleTeamAuthorRequest } from "./team-author";
@@ -693,7 +693,7 @@ async function handleRequest(
     const notification = new Notification({
       title: printable(request.title || "Aya"),
       body: printable(request.body),
-      silent: false,
+      silent: IS_E2E_HEADLESS, // a hidden test run must not ding at the person at the machine
     });
     notification.on("click", () => {
       const current = options.getWindow();
