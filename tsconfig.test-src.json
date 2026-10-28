@@ -23,6 +23,7 @@
     "src/components/TerminalView.tsx",
     "src/components/FindBarCoverageLine.tsx",
     "src/colors.ts",
+    "src/window-layout.ts",
     "src/control-status-target.ts",
     "src/team-edit.ts",
     "src/team-chat.ts",
