@@ -3,11 +3,10 @@ import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../ollama-defa
 import { PRESET_ID_SHELL } from "../preset-ids";
 import { uuid } from "../uuid";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type AyaIntelligenceConfig,
   type CliStatus,
-  type DiagnosticsReport,
   type HarnessDef,
   type ChromeStyle,
   type LayoutMode,
@@ -16,7 +15,6 @@ import {
   type Preset,
   type Snippet,
   type Theme,
-  type UpdateStatus,
   type UsageHookStatus,
   type StatusHookStatus,
   type OmarchyStatus,
@@ -27,6 +25,9 @@ import {
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { MachinesSettings } from "./MachinesSettings";
+import { DiagnosticsTab } from "./settings/DiagnosticsTab";
+import { UpdatesTab } from "./settings/UpdatesTab";
+import { SettingsHeader, SettingsIcon, SettingsRow } from "./settings/parts";
 import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
@@ -221,75 +222,6 @@ function snippetFromDraft(c: DraftSnippet): Snippet {
   };
 }
 
-function SettingsIcon({ name, className = "" }: { name: string; className?: string }) {
-  return (
-    <span
-      className={`aya-settings-material ${className}`}
-      style={{ fontFamily: "Material Symbols Outlined" }}
-      aria-hidden="true"
-    >
-      {name}
-    </span>
-  );
-}
-
-function SettingsHeader({
-  icon,
-  title,
-  children,
-}: {
-  icon: string;
-  title: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="aya-settings-header">
-      <div className="aya-settings-header-icon">
-        <SettingsIcon name={icon} />
-      </div>
-      <div>
-        <div className="aya-modal-title">{title}</div>
-        {children && <div className="aya-modal-hint">{children}</div>}
-      </div>
-    </div>
-  );
-}
-
-function SettingsRow({
-  icon,
-  title,
-  children,
-  control,
-  labelFor,
-}: {
-  icon: string;
-  title: ReactNode;
-  children?: ReactNode;
-  control: ReactNode;
-  labelFor?: string;
-}) {
-  return (
-    <div className="aya-settings-general-row">
-      <div className="aya-settings-general-copy">
-        <div className="aya-settings-row-icon">
-          <SettingsIcon name={icon} />
-        </div>
-        <div>
-          {labelFor ? (
-            <label className="aya-settings-general-title" htmlFor={labelFor}>
-              {title}
-            </label>
-          ) : (
-            <div className="aya-settings-general-title">{title}</div>
-          )}
-          {children && <div className="aya-modal-hint">{children}</div>}
-        </div>
-      </div>
-      <div className="aya-settings-control">{control}</div>
-    </div>
-  );
-}
-
 export function SettingsModal({
   presets,
   defaults,
@@ -369,12 +301,6 @@ export function SettingsModal({
     );
   const [micStatus, setMicStatus] = useState<MicPermissionStatus | null>(null);
   const [micBusy, setMicBusy] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<DiagnosticsReport | null>(null);
-  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
-  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
-  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [updateBusy, setUpdateBusy] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [intelligenceTestBusy, setIntelligenceTestBusy] = useState(false);
@@ -430,9 +356,6 @@ export function SettingsModal({
     void window.aya.micStatus().then((status) => {
       if (!cancelled) setMicStatus(status);
     });
-    void window.aya.getUpdateStatus().then((status) => {
-      if (!cancelled) setUpdateStatus(status);
-    });
     void window.aya
       .webStatus()
       .then((status) => {
@@ -469,13 +392,6 @@ export function SettingsModal({
       cancelled = true;
       stopOmarchyWatch();
     };
-  }, []);
-
-  useEffect(() => {
-    return window.aya.onUpdateStatus((status) => {
-      setUpdateStatus(status);
-      if (status.phase !== "checking") setUpdateBusy(false);
-    });
   }, []);
 
   useEffect(() => {
@@ -596,53 +512,6 @@ export function SettingsModal({
     } finally {
       setMicBusy(false);
     }
-  };
-
-  const diagnosticsJson = diagnostics
-    ? JSON.stringify(diagnostics, null, 2)
-    : "";
-
-  const refreshDiagnostics = async () => {
-    setDiagnosticsBusy(true);
-    setDiagnosticsCopied(false);
-    setDiagnosticsError(null);
-    try {
-      setDiagnostics(await window.aya.getDiagnostics());
-    } catch (err) {
-      setDiagnosticsError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDiagnosticsBusy(false);
-    }
-  };
-
-  // Aya asks before stopping them (in the main process, which Aya Web reaches too).
-  const stopOtherHosts = async () => {
-    try {
-      await window.aya.stopOtherPtyHosts();
-    } catch (err) {
-      setDiagnosticsError(err instanceof Error ? err.message : String(err));
-      return;
-    }
-    await refreshDiagnostics();
-  };
-
-  const copyDiagnostics = async () => {
-    if (!diagnosticsJson) return;
-    await window.aya.writeClipboard(diagnosticsJson);
-    setDiagnosticsCopied(true);
-  };
-
-  const checkUpdates = async () => {
-    setUpdateBusy(true);
-    try {
-      setUpdateStatus(await window.aya.checkForUpdates());
-    } finally {
-      setUpdateBusy(false);
-    }
-  };
-
-  const installUpdate = async () => {
-    await window.aya.installUpdate();
   };
 
   const patchAyaIntelligence = (patch: Partial<AyaIntelligenceConfig>) => {
@@ -2177,71 +2046,7 @@ export function SettingsModal({
               </section>
             )}
 
-            {activeTab === "updates" && (
-              <section className="aya-settings-pane">
-                <SettingsHeader icon="system_update" title="Updates">
-                  {isWeb
-                    ? "Check for updates here; install them from the desktop app."
-                    : "App version checks and restart-to-update controls."}
-                </SettingsHeader>
-                <div className="aya-settings-general">
-                  <SettingsRow
-                    icon="system_update"
-                    title="Updates"
-                    control={(
-                      <div className="aya-settings-button-row">
-                        <button
-                          className="aya-modal-btn"
-                          onClick={checkUpdates}
-                          disabled={
-                            updateBusy ||
-                            updateStatus?.phase === "checking" ||
-                            updateStatus?.phase === "downloading" ||
-                            updateStatus?.supported === false
-                          }
-                        >
-                          {updateBusy || updateStatus?.phase === "checking"
-                            ? "Checking..."
-                            : "Check"}
-                        </button>
-                        {isWeb ? (
-                          <span className="aya-modal-hint">Available in the desktop app.</span>
-                        ) : (
-                          <button
-                            className="aya-modal-btn"
-                            onClick={installUpdate}
-                            disabled={updateStatus?.phase !== "downloaded"}
-                          >
-                            Restart to update
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  >
-                    {updateStatus?.phase === "downloaded"
-                      ? updateStatus.message
-                      : updateStatus?.phase === "downloading"
-                        ? `Downloading ${Math.round(updateStatus.percent ?? 0)}%.`
-                        : updateStatus?.message ??
-                          `Current version ${updateStatus?.currentVersion ?? ""}`.trim()}
-                  </SettingsRow>
-                  {updateStatus?.phase === "downloading" && (
-                    <div className="aya-settings-update-progress" aria-hidden="true">
-                      <span style={{ width: `${Math.round(updateStatus.percent ?? 0)}%` }} />
-                    </div>
-                  )}
-                  {/* A previous update that silently rolled back (#78). Shown
-                      separately from `message` because the phase/message pair
-                      is replaced by the next check - and this panel is usually
-                      opened long after that. */}
-                  {updateStatus?.rollbackNotice && (
-                    <p className="aya-settings-update-rollback" role="status">
-                      {updateStatus.rollbackNotice}
-                    </p>
-                  )}
-                </div>
-              </section>
-            )}
+            {activeTab === "updates" && <UpdatesTab isWeb={isWeb} />}
 
             {activeTab === "machines" && (
               <section className="aya-settings-pane">
@@ -2259,151 +2064,7 @@ export function SettingsModal({
             )}
 
             {activeTab === "diagnostics" && (
-              <section className="aya-settings-pane">
-                <SettingsHeader icon="monitor_heart" title="Diagnostics">
-                  Maintenance tools and a copyable support report.
-                </SettingsHeader>
-                <div className="aya-settings-general">
-                  <SettingsRow
-                    icon="restart_alt"
-                    title="PTY host"
-                    control={(
-                      isWeb ? (
-                        <span className="aya-modal-hint">Available in the desktop app.</span>
-                      ) : (
-                        <button
-                          className="aya-modal-btn"
-                          onClick={() => {
-                            if (
-                              confirm(
-                                "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
-                              )
-                            ) {
-                              void Promise.resolve(onRestartPtyHost()).then(async (failure) => {
-                                if (diagnostics || failure) await refreshDiagnostics();
-                                if (failure) setDiagnosticsError(failure);
-                              });
-                            }
-                          }}
-                        >
-                          Restart
-                        </button>
-                      )
-                    )}
-                  >
-                    Restarts the background terminal host. Use after an update if
-                    terminals behave like an older version.
-                  </SettingsRow>
-                  <SettingsRow
-                    icon="monitor_heart"
-                    title="Diagnostics"
-                    control={(
-                      <div className="aya-settings-button-row">
-                        <button
-                          className="aya-modal-btn"
-                          onClick={refreshDiagnostics}
-                          disabled={diagnosticsBusy}
-                        >
-                          {diagnosticsBusy ? "Checking..." : "Refresh"}
-                        </button>
-                        <button
-                          className="aya-modal-btn"
-                          onClick={copyDiagnostics}
-                          disabled={!diagnosticsJson}
-                        >
-                          {diagnosticsCopied ? "Copied" : "Copy JSON"}
-                        </button>
-                      </div>
-                    )}
-                  >
-                    App, PTY host, sockets, presets, usage hook, and remote-ready state.
-                  </SettingsRow>
-                  {(diagnostics || diagnosticsError) && (
-                    <div className="aya-settings-diagnostics">
-                      {/* Above the report, not instead of it: after a failed restart the report says what still runs. */}
-                      {diagnosticsError && <div className="aya-settings-errors">{diagnosticsError}</div>}
-                      {diagnostics ? (
-                        <>
-                          {diagnostics.ptyHost.warnings.length > 0 && (
-                            <div className="aya-settings-diagnostics-warnings" role="status">
-                              {diagnostics.ptyHost.warnings.map((warning) => (
-                                <div key={warning}>
-                                  <strong>Warning:</strong> {warning}
-                                </div>
-                              ))}
-                              {diagnostics.ptyHost.otherHosts.length > 0 && (
-                                isWeb ? (
-                                  <span className="aya-modal-hint">Available in the desktop app.</span>
-                                ) : (
-                                  <button
-                                    className="aya-modal-btn"
-                                    type="button"
-                                    onClick={() => void stopOtherHosts()}
-                                  >
-                                    Stop other hosts
-                                  </button>
-                                )
-                              )}
-                            </div>
-                          )}
-                          <div className="aya-settings-diagnostics-grid">
-                            <div>
-                              <span>Mode</span>
-                              <strong>{diagnostics.app.mode}</strong>
-                            </div>
-                            <div>
-                              <span>Version</span>
-                              <strong>{diagnostics.app.version}</strong>
-                            </div>
-                            <div>
-                              <span>PTYs</span>
-                              <strong>{diagnostics.ptyHost.ptyCount}</strong>
-                            </div>
-                            <div>
-                              <span>PTY host</span>
-                              <strong>{diagnostics.ptyHost.stale ? "stale" : "current"}</strong>
-                            </div>
-                            <div>
-                              <span>Presets</span>
-                              <strong>{diagnostics.presets.length}</strong>
-                            </div>
-                            <div>
-                              <span>Remote projects</span>
-                              <strong>{diagnostics.projects.remote}</strong>
-                            </div>
-                          </div>
-                          <section className="aya-settings-rule-diagnostics" aria-label="User screen rules">
-                            <h3>User screen rules</h3>
-                            <p>Files are in {diagnostics.userScreenRules.directory}.</p>
-                            {diagnostics.userScreenRules.fileProblem ? (
-                              <p>{/^(generic|claude|codex|opencode|grok|antigravity)\.json: /.test(diagnostics.userScreenRules.fileProblem)
-                                ? diagnostics.userScreenRules.fileProblem
-                                : `${diagnostics.userScreenRules.directory}: ${diagnostics.userScreenRules.fileProblem}`}. Aya continues to use built-in rules, so prompts are still detected.</p>
-                            ) : diagnostics.userScreenRules.reason && !diagnostics.userScreenRules.available ? (
-                              <p>Your rules are currently unavailable. Aya continues to use built-in rules, so prompts are still detected.</p>
-                            ) : null}
-                            <ul>
-                              {diagnostics.userScreenRules.sets.filter((set) => set.status === "loaded").map((set) => (
-                                <li key={set.agent}>
-                                  <strong>{({claude:"Claude",codex:"Codex",opencode:"OpenCode",grok:"Grok",antigravity:"Antigravity",generic:"Generic"} as const)[set.agent]}</strong>: built-in rules + {set.ruleCount ?? 0} of your rules ({(set.sources ?? []).map((source) => source.split("/").at(-1)).join(", ")})
-                                </li>
-                              ))}
-                              {diagnostics.userScreenRules.available && !diagnostics.userScreenRules.sets.some((set) => set.status === "loaded") ? (
-                                <li>All agents: built-in rules only</li>
-                              ) : diagnostics.userScreenRules.available && diagnostics.userScreenRules.sets.some((set) => set.status === "built-in only") ? (
-                                <li>Other agents: built-in rules only</li>
-                              ) : null}
-                            </ul>
-                          </section>
-                          <pre className="aya-settings-diagnostics-json">
-                            {diagnosticsJson}
-                          </pre>
-                        </>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-              </section>
+              <DiagnosticsTab isWeb={isWeb} onRestartPtyHost={onRestartPtyHost} />
             )}
 
             {activeTab === "presets" && (
