@@ -102,6 +102,7 @@ import {
   type Theme,
   type UpdateStatus,
 } from "./types";
+import { windowLayoutOf, windowLayoutParts } from "./window-layout";
 
 // Cap on preset suggestions offered during repo preset import.
 const MAX_SUGGESTED_PRESETS = 8;
@@ -1579,10 +1580,12 @@ export function App() {
           onShowUsageHarnessNameChange={setShowUsageHarnessName}
           showGitHubLink={showGitHubLink}
           onShowGitHubLinkChange={updateShowGitHubLink}
-          layoutMode={layoutMode}
-          onLayoutModeChange={setLayoutMode}
-          chromeStyle={chromeStyle}
-          onChromeStyleChange={setChromeStyle}
+          windowLayout={windowLayoutOf(layoutMode, chromeStyle)}
+          onWindowLayoutChange={(layout) => {
+            const parts = windowLayoutParts(layout);
+            setLayoutMode(parts.layoutMode);
+            setChromeStyle(parts.chromeStyle);
+          }}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}

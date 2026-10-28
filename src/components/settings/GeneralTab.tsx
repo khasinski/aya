@@ -1,10 +1,11 @@
 import { type Dispatch, type SetStateAction, type RefObject } from "react";
 import { PRESET_ID_SHELL } from "../../preset-ids";
-import { type CliStatus, type ChromeStyle, type LayoutMode, type MicPermissionStatus, type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus, type WebConfigureRequest, type WebServerStatus } from "../../types";
+import { type CliStatus, type MicPermissionStatus, type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus, type WebConfigureRequest, type WebServerStatus } from "../../types";
 import { type MacOptionKeyMode } from "../../terminal-option-key";
 import { type TerminalSoundCue } from "../../terminal-sound-prefs";
 import { allNetworksWarning, WEB_LOOPBACK_HOST, webHostOptions } from "../../web-host-options";
 import { SettingsHeader, SettingsRow } from "./parts";
+import { WINDOW_LAYOUTS, type WindowLayout } from "../../window-layout";
 
 interface GeneralTabProps {
   omarchy: OmarchyStatus | null;
@@ -23,10 +24,8 @@ interface GeneralTabProps {
   showGitHubLink: boolean;
   onShowGitHubLinkChange: (show: boolean) => void;
   ghAvailable: boolean | null;
-  layoutMode: LayoutMode;
-  chromeStyle: ChromeStyle;
-  onLayoutModeChange: (mode: LayoutMode) => void;
-  onChromeStyleChange: (style: ChromeStyle) => void;
+  windowLayout: WindowLayout;
+  onWindowLayoutChange: (layout: WindowLayout) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   ayaWeb: WebServerStatus | null;
@@ -81,10 +80,8 @@ export function GeneralTab({
   showGitHubLink,
   onShowGitHubLinkChange,
   ghAvailable,
-  layoutMode,
-  chromeStyle,
-  onLayoutModeChange,
-  onChromeStyleChange,
+  windowLayout,
+  onWindowLayoutChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
   ayaWeb,
@@ -320,24 +317,14 @@ export function GeneralTab({
     }
     control={(
     <div className="aya-settings-segmented" aria-label="Window layout">
-      {([
-        ["classic", "classic", "Projects on top"],
-        ["projects-left", "classic", "Projects on left"],
-        ["classic", "command-rail", "Command Rail"],
-        ["projects-left", "command-rail", "Command Rail, projects left"],
-      ] as const).map(([mode, style, label]) => (
+      {WINDOW_LAYOUTS.map(({ id, label }) => (
         <button
-          key={label}
+          key={id}
           type="button"
           className={`aya-settings-segment ${
-            layoutMode === mode && chromeStyle === style
-              ? "aya-settings-segment--active"
-              : ""
+            windowLayout === id ? "aya-settings-segment--active" : ""
           }`}
-          onClick={() => {
-            onLayoutModeChange(mode);
-            onChromeStyleChange(style);
-          }}
+          onClick={() => onWindowLayoutChange(id)}
         >
           {label}
         </button>

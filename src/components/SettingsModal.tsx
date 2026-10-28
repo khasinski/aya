@@ -6,8 +6,6 @@ import {
   type AyaIntelligenceConfig,
   type CliStatus,
   type HarnessDef,
-  type ChromeStyle,
-  type LayoutMode,
   type MicPermissionStatus,
   type Preset,
   type Snippet,
@@ -43,6 +41,7 @@ import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { HOOK_THROTTLE_MINUTES } from "../main-mirrors";
+import type { WindowLayout } from "../window-layout";
 
 interface Props {
   presets: Preset[];
@@ -60,10 +59,8 @@ interface Props {
   onShowUsageHarnessNameChange: (show: boolean) => void;
   showGitHubLink: boolean;
   onShowGitHubLinkChange: (show: boolean) => void;
-  layoutMode: LayoutMode;
-  onLayoutModeChange: (mode: LayoutMode) => void;
-  chromeStyle: ChromeStyle;
-  onChromeStyleChange: (style: ChromeStyle) => void;
+  windowLayout: WindowLayout;
+  onWindowLayoutChange: (layout: WindowLayout) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   terminalSoundsEnabled: boolean;
@@ -114,10 +111,8 @@ export function SettingsModal({
   onShowUsageHarnessNameChange,
   showGitHubLink,
   onShowGitHubLinkChange,
-  layoutMode,
-  onLayoutModeChange,
-  chromeStyle,
-  onChromeStyleChange,
+  windowLayout,
+  onWindowLayoutChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
   terminalSoundsEnabled,
@@ -980,10 +975,8 @@ export function SettingsModal({
                 showGitHubLink={showGitHubLink}
                 onShowGitHubLinkChange={onShowGitHubLinkChange}
                 ghAvailable={ghAvailable}
-                layoutMode={layoutMode}
-                chromeStyle={chromeStyle}
-                onLayoutModeChange={onLayoutModeChange}
-                onChromeStyleChange={onChromeStyleChange}
+                windowLayout={windowLayout}
+                onWindowLayoutChange={onWindowLayoutChange}
                 harnessSearchEnabled={harnessSearchEnabled}
                 onHarnessSearchEnabledChange={onHarnessSearchEnabledChange}
                 ayaWeb={ayaWeb}
