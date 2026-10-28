@@ -289,7 +289,8 @@ export function TeamCard({
                   {project.tabs.map((tab) => {
                     const terminal = terminals[tab.id];
                     const state = terminal?.spawnFailure ? " (failed to start)" :
-                      terminal && (terminal.exitCode !== null || terminal.stopped) ? " (exited)" : "";
+                      terminal?.exitCode !== null && terminal?.exitCode !== undefined ? " (exited)" :
+                        terminal?.stopped ? " (stopped)" : "";
                     return (
                       <option key={tab.id} value={tab.id}>
                         {paneOptionLabel(tab.name, plays[tab.id], team.name, role.id)}{state}

@@ -37,6 +37,8 @@ export function useTeams({ projects, activeProjectId, activeProjectRemote }: Tea
       })
       .finally(() => { refreshesInFlight.current--; });
   }, [projectSlugsKey]);
+  const currentRefreshTeams = useRef(refreshTeams);
+  currentRefreshTeams.current = refreshTeams;
   useEffect(() => {
     // A changed project list must get a trailing read even if an older batch is in flight.
     void refreshTeams(true);
@@ -46,15 +48,17 @@ export function useTeams({ projects, activeProjectId, activeProjectRemote }: Tea
   const assignTeamRole = useCallback(
     (team: string, role: string, paneId: string | null) => {
       if (!activeProjectId) return;
-      const projectScope = projectSlugsKey;
       void window.aya
         .teamAssign(activeProjectId, team, role, paneId)
         .catch((err) => console.warn("[aya] team role not assigned:", err))
-        .then(() => {
-          if (projectScope === currentProjectSlugs.current) return refreshTeams(true);
+      .then(() => {
+          // The assigned project may still be open after the project list changes.
+          // Refresh the current scope so a batch that started before the assignment
+          // cannot leave its chips stale until the next interval tick.
+          if (currentProjectSlugs.current.split("\n").includes(activeProjectId)) return currentRefreshTeams.current(true);
         });
     },
-    [activeProjectId, projectSlugsKey, refreshTeams],
+    [activeProjectId],
   );
   const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || EMPTY_TEAMS;
   // Closing the Teams window refreshes definitions and role chips.

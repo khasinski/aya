@@ -79,8 +79,9 @@ else delete require.cache[jsxRuntimeId];
 
 function deferred() {
   let resolve;
-  const promise = new Promise((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function summary(roleIds, assignments = {}, name = "ux-review") {
@@ -295,13 +296,14 @@ test("an action from the old project cannot invalidate the current project's pol
 
 test("an old project's list failure does not show beside the current project's cards", async () => {
   let aCalls = 0;
+  const oldFailure = deferred();
   const hook = mount(
-    async (slug) => {
+    (slug) => {
       if (slug === "a") {
-        if (aCalls++ === 0) return [summary(["role"], {}, "team-a")];
-        throw new Error("old project failed");
+        if (aCalls++ === 0) return Promise.resolve([summary(["role"], {}, "team-a")]);
+        return oldFailure.promise;
       }
-      return [summary(["role"], {}, "team-b")];
+      return Promise.resolve([summary(["role"], {}, "team-b")]);
     },
     async () => {},
     [],
@@ -309,15 +311,45 @@ test("an old project's list failure does not show beside the current project's c
   );
   try {
     await settle(hook);
-    const oldRefresh = findTeamCard(hook.render(), "team-a").props.onChanged;
+    hook.tick();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(aCalls, 2, "A's refresh is already in flight before switching");
     hook.updateProject({ slug: "b", name: "Project B", directory: "/b" });
     await settle(hook);
-    await oldRefresh();
+    oldFailure.reject(new Error("old project failed"));
     await settle(hook);
     const error = findNode(hook.render(), (node) => node.type?.name === "ErrorLine");
     assert.equal(error?.props.error ?? null, null, "the stale failure is not shown for project B");
     assert.ok(findTeamCard(hook.render(), "team-b"));
-  } finally { hook.cleanup(); }
+  } finally { oldFailure.reject(new Error("cleanup")); hook.cleanup(); }
+});
+
+test("a stale failure from an earlier request cannot appear after the newer same-project response", async () => {
+  const oldFailure = deferred();
+  let calls = 0;
+  const hook = mount(
+    () => {
+      calls++;
+      if (calls === 1) return Promise.resolve([summary(["role"], {}, "team-a")]);
+      if (calls === 2) return oldFailure.promise;
+      return Promise.resolve([summary(["role"], {}, "team-a")]);
+    },
+    async () => {},
+    [],
+    { slug: "a", name: "Project A", directory: "/a" },
+  );
+  try {
+    await settle(hook);
+    hook.tick();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls, 2, "the old request is pending");
+    await findTeamCard(hook.render(), "team-a").props.onChanged();
+    await settle(hook);
+    oldFailure.reject(new Error("stale request failure"));
+    await settle(hook);
+    const error = findNode(hook.render(), (node) => node.type?.name === "ErrorLine");
+    assert.equal(error?.props.error ?? null, null, "an older failed request cannot replace the current success");
+  } finally { oldFailure.reject(new Error("cleanup")); hook.cleanup(); }
 });
 
 test("two interval ticks do not start more window polls while teamList is pending", async () => {
@@ -386,26 +418,32 @@ test("the real Remove team action refreshes during a poll without waiting for an
 
 test("the real Pause and Resume card actions each refresh immediately with interval polling off", async () => {
   for (const action of [
-    { name: "Pause", configure: (value) => { value.running = true; }, api: "teamPause" },
-    { name: "Resume", configure: (value) => { value.paused = true; }, api: "teamResume" },
+    { name: "Pause", configure: (value) => { value.running = true; }, api: "teamPause", result: { paused: true, running: false } },
+    { name: "Resume", configure: (value) => { value.paused = true; }, api: "teamResume", result: { paused: false, running: true } },
   ]) {
     let calls = 0;
-    const value = summary(["tester", "implementer"]);
-    action.configure(value);
+    const apiCalls = [];
+    const initial = summary(["tester", "implementer"]);
+    action.configure(initial);
+    const updated = { ...initial, ...action.result };
     const hook = mount(
-      async () => { calls++; return [value]; },
+      async () => { calls++; return [calls === 1 ? initial : updated]; },
       async () => {},
       [],
       undefined,
       {},
-      { [action.api]: async () => {} },
+      { [action.api]: async (...args) => { apiCalls.push(args); } },
     );
     try {
       await settle(hook);
       const button = findButton(renderComponent(findTeamCard(hook.render())), action.name);
       assert.ok(button, `${action.name} is a real card action`);
       await button.props.onClick();
+      assert.deepEqual(apiCalls, [["game", "ux-review"]], `${action.name} invokes ${action.api} for this project and team`);
       assert.equal(calls, 2, `${action.name} refreshes without an interval tick`);
+      const refreshed = findTeamCard(hook.render()).props.team;
+      assert.equal(refreshed.paused, action.result.paused, `${action.name} renders the refreshed paused state`);
+      assert.equal(refreshed.running, action.result.running, `${action.name} renders the refreshed running state`);
     } finally { hook.cleanup(); }
   }
 });
@@ -560,22 +598,29 @@ test("a pane with confirmed spawn failure is unassigned when Save returns focus"
   }
 });
 
-test("the card labels an assigned but exited pane in its Pane selector", async () => {
-  const hook = mount(
-    async () => [summary(["tester"], { tester: "pane-exited" })],
-    async () => {},
-    [{ id: "pane-exited", name: "shell 1" }],
-    undefined,
-    { "pane-exited": { id: "pane-exited", exitCode: 0, stopped: true } },
-  );
-  try {
-    await settle(hook);
-    const cardElement = findTeamCard(hook.render());
-    const card = renderComponent(cardElement);
-    const select = findNode(card, (node) => node.type === "select" && node.props["aria-label"] === "Pane for tester");
-    const option = findNode(select, (node) => node.type === "option" && node.props.value === "pane-exited");
-    assert.equal(Array.isArray(option?.props.children) ? option.props.children.join("") : option?.props.children, "shell 1 (exited)");
-  } finally { hook.cleanup(); }
+test("the Pane selector distinguishes live, exited, stopped and failed panes", async () => {
+  const states = [
+    { name: "live", state: { id: "pane", exitCode: null, stopped: false }, expected: "shell 1" },
+    { name: "exited", state: { id: "pane", exitCode: 0, stopped: false }, expected: "shell 1 (exited)" },
+    { name: "stopped", state: { id: "pane", exitCode: null, stopped: true }, expected: "shell 1 (stopped)" },
+    { name: "failed to start", state: { id: "pane", exitCode: null, stopped: false, spawnFailure: { reason: "spawn-failed" } }, expected: "shell 1 (failed to start)" },
+  ];
+  for (const item of states) {
+    const hook = mount(
+      async () => [summary(["tester"], { tester: "pane" })],
+      async () => {},
+      [{ id: "pane", name: "shell 1" }],
+      undefined,
+      { pane: item.state },
+    );
+    try {
+      await settle(hook);
+      const card = renderComponent(findTeamCard(hook.render()));
+      const select = findNode(card, (node) => node.type === "select" && node.props["aria-label"] === "Pane for tester");
+      const option = findNode(select, (node) => node.type === "option" && node.props.value === "pane");
+      assert.equal(Array.isArray(option?.props.children) ? option.props.children.join("") : option?.props.children, item.expected, item.name);
+    } finally { hook.cleanup(); }
+  }
 });
 
 test("a pre-save poll with the same roles cannot consume the post-save focus request", async () => {

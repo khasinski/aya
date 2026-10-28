@@ -152,7 +152,7 @@ test("a project added during an in-flight poll is loaded without another interva
   } finally { hook.cleanup(); }
 });
 
-test("an assignment started before the project list changed cannot supersede the new project batch", async () => {
+test("an assignment started before the project list changed refreshes the still-current scope", async () => {
   const assignment = deferred();
   const currentGame = deferred();
   const addedProject = deferred();
@@ -180,14 +180,55 @@ test("an assignment started before the project list changed cannot supersede the
     assert.deepEqual(calls, ["game", "game", "added"]);
     assignment.resolve();
     await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ["game", "game", "added", "game", "added"]);
     currentGame.resolve([summary("current-game")]);
     addedProject.resolve([summary("added-project")]);
     await settle(hook);
-    assert.equal(hook.render().teamsByProject.added?.[0]?.definition.roles[0].id, "added-project");
+    await settle(hook);
+    assert.equal(hook.render().teamsByProject.added?.[0]?.definition.roles[0].id, "late-added");
   } finally {
     assignment.resolve();
     currentGame.resolve([summary("current-game")]);
     addedProject.resolve([summary("added-project")]);
+    hook.cleanup();
+  }
+});
+
+test("an assignment that completes after a project is added refreshes the current scope", async () => {
+  const assignment = deferred();
+  const currentRead = deferred();
+  const calls = [];
+  const hook = mount(
+    (slug) => {
+      calls.push(slug);
+      if (calls.length === 1) return Promise.resolve([summary("initial")]);
+      if (calls.length === 2) return Promise.resolve([summary("current-game")]);
+      if (calls.length === 3) return Promise.resolve([summary("added-project")]);
+      if (calls.length === 4) return currentRead.promise;
+      return Promise.resolve([summary(`refresh-${slug}`)]);
+    },
+    [{ slug: "game", directory: "/project" }],
+    "game",
+    () => assignment.promise,
+  );
+  try {
+    await settle(hook);
+    hook.render().onAssignTeamRole("ux-review", "reviewer", "pane-1");
+    await new Promise((resolve) => setImmediate(resolve));
+    hook.updateProjects([
+      { slug: "game", directory: "/project" },
+      { slug: "added", directory: "/added" },
+    ]);
+    assert.deepEqual(calls, ["game", "game", "added"]);
+    assignment.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ["game", "game", "added", "game", "added"], "completion refreshes the still-open project set");
+    currentRead.resolve([summary("assigned-current")]);
+    await settle(hook);
+    assert.equal(hook.render().teamsByProject.game[0].definition.roles[0].id, "assigned-current");
+  } finally {
+    assignment.resolve();
+    currentRead.resolve([summary("assigned-current")]);
     hook.cleanup();
   }
 });
