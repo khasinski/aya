@@ -152,7 +152,7 @@ import type {
   SpawnRequest,
 } from "./types";
 
-installHeadlessUiRouter({ env: process.env, dialog, BrowserWindow, ipcMain });
+const headlessWindowOptions = installHeadlessUiRouter({ env: process.env, app, dialog, BrowserWindow, Notification, ipcMain });
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
@@ -330,6 +330,7 @@ let forgetRemoteOutputSink: (webContentsId: number) => void = () => {};
 
 const windows = createAyaWindows({
   BrowserWindow,
+  headlessWindowOptions,
   ptyHost,
   platform: process.platform,
   mainDirname: __dirname,
@@ -497,7 +498,7 @@ const aboutPanelDeps = {
   darkBackground: COLOR_DARK_BG,
   lightText: COLOR_LIGHT_TEXT,
   focusedAyaWindow,
-  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(options),
+  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(headlessWindowOptions(options)),
   devIconPath,
 };
 

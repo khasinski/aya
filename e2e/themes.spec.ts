@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, handleRendererDialogs } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ test("deleting the active theme falls back to a valid theme and persists", async
   app,
   seeded,
 }) => {
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
   await fireShortcut(app, "open-settings");
   const settings = window.locator(".aya-modal--settings");
   await expect(settings).toBeVisible();
@@ -25,7 +26,6 @@ test("deleting the active theme falls back to a valid theme and persists", async
   expect(deletedName).toBeTruthy();
 
   // Accept the native confirm() before clicking delete.
-  window.once("dialog", (d) => d.accept());
   await activeRow.locator(".aya-settings-row-close").click();
 
   // Row gone, and exactly one (different) theme is now active - not a broken/empty state.

@@ -1,12 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, expectHeadlessUiEvents } from "./fixtures";
+import { appEnv } from "./helpers/seed";
 
-test("headless Electron records and cancels native and renderer dialogs and window show requests", async ({ app, window, seeded }) => {
+test("headless Electron records and cancels native UI requests without showing them", async ({ app, window, seeded }) => {
+  test.skip(appEnv(seeded).AYA_E2E_HEADLESS !== "1", "router probe is only meaningful in headless mode; CI uses Xvfb");
   const expectedUnhandled = [
-    "dialog.showMessageBox", "dialog.showErrorBox", "dialog.showOpenDialog", "window.show", "window.showInactive", "renderer.alert", "renderer.confirm",
+    "dialog.showMessageBox", "dialog.showMessageBoxSync", "dialog.showErrorBox", "dialog.showOpenDialog", "dialog.showOpenDialogSync",
+    "dialog.showSaveDialog", "dialog.showSaveDialogSync", "window.show", "window.showInactive", "window.construct-visible",
+    "app.showAboutPanel", "notification.show", "renderer.alert", "renderer.confirm",
   ];
-  const expectedRecorded = [...expectedUnhandled, "renderer.confirm"];
+  const expectedRecorded = [...expectedUnhandled, "renderer.confirm", "renderer.prompt"];
   expectHeadlessUiEvents(seeded, expectedUnhandled);
   await expect(window.locator("body")).toBeVisible();
   const pageDialogs: string[] = [];
@@ -17,29 +21,45 @@ test("headless Electron records and cancels native and renderer dialogs and wind
       (window as Window & { headlessDialogEvents: unknown[] }).headlessDialogEvents.push((event as CustomEvent).detail);
     });
   });
-  const result = await app.evaluate(async ({ BrowserWindow, dialog }) => {
+  const result = await app.evaluate(async ({ BrowserWindow, dialog, app, Notification }) => {
     const message = await dialog.showMessageBox({ message: "headless router probe", cancelId: 1, defaultId: 0 });
+    const syncMessage = dialog.showMessageBoxSync({ message: "sync probe", cancelId: 2, defaultId: 0 });
     dialog.showErrorBox("headless router probe", "must not show");
     const open = await dialog.showOpenDialog({ properties: ["openFile"] });
+    const openSync = dialog.showOpenDialogSync({ properties: ["openFile"] });
+    const save = await dialog.showSaveDialog({});
+    const saveSync = dialog.showSaveDialogSync({});
     const window = BrowserWindow.getAllWindows()[0];
     window.show();
     window.showInactive();
+    const constructedVisible = await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.probeVisibleWindow()");
+    app.showAboutPanel();
+    new Notification({ title: "headless", body: "must not show" }).show();
     await window.webContents.executeJavaScript("window.alert('headless renderer probe')");
     const cancelled = await window.webContents.executeJavaScript("window.confirm('default cancel')");
     await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.confirm', true)");
     const accepted = await window.webContents.executeJavaScript("window.confirm('test accepted')");
-    return { message, open, visible: BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()), cancelled, accepted };
+    await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.prompt', 'safe answer')");
+    const prompt = await window.webContents.executeJavaScript("window.prompt('headless prompt')");
+    return { message, syncMessage, open, openSync, save, saveSync, constructedVisible, visible: BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()), cancelled, accepted, prompt };
   });
   expect(result.message.response).toBe(1);
+  expect(result.syncMessage).toBe(2);
   expect(result.open).toEqual({ canceled: true, filePaths: [] });
+  expect(result.openSync).toBeUndefined();
+  expect(result.save).toEqual({ canceled: true });
+  expect(result.saveSync).toBeUndefined();
+  expect(result.constructedVisible).toBe(false);
   expect(result.visible).toBe(false);
   await expect.poll(() => window.evaluate(() => (window as Window & { headlessDialogEvents: Array<{ kind: string; message: string }> }).headlessDialogEvents)).toEqual([
     { kind: "renderer.alert", message: "headless renderer probe" },
     { kind: "renderer.confirm", message: "default cancel" },
     { kind: "renderer.confirm", message: "test accepted" },
+    { kind: "renderer.prompt", message: "headless prompt" },
   ]);
   expect(result.cancelled).toBe(false);
   expect(result.accepted).toBe(true);
+  expect(result.prompt).toBe("safe answer");
   expect(pageDialogs).toEqual([]);
   const lines = readFileSync(join(seeded.root, "e2e-headless-ui.log"), "utf8").trim().split("\n");
   expect(lines.map((line) => JSON.parse(line).kind)).toEqual(expectedRecorded);

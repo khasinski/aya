@@ -218,9 +218,59 @@ export function launchE2eElectron(options: Parameters<typeof electron.launch>[0]
   return electron.launch({ ...options, env });
 }
 
+/** Raw Electron subprocesses use the same headless bootstrap and launch guard as Playwright launches. */
+export function spawnE2eElectron(
+  binary: string,
+  inputArgs: string[],
+  options: import("node:child_process").SpawnOptions,
+): ReturnType<typeof spawn> {
+  const env = { ...(options.env as NodeJS.ProcessEnv | undefined) };
+  if (env.AYA_E2E_RUN === "1" && !process.env.CI && env.AYA_E2E_HEADLESS !== "1") {
+    throw new Error("Local e2e must launch Aya with hidden windows");
+  }
+  const args = [...inputArgs];
+  if (env.AYA_E2E_HEADLESS === "1") {
+    if (!env.AYA_E2E_HEADLESS_UI_LOG) throw new Error("Headless e2e launch is missing its UI event log");
+    const originalMain = args[0];
+    if (!originalMain || originalMain.startsWith("-")) throw new Error("Headless Electron spawn must name its entry as the first argument");
+    env.AYA_E2E_REAL_MAIN = originalMain;
+    env.AYA_E2E_HEADLESS_UI_MODULE = join(APP_ROOT, "dist-electron", "e2e-headless-ui.js");
+    args[0] = join(APP_ROOT, "e2e", "helpers", "headless-main.cjs");
+  }
+  return spawn(binary, args, { ...options, env });
+}
+
 /** Declare the native UI requests a test intentionally exercises in headless mode. */
 export function expectHeadlessUiEvents(seeded: SeededEnv, kinds: string[]): void {
   writeFileSync(join(seeded.root, "e2e-headless-ui-expected.json"), JSON.stringify(kinds), { mode: 0o600 });
+}
+
+/** Handle renderer JS dialogs in both local-headless runs and visible CI/Xvfb runs. */
+export async function handleRendererDialogs(
+  page: Page,
+  seeded: SeededEnv,
+  responses: Partial<Record<"renderer.alert" | "renderer.confirm" | "renderer.prompt", boolean | string | null>> = {},
+): Promise<{ read: () => Promise<Array<{ kind: string; message: string }>> }> {
+  const headless = appEnv(seeded).AYA_E2E_HEADLESS === "1";
+  if (headless) {
+    await page.evaluate((values) => {
+      const w = window as Window & { __ayaE2eHeadlessUi: { setResponse: (kind: string, response: unknown) => void }; __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> };
+      w.__ayaE2eRendererEvents = [];
+      window.addEventListener("aya:e2e-headless-dialog", (event) => w.__ayaE2eRendererEvents?.push((event as CustomEvent).detail));
+      for (const [kind, response] of Object.entries(values)) w.__ayaE2eHeadlessUi.setResponse(kind, response);
+    }, responses);
+    return { read: () => page.evaluate(() => (window as Window & { __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> }).__ayaE2eRendererEvents ?? []) };
+  }
+  const events: Array<{ kind: string; message: string }> = [];
+  page.on("dialog", async (dialog) => {
+    const kind = `renderer.${dialog.type()}`;
+    events.push({ kind, message: dialog.message() });
+    const response = responses[kind as keyof typeof responses];
+    if (dialog.type() === "confirm" && response === false) await dialog.dismiss();
+    else if (dialog.type() === "prompt" && typeof response === "string") await dialog.accept(response);
+    else await dialog.accept();
+  });
+  return { read: async () => events };
 }
 
 function headlessUiFailure(seeded: SeededEnv): Error | null {
@@ -236,6 +286,11 @@ function headlessUiFailure(seeded: SeededEnv): Error | null {
   return JSON.stringify(actual) === JSON.stringify(expected)
     ? null
     : new Error(`Headless e2e requested native UI: expected ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`);
+}
+
+export function assertHeadlessUiEvents(seeded: SeededEnv): void {
+  const error = headlessUiFailure(seeded);
+  if (error) throw error;
 }
 
 export async function closeAndWait(app: ElectronApplication): Promise<void> {
@@ -282,10 +337,12 @@ export const test = base.extend<{
     const uiError = headlessUiFailure(s);
     // Attach the PTY lifecycle log before the root is wiped: the only record.
     if (testInfo.status !== testInfo.expectedStatus) {
-      for (const name of ["pty-events.log", "pty-events.log.1"]) {
+      for (const name of ["pty-events.log", "pty-events.log.1", "e2e-headless-ui.log"]) {
         const p = join(s.ayaHome, name);
-        if (existsSync(p)) {
-          await testInfo.attach(name, { path: p, contentType: "text/plain" });
+        const uiLog = join(s.root, name);
+        const evidence = name === "e2e-headless-ui.log" ? uiLog : p;
+        if (existsSync(evidence)) {
+          await testInfo.attach(name, { path: evidence, contentType: "text/plain" });
         }
       }
     }
@@ -333,7 +390,7 @@ export const test = base.extend<{
     // tabs must attach-only instead of respawning.
     if (seedOptions.preStartPtyHost) {
       // Match main's startHost: the Node/Electron runtime is part of the host content identity.
-      const issuer=spawn(require("electron") as string,[join(APP_ROOT,'tests/helpers/pty-prestart-announced.cjs')],{
+      const issuer=spawnE2eElectron(require("electron") as string,[join(APP_ROOT,'tests/helpers/pty-prestart-announced.cjs')],{
         env:{...appEnv(seeded,process.env,false),ELECTRON_RUN_AS_NODE:'1',AYA_TEST_HOST_SCRIPT:PTY_HOST_SCRIPT},stdio:['ignore','ignore','pipe'],
       });
       let issuerError='';issuer.stderr?.on('data',chunk=>{issuerError+=String(chunk);});

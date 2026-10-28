@@ -1,8 +1,7 @@
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { socketPathLimit } from "../dist-electron/socket-path.js";
-import { test, expect, ciElectronFlags, cleanUpSeeded, reapPtyHosts } from "./fixtures";
+import { test, expect, ciElectronFlags, cleanUpSeeded, reapPtyHosts, spawnE2eElectron, assertHeadlessUiEvents } from "./fixtures";
 import { appEnv, seedEnv } from "./helpers/seed";
 
 // A unix socket path over the OS limit (104 bytes on macOS) makes listen() throw EINVAL: Aya refuses
@@ -16,7 +15,7 @@ test("Aya started with an AYA_HOME too long for its sockets exits and names the 
   const longHome = join(seeded.root, "h".repeat(socketPathLimit()), "aya-home");
   mkdirSync(longHome, { recursive: true });
   const electronBinary = (await import("electron")).default as unknown as string;
-  const child = spawn(
+  const child = spawnE2eElectron(
     electronBinary,
     [join(APP_ROOT, "dist-electron", "main.js"), `--user-data-dir=${seeded.userDataDir}`, ...ciElectronFlags()],
     {
@@ -30,7 +29,8 @@ test("Aya started with an AYA_HOME too long for its sockets exits and names the 
   const killer = setTimeout(() => child.kill("SIGKILL"), EXIT_TIMEOUT_MS);
   const code = await new Promise((resolve) => child.on("exit", resolve));
   clearTimeout(killer);
-  await reapPtyHosts(longHome).finally(() => cleanUpSeeded(seeded));
+  try { assertHeadlessUiEvents(seeded); }
+  finally { await reapPtyHosts(longHome).finally(() => cleanUpSeeded(seeded)); }
 
   expect(code).toBe(1);
   expect(stderr).toMatch(/AYA_HOME.*too long/);
@@ -47,7 +47,7 @@ test("an AYA_HOME only the remote socket outgrows still starts Aya, with the bri
   expect(Buffer.byteLength(join(home, "aya-remote.sock"))).toBe(limit + 1);
   mkdirSync(home, { recursive: true });
   const electronBinary = (await import("electron")).default as unknown as string;
-  const child = spawn(
+  const child = spawnE2eElectron(
     electronBinary,
     [join(APP_ROOT, "dist-electron", "main.js"), `--user-data-dir=${seeded.userDataDir}`, ...ciElectronFlags()],
     { env: { ...appEnv(seeded), AYA_HOME: home }, stdio: ["ignore", "ignore", "pipe"] },
@@ -60,6 +60,7 @@ test("an AYA_HOME only the remote socket outgrows still starts Aya, with the bri
     expect(existsSync(join(home, "aya-remote.sock"))).toBe(false);
     expect(stderr).toMatch(/remote bridge is off.*too long/);
     expect(child.exitCode).toBeNull();
+    assertHeadlessUiEvents(seeded);
   } finally {
     child.kill("SIGKILL");
     await reapPtyHosts(home).finally(() => cleanUpSeeded(seeded));

@@ -2,14 +2,15 @@ import type { ElectronApplication } from "@playwright/test";
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import config from "../playwright.config";
-import { cleanUpSeeded, closeAndWait, expect, hostPidsForHome, launchApp, test as base } from "./fixtures";
+import { assertHeadlessUiEvents, cleanUpSeeded, closeAndWait, expect, hostPidsForHome, launchApp, test as base } from "./fixtures";
 import { appEnv, seedEnv, type SeededEnv } from "./helpers/seed";
 
 const test = base.extend<{ peerSeeded: SeededEnv; peerApp: ElectronApplication }>({
   peerSeeded: async ({}, use) => {
     const seeded = seedEnv();
     await use(seeded);
-    await cleanUpSeeded(seeded);
+    try { assertHeadlessUiEvents(seeded); }
+    finally { await cleanUpSeeded(seeded); }
   },
   peerApp: async ({ peerSeeded }, use) => {
     const app = await launchApp(peerSeeded);

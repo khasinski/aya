@@ -1,6 +1,6 @@
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {test as base,expect,launchApp,launchE2eElectron,closeAndWait,hostPidsForHome,ciElectronFlags} from './fixtures';
+import {test as base,expect,launchApp,launchE2eElectron,closeAndWait,hostPidsForHome,ciElectronFlags,handleRendererDialogs} from './fixtures';
 import {appEnv} from './helpers/seed';
 import {waitForShellReady} from './helpers/terminal';
 const alive=(pid:number)=>{try{process.kill(pid,0);return true;}catch{return false;}};
@@ -28,9 +28,10 @@ for(const scenario of ['takeover','deadline','close','quit'])test(`a still-closi
   await waiting.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','not-delivered-paste\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
   expect(await next.evaluate(()=>(globalThis as any).principalWrites)).toBe(0);
   if(scenario==='close'){
-   const told=new Promise<string>((resolve,reject)=>view.once('dialog',dialog=>{const message=dialog.message();void dialog.accept().then(()=>resolve(message),reject);}));
+   const rendererDialogs=await handleRendererDialogs(view,seeded,{'renderer.alert':undefined});
    await view.locator('.aya-sidebar-row[data-terminal-name="shell 1"]').click({button:'right'});
-   await view.locator('.aya-context-menu-item',{hasText:'Close terminal'}).click();expect(await told).toContain('Aya did not close shell 1');
+   await view.locator('.aya-context-menu-item',{hasText:'Close terminal'}).click();
+   await expect.poll(async()=> (await rendererDialogs.read()).map((event)=>event.message).join('\n')).toContain('Aya did not close shell 1');
   }
   if(scenario==='quit'){
    await closeAndWait(next);await closeAndWait(app);

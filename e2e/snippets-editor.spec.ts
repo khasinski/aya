@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, handleRendererDialogs } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -104,6 +104,7 @@ test("removing a snippet (native confirm) drops it from disk", async ({
   app,
   seeded,
 }) => {
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
   const settings = await openSnippets(app, window);
   const rows = settings.locator(".aya-settings-snippet-row");
   const before = await rows.count();
@@ -114,7 +115,6 @@ test("removing a snippet (native confirm) drops it from disk", async ({
   ).trim();
   expect(removedName).toBeTruthy();
 
-  window.once("dialog", (d) => d.accept());
   await rows.first().locator(".aya-settings-row-close").click();
   await expect(rows).toHaveCount(before - 1);
 

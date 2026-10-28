@@ -5,6 +5,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { createOpenProjectBuffer } from "./open-project-buffer";
 import { installPromptAttachmentGestures } from "./prompt-attachment-gestures";
 import { installWheelZoom } from "./zoom-preload";
+const E2E_HEADLESS_UI_ACTIVE_ENV = "AYA_E2E_HEADLESS_UI_ACTIVE";
 
 import type {
   AyaApi,
@@ -16,11 +17,12 @@ import type {
   UpdateStatus,
 } from "./types";
 
-if (process.env.AYA_E2E_HEADLESS === "1") {
+if (process.env[E2E_HEADLESS_UI_ACTIVE_ENV] === "1") {
   contextBridge.exposeInMainWorld("__ayaE2eHeadlessUi", {
     request: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt") =>
       ipcRenderer.sendSync("e2e:headless-ui-renderer", kind),
-    setResponse: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", response: boolean | string | null) =>
+    probeVisibleWindow: () => ipcRenderer.sendSync("e2e:headless-ui-renderer", "window.construct-visible"),
+    setResponse: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", response: boolean | string | null | undefined) =>
       ipcRenderer.sendSync("e2e:headless-ui-response", kind, response),
   });
   contextBridge.executeInMainWorld({

@@ -12,6 +12,7 @@ import {
   delay,
   cleanUpSeeded,
   launchE2eElectron,
+  assertHeadlessUiEvents,
 } from "./fixtures";
 
 // Reproduces: after restart the FIRST terminal is selected, not the one that
@@ -34,7 +35,11 @@ function seed(): SeededEnv {
 
 test.afterEach(async () => {
   for (const app of [...launched]) await killAndWait(app);
-  if (seeded) await cleanUpSeeded(seeded);
+  if (seeded) {
+    const current = seeded;
+    try { assertHeadlessUiEvents(current); }
+    finally { await cleanUpSeeded(current); }
+  }
   seeded = null;
 });
 

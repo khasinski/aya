@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {appEnv} from "./helpers/seed";
 import type { Page } from "@playwright/test";
-import { expect, expectHeadlessUiEvents, hostPidsForHome, test as base, launchApp, launchE2eElectron, closeAndWait, ciElectronFlags } from "./fixtures";
+import { expect, hostPidsForHome, test as base, launchApp, launchE2eElectron, closeAndWait, ciElectronFlags, handleRendererDialogs } from "./fixtures";
 import { waitForShellReady } from "./helpers/terminal";
 
 // These are the unknown-key reuse cases. A main that created the host now
@@ -77,7 +77,6 @@ test("a killed JS host leaves its shells alive and disconnected; Shift+Enter nev
 });
 
 test("a refused kill explains why restart stopped and keeps the disconnected pane without another spawn", async ({ app, window, seeded }) => {
-  expectHeadlessUiEvents(seeded, ["renderer.alert"]);
   const { before, row } = await loseHost(window, seeded.ayaHome);
   await app.evaluate(({ ipcMain }) => {
     const g = globalThis as unknown as { unexpectedSpawns: unknown[]; restartQuestions: number };
@@ -89,14 +88,11 @@ test("a refused kill explains why restart stopped and keeps the disconnected pan
     ipcMain.removeHandler("pty:spawn");
     ipcMain.handle("pty:spawn", (_event, req) => { g.unexpectedSpawns.push(req); });
   });
-  await window.evaluate(()=>{
-    const w=window as any;w.headlessUiEvents=[];
-    window.addEventListener("aya:e2e-headless-dialog",event=>w.headlessUiEvents.push((event as CustomEvent).detail));
-  });
+  const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.alert':undefined});
   await row.click({ button: "right" });
   await window.locator(".aya-context-menu-item", { hasText: "Restart terminal" }).click();
-  await expect.poll(()=>window.evaluate(()=>(window as any).headlessUiEvents)).toContainEqual(expect.objectContaining({kind:"renderer.alert"}));
-  const message = (await window.evaluate(()=>(window as any).headlessUiEvents.at(-1).message)) as string;
+  await expect.poll(()=>rendererDialogs.read()).toContainEqual(expect.objectContaining({kind:"renderer.alert"}));
+  const message = (await rendererDialogs.read()).at(-1)?.message ?? "";
   expect(message).toContain("Aya did not restart shell 1: it could not confirm that the old terminal stopped");
   expect(message).toContain("The native owner cannot authenticate this Aya");
   await window.waitForTimeout(500);
@@ -177,11 +173,7 @@ test.describe("a pane mounted after its host disconnected", () => {
 test('Diagnostics separately confirms stopping a retained owner after unavailable continuity and JS death',async({app,window,seeded})=>{
   const {before}=await loseHost(window,seeded.ayaHome);
   const pageErrors:string[]=[];window.on('pageerror',error=>pageErrors.push(String(error)));
-  await window.evaluate(()=>{
-    const w=window as any;w.headlessUiEvents=[];
-    window.addEventListener('aya:e2e-headless-dialog',event=>w.headlessUiEvents.push((event as CustomEvent).detail));
-    w.__ayaE2eHeadlessUi.setResponse('renderer.confirm',true);
-  });
+  const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.confirm':true});
   await app.evaluate(({dialog})=>{
     const original=dialog.showMessageBox.bind(dialog),g=globalThis as any;g.ownerAnswer=1;g.ownerQuestions=[];
     dialog.showMessageBox=(async(...args:Parameters<typeof dialog.showMessageBox>)=>{
@@ -198,12 +190,12 @@ test('Diagnostics separately confirms stopping a retained owner after unavailabl
   const question=await app.evaluate(()=>(globalThis as any).ownerQuestions[0]);expect(question).toContain('Stopping the terminal owner');expect(question).toContain(`PID ${before.pid}`);
   for(const pane of before.panes){expect(question).toContain(`PID ${pane.pid}`);expect(alive(pane.pid)).toBe(true);}
   expect(alive(before.pid)).toBe(true);expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);
-  await expect.poll(()=>window.evaluate(()=>(window as any).headlessUiEvents.filter((event:any)=>event.kind==='renderer.confirm').length)).toBe(1);
+  await expect.poll(async()=> (await rendererDialogs.read()).filter((event)=>event.kind==='renderer.confirm').length).toBe(1);
   await app.evaluate(()=>{(globalThis as any).ownerAnswer=0;});await restart.click();
   await expect.poll(()=>app.evaluate(()=>(globalThis as any).ownerQuestions.length)).toBe(2);
   await expect.poll(()=>alive(before.pid)).toBe(false);
-  await expect.poll(()=>window.evaluate(()=>(window as any).headlessUiEvents.filter((event:any)=>event.kind==='renderer.confirm').length)).toBe(2);
-  expect(await window.evaluate(()=>(window as any).headlessUiEvents.filter((event:any)=>event.kind==='renderer.confirm').map((event:any)=>event.message))).toEqual([
+  await expect.poll(async()=> (await rendererDialogs.read()).filter((event)=>event.kind==='renderer.confirm').length).toBe(2);
+  expect((await rendererDialogs.read()).filter((event)=>event.kind==='renderer.confirm').map((event)=>event.message)).toEqual([
     'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.',
     'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.',
   ]);

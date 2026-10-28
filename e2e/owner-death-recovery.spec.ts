@@ -1,14 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test, expect, hostPidsForHome } from "./fixtures";
+import { test, expect, hostPidsForHome, handleRendererDialogs } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
 const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
-const command = `exec ${quote(process.execPath)} ${quote(join(__dirname, "helpers/pty-owner-survivor.cjs"))}`;
+const command = `exec ${quote(process.execPath)} ${quote(join(__dirname, "helpers/pty-owner-survivor.cjs"))} --aya-e2e-survivor=\"$AYA_HOME/owner-death-recovery\"`;
 test.use({ seedOptions: { singleTab: { presetId: "survivor", name: "Survivor" }, split: false,
   presetList: [{ id: "survivor", name: "Survivor", icon: "$", color: "", command }] } });
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 test("a dead owner's survivor stays blocked on Cancel and explicit confirmed recovery stops it before a new spawn", async ({ app, window, seeded }) => {
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
   const file = join(seeded.ayaHome, "pty-owner/record.json");
   let original: { pid: number; panes: Array<{ id: string; pid: number; startIdentity: string }> } | undefined;
   try {
@@ -33,7 +34,7 @@ test("a dead owner's survivor stays blocked on Cancel and explicit confirmed rec
     await fireShortcut(app, "open-settings"); const settings = window.locator(".aya-modal--settings");
     await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
     const restart = settings.locator(".aya-settings-general-row", { hasText: "PTY host" }).getByRole("button", { name: "Restart" });
-    window.once("dialog", dialog => void dialog.accept()); await restart.click();
+    await restart.click();
     await expect.poll(() => app.evaluate(() => (globalThis as unknown as { recoveryQuestions: string[] }).recoveryQuestions.length)).toBe(1);
     expect(await app.evaluate(() => (globalThis as unknown as { recoveryQuestions: string[] }).recoveryQuestions[0])).toContain(`Survivor (PID ${pane.pid})`);
     expect(alive(pane.pid)).toBe(true);
@@ -68,7 +69,7 @@ test("a dead owner's survivor stays blocked on Cancel and explicit confirmed rec
     expect(JSON.parse(readFileSync(file,"utf8")).panes[0].pid).toBe(pane.pid);
     await fireShortcut(app,"open-settings");await settings.getByTestId("settings-tab").filter({hasText:"Diagnostics"}).click();
     await app.evaluate(() => { (globalThis as unknown as { recoveryAnswer: number }).recoveryAnswer = 0; });
-    window.once("dialog", dialog => void dialog.accept()); await restart.click();
+    await restart.click();
     await expect.poll(() => alive(pane.pid), { timeout: 15000 }).toBe(false);
     await expect.poll(() => existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).panes.some((p: { pid: number }) => p.pid === pane.pid) : false).toBe(false);
     await window.keyboard.press("Escape"); await expect(settings).not.toBeVisible();

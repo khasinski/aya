@@ -1,10 +1,11 @@
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {test,expect} from './fixtures';
+import {test,expect,handleRendererDialogs} from './fixtures';
 import {waitForShellReady} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
 
 for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${action} cancels its unsent attach while display or visibility is pending`,async({app,window,seeded})=>{
+ const rendererDialogs=await handleRendererDialogs(window,seeded,{'renderer.alert':undefined});
  await waitForShellReady(window);
  const record=()=>JSON.parse(readFileSync(join(seeded.ayaHome,'pty-owner/record.json'),'utf8'));
  await expect.poll(()=>record().panes.length).toBe(2);
@@ -34,7 +35,6 @@ for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${
  const id=await app.evaluate(()=>(globalThis as unknown as {pendingId:string}).pendingId);
  const pane=window.locator(`.aya-pane[data-terminal-id="${id}"]`);
  await expect(pane).toBeVisible();
- const alerts:string[]=[];window.on('dialog',async dialog=>{alerts.push(dialog.message());await dialog.accept();});
  if(action==='hidden-pane'){
   await window.locator('.aya-sidebar-row[data-terminal-id="tab-left"]').click();
   await expect(pane).toBeAttached();await expect(pane).toBeHidden();
@@ -44,7 +44,7 @@ for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${
  }else if(action==='pane')await fireShortcut(app,'close-tab');
  else await window.getByTitle(/^Close project /).click();
  await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {killSeen:boolean}).killSeen)).toBe(true);
- if(action==='project')await expect.poll(()=>alerts.join('\n')).toContain('test refusal keeps the existing live pane');
+ if(action==='project')await expect.poll(async()=> (await rendererDialogs.read()).map(event=>event.message).join('\n')).toContain('test refusal keeps the existing live pane');
  if(action!=='hidden-pane')await app.evaluate(()=>(globalThis as unknown as {releaseDisplay:()=>void}).releaseDisplay());
  // This notice is emitted only after the old lookup resumes and observes its
  // cancellation. Thus zero calls is checked after that continuation, not a sleep.

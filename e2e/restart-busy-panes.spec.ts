@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ElectronApplication, Locator, Page } from "@playwright/test";
-import { test, expect } from "./fixtures";
+import { test, expect, handleRendererDialogs } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
 import { agentPreset } from "./helpers/team";
 import { visiblePane, waitForShellReady } from "./helpers/terminal";
@@ -56,7 +56,6 @@ async function openDiagnostics(app: ElectronApplication, window: Page) {
 
 /** PTY host > Restart, past the window's own confirm. */
 async function restartHost(settings: Locator) {
-  settings.page().once("dialog", (dialog) => void dialog.accept());
   await settings.locator(".aya-settings-general-row", { hasText: "PTY host" }).getByRole("button", { name: "Restart" }).click();
 }
 
@@ -78,7 +77,8 @@ function sleeping(): number[] {
     .map((m) => Number(m[1]));
 }
 
-test("a host restart asks about an agent mid-turn and a shell running a command", async ({ app, window }) => {
+test("a host restart asks about an agent mid-turn and a shell running a command", async ({ app, window, seeded }) => {
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": true });
   const buffer = (id: string) => window.evaluate((terminalId) => window.aya.ptyBuffer(terminalId), id);
   await waitForShellReady(window);
   await expect.poll(() => buffer("tab-right"), { timeout: 15_000 }).toContain("esc to interrupt");
@@ -108,7 +108,8 @@ test("a host restart asks about an agent mid-turn and a shell running a command"
   await expect.poll(agents, { timeout: 15_000 }).not.toContain(agent);
 });
 
-test("a restart whose question cannot be asked does not go ahead", async ({ app, window }) => {
+test("a restart whose question cannot be asked does not go ahead", async ({ app, window, seeded }) => {
+  const rendererDialogs = await handleRendererDialogs(window, seeded, { "renderer.alert": undefined });
   await waitForShellReady(window);
   const shell = visiblePane(window, "shell 1").getByTestId("xterm-host");
   await shell.click();
@@ -118,11 +119,10 @@ test("a restart whose question cannot be asked does not go ahead", async ({ app,
   const [sleep] = sleeping();
   // The question fails in main (no handler): before, the restart went ahead without asking and ended the command.
   await app.evaluate(({ ipcMain }) => ipcMain.removeHandler("pty:confirm-restart"));
-  const told = new Promise<string>((resolve) => window.once("dialog", (d) => (resolve(d.message()), void d.accept())));
   await window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]').click({ button: "right" });
   await window.locator(".aya-context-menu-item", { hasText: "Restart terminal" }).click();
   // The user is told why nothing happened.
-  expect(await told).toMatch(/^Aya did not restart shell 1: it could not ask first whether that would stop work there, so the pane keeps running\./);
+  await expect.poll(async () => (await rendererDialogs.read()).map((event) => event.message)).toContainEqual(expect.stringMatching(/^Aya did not restart shell 1: it could not ask first whether that would stop work there, so the pane keeps running\./));
   await window.waitForTimeout(2_000);
   expect(sleeping()).toEqual([sleep]);
 });

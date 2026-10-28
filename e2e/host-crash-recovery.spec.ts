@@ -6,19 +6,21 @@ import {agentBin} from './helpers/agent-bin';
 import {readFileSync,writeFileSync,existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
-import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags,launchE2eElectron} from './fixtures';
+import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags,launchE2eElectron,assertHeadlessUiEvents} from './fixtures';
 import {waitForShellReady,visiblePane} from './helpers/terminal';
 test.use({seedOptions:{launchEnv:{AYA_E2E_PTY_SHUTDOWN:'0'}}});
+const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js') as {ownerProcessStartIdentity:(pid:number)=>string|null};
 const survivorCleanupTest=test.extend({seeded:async({seeded},use)=>{
  await use(seeded);
  const pidFile=join(seeded.root,'pty-owner-survivor.pid');
  if(!existsSync(pidFile))return;
- const pid=Number(readFileSync(pidFile,'utf8'));
- if(!Number.isInteger(pid)||pid<=1)return;
+ const saved=JSON.parse(readFileSync(pidFile,'utf8')) as {pid:number;startIdentity:string;marker:string};
+ const pid=saved.pid;
+ if(!Number.isInteger(pid)||pid<=1||!saved.startIdentity||!saved.marker.endsWith(pidFile))return;
  let command='';try{command=execFileSync('ps',['-p',String(pid),'-o','command='],{encoding:'utf8'});}catch{return;}
- if(!command.includes(join(__dirname,'helpers/pty-owner-survivor.cjs')))return;
+ if(!command.includes(join(__dirname,'helpers/pty-owner-survivor.cjs'))||!command.includes(saved.marker)||ownerProcessStartIdentity(pid)!==saved.startIdentity)return;
  try{process.kill(pid,'SIGTERM');}catch{return;}
- await expect.poll(()=>alive(pid),{timeout:2000}).toBe(false);
+ await expect.poll(()=>ownerProcessStartIdentity(pid)!==saved.startIdentity,{timeout:2000}).toBe(true);
 }});
 type Record={pid:number;panes:Array<{id:string;pid:number;generation:number;cols:number;rows:number}>};
 const record=(home:string):Record=>JSON.parse(readFileSync(join(home,'pty-owner/record.json'),'utf8'));
@@ -230,8 +232,9 @@ survivorCleanupTest('restarting an ended pane after another pane loses its owner
  await window.evaluate(()=>{const w=window as unknown as {attachRejections:string[]};w.attachRejections=[];window.addEventListener('unhandledrejection',e=>w.attachRejections.push(String(e.reason)));});
  await window.evaluate(()=>window.aya.ptyWrite('tab-left','exit 0\r'));
  const ended=visiblePane(window,'shell 1').getByTestId('xterm-host');await expect(ended).toContainText('process exited with code 0');
- const quote=(s:string)=>`'${s.replace(/'/g,"'\\''")}'`,survivorPidFile=join(seeded.root,'pty-owner-survivor.pid');
- await window.evaluate(command=>window.aya.ptyWrite('tab-right',command+'\r'),`exec env AYA_TEST_SURVIVOR_PID_FILE=${quote(survivorPidFile)} ${quote(process.execPath)} ${quote(join(__dirname,'helpers/pty-owner-survivor.cjs'))}`);
+ const quote=(s:string)=>`'${s.replace(/'/g,"'\\''")}'`,survivorPidFile=join(seeded.root,'pty-owner-survivor.pid'),appRoot=join(__dirname,'..');
+ const survivorMarker=`--aya-e2e-survivor=${survivorPidFile}`;
+ await window.evaluate(command=>window.aya.ptyWrite('tab-right',command+'\r'),`exec env AYA_TEST_SURVIVOR_PID_FILE=${quote(survivorPidFile)} AYA_TEST_APP_ROOT=${quote(appRoot)} ${quote(process.execPath)} ${quote(join(__dirname,'helpers/pty-owner-survivor.cjs'))} ${quote(survivorMarker)}`);
  await expect(visiblePane(window,'shell 2').getByTestId('xterm-host')).toContainText('SURVIVOR_READY');
  const before=record(seeded.ayaHome),survivor=before.panes.find(p=>p.id==='tab-right')!;
  await app.evaluate((_electron,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),spawn=PtyHostClient.prototype.spawn,g=globalThis as unknown as {endedRestartCalls:number};g.endedRestartCalls=0;PtyHostClient.prototype.spawn=async function(...args:Parameters<typeof spawn>){if(args[0].ptyId==='tab-left')g.endedRestartCalls++;return spawn.apply(this,args);};},join(__dirname,'..'));
