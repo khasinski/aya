@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { teamPromptKey, unassignedTeams } from "../team-view";
 import type { ProjectConfig, TeamSummary } from "../types";
+import { pollVisible } from "../poll-visible";
 
 // Teams of every open project are re-read this often, for chips and badges.
 export const TEAMS_REFRESH_MS = 5000;
@@ -27,9 +28,8 @@ export function useTeams({ projects, activeProjectId, activeProjectRemote }: Tea
     setTeamsByProject((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   }, [projectSlugsKey]);
   useEffect(() => {
-    void refreshTeams();
-    const id = window.setInterval(() => void refreshTeams(), TEAMS_REFRESH_MS);
-    return () => window.clearInterval(id);
+    // teamList reads team files in the main process per project: skip it while the window is hidden.
+    return pollVisible(() => void refreshTeams(), TEAMS_REFRESH_MS);
   }, [refreshTeams]);
   const assignTeamRole = useCallback(
     (team: string, role: string, paneId: string | null) => {
