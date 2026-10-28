@@ -60,7 +60,8 @@ export function stubApp(socket, delayMs = 0) {
 /** bin/aya `args` under `shell`: its exit status and stderr. */
 export function runCli(shell, args, env) {
   return new Promise((done, fail) => {
-    const child = spawn(shell, [CLI, ...args], { env, stdio: ["ignore", "ignore", "pipe"] });
+    // A mise `node` shim, resolved under the test's throwaway HOME, warns on stderr and these tests assert stderr.
+    const child = spawn(shell, [CLI, ...args], { env: { MISE_LOG_LEVEL: "error", ...env }, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => (stderr += chunk));
