@@ -9,7 +9,6 @@ import {
   type ChromeStyle,
   type LayoutMode,
   type MicPermissionStatus,
-  type OllamaStatus,
   type Preset,
   type Snippet,
   type Theme,
@@ -40,7 +39,6 @@ import { IntelligenceTab } from "./settings/IntelligenceTab";
 import { PresetsTab } from "./settings/PresetsTab";
 import { SnippetsTab } from "./settings/SnippetsTab";
 import { ThemesTab } from "./settings/ThemesTab";
-import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
@@ -181,12 +179,6 @@ export function SettingsModal({
     );
   const [micStatus, setMicStatus] = useState<MicPermissionStatus | null>(null);
   const [micBusy, setMicBusy] = useState(false);
-  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
-  const [ollamaBusy, setOllamaBusy] = useState(false);
-  const [intelligenceTestBusy, setIntelligenceTestBusy] = useState(false);
-  const [intelligenceTestResult, setIntelligenceTestResult] = useState<string | null>(
-    null,
-  );
   const [localSummaryStatus, setLocalSummaryStatus] = useState<
     "checking" | "available" | "unavailable" | null
   >(null);
@@ -273,16 +265,6 @@ export function SettingsModal({
       stopOmarchyWatch();
     };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.aya.ollamaStatus(ayaIntelligence.ollamaModel).then((status) => {
-      if (!cancelled) setOllamaStatus(status);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ayaIntelligence.ollamaModel]);
 
   const applyAyaWeb = async (req: WebConfigureRequest) => {
     setAyaWebBusy(true);
@@ -397,55 +379,6 @@ export function SettingsModal({
   const patchAyaIntelligence = (patch: Partial<AyaIntelligenceConfig>) => {
     if (patch.provider) onLocalSummariesEnabledChange(true);
     onAyaIntelligenceChange({ ...ayaIntelligence, ...patch });
-  };
-
-  const refreshOllamaStatus = async () => {
-    setOllamaBusy(true);
-    try {
-      setOllamaStatus(await window.aya.ollamaStatus(ayaIntelligence.ollamaModel));
-    } finally {
-      setOllamaBusy(false);
-    }
-  };
-
-  const pullOllamaModel = async () => {
-    setOllamaBusy(true);
-    try {
-      setOllamaStatus(await window.aya.pullOllamaModel(ayaIntelligence.ollamaModel));
-      onLocalSummariesEnabledChange(true);
-    } finally {
-      setOllamaBusy(false);
-    }
-  };
-
-  const testAyaIntelligence = async () => {
-    setIntelligenceTestBusy(true);
-    setIntelligenceTestResult(null);
-    try {
-      const result = await window.aya.summarizeLocal({
-        kind: "terminal",
-        intelligence: ayaIntelligence,
-        lines: [
-          "Starting Aya Intelligence smoke test",
-          "Gemma is summarizing recent terminal output through Ollama",
-          "Expected result: Aya should show a short tab or terminal description",
-        ],
-      });
-      setIntelligenceTestResult(
-        result.available
-          ? result.useful
-            ? `OK: ${result.summary}`
-            : `No useful summary returned${result.error ? `: ${result.error}` : "."}`
-          : localSummaryUnavailableMessage(
-              result.error,
-              ayaIntelligence.provider,
-            ),
-      );
-    } catch (err) {
-      setIntelligenceTestResult(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIntelligenceTestBusy(false);
-    }
   };
 
   const existingCmds = new Set(
@@ -1096,14 +1029,7 @@ export function SettingsModal({
                 ayaIntelligence={ayaIntelligence}
                 patchAyaIntelligence={patchAyaIntelligence}
                 localSummaryStatus={localSummaryStatus}
-                refreshOllamaStatus={refreshOllamaStatus}
-                ollamaBusy={ollamaBusy}
-                pullOllamaModel={pullOllamaModel}
-                ollamaStatus={ollamaStatus}
-                testAyaIntelligence={testAyaIntelligence}
-                intelligenceTestBusy={intelligenceTestBusy}
                 onRefreshSummaries={onRefreshSummaries}
-                intelligenceTestResult={intelligenceTestResult}
                 autoSummaryStatus={autoSummaryStatus}
               />
             )}

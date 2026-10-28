@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { localSummaryUnavailableMessage } from "../../local-summary-errors";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../../ollama-defaults";
 import { type AyaIntelligenceConfig, type OllamaStatus } from "../../types";
 import { SettingsHeader, SettingsIcon } from "./parts";
@@ -8,14 +10,7 @@ interface IntelligenceTabProps {
   ayaIntelligence: AyaIntelligenceConfig;
   patchAyaIntelligence: (patch: Partial<AyaIntelligenceConfig>) => void;
   localSummaryStatus: "checking" | "available" | "unavailable" | null;
-  refreshOllamaStatus: () => Promise<void>;
-  ollamaBusy: boolean;
-  pullOllamaModel: () => Promise<void>;
-  ollamaStatus: OllamaStatus | null;
-  testAyaIntelligence: () => Promise<void>;
-  intelligenceTestBusy: boolean;
   onRefreshSummaries: () => void;
-  intelligenceTestResult: string | null;
   autoSummaryStatus: { terminalCount: number; terminalsWithLines: number; totalLines: number; lastEvent: string; };
 }
 
@@ -25,16 +20,75 @@ export function IntelligenceTab({
   ayaIntelligence,
   patchAyaIntelligence,
   localSummaryStatus,
-  refreshOllamaStatus,
-  ollamaBusy,
-  pullOllamaModel,
-  ollamaStatus,
-  testAyaIntelligence,
-  intelligenceTestBusy,
   onRefreshSummaries,
-  intelligenceTestResult,
   autoSummaryStatus,
 }: IntelligenceTabProps) {
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [intelligenceTestBusy, setIntelligenceTestBusy] = useState(false);
+  const [intelligenceTestResult, setIntelligenceTestResult] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.aya.ollamaStatus(ayaIntelligence.ollamaModel).then((status) => {
+      if (!cancelled) setOllamaStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ayaIntelligence.ollamaModel]);
+
+  const refreshOllamaStatus = async () => {
+    setOllamaBusy(true);
+    try {
+      setOllamaStatus(await window.aya.ollamaStatus(ayaIntelligence.ollamaModel));
+    } finally {
+      setOllamaBusy(false);
+    }
+  };
+
+  const pullOllamaModel = async () => {
+    setOllamaBusy(true);
+    try {
+      setOllamaStatus(await window.aya.pullOllamaModel(ayaIntelligence.ollamaModel));
+      onLocalSummariesEnabledChange(true);
+    } finally {
+      setOllamaBusy(false);
+    }
+  };
+
+  const testAyaIntelligence = async () => {
+    setIntelligenceTestBusy(true);
+    setIntelligenceTestResult(null);
+    try {
+      const result = await window.aya.summarizeLocal({
+        kind: "terminal",
+        intelligence: ayaIntelligence,
+        lines: [
+          "Starting Aya Intelligence smoke test",
+          "Gemma is summarizing recent terminal output through Ollama",
+          "Expected result: Aya should show a short tab or terminal description",
+        ],
+      });
+      setIntelligenceTestResult(
+        result.available
+          ? result.useful
+            ? `OK: ${result.summary}`
+            : `No useful summary returned${result.error ? `: ${result.error}` : "."}`
+          : localSummaryUnavailableMessage(
+              result.error,
+              ayaIntelligence.provider,
+            ),
+      );
+    } catch (err) {
+      setIntelligenceTestResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIntelligenceTestBusy(false);
+    }
+  };
+
   return (
     <section className="aya-settings-pane">
       <SettingsHeader icon="auto_awesome" title="Intelligence">
