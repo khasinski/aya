@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useDragReorder } from "../hooks/useDragReorder";
 import type { ProjectConfig, TeamSummary, UsageAccount } from "../types";
@@ -8,6 +8,8 @@ import { averageUsagePct, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { compactDir } from "../project-path";
 import { RecentProjectsMenu } from "./RecentProjectsMenu";
+import { moveItem } from "../keyboard-navigation";
+import { ProjectContextMenu } from "./ProjectContextMenu";
 
 interface ProjectAttention {
   count: number;
@@ -134,6 +136,10 @@ function CommandRailLayoutImpl({
     remote: boolean;
     windows: Array<{ id: number; activeProject: string | null }>;
   } | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (projectMenu) projectMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [projectMenu]);
   useEffect(() => {
     if (!projectMenu) return;
     const close = () => setProjectMenu(null);
@@ -287,48 +293,26 @@ function CommandRailLayoutImpl({
           </div>
         </main>
       )}
-      {projectMenu && (
-        <div
-          className="aya-context-menu"
-          style={{ left: projectMenu.x, top: projectMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {onMoveProjectToWindow && !projectMenu.remote && (
-            <>
-              <button
-                className="aya-context-menu-item"
-                onClick={() => {
-                  onMoveProjectToWindow(projectMenu.slug, "new");
-                  setProjectMenu(null);
-                }}
-              >
-                Move to New Window
-              </button>
-              {projectMenu.windows.map((w) => (
-                <button
-                  key={w.id}
-                  className="aya-context-menu-item"
-                  onClick={() => {
-                    onMoveProjectToWindow(projectMenu.slug, w.id);
-                    setProjectMenu(null);
-                  }}
-                >
-                  Move to Window: {w.activeProject ?? "(empty)"}
-                </button>
-              ))}
-            </>
-          )}
-          <button
-            className="aya-context-menu-item aya-context-menu-item--danger"
-            onClick={() => {
-              onCloseProject(projectMenu.slug);
+      {projectMenu && (() => {
+        const index = projects.findIndex((project) => project.slug === projectMenu.slug);
+        return (
+          <ProjectContextMenu
+            menuRef={projectMenuRef}
+            x={projectMenu.x}
+            y={projectMenu.y}
+            index={index}
+            projectCount={projects.length}
+            windows={projectMenu.windows}
+            canMoveToWindow={!!onMoveProjectToWindow && !projectMenu.remote}
+            onMove={(delta) => {
+              onReorderProjects(moveItem(projects.map((project) => project.slug), index, delta));
               setProjectMenu(null);
             }}
-          >
-            Close project
-          </button>
-        </div>
-      )}
+            onClose={() => { onCloseProject(projectMenu.slug); setProjectMenu(null); }}
+            onMoveToWindow={(target) => { onMoveProjectToWindow?.(projectMenu.slug, target); setProjectMenu(null); }}
+          />
+        );
+      })()}
     </div>
   );
 }

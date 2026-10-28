@@ -26,6 +26,7 @@ import { TeamRoleChip, TeamRoleMenuItems, TeamUnread } from "./TeamRole";
 import { CommandRailUsage } from "./CommandRailLayout";
 import { compactDir } from "../project-path";
 import { RecentProjectsMenu } from "./RecentProjectsMenu";
+import { ProjectContextMenu } from "./ProjectContextMenu";
 
 // Project rail width bounds (px) for the drag-resize handle.
 const RAIL_MIN_WIDTH_PX = 160;
@@ -963,48 +964,27 @@ function ProjectsLeftLayoutImpl({
 
   const menusNode = (
     <>
-      {projectMenu && (
-        <div
-          ref={projectMenuRef}
-          role="menu"
-          className="aya-context-menu"
-          style={{ left: projectMenu.x, top: projectMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onKeyDown={handleMenuNavigation}
-        >
-          {(() => {
-            const index = projects.findIndex((project) => project.slug === projectMenu.slug);
-            return <>
-              <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
-                const slug = projectMenu.slug;
-                setFocusProjectAfterMove({ slug, index: index - 1 });
-                onReorderProjects(moveItem(projects.map((project) => project.slug), index, -1));
-                closeProjectMenu(false);
-              }}>Move left</button>
-              <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= projects.length - 1} className="aya-context-menu-item" onClick={() => {
-                const slug = projectMenu.slug;
-                setFocusProjectAfterMove({ slug, index: index + 1 });
-                onReorderProjects(moveItem(projects.map((project) => project.slug), index, 1));
-                closeProjectMenu(false);
-              }}>Move right</button>
-              <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item aya-context-menu-item--danger" onClick={() => { onCloseProject(projectMenu.slug); closeProjectMenu(); }}>Close project</button>
-            </>;
-          })()}
-          {onMoveProjectToWindow && <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item" onClick={() => { onMoveProjectToWindow(projectMenu.slug, "new"); closeProjectMenu(); }}>Move to New Window</button>}
-          {onMoveProjectToWindow && projectMenu.windows.map((w) => (
-            <button type="button" role="menuitem" tabIndex={-1}
-              key={w.id}
-              className="aya-context-menu-item"
-              onClick={() => {
-                onMoveProjectToWindow(projectMenu.slug, w.id);
-                closeProjectMenu();
-              }}
-            >
-              Move to Window: {w.activeProject ?? "(empty)"}
-            </button>
-          ))}
-        </div>
-      )}
+      {projectMenu && (() => {
+        const index = projects.findIndex((project) => project.slug === projectMenu.slug);
+        return (
+          <ProjectContextMenu
+            menuRef={projectMenuRef}
+            x={projectMenu.x}
+            y={projectMenu.y}
+            index={index}
+            projectCount={projects.length}
+            windows={projectMenu.windows}
+            canMoveToWindow={!!onMoveProjectToWindow}
+            onMove={(delta) => {
+              setFocusProjectAfterMove({ slug: projectMenu.slug, index: index + delta });
+              onReorderProjects(moveItem(projects.map((project) => project.slug), index, delta));
+              closeProjectMenu(false);
+            }}
+            onClose={() => { onCloseProject(projectMenu.slug); closeProjectMenu(); }}
+            onMoveToWindow={(target) => { onMoveProjectToWindow?.(projectMenu.slug, target); closeProjectMenu(); }}
+          />
+        );
+      })()}
       {menu && (
         <div
           ref={terminalMenuRef}

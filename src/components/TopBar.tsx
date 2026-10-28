@@ -11,7 +11,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useDragReorder } from "../hooks/useDragReorder";
-import { handleMenuNavigation, handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
+import { handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
 import type {
   GrokUsage,
   MonitoredSession,
@@ -23,6 +23,7 @@ import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { compactDir } from "../project-path";
 import { RecentProjectsMenu } from "./RecentProjectsMenu";
+import { ProjectContextMenu } from "./ProjectContextMenu";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
 const TAB_MIN_WIDTH_PX = 120;
@@ -562,50 +563,27 @@ function TopBarImpl({
           onClose={onCloseWindow}
         />
       </div>
-      {tabMenu && (
-        <div
-          ref={tabMenuRef}
-          role="menu"
-          className="aya-context-menu"
-          style={{ left: tabMenu.x, top: tabMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onKeyDown={handleMenuNavigation}
-        >
-          {(() => {
-            const index = projects.findIndex((project) => project.slug === tabMenu.slug);
-            return (
-              <>
-                <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
-                  const slug = tabMenu.slug;
-                  setFocusProjectAfterMove({ slug, index: index - 1 });
-                  onReorderProjects(moveItem(projects.map((project) => project.slug), index, -1));
-                  closeTabMenu(false);
-                }}>Move left</button>
-                <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= projects.length - 1} className="aya-context-menu-item" onClick={() => {
-                  const slug = tabMenu.slug;
-                  setFocusProjectAfterMove({ slug, index: index + 1 });
-                  onReorderProjects(moveItem(projects.map((project) => project.slug), index, 1));
-                  closeTabMenu(false);
-                }}>Move right</button>
-                <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item aya-context-menu-item--danger" onClick={() => { onCloseProject(tabMenu.slug); closeTabMenu(); }}>Close project</button>
-              </>
-            );
-          })()}
-          {onMoveProjectToWindow && <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item" onClick={() => { onMoveProjectToWindow(tabMenu.slug, "new"); closeTabMenu(); }}>Move to New Window</button>}
-          {onMoveProjectToWindow && tabMenu.windows.map((w) => (
-            <button type="button" role="menuitem" tabIndex={-1}
-              key={w.id}
-              className="aya-context-menu-item"
-              onClick={() => {
-                onMoveProjectToWindow(tabMenu.slug, w.id);
-                closeTabMenu();
-              }}
-            >
-              Move to Window: {w.activeProject ?? "(empty)"}
-            </button>
-          ))}
-        </div>
-      )}
+      {tabMenu && (() => {
+        const index = projects.findIndex((project) => project.slug === tabMenu.slug);
+        return (
+          <ProjectContextMenu
+            menuRef={tabMenuRef}
+            x={tabMenu.x}
+            y={tabMenu.y}
+            index={index}
+            projectCount={projects.length}
+            windows={tabMenu.windows}
+            canMoveToWindow={!!onMoveProjectToWindow}
+            onMove={(delta) => {
+              setFocusProjectAfterMove({ slug: tabMenu.slug, index: index + delta });
+              onReorderProjects(moveItem(projects.map((project) => project.slug), index, delta));
+              closeTabMenu(false);
+            }}
+            onClose={() => { onCloseProject(tabMenu.slug); closeTabMenu(); }}
+            onMoveToWindow={(target) => { onMoveProjectToWindow?.(tabMenu.slug, target); closeTabMenu(); }}
+          />
+        );
+      })()}
     </header>
   );
 }
