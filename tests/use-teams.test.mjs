@@ -66,7 +66,7 @@ async function settle(hook) {
   hook.render();
 }
 
-function summary(role) {
+function summary(role, assignments = {}) {
   return {
     name: "ux-review",
     definition: { name: "ux-review", roles: [{ id: role }], lead: role },
@@ -78,7 +78,7 @@ function summary(role) {
     agentAuthored: false,
     paused: false,
     running: false,
-    assignments: {},
+    assignments,
     unread: {},
     log: [],
   };
@@ -241,7 +241,7 @@ test("an assignment during a poll starts a fresh chip refresh without another ti
   const hook = mount(
     () => {
       listCalls++;
-      if (listCalls === 1) return Promise.resolve([summary("initial")]);
+      if (listCalls === 1) return Promise.resolve([summary("initial", {})]);
       if (listCalls === 2) return poll.promise;
       return fresh.promise;
     },
@@ -251,14 +251,16 @@ test("an assignment during a poll starts a fresh chip refresh without another ti
   );
   try {
     await settle(hook);
+    assert.deepEqual(hook.render().activeTeams[0].assignments, {}, "the initial read has no pane assignment");
     hook.tickInterval();
     await new Promise((resolve) => setImmediate(resolve));
     hook.render().onAssignTeamRole("ux-review", "reviewer", "pane-1");
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(assignmentCalls, 1);
     assert.equal(listCalls, 3, "assignment completion immediately launches its own refresh");
-    fresh.resolve([summary("assigned")]);
+    fresh.resolve([summary("assigned", { reviewer: "pane-1" })]);
     await settle(hook);
+    assert.deepEqual(hook.render().activeTeams[0].assignments, { reviewer: "pane-1" }, "the immediate refresh exposes the assignment");
     poll.resolve([summary("stale")]);
     await settle(hook);
     assert.equal(hook.render().activeTeams[0].definition.roles[0].id, "assigned");

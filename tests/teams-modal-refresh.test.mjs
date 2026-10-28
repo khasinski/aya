@@ -352,6 +352,20 @@ test("a stale failure from an earlier request cannot appear after the newer same
   } finally { oldFailure.reject(new Error("cleanup")); hook.cleanup(); }
 });
 
+test("a current team-list failure is shown to the user", async () => {
+  const hook = mount(
+    async () => { throw new Error("current team list failed"); },
+    async () => {},
+    [],
+    { slug: "a", name: "Project A", directory: "/a" },
+  );
+  try {
+    await settle(hook);
+    const error = findNode(hook.render(), (node) => node.type?.name === "ErrorLine");
+    assert.equal(error?.props.error, "current team list failed");
+  } finally { hook.cleanup(); }
+});
+
 test("two interval ticks do not start more window polls while teamList is pending", async () => {
   const slow = deferred();
   let calls = 0;
@@ -602,6 +616,7 @@ test("the Pane selector distinguishes live, exited, stopped and failed panes", a
   const states = [
     { name: "live", state: { id: "pane", exitCode: null, stopped: false }, expected: "shell 1" },
     { name: "exited", state: { id: "pane", exitCode: 0, stopped: false }, expected: "shell 1 (exited)" },
+    { name: "exited with stopped flag", state: { id: "pane", exitCode: 0, stopped: true }, expected: "shell 1 (exited)" },
     { name: "stopped", state: { id: "pane", exitCode: null, stopped: true }, expected: "shell 1 (stopped)" },
     { name: "failed to start", state: { id: "pane", exitCode: null, stopped: false, spawnFailure: { reason: "spawn-failed" } }, expected: "shell 1 (failed to start)" },
   ];
