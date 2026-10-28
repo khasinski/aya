@@ -12,7 +12,7 @@ function runAya(args, env = {}) {
   return spawnSync(cli, args, {
     cwd: resolve("."),
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: { MISE_LOG_LEVEL: "error", ...process.env, ...env },
   });
 }
 
@@ -20,7 +20,7 @@ function runAyaAsync(args, env = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(cli, args, {
       cwd: resolve("."),
-      env: { ...process.env, ...env },
+      env: { MISE_LOG_LEVEL: "error", ...process.env, ...env },
     });
     let stdout = "";
     let stderr = "";
