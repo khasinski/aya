@@ -8,12 +8,13 @@ if (process.env.AYA_E2E_HEADLESS === "1") {
   const { installHeadlessUiRouter } = require(process.env.AYA_E2E_HEADLESS_UI_MODULE);
   let routedBrowserWindow;
   const originalLoad = Module._load;
+  const electronUiAliases = new Set(["electron", "electron/main", "electron/common"]);
   Module._load = function (request, parent, isMain) {
     const loaded = originalLoad.call(this, request, parent, isMain);
-    if (request !== "electron" || !routedBrowserWindow) return loaded;
+    if (!electronUiAliases.has(request) || !routedBrowserWindow || !loaded || (typeof loaded !== "object" && typeof loaded !== "function")) return loaded;
     return new Proxy(loaded, {
       get(target, property) {
-        if (property === "BrowserWindow") return routedBrowserWindow;
+        if (property === "BrowserWindow" && property in target) return routedBrowserWindow;
         return Reflect.get(target, property, target);
       },
     });

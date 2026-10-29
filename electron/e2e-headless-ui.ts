@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { App, BrowserWindow, BrowserWindowConstructorOptions, Dialog, IpcMain } from "electron";
+import type { App, BrowserWindow, BrowserWindowConstructorOptions, Dialog, IpcMain, WebContents } from "electron";
 
 export const E2E_HEADLESS_UI_LOG_ENV = "AYA_E2E_HEADLESS_UI_LOG";
 export const E2E_HEADLESS_UI_ACTIVE_ENV = "AYA_E2E_HEADLESS_UI_ACTIVE";
@@ -12,7 +12,7 @@ type DialogApi = Pick<Dialog,
 type WindowMethod = "show" | "showInactive" | "maximize" | "restore" | "focus" | "setFullScreen" | "moveTop";
 type WindowMethods = Partial<Pick<BrowserWindow, WindowMethod>>;
 type WindowConstructor = {
-  new(options: BrowserWindowConstructorOptions): Pick<BrowserWindow, "isVisible" | "destroy">;
+  new(options: BrowserWindowConstructorOptions): Pick<BrowserWindow, "isVisible" | "destroy" | "webContents">;
   prototype: WindowMethods & { getTitle?: () => string };
   getAllWindows?: () => Array<Pick<BrowserWindow, "webContents" | "isDestroyed">>;
 };
@@ -22,6 +22,7 @@ type EventKind =
   | "dialog.showOpenDialog" | "dialog.showOpenDialogSync" | "dialog.showSaveDialog" | "dialog.showSaveDialogSync"
   | "window.show" | "window.showInactive" | "window.maximize" | "window.restore" | "window.focus"
   | "window.setFullScreen" | "window.moveTop" | "window.construct-visible" | "app.showAboutPanel" | "notification.show"
+  | "webContents.openDevTools"
   | "renderer.alert" | "renderer.confirm" | "renderer.prompt";
 
 const installed = new WeakSet<object>();
@@ -75,7 +76,9 @@ export function installHeadlessUiRouter(deps: {
         // Keep Electron's native BrowserWindow constructor as new.target.
         // Passing the Proxy as newTarget makes Electron treat it as a subclass
         // and can prevent the first renderer window from being created.
-        return Reflect.construct(target, [headlessWindowOptions(options), ...args.slice(1)]);
+        const window = Reflect.construct(target, [headlessWindowOptions(options), ...args.slice(1)]) as Pick<BrowserWindow, "webContents">;
+        routeWebContentsOpenDevTools(window.webContents, record);
+        return window;
       },
       get(target, property) {
         // Electron's static methods can rely on their native constructor
@@ -97,6 +100,9 @@ export function installHeadlessUiRouter(deps: {
     routeDialogMethod(deps.dialog, "showSaveDialogSync", "dialog.showSaveDialogSync", () => undefined, record);
     for (const method of ["show", "showInactive", "maximize", "restore", "focus", "setFullScreen", "moveTop"] as const) {
       routeWindowMethod(deps.BrowserWindow.prototype, method, record);
+    }
+    for (const window of deps.BrowserWindow.getAllWindows?.() ?? []) {
+      routeWebContentsOpenDevTools(window.webContents, record);
     }
     routeNotificationMethod(deps.Notification.prototype, record);
     routeObjectMethod(deps.app, "showAboutPanel", "app.showAboutPanel", record, "About panel");
@@ -148,6 +154,14 @@ export function installHeadlessUiRouter(deps: {
 
   return headlessWindowOptions;
 }
+
+function routeWebContentsOpenDevTools(
+  webContents: Pick<WebContents, "openDevTools">,
+  record: (kind: EventKind, expected?: boolean, detail?: string) => void,
+): void {
+  webContents.openDevTools = () => { record("webContents.openDevTools", false, "DevTools"); };
+}
+
 function messageBoxDefault(args: unknown[]): { response: number; checkboxChecked: false } {
   const options = args.at(-1) as { cancelId?: unknown; defaultId?: unknown } | undefined;
   const cancelId = options?.cancelId;

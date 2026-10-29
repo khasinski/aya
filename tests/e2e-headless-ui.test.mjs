@@ -23,7 +23,7 @@ test("headless UI routing records and suppresses dialogs and every BrowserWindow
     constructor(options = {}) {
       this.options = options;
       this.visible = options.show !== false;
-      this.webContents = {};
+      this.webContents = { openDevTools() { native.push("openDevTools"); } };
       FakeWindow.windows.push(this);
     }
     show() { native.push("show"); }
@@ -75,6 +75,7 @@ test("headless UI routing records and suppresses dialogs and every BrowserWindow
   visible.focus();
   visible.setFullScreen(true);
   visible.moveTop();
+  visible.webContents.openDevTools({ mode: "detach" });
   assert.equal(visible.isVisible(), false);
   app.showAboutPanel();
   new FakeNotification().show();
@@ -89,7 +90,7 @@ test("headless UI routing records and suppresses dialogs and every BrowserWindow
     "dialog.showMessageBox", "dialog.showMessageBox", "dialog.showMessageBoxSync", "dialog.showErrorBox",
     "dialog.showOpenDialog", "dialog.showOpenDialogSync", "dialog.showSaveDialog", "dialog.showSaveDialogSync",
     "window.show", "window.showInactive", "window.construct-visible", "window.show", "window.showInactive",
-    "window.maximize", "window.restore", "window.focus", "window.setFullScreen", "window.moveTop",
+    "window.maximize", "window.restore", "window.focus", "window.setFullScreen", "window.moveTop", "webContents.openDevTools",
     "app.showAboutPanel", "notification.show", "renderer.alert",
   ]);
 });
@@ -174,6 +175,7 @@ test("renderer responses are one-shot and matched to the exact message", () => {
       return event.returnValue;
     };
     assert.equal(requestFrom(secondSender, "Stop every terminal?"), false, "a response cannot cross to another sender");
+    assert.equal(requestFrom(sender, "A different confirmation?"), false, "a different message from the same sender is rejected without consuming the response");
     assert.equal(requestFrom(sender, "Stop every terminal?"), true, "a mismatched request leaves the fresh exact response available");
     assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n").map((line) => {
       const event = JSON.parse(line);
@@ -182,6 +184,7 @@ test("renderer responses are one-shot and matched to the exact message", () => {
       { detail: "Restart this terminal?", expected: true },
       { detail: "Restart this terminal?", expected: false },
       { detail: "Stop every terminal?", expected: false },
+      { detail: "A different confirmation?", expected: false },
       { detail: "Stop every terminal?", expected: true },
     ]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -454,12 +457,15 @@ test("main installs the router before app windows and all Electron e2e launches 
     assert.match(router, new RegExp(`"${method}"`), `${method} must be routed in headless mode`);
   }
   assert.match(router, /routeNotificationMethod\(deps\.Notification\.prototype/);
+  assert.match(router, /routeWebContentsOpenDevTools/);
   if (hasAboutPanelCall) assert.match(router, /routeObjectMethod\(deps\.app, "showAboutPanel", "app\.showAboutPanel"/);
   const bootstrap = readFileSync(join(root, "e2e/helpers/headless-main.cjs"), "utf8");
   assert.ok(bootstrap.indexOf("installHeadlessUiRouter(") < bootstrap.indexOf("require(main)"), "headless router must install before wrapper or app main code");
   assert.match(bootstrap, /replaceBrowserWindow:\s*\(constructor\)/);
   assert.match(bootstrap, /Module\._load\s*=/);
   assert.match(bootstrap, /property === "BrowserWindow"/);
+  assert.match(bootstrap, /electron\/main/);
+  assert.match(bootstrap, /electron\/common/);
   assert.match(bootstrap, /return new Proxy\(loaded/);
   const e2eFiles = readdirSync(join(root, "e2e"), { recursive: true }).filter((name) => typeof name === "string" && name.endsWith(".ts"));
   const direct = [];
