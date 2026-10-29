@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { test, expect, PTY_HOST_SCRIPT, delay, spawnAuthenticatedHost } from "./fixtures";
+import { test, expect, PTY_HOST_SCRIPT, delay, spawnAuthenticatedHost, handleRendererDialogs } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
 import type { ElectronApplication, Page } from "@playwright/test";
 
@@ -28,6 +28,7 @@ const isAlive = (pid: number) => {
 };
 
 test("a host with no pty-host.sock is warned about, and Restart puts things right", async ({ window, app, seeded }) => {
+  await handleRendererDialogs(window, seeded, { "renderer.confirm": { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true } });
   const settings = await openDiagnostics(app, window);
   const refresh = settings.locator(".aya-modal-btn", { hasText: "Refresh" });
   const report = async () => {
@@ -47,7 +48,6 @@ test("a host with no pty-host.sock is warned about, and Restart puts things righ
   const warnings = settings.getByRole("status").filter({ hasText: "Warning:" });
   await expect(warnings).toContainText("has no pty-host.sock: the next Aya start will start a second host");
 
-  window.once("dialog", (dialog) => void dialog.accept());
   await settings.locator(".aya-settings-general-row", { hasText: "PTY host" }).getByRole("button", { name: "Restart" }).click();
   await expect.poll(() => existsSync(socket), { timeout: 15_000 }).toBe(true);
   await refresh.click();

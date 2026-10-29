@@ -23,7 +23,7 @@ if (!basename(process.env.AYA_HOME ?? "").startsWith(RUNNER_HOME)) {
 // These specs touch the OS clipboard, native-window focus/display, or
 // temporarily change the shared PTY host script or app package version. They
 // run one at a time after every isolated app has closed.
-const sharedResources = /(?:^|[/\\])(?:a11y-pr2|diagnostics|machines-copy|teams|terminal-polish|prompt-attachments|team-relaunch-stale-host|host-version-survives|planned-host-handover|restart-busy-panes)\.spec\.ts$/;
+const sharedResources = /(?:^|[/\\])(?:a11y-pr2|diagnostics|machines-copy|teams|terminal-polish|prompt-attachments|team-relaunch-stale-host|host-version-survives|planned-host-handover|restart-busy-panes|host-crash-recovery)\.spec\.ts$/;
 
 // Electron end-to-end tests. Each test launches the built app (dist-electron +
 // dist) through Playwright's Electron driver against an isolated, seeded

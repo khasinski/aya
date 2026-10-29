@@ -1,7 +1,6 @@
-import {_electron} from '@playwright/test';
 import {readFileSync,writeFileSync,unlinkSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
-import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags} from './fixtures';
+import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags,launchE2eElectron} from './fixtures';
 import {appEnv} from './helpers/seed';
 import {waitForShellReady} from './helpers/terminal';
 test.use({seedOptions:{launchEnv:{AYA_E2E_PTY_SHUTDOWN:'0'}}});
@@ -16,7 +15,7 @@ for(const shutdown of [true,false])test(`a socketless host gets a bounded shutdo
  }else unlinkSync(socket);
  const entry=join(seeded.root,'shutdown-grace-main.js');
  writeFileSync(entry,`const {dialog}=require('electron');global.graceQuestions=[];dialog.showMessageBox=async(...args)=>{const o=args.at(-1);global.graceQuestions.push(o);return {response:o.buttons?.length===1?0:1,checkboxChecked:false};};const {PtyHostClient}=require(require('node:path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host-client.js'));const {ownerProcessStartIdentity}=require(require('node:path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-owner-client.js'));const start=PtyHostClient.prototype.startHost;global.graceStarts=[];PtyHostClient.prototype.startHost=function(...args){global.graceStarts.push({oldGone:ownerProcessStartIdentity(Number(process.env.AYA_TEST_OLD_HOST_PID))===null});return start.apply(this,args);};require(require('node:path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/main.js'));`);
- const started=Date.now(),next=await _electron.launch({cwd:root,args:[entry,`--user-data-dir=${join(seeded.root,'second-profile')}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_TEST_APP_ROOT:root,AYA_TEST_OLD_HOST_PID:String(old)}})});
+ const started=Date.now(),next=await launchE2eElectron({cwd:root,args:[entry,`--user-data-dir=${join(seeded.root,'second-profile')}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_TEST_APP_ROOT:root,AYA_TEST_OLD_HOST_PID:String(old)}})});
  try{
   await next.firstWindow({timeout:7000});const questions=await next.evaluate(()=>(globalThis as any).graceQuestions),starts=await next.evaluate(()=>(globalThis as any).graceStarts);
   if(shutdown){expect(questions).toEqual([]);expect(starts).toEqual([{oldGone:true}]);expect(alive(old)).toBe(false);await expect.poll(()=>hostPidsForHome(seeded.ayaHome).filter(pid=>pid!==old).length).toBe(1);}

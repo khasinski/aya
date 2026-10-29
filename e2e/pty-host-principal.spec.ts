@@ -1,7 +1,6 @@
-import {_electron} from '@playwright/test';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {test as base,expect,launchApp,closeAndWait,hostPidsForHome,ciElectronFlags} from './fixtures';
+import {test as base,expect,launchApp,launchE2eElectron,closeAndWait,hostPidsForHome,ciElectronFlags,handleRendererDialogs} from './fixtures';
 import {appEnv} from './helpers/seed';
 import {waitForShellReady} from './helpers/terminal';
 const alive=(pid:number)=>{try{process.kill(pid,0);return true;}catch{return false;}};
@@ -17,7 +16,7 @@ for(const scenario of ['takeover','deadline','close','quit'])test(`a still-closi
  await app.evaluate((_api,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),request=PtyHostClient.prototype.request;PtyHostClient.prototype.request=function(...args:unknown[]){(globalThis as any).announcingClient=this;return request.apply(this,args);};},root);
  await window.evaluate(()=>window.aya.ptyBuffer('tab-left'));
  expect(await app.evaluate(()=>(globalThis as any).announcingClient.announceOrdinaryQuit())).toBe(true);
- const next=await _electron.launch({cwd:root,args:[entry,`--user-data-dir=${join(seeded.root,'second-profile')}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,AYA_TEST_TRACE_FILE:exhaustionFile}})});
+ const next=await launchE2eElectron({cwd:root,args:[entry,`--user-data-dir=${join(seeded.root,'second-profile')}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,AYA_TEST_TRACE_FILE:exhaustionFile}})});
  const nextPid=next.process().pid!;
  try{
   const view=await next.firstWindow({timeout:5000}),errors:string[]=[];view.on('pageerror',error=>errors.push(String(error)));
@@ -29,9 +28,10 @@ for(const scenario of ['takeover','deadline','close','quit'])test(`a still-closi
   await waiting.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','not-delivered-paste\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
   expect(await next.evaluate(()=>(globalThis as any).principalWrites)).toBe(0);
   if(scenario==='close'){
-   const told=new Promise<string>((resolve,reject)=>view.once('dialog',dialog=>{const message=dialog.message();void dialog.accept().then(()=>resolve(message),reject);}));
+   const rendererDialogs=await handleRendererDialogs(view,seeded,{'renderer.alert':{messagePrefix:'Aya did not close shell 1:',response:undefined}});
    await view.locator('.aya-sidebar-row[data-terminal-name="shell 1"]').click({button:'right'});
-   await view.locator('.aya-context-menu-item',{hasText:'Close terminal'}).click();expect(await told).toContain('Aya did not close shell 1');
+   await view.locator('.aya-context-menu-item',{hasText:'Close terminal'}).click();
+   await expect.poll(async()=> (await rendererDialogs.read()).map((event)=>event.message).join('\n')).toContain('Aya did not close shell 1');
   }
   if(scenario==='quit'){
    await closeAndWait(next);await closeAndWait(app);

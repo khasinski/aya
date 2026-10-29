@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, expectHeadlessUiEvents } from "./fixtures";
 
 // The white-terminal-after-returning bug: a WebGL context held by a hidden /
 // occluded window is what the GPU evicts under memory pressure (e.g. a
@@ -49,7 +49,10 @@ async function setDocVisibility(
 test("WebGL is dropped while hidden and comes back fresh on visibility - nothing evictable in the background", async ({
   window,
   app,
+  seeded,
 }) => {
+  const windowTitle = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getTitle() || "(untitled window)");
+  expectHeadlessUiEvents(seeded, [{ kind: "window.show", detail: windowTitle }]);
   await window.emulateMedia({ colorScheme: "dark" }); // match the reporter's setup
   // Before reload(): its context teardown lets V8 collect the pending promise of
   // a main-process evaluate ("Resulting promise was garbage collected" on CI).

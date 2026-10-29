@@ -118,7 +118,7 @@ test("no e2e file launches the app or its pty host without the shared env builde
     assert.ok(!/\.\.\.process\.env|Object\.entries\(process\.env\)/.test(source), `${file} spreads the runner's env`);
   }
   const fixtures = readFileSync(join(REPO, "e2e", "fixtures.ts"), "utf8");
-  assert.equal(fixtures.match(/\bappEnv\(/g)?.length, 3, "launchApp, the pre-started pty host, and the fake remote terminal host use appEnv()");
+  assert.equal(fixtures.match(/\bappEnv\(/g)?.length, 5, "launchApp, renderer-dialog mode, fixture teardown, the pre-started pty host, and the fake remote terminal host use appEnv()");
 });
 
 test("insideRoot: a sibling dir that merely starts with the root's name is outside it", () => {

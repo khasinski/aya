@@ -59,6 +59,7 @@ export interface AyaWindowsDeps {
   darkBackground: string;
   isDev: boolean;
   isE2eHeadless: boolean;
+  headlessWindowOptions?: (options: BrowserWindowConstructorOptions) => BrowserWindowConstructorOptions;
   devServerUrl: string;
   rendererIndexPath: string;
   maxKeyboardProjects: number;
@@ -185,7 +186,7 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
   }
 
   function createWindow(initial: WindowGeometry): BrowserWindow {
-    const win = new BrowserWindow({
+    const options: BrowserWindowConstructorOptions = {
       x: initial.x,
       y: initial.y,
       width: initial.width,
@@ -216,7 +217,8 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
         // backgrounded to save power).
         ...(IS_E2E_HEADLESS ? { backgroundThrottling: false } : {}),
       },
-    });
+    };
+    const win = new BrowserWindow(deps.headlessWindowOptions?.(options) ?? options);
 
     if (platform === "darwin") {
       win.setWindowButtonVisibility(false);

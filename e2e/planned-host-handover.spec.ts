@@ -1,7 +1,7 @@
 import {appendFileSync,readFileSync,writeFileSync,existsSync,readdirSync} from "node:fs";
 import {join} from "node:path";
-import {_electron,type ElectronApplication,type Page} from "@playwright/test";
-import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags} from "./fixtures";
+import {type ElectronApplication,type Page} from "@playwright/test";
+import {test,expect,expectHeadlessUiEvents,hostPidsForHome,closeAndWait,ciElectronFlags,launchE2eElectron} from "./fixtures";
 import {appEnv,type SeededEnv} from "./helpers/seed";
 import {waitForShellReady,visiblePane} from "./helpers/terminal";
 const root=join(__dirname,'..'),hostScript=join(root,'dist-electron/pty-host.js'),built=readFileSync(hostScript);
@@ -53,7 +53,7 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
  if(offset){const now=Date.now;Date.now=()=>now()+offset;}
  require(path.join(root,'dist-electron/main.js'));
  `);
- const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
+ const app=await launchE2eElectron({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
   AYA_TEST_HANDOVER_CHOICE:String(choice),AYA_TEST_PLAIN_HOST:plainHost?'1':'0',AYA_TEST_PLAIN_NODE:process.execPath,AYA_TEST_PLAIN_RUNTIME:JSON.stringify({node:process.versions.node,electron:null}),
   AYA_TEST_BLOCK_DISPLAY:blockDisplay?'1':'0',AYA_TEST_DISPLAY_RELEASE:join(seeded.root,'release-display'),AYA_TEST_REAL_UPDATE:realUpdate?'1':'0',
   AYA_TEST_DATE_OFFSET_MS:String(dateOffsetMs),AYA_TEST_FAIL_ORDINARY_ANNOUNCEMENT:failOrdinaryAnnouncement?'1':'0',AYA_TEST_FAIL_STATUS_AFTER_REPLACED_TRANSFER:failStatusAfterReplacedTransfer?'1':'0',AYA_TEST_BLOCK_UPDATE_PREPARE:blockUpdatePrepare?'1':'0',AYA_TEST_UPDATE_PREPARE_READY:join(seeded.root,'update-prepare-ready'),AYA_TEST_UPDATE_PREPARE_RELEASE:join(seeded.root,'release-update-prepare'),AYA_TEST_QUESTIONS_FILE:join(seeded.root,'handover-questions.json'),AYA_TEST_ORDINARY_RESULT:join(seeded.root,'ordinary-result'),
@@ -198,6 +198,7 @@ test('trimmed replay resets the captured display once and explains history loss 
 
 
 test('the real Restart to update IPC announces handover and preserves a foreground command without asking to stop it',async({seeded})=>{
+ expectHeadlessUiEvents(seeded,[{kind:'notification.show',detail:'Aya update ready: Restart Aya to install the update.'}]);
  test.setTimeout(45000);const first=await launch(seeded,1,false,true);await waitForShellReady(first.window);
  await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'ACTUAL_UPDATE_ROUTE\\n'; sleep 1000\r"));
  await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('ACTUAL_UPDATE_ROUTE\r\n');
@@ -217,6 +218,7 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
 });
 
 test('terminal creation is disabled and safely refused while update preparation later fails',async({seeded})=>{
+ expectHeadlessUiEvents(seeded,[{kind:'notification.show',detail:'Aya update ready: Restart Aya to install the update.'}]);
  test.setTimeout(45000);const first=await launch(seeded,1,false,true,false,0,false,false,true);await waitForShellReady(first.window);
  await first.window.evaluate(()=>window.aya.ptyWrite('tab-left','exit\r'));
  await expect(visiblePane(first.window,'shell 1').locator('.xterm-rows')).toContainText(/process exited with code/);
@@ -421,6 +423,7 @@ test('a capped renderer capture restores with a visible oldest-history-cut notic
 });
 
 for(const yes of [false,true])test(`real Restart to update asks about the ineligible pane before installer handoff, yes=${yes}`,async({seeded})=>{
+ expectHeadlessUiEvents(seeded,[{kind:'notification.show',detail:'Aya update ready: Restart Aya to install the update.'}]);
  test.setTimeout(45000);
  appendFileSync(hostScript,`\nconst UpdateTestAdapter=require('./pty-owner-adapter').OwnerPty,updateFreeze=UpdateTestAdapter.prototype.freezeForHandover;UpdateTestAdapter.prototype.freezeForHandover=function(...args){if(this.pane.id==='tab-right')throw Error('test update route ineligible process');return updateFreeze.apply(this,args);};\n`);
  const first=await launch(seeded,yes?0:1,false,true);await waitForShellReady(first.window);await expect.poll(()=>inventory(seeded.ayaHome).panes.length).toBe(2);

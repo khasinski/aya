@@ -1,9 +1,10 @@
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {test,expect,hostPidsForHome} from './fixtures';
+import {test,expect,hostPidsForHome,handleRendererDialogs} from './fixtures';
 import {waitForShellReady,visiblePane} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
 test('a changed restart target asks again; Cancel keeps Aya open and a later crash recovers',async({app,window,seeded})=>{
+ await handleRendererDialogs(window,seeded,{'renderer.confirm':{message:'Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.',response:true}});
  await waitForShellReady(window);const before=JSON.parse(readFileSync(join(seeded.ayaHome,'pty-owner/record.json'),'utf8')),hosts=hostPidsForHome(seeded.ayaHome);
  await app.evaluate(({dialog},root)=>{
   const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
@@ -15,7 +16,7 @@ test('a changed restart target asks again; Cancel keeps Aya open and a later cra
   dialog.showMessageBox=(async(...args:Parameters<typeof dialog.showMessageBox>)=>{const options=args.at(-1) as {message:string;detail?:string};if(options.message!=='Work in progress will stop')return ask(...args);g.targetQuestions.push(options.detail??'');return{response:g.targetQuestions.length===1?0:1,checkboxChecked:false};}) as typeof dialog.showMessageBox;
  },join(__dirname,'..'));
  await fireShortcut(app,'open-settings');const settings=window.locator('.aya-modal--settings');await settings.getByTestId('settings-tab').filter({hasText:'Diagnostics'}).click();
- window.once('dialog',dialog=>void dialog.accept());await settings.locator('.aya-settings-general-row',{hasText:'PTY host'}).getByRole('button',{name:'Restart'}).click();
+ await settings.locator('.aya-settings-general-row',{hasText:'PTY host'}).getByRole('button',{name:'Restart'}).click();
  await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {targetQuestions:string[]}).targetQuestions.length)).toBe(2);
  const result=await app.evaluate(()=>{const g=globalThis as unknown as {targetQuestions:string[];shutdownRequests:number};return{questions:g.targetQuestions,shutdown:g.shutdownRequests};});
  expect(result.questions[0]).toContain('ghost (PID 900)');expect(result.questions[1]).toContain('host changed');

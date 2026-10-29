@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, handleRendererDialogs, expectHeadlessUiEvents } from "./fixtures";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -18,6 +18,7 @@ const SHOTS = "/tmp/aya-worktrees-ga-screens";
 const paneBuffer = (window: import("@playwright/test").Page, id: string) => window.evaluate((paneId) => window.aya.ptyBuffer(paneId), id);
 
 test("create worktrees from one prompt and offer safe branch deletion", async ({ window, seeded }) => {
+  const rendererDialogs = await handleRendererDialogs(window, seeded);
   mkdirSync(SHOTS, { recursive: true });
   await expect(window.locator(".aya-worktree-add")).toBeVisible();
   await expect(window.locator(".aya-worktree-add")).toContainText("New worktrees");
@@ -91,12 +92,14 @@ test("create worktrees from one prompt and offer safe branch deletion", async ({
   const lateBranch = changedDialog.getByRole("checkbox", { name: `Also delete branch ${lateBranchName}`, exact: true });
   await expect(lateBranch).toBeChecked();
   execFileSync("git", ["-c", "user.email=e2e@example.test", "-c", "user.name=E2E", "commit", "--allow-empty", "-m", "arrived while remove dialog was open"], { cwd: latePath });
-  const warning = window.waitForEvent("dialog").then(async (nativeDialog) => {
-    expect(nativeDialog.message()).toBe("The worktree was removed, but Git kept the branch.");
-    await nativeDialog.accept();
-  });
   await changedDialog.getByRole("button", { name: "Remove worktree" }).click();
-  await warning;
+  await expect.poll(() => rendererDialogs.read()).toEqual([
+    { kind: "renderer.alert", message: "The worktree was removed, but Git kept the branch." },
+  ]);
+  expectHeadlessUiEvents(seeded, [{
+    kind: "renderer.alert",
+    detail: "The worktree was removed, but Git kept the branch.",
+  }]);
   assert.equal(execFileSync("git", ["branch", "--list", lateBranchName], { cwd: seeded.projectDir }).toString().trim(), lateBranchName);
 
   const existingRowsBeforeBlank = await window.locator(".aya-sidebar-row").count();

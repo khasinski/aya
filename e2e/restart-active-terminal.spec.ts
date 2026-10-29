@@ -1,7 +1,6 @@
 import {
   test,
   expect,
-  _electron as electron,
   type ElectronApplication,
 } from "@playwright/test";
 import { join } from "node:path";
@@ -12,6 +11,8 @@ import {
   APP_PROCESS_EXIT_TIMEOUT_MS,
   delay,
   cleanUpSeeded,
+  launchE2eElectron,
+  assertHeadlessUiEvents,
 } from "./fixtures";
 
 // Reproduces: after restart the FIRST terminal is selected, not the one that
@@ -34,7 +35,11 @@ function seed(): SeededEnv {
 
 test.afterEach(async () => {
   for (const app of [...launched]) await killAndWait(app);
-  if (seeded) await cleanUpSeeded(seeded);
+  if (seeded) {
+    const current = seeded;
+    try { assertHeadlessUiEvents(current); }
+    finally { await cleanUpSeeded(current); }
+  }
   seeded = null;
 });
 
@@ -55,7 +60,7 @@ async function launch(seeded: SeededEnv): Promise<ElectronApplication> {
   if (process.env.CI) {
     args.push("--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage");
   }
-  const app = await electron.launch({ args, cwd: APP_ROOT, env });
+  const app = await launchE2eElectron({ args, cwd: APP_ROOT, env });
   launched.push(app);
   return app;
 }

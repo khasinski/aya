@@ -5,6 +5,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { createOpenProjectBuffer } from "./open-project-buffer";
 import { installPromptAttachmentGestures } from "./prompt-attachment-gestures";
 import { installWheelZoom } from "./zoom-preload";
+const E2E_HEADLESS_UI_ACTIVE_ENV = "AYA_E2E_HEADLESS_UI_ACTIVE";
 
 import type {
   AyaApi,
@@ -15,6 +16,30 @@ import type {
   TeamOpenPanesRequest,
   UpdateStatus,
 } from "./types";
+
+if (process.env[E2E_HEADLESS_UI_ACTIVE_ENV] === "1") {
+  contextBridge.exposeInMainWorld("__ayaE2eHeadlessUi", {
+    request: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", message: string) =>
+      ipcRenderer.sendSync("e2e:headless-ui-renderer", kind, message),
+    setResponse: (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", matcher: { message?: string; messagePrefix?: string }, response: boolean | string | null | undefined) =>
+      ipcRenderer.sendSync("e2e:headless-ui-response", kind, matcher, response),
+  });
+  contextBridge.executeInMainWorld({
+    func: () => {
+      const bridge = (window as unknown as Window & { __ayaE2eHeadlessUi: { request(kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", message: string): unknown } }).__ayaE2eHeadlessUi;
+      const notify = (kind: "renderer.alert" | "renderer.confirm" | "renderer.prompt", message: unknown) => {
+        window.dispatchEvent(new CustomEvent("aya:e2e-headless-dialog", { detail: { kind, message: String(message ?? "") } }));
+        return bridge.request(kind, String(message ?? ""));
+      };
+      window.alert = (message?: string) => { void notify("renderer.alert", message); };
+      window.confirm = (message?: string) => notify("renderer.confirm", message) as boolean;
+      window.prompt = (message?: unknown, defaultValue?: string) => {
+        void defaultValue;
+        return notify("renderer.prompt", message) as string | null;
+      };
+    },
+  });
+}
 
 installWheelZoom();
 

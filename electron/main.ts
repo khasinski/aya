@@ -93,6 +93,7 @@ import {
   PANE_LAUNCH_ROLES_FILE,
   AGENT_BRIEF_FILES_FILE,
 } from "./paths";
+import { installHeadlessUiRouter } from "./e2e-headless-ui";
 import { createPtyLog } from "./pty-log";
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
@@ -150,6 +151,8 @@ import type {
   PtyEvent,
   SpawnRequest,
 } from "./types";
+
+const headlessWindowOptions = installHeadlessUiRouter({ env: process.env, app, dialog, BrowserWindow, Notification, ipcMain });
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
@@ -327,6 +330,7 @@ let forgetRemoteOutputSink: (webContentsId: number) => void = () => {};
 
 const windows = createAyaWindows({
   BrowserWindow,
+  headlessWindowOptions,
   ptyHost,
   platform: process.platform,
   mainDirname: __dirname,
@@ -494,7 +498,7 @@ const aboutPanelDeps = {
   darkBackground: COLOR_DARK_BG,
   lightText: COLOR_LIGHT_TEXT,
   focusedAyaWindow,
-  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(options),
+  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(headlessWindowOptions(options)),
   devIconPath,
 };
 

@@ -67,7 +67,8 @@ test('an older retained owner without kernel identity is unknown and its notice 
 });
 test('a survivor needs separate consent after owner death; Cancel keeps it and yes settles it before a fresh host',{timeout:25000},async t=>{
  if(!requirePidfd(t))return;
- const command=`exec env ELECTRON_RUN_AS_NODE=1 '${process.execPath}' '${path.resolve('e2e/helpers/pty-owner-survivor.cjs')}'`;
+ const marker=`--aya-e2e-survivor=${path.join(home,'survivor')}`;
+ const command=`exec env ELECTRON_RUN_AS_NODE=1 '${process.execPath}' '${path.resolve('e2e/helpers/pty-owner-survivor.cjs')}' '${marker}'`;
  const f=await setup(command),terminate=native.terminateVerifiedProcess;let signals=0;
  // Model a failure during the owner's normal SIGTERM cleanup, leaving a real
  // HUP-ignoring child. Main still requests exactly one individual SIGTERM.
