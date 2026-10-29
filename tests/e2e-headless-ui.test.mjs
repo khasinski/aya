@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const { installHeadlessUiRouter, headlessUiEventMismatch } = await import("../dist-electron/e2e-headless-ui.js");
 
-test("headless UI routing records and suppresses every native dialog and BrowserWindow show path", async (t) => {
+test("headless UI routing records and suppresses dialogs and every BrowserWindow reveal path", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const logPath = join(dir, "ui.jsonl");
@@ -28,6 +28,11 @@ test("headless UI routing records and suppresses every native dialog and Browser
     }
     show() { native.push("show"); }
     showInactive() { native.push("showInactive"); }
+    maximize() { native.push("maximize"); this.visible = true; }
+    restore() { native.push("restore"); this.visible = true; }
+    focus() { native.push("focus"); this.visible = true; }
+    setFullScreen() { native.push("setFullScreen"); this.visible = true; }
+    moveTop() { native.push("moveTop"); this.visible = true; }
     isVisible() { return this.visible; }
     hide() { this.visible = false; }
     isDestroyed() { return false; }
@@ -42,7 +47,8 @@ test("headless UI routing records and suppresses every native dialog and Browser
     showSaveDialogSync() { native.push("showSaveDialogSync"); return "/should-not-save"; },
   };
   class FakeNotification { show() { native.push("notification"); } }
-  const windowOptions = installHeadlessUiRouter({ env: { AYA_E2E_HEADLESS: "1", AYA_E2E_HEADLESS_UI_LOG: logPath }, app, dialog, BrowserWindow: FakeWindow, Notification: FakeNotification, ipcMain });
+  let RoutedBrowserWindow;
+  installHeadlessUiRouter({ env: { AYA_E2E_HEADLESS: "1", AYA_E2E_HEADLESS_UI_LOG: logPath }, app, dialog, BrowserWindow: FakeWindow, Notification: FakeNotification, ipcMain, replaceBrowserWindow: (ctor) => { RoutedBrowserWindow = ctor; } });
 
   const original = dialog.showMessageBox.bind(dialog);
   dialog.showMessageBox = async (...args) => args.at(-1)?.message === "expected test prompt"
@@ -52,13 +58,23 @@ test("headless UI routing records and suppresses every native dialog and Browser
   assert.deepEqual(await dialog.showMessageBox({ cancelId: 2 }), { response: 2, checkboxChecked: false });
   assert.equal(dialog.showMessageBoxSync({ cancelId: 3 }), 3);
   dialog.showErrorBox("title", "body");
-  assert.deepEqual(await dialog.showOpenDialog({}), { canceled: true, filePaths: [] });
+  const openDialog = dialog.showOpenDialog({});
+  assert.ok(openDialog instanceof Promise, "showOpenDialog keeps Electron's Promise API");
+  assert.deepEqual(await openDialog, { canceled: true, filePaths: [] });
   assert.equal(dialog.showOpenDialogSync({}), undefined);
   assert.deepEqual(await dialog.showSaveDialog({}), { canceled: true });
   assert.equal(dialog.showSaveDialogSync({}), undefined);
   new FakeWindow({ show: false }).show();
   new FakeWindow({ show: false }).showInactive();
-  const visible = new FakeWindow(windowOptions({ show: true }));
+  const visible = new RoutedBrowserWindow({ show: true, title: "direct constructor probe" });
+  assert.equal(visible.isVisible(), false);
+  visible.show();
+  visible.showInactive();
+  visible.maximize();
+  visible.restore();
+  visible.focus();
+  visible.setFullScreen(true);
+  visible.moveTop();
   assert.equal(visible.isVisible(), false);
   app.showAboutPanel();
   new FakeNotification().show();
@@ -72,7 +88,9 @@ test("headless UI routing records and suppresses every native dialog and Browser
   assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line).kind), [
     "dialog.showMessageBox", "dialog.showMessageBox", "dialog.showMessageBoxSync", "dialog.showErrorBox",
     "dialog.showOpenDialog", "dialog.showOpenDialogSync", "dialog.showSaveDialog", "dialog.showSaveDialogSync",
-    "window.show", "window.showInactive", "window.construct-visible", "app.showAboutPanel", "notification.show", "renderer.alert",
+    "window.show", "window.showInactive", "window.construct-visible", "window.show", "window.showInactive",
+    "window.maximize", "window.restore", "window.focus", "window.setFullScreen", "window.moveTop",
+    "app.showAboutPanel", "notification.show", "renderer.alert",
   ]);
 });
 
@@ -143,14 +161,28 @@ test("renderer responses are one-shot and matched to the exact message", () => {
       handlers.get("e2e:headless-ui-renderer")(event, "renderer.confirm", message);
       return event.returnValue;
     };
+    const secondWindow = new FakeWindow();
+    const secondSender = secondWindow.webContents;
     assert.equal(request("Restart this terminal?"), true);
-    assert.equal(request("Stop every terminal?"), false, "a response cannot approve another message");
+    assert.equal(request("Restart this terminal?"), false, "a response is one-shot for the same message");
+    const freshResponse = { sender, returnValue: false };
+    handlers.get("e2e:headless-ui-response")(freshResponse, "renderer.confirm", { message: "Stop every terminal?" }, true);
+    assert.equal(freshResponse.returnValue, true);
+    const requestFrom = (requestSender, message) => {
+      const event = { sender: requestSender, returnValue: undefined };
+      handlers.get("e2e:headless-ui-renderer")(event, "renderer.confirm", message);
+      return event.returnValue;
+    };
+    assert.equal(requestFrom(secondSender, "Stop every terminal?"), false, "a response cannot cross to another sender");
+    assert.equal(requestFrom(sender, "Stop every terminal?"), true, "a mismatched request leaves the fresh exact response available");
     assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n").map((line) => {
       const event = JSON.parse(line);
       return { detail: event.detail, expected: event.expected };
     }), [
       { detail: "Restart this terminal?", expected: true },
+      { detail: "Restart this terminal?", expected: false },
       { detail: "Stop every terminal?", expected: false },
+      { detail: "Stop every terminal?", expected: true },
     ]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -358,6 +390,41 @@ test("malformed headless UI logs still clean the seeded fixture root", (t) => {
   assert.match(`${result.stdout}\n${result.stderr}`, /Headless e2e UI log is invalid/);
 });
 
+test("headless UI records without a kind fail the fixture and still clean the seed", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-headless-ui-invalid-record-"));
+  const spec = join(root, "e2e", `headless-ui-invalid-record-${process.pid}-${Date.now()}.spec.ts`);
+  const marker = join(dir, "seed-root.txt");
+  let seededRoot;
+  t.after(() => {
+    rmSync(spec, { force: true });
+    if (seededRoot) rmSync(seededRoot, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+  writeFileSync(spec, `
+    import { appendFileSync, writeFileSync } from "node:fs";
+    import { test } from "./fixtures";
+    import { appEnv } from "./helpers/seed";
+    test("missing event kind is a fixture failure", async ({ seeded }) => {
+      const env = appEnv(seeded);
+      writeFileSync(process.env.E2E_HEADLESS_UI_PROBE_ROOT_FILE!, seeded.root);
+      appendFileSync(env.AYA_E2E_HEADLESS_UI_LOG!, JSON.stringify({ expected: true }) + "\\n");
+    });
+  `);
+  const result = spawnSync(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", spec,
+    "--project=isolated", "--no-deps", "--workers=1", "--reporter=line"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env, CI: "", E2E_HEADLESS_UI_PROBE_ROOT_FILE: marker },
+  });
+  assert.notEqual(result.status, 0, `invalid UI record should fail the Playwright test:\n${result.stdout}\n${result.stderr}`);
+  assert.ok(existsSync(marker), "probe should report its seeded root");
+  seededRoot = readFileSync(marker, "utf8");
+  assert.equal(existsSync(seededRoot), false, "fixture cleanup must remove the seeded root after an invalid record");
+  assert.match(`${result.stdout}\n${result.stderr}`, /invalid headless e2e UI record/i);
+});
+
 test("main installs the router before app windows and all Electron e2e launches use the shared headless gate", () => {
   const main = readFileSync(join(root, "electron/main.ts"), "utf8");
   assert.match(main, /installHeadlessUiRouter\(\{\s*env:\s*process\.env,\s*app,\s*dialog,\s*BrowserWindow,\s*Notification,\s*ipcMain\s*\}\)/);
@@ -382,12 +449,18 @@ test("main installs the router before app windows and all Electron e2e launches 
   assert.deepEqual(browserWindowCreations.map(({ name }) => name).sort(), ["main.ts", "windows.ts"], "new main-process BrowserWindows must use one of the guarded Aya factories");
   assert.ok(browserWindowCreations.some(({ name, call }) => name === "main.ts" && call.includes("headlessWindowOptions(options)")));
   assert.ok(browserWindowCreations.some(({ name, call }) => name === "windows.ts" && call.includes("deps.headlessWindowOptions")));
-  assert.match(router, /routeWindowMethod\(deps\.BrowserWindow\.prototype, "show", "window\.show"/);
-  assert.match(router, /routeWindowMethod\(deps\.BrowserWindow\.prototype, "showInactive", "window\.showInactive"/);
+  assert.match(router, /routeWindowMethod\(deps\.BrowserWindow\.prototype, method, record\)/);
+  for (const method of ["show", "showInactive", "maximize", "restore", "focus", "setFullScreen", "moveTop"]) {
+    assert.match(router, new RegExp(`"${method}"`), `${method} must be routed in headless mode`);
+  }
   assert.match(router, /routeNotificationMethod\(deps\.Notification\.prototype/);
   if (hasAboutPanelCall) assert.match(router, /routeObjectMethod\(deps\.app, "showAboutPanel", "app\.showAboutPanel"/);
   const bootstrap = readFileSync(join(root, "e2e/helpers/headless-main.cjs"), "utf8");
   assert.ok(bootstrap.indexOf("installHeadlessUiRouter(") < bootstrap.indexOf("require(main)"), "headless router must install before wrapper or app main code");
+  assert.match(bootstrap, /replaceBrowserWindow:\s*\(constructor\)/);
+  assert.match(bootstrap, /Module\._load\s*=/);
+  assert.match(bootstrap, /property === "BrowserWindow"/);
+  assert.match(bootstrap, /return new Proxy\(loaded/);
   const e2eFiles = readdirSync(join(root, "e2e"), { recursive: true }).filter((name) => typeof name === "string" && name.endsWith(".ts"));
   const direct = [];
   const electronSpawns = [];

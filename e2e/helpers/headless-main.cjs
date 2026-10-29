@@ -2,14 +2,28 @@
 // main entry. Use this as the entry for every headless e2e launch so wrapper
 // scripts can install intentional dialog fakes only after the router exists.
 if (process.env.AYA_E2E_HEADLESS === "1") {
+  const Module = require("node:module");
   const electron = require("electron");
   if (!process.env.AYA_E2E_HEADLESS_UI_MODULE) throw new Error("Headless e2e UI router module is missing");
   const { installHeadlessUiRouter } = require(process.env.AYA_E2E_HEADLESS_UI_MODULE);
+  let routedBrowserWindow;
+  const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) {
+    const loaded = originalLoad.call(this, request, parent, isMain);
+    if (request !== "electron" || !routedBrowserWindow) return loaded;
+    return new Proxy(loaded, {
+      get(target, property) {
+        if (property === "BrowserWindow") return routedBrowserWindow;
+        return Reflect.get(target, property, target);
+      },
+    });
+  };
   installHeadlessUiRouter({
     env: process.env,
     app: electron.app,
     dialog: electron.dialog,
     BrowserWindow: electron.BrowserWindow,
+    replaceBrowserWindow: (constructor) => { routedBrowserWindow = constructor; },
     Notification: electron.Notification,
     ipcMain: electron.ipcMain,
   });

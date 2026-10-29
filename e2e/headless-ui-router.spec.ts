@@ -41,6 +41,14 @@ test("headless Electron records and cancels native UI requests without showing t
     { kind: "dialog.showSaveDialog", detail: "(no message)" },
     { kind: "dialog.showSaveDialogSync", detail: "(no message)" },
     { kind: "window.show", detail: title }, { kind: "window.showInactive", detail: title },
+    { kind: "window.construct-visible", detail: "direct constructor probe" },
+    { kind: "window.show", detail: "direct constructor probe" },
+    { kind: "window.showInactive", detail: "direct constructor probe" },
+    { kind: "window.maximize", detail: "direct constructor probe" },
+    { kind: "window.restore", detail: "direct constructor probe" },
+    { kind: "window.focus", detail: "direct constructor probe" },
+    { kind: "window.setFullScreen", detail: "direct constructor probe" },
+    { kind: "window.moveTop", detail: "direct constructor probe" },
     { kind: "app.showAboutPanel", detail: "About panel" }, { kind: "notification.show", detail: "headless: must not show" },
     { kind: "renderer.alert", detail: "headless renderer probe" }, { kind: "renderer.confirm", detail: "default cancel" },
   ];
@@ -66,6 +74,16 @@ test("headless Electron records and cancels native UI requests without showing t
     // Exercise show() on Aya's real main window created by createAyaWindows.
     window.show();
     window.showInactive();
+    const directWindow = new BrowserWindow({ show: true, title: "direct constructor probe" });
+    const directInitiallyVisible = directWindow.isVisible();
+    directWindow.show();
+    directWindow.showInactive();
+    directWindow.maximize();
+    directWindow.restore();
+    directWindow.focus();
+    directWindow.setFullScreen(true);
+    directWindow.moveTop();
+    directWindow.destroy();
     app.showAboutPanel();
     new Notification({ title: "headless", body: "must not show" }).show();
     await window.webContents.executeJavaScript("window.alert('headless renderer probe')");
@@ -74,7 +92,7 @@ test("headless Electron records and cancels native UI requests without showing t
     const accepted = await window.webContents.executeJavaScript("window.confirm('test accepted')");
     await window.webContents.executeJavaScript("window.__ayaE2eHeadlessUi.setResponse('renderer.prompt', { message: 'headless prompt' }, 'safe answer')");
     const prompt = await window.webContents.executeJavaScript("window.prompt('headless prompt')");
-    return { message, syncMessage, open, openSync, save, saveSync, visible: BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()), cancelled, accepted, prompt };
+    return { message, syncMessage, open, openSync, save, saveSync, visible: BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()), directInitiallyVisible, cancelled, accepted, prompt };
   });
   expect(result.message.response).toBe(1);
   expect(result.syncMessage).toBe(2);
@@ -82,6 +100,7 @@ test("headless Electron records and cancels native UI requests without showing t
   expect(result.openSync).toBeUndefined();
   expect(result.save).toEqual({ canceled: true });
   expect(result.saveSync).toBeUndefined();
+  expect(result.directInitiallyVisible).toBe(false);
   expect(result.visible).toBe(false);
   await expect.poll(() => window.evaluate(() => (window as Window & { headlessDialogEvents: Array<{ kind: string; message: string }> }).headlessDialogEvents)).toEqual([
     { kind: "renderer.alert", message: "headless renderer probe" },

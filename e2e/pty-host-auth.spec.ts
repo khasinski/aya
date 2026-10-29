@@ -12,7 +12,10 @@ const test=base.extend({app:async({seeded},use)=>{const app=await launchApp({...
 
 test('ordinary relaunch proves continuity and a later JS crash recovers the original owner and panes',async({app,window,seeded})=>{
  await waitForShellReady(window);const before=record(seeded.ayaHome),old=hostPidsForHome(seeded.ayaHome);expect(old).toHaveLength(1);expect(existsSync(join(seeded.ayaHome,'pty-host-auth'))).toBe(false);
- await closeAndWait(app);expect(alive(old[0])).toBe(true);
+ const appProcess=app.process(),exited=new Promise<void>(resolve=>appProcess.once('exit',()=>resolve()));
+ await app.evaluate(({app})=>app.quit());
+ await Promise.race([exited,new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('Aya did not finish its ordinary quit')),10_000))]);
+ expect(alive(old[0])).toBe(true);
  expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(1);
  mkdirSync(join(seeded.ayaHome,'pty-host-auth'),{mode:0o700});writeFileSync(join(seeded.ayaHome,'pty-host-auth/key'),Buffer.alloc(32,42),{mode:0o600});
  const next=await launchApp({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}});

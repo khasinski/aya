@@ -10,6 +10,11 @@ import { appEnv, seedEnv } from "./helpers/seed";
 const APP_ROOT = join(__dirname, "..");
 const EXIT_TIMEOUT_MS = 20_000;
 
+function waitForExit(child: import("node:child_process").ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
+  return new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+}
+
 test("Aya started with an AYA_HOME too long for its sockets exits and names the limit", async () => {
   const seeded = seedEnv({});
   const longHome = join(seeded.root, "h".repeat(socketPathLimit()), "aya-home");
@@ -26,16 +31,23 @@ test("Aya started with an AYA_HOME too long for its sockets exits and names the 
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => (stderr += chunk));
-  const killer = setTimeout(() => child.kill("SIGKILL"), EXIT_TIMEOUT_MS);
-  const code = await new Promise((resolve) => child.on("exit", resolve));
-  clearTimeout(killer);
-  try { assertHeadlessUiEvents(seeded); }
-  finally { await reapPtyHosts(longHome).finally(() => cleanUpSeeded(seeded)); }
-
-  expect(code).toBe(1);
-  expect(stderr).toMatch(/AYA_HOME.*too long/);
-  expect(stderr).toContain(`the limit is ${socketPathLimit()}`);
-  expect(stderr).toContain(longHome);
+  const exited = waitForExit(child);
+  const killer = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, EXIT_TIMEOUT_MS);
+  try {
+    const code = await exited;
+    expect(code).toBe(1);
+    expect(stderr).toMatch(/AYA_HOME.*too long/);
+    expect(stderr).toContain(`the limit is ${socketPathLimit()}`);
+    expect(stderr).toContain(longHome);
+  } finally {
+    clearTimeout(killer);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    }
+    try { assertHeadlessUiEvents(seeded); }
+    finally { await reapPtyHosts(longHome).finally(() => cleanUpSeeded(seeded)); }
+  }
 });
 
 test("an AYA_HOME only the remote socket outgrows still starts Aya, with the bridge off and a message", async () => {
@@ -55,14 +67,16 @@ test("an AYA_HOME only the remote socket outgrows still starts Aya, with the bri
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => (stderr += chunk));
+  const exited = waitForExit(child);
   try {
     await expect.poll(() => existsSync(join(home, "aya.sock")), { timeout: EXIT_TIMEOUT_MS }).toBe(true);
     expect(existsSync(join(home, "aya-remote.sock"))).toBe(false);
     expect(stderr).toMatch(/remote bridge is off.*too long/);
     expect(child.exitCode).toBeNull();
-    assertHeadlessUiEvents(seeded);
   } finally {
-    child.kill("SIGKILL");
-    await reapPtyHosts(home).finally(() => cleanUpSeeded(seeded));
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    try { assertHeadlessUiEvents(seeded); }
+    finally { await reapPtyHosts(home).finally(() => cleanUpSeeded(seeded)); }
   }
 });

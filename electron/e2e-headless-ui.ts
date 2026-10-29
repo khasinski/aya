@@ -9,21 +9,24 @@ type DialogApi = Pick<Dialog,
   | "showMessageBox" | "showMessageBoxSync" | "showErrorBox"
   | "showOpenDialog" | "showOpenDialogSync" | "showSaveDialog" | "showSaveDialogSync"
 >;
+type WindowMethod = "show" | "showInactive" | "maximize" | "restore" | "focus" | "setFullScreen" | "moveTop";
+type WindowMethods = Partial<Pick<BrowserWindow, WindowMethod>>;
 type WindowConstructor = {
   new(options: BrowserWindowConstructorOptions): Pick<BrowserWindow, "isVisible" | "destroy">;
-  prototype: { show?: (...args: unknown[]) => unknown; showInactive?: (...args: unknown[]) => unknown; getTitle?: () => string };
+  prototype: WindowMethods & { getTitle?: () => string };
   getAllWindows?: () => Array<Pick<BrowserWindow, "webContents" | "isDestroyed">>;
 };
 type NotificationClass = { prototype: { show?: (...args: unknown[]) => unknown } };
 type EventKind =
   | "dialog.showMessageBox" | "dialog.showMessageBoxSync" | "dialog.showErrorBox"
   | "dialog.showOpenDialog" | "dialog.showOpenDialogSync" | "dialog.showSaveDialog" | "dialog.showSaveDialogSync"
-  | "window.show" | "window.showInactive" | "window.construct-visible" | "app.showAboutPanel" | "notification.show"
+  | "window.show" | "window.showInactive" | "window.maximize" | "window.restore" | "window.focus"
+  | "window.setFullScreen" | "window.moveTop" | "window.construct-visible" | "app.showAboutPanel" | "notification.show"
   | "renderer.alert" | "renderer.confirm" | "renderer.prompt";
 
 const installed = new WeakSet<object>();
 const ipcInstalled = new WeakSet<object>();
-type RendererResponse = { message?: string; messagePrefix?: string; response: unknown; sender: unknown };
+type RendererResponse = { message?: string; messagePrefix?: string; response: unknown };
 
 export interface HeadlessUiEventExpectation { kind: string; detail?: string }
 export interface HeadlessUiEventRecord { kind: string; detail?: string; expected?: boolean }
@@ -43,6 +46,7 @@ export function installHeadlessUiRouter(deps: {
   app: Pick<App, "isPackaged" | "showAboutPanel">;
   dialog: DialogApi;
   BrowserWindow: WindowConstructor;
+  replaceBrowserWindow?: (constructor: WindowConstructor) => void;
   Notification: NotificationClass;
   ipcMain?: Pick<IpcMain, "on">;
   append?: (path: string, line: string) => void;
@@ -57,12 +61,31 @@ export function installHeadlessUiRouter(deps: {
   const alreadyInstalled = installed.has(deps.dialog);
   const append = deps.append ?? ((path, line) => appendFileSync(path, line, { encoding: "utf8", mode: 0o600 }));
   const record = (kind: EventKind, expected = false, detail?: string) => append(logPath, `${JSON.stringify({ kind, ...(detail === undefined ? {} : { detail }), expected, at: new Date().toISOString() })}\n`);
-  const rendererResponses = new Map<EventKind, RendererResponse>();
+  const rendererResponses = new Map<unknown, Map<EventKind, RendererResponse>>();
   const headlessWindowOptions = (options: BrowserWindowConstructorOptions): BrowserWindowConstructorOptions => {
     if (options.show === false) return options;
     record("window.construct-visible", false, options.title || "(untitled window)");
     return { ...options, show: false };
   };
+
+  if (deps.replaceBrowserWindow) {
+    const RoutedBrowserWindow = new Proxy(deps.BrowserWindow, {
+      construct(target, args) {
+        const options = (args[0] ?? {}) as BrowserWindowConstructorOptions;
+        // Keep Electron's native BrowserWindow constructor as new.target.
+        // Passing the Proxy as newTarget makes Electron treat it as a subclass
+        // and can prevent the first renderer window from being created.
+        return Reflect.construct(target, [headlessWindowOptions(options), ...args.slice(1)]);
+      },
+      get(target, property) {
+        // Electron's static methods can rely on their native constructor
+        // receiver; bind them to the original class instead of the Proxy.
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    deps.replaceBrowserWindow(RoutedBrowserWindow);
+  }
 
   if (!alreadyInstalled) {
     routeDialogMethod(deps.dialog, "showMessageBox", "dialog.showMessageBox", (args) => Promise.resolve(messageBoxDefault(args)), record);
@@ -72,8 +95,9 @@ export function installHeadlessUiRouter(deps: {
     routeDialogMethod(deps.dialog, "showOpenDialogSync", "dialog.showOpenDialogSync", () => undefined, record);
     routeDialogMethod(deps.dialog, "showSaveDialog", "dialog.showSaveDialog", () => Promise.resolve({ canceled: true }), record);
     routeDialogMethod(deps.dialog, "showSaveDialogSync", "dialog.showSaveDialogSync", () => undefined, record);
-    routeWindowMethod(deps.BrowserWindow.prototype, "show", "window.show", record);
-    routeWindowMethod(deps.BrowserWindow.prototype, "showInactive", "window.showInactive", record);
+    for (const method of ["show", "showInactive", "maximize", "restore", "focus", "setFullScreen", "moveTop"] as const) {
+      routeWindowMethod(deps.BrowserWindow.prototype, method, record);
+    }
     routeNotificationMethod(deps.Notification.prototype, record);
     routeObjectMethod(deps.app, "showAboutPanel", "app.showAboutPanel", record, "About panel");
     installed.add(deps.dialog);
@@ -87,11 +111,14 @@ export function installHeadlessUiRouter(deps: {
       if (!isAyaSender(event.sender)) { event.returnValue = null; return; }
       if (kind === "renderer.alert" || kind === "renderer.confirm" || kind === "renderer.prompt") {
         const detail = String(message ?? "");
-        const configured = rendererResponses.get(kind);
-        const configuredForSender = configured?.sender === event.sender;
-        if (configuredForSender) rendererResponses.delete(kind);
-        const matched = configuredForSender && (configured?.message === detail
+        const senderResponses = rendererResponses.get(event.sender);
+        const configured = senderResponses?.get(kind);
+        const matched = configured !== undefined && (configured.message === detail
           || (configured?.messagePrefix !== undefined && detail.startsWith(configured.messagePrefix)));
+        if (matched) {
+          senderResponses?.delete(kind);
+          if (senderResponses?.size === 0) rendererResponses.delete(event.sender);
+        }
         record(kind, matched, detail);
         event.returnValue = matched ? configured!.response
           : kind === "renderer.confirm" ? false : kind === "renderer.prompt" ? null : undefined;
@@ -106,10 +133,14 @@ export function installHeadlessUiRouter(deps: {
       const hasPrefix = typeof rule.messagePrefix === "string" && rule.messagePrefix.length > 0 && rule.messagePrefix.length <= 4096;
       if (hasExact === hasPrefix) { event.returnValue = false; return; }
       const match = hasExact ? { message: rule.message as string } : { messagePrefix: rule.messagePrefix as string };
-      if (kind === "renderer.alert" && response === undefined) rendererResponses.set(kind, { ...match, response: undefined, sender: event.sender });
-      else if (kind === "renderer.confirm" && typeof response === "boolean") rendererResponses.set(kind, { ...match, response, sender: event.sender });
-      else if (kind === "renderer.prompt" && (typeof response === "string" || response === null)) rendererResponses.set(kind, { ...match, response, sender: event.sender });
+      let value: unknown;
+      if (kind === "renderer.alert" && response === undefined) value = undefined;
+      else if (kind === "renderer.confirm" && typeof response === "boolean") value = response;
+      else if (kind === "renderer.prompt" && (typeof response === "string" || response === null)) value = response;
       else { event.returnValue = false; return; }
+      let senderResponses = rendererResponses.get(event.sender);
+      if (!senderResponses) { senderResponses = new Map(); rendererResponses.set(event.sender, senderResponses); }
+      senderResponses.set(kind, { ...match, response: value });
       event.returnValue = true;
     });
     ipcInstalled.add(deps.ipcMain);
@@ -178,9 +209,8 @@ function routeDialogMethod<K extends keyof DialogApi>(
 }
 
 function routeWindowMethod(
-  prototype: { show?: (...args: unknown[]) => unknown; showInactive?: (...args: unknown[]) => unknown; getTitle?: () => string },
-  method: "show" | "showInactive",
-  kind: EventKind,
+  prototype: WindowMethods & { getTitle?: () => string },
+  method: WindowMethod,
   record: (kind: EventKind, expected?: boolean, detail?: string) => void,
 ): void {
   const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
@@ -188,7 +218,7 @@ function routeWindowMethod(
     configurable: true,
     enumerable: descriptor?.enumerable ?? false,
     writable: false,
-    value: function (this: { getTitle?: () => string }) { record(kind, false, this.getTitle?.() || "(untitled window)"); return undefined; },
+    value: function (this: { getTitle?: () => string }) { record(`window.${method}` as EventKind, false, this.getTitle?.() || "(untitled window)"); return undefined; },
   });
 }
 

@@ -323,7 +323,11 @@ function headlessUiFailure(seeded: SeededEnv): Error | null {
   if (!logPath) return new Error("Headless e2e has no native UI event log path");
   try {
     const logged = existsSync(logPath)
-      ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as HeadlessUiEventRecord)
+      ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line, index) => {
+        const record: unknown = JSON.parse(line);
+        if (!isHeadlessUiEventRecord(record)) throw new Error(`Invalid headless e2e UI record at line ${index + 1}`);
+        return record;
+      })
       : [];
     const expectedPath = join(seeded.root, "e2e-headless-ui-expected.json");
     const expected = existsSync(expectedPath) ? JSON.parse(readFileSync(expectedPath, "utf8")) as HeadlessUiEventExpectation[] : [];
@@ -333,6 +337,15 @@ function headlessUiFailure(seeded: SeededEnv): Error | null {
     const message = error instanceof Error ? error.message : String(error);
     return new Error(`Headless e2e UI log is invalid: ${message}`);
   }
+}
+
+function isHeadlessUiEventRecord(value: unknown): value is HeadlessUiEventRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.kind === "string" && record.kind.length > 0
+    && (record.detail === undefined || typeof record.detail === "string")
+    && (record.expected === undefined || typeof record.expected === "boolean")
+    && (record.at === undefined || typeof record.at === "string");
 }
 
 export function assertHeadlessUiEvents(seeded: SeededEnv): void {

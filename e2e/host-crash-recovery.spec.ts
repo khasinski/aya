@@ -9,23 +9,44 @@ import {join} from 'node:path';
 import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags,launchE2eElectron,assertHeadlessUiEvents} from './fixtures';
 import {waitForShellReady,visiblePane} from './helpers/terminal';
 test.use({seedOptions:{launchEnv:{AYA_E2E_PTY_SHUTDOWN:'0'}}});
-const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js') as {ownerProcessStartIdentity:(pid:number)=>string|null};
+const {ownerProcessStartIdentity,terminateVerifiedProcess}=require('../dist-electron/pty-owner-client.js') as {
+ ownerProcessStartIdentity:(pid:number)=>string|null;
+ terminateVerifiedProcess:(member:{pid:number;startIdentity:string|null},group:number)=>'absent'|'mismatch'|'unknown'|'signalled';
+};
+type SurvivorRecord={pid:number;startIdentity:string;marker:string};
+type SurvivorCleanupDeps={identity:(pid:number)=>string|null;command:(pid:number)=>string;terminate:(member:{pid:number;startIdentity:string|null},group:number)=>string};
+function retireVerifiedSurvivor(saved:SurvivorRecord,pidFile:string,deps:SurvivorCleanupDeps):string{
+ const pid=saved.pid,marker=`--aya-e2e-survivor=${pidFile}`;
+ if(!Number.isInteger(pid)||pid<=1||!saved.startIdentity||saved.marker!==marker)return 'refused';
+ let command:string;try{command=deps.command(pid);}catch{return 'absent';}
+ if(!command.includes(join(__dirname,'helpers/pty-owner-survivor.cjs'))||!command.includes(marker)||deps.identity(pid)!==saved.startIdentity)return 'refused';
+ return deps.terminate({pid,startIdentity:saved.startIdentity},pid);
+}
 const survivorCleanupTest=test.extend({seeded:async({seeded},use)=>{
  await use(seeded);
  const pidFile=join(seeded.root,'pty-owner-survivor.pid');
  if(!existsSync(pidFile))return;
- const saved=JSON.parse(readFileSync(pidFile,'utf8')) as {pid:number;startIdentity:string;marker:string};
+ const saved=JSON.parse(readFileSync(pidFile,'utf8')) as SurvivorRecord;
  const pid=saved.pid;
- if(!Number.isInteger(pid)||pid<=1||!saved.startIdentity||!saved.marker.endsWith(pidFile))return;
- let command='';try{command=execFileSync('ps',['-p',String(pid),'-o','command='],{encoding:'utf8'});}catch{return;}
- if(!command.includes(join(__dirname,'helpers/pty-owner-survivor.cjs'))||!command.includes(saved.marker)||ownerProcessStartIdentity(pid)!==saved.startIdentity)return;
- try{process.kill(pid,'SIGTERM');}catch{return;}
- await expect.poll(()=>ownerProcessStartIdentity(pid)!==saved.startIdentity,{timeout:2000}).toBe(true);
+ const result=retireVerifiedSurvivor(saved,pidFile,{
+  identity:ownerProcessStartIdentity,
+  command:target=>execFileSync('ps',['-p',String(target),'-o','command='],{encoding:'utf8'}),
+  terminate:terminateVerifiedProcess,
+ });
+ if(result==='signalled')await expect.poll(()=>ownerProcessStartIdentity(pid)!==saved.startIdentity,{timeout:2000}).toBe(true);
 }});
 type Record={pid:number;panes:Array<{id:string;pid:number;generation:number;cols:number;rows:number}>};
 const record=(home:string):Record=>JSON.parse(readFileSync(join(home,'pty-owner/record.json'),'utf8'));
 const identities=(home:string)=>record(home).panes.map(p=>({id:p.id,pid:p.pid,generation:p.generation})).sort((a,b)=>a.id.localeCompare(b.id));
 const alive=(pid:number)=>{try{process.kill(pid,0);return true;}catch{return false;}};
+test('survivor cleanup refuses a wrong marker or process identity without signalling',async()=>{
+ const pidFile='/tmp/aya-survivor-test.pid',valid:SurvivorRecord={pid:43210,startIdentity:'start-A',marker:`--aya-e2e-survivor=${pidFile}`};
+ let signals=0;
+ const deps:SurvivorCleanupDeps={identity:()=> 'start-A',command:()=>`node ${join(__dirname,'helpers/pty-owner-survivor.cjs')} ${valid.marker}`,terminate:()=>{signals++;return 'signalled';}};
+ expect(retireVerifiedSurvivor({...valid,marker:'--aya-e2e-survivor=/tmp/other.pid'},pidFile,deps)).toBe('refused');
+ expect(retireVerifiedSurvivor(valid,pidFile,{...deps,identity:()=> 'start-B'})).toBe('refused');
+ expect(signals).toBe(0);
+});
 async function crash(home:string){const hosts=hostPidsForHome(home);expect(hosts).toHaveLength(1);process.kill(hosts[0],'SIGKILL');await expect.poll(()=>alive(hosts[0])).toBe(false);return hosts[0];}
 async function recovered(home:string,old:number){await expect.poll(()=>hostPidsForHome(home).filter(pid=>pid!==old).length).toBe(1);}
 
