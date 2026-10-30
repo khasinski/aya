@@ -2,9 +2,40 @@
 
 ## Unreleased
 
-- Opt-in shared 1Password CLI terminal sessions for agent presets
-  (`AYA_OP_SESSION=1`), reducing repeated biometric prompts for read-only
-  `op` commands without caching secrets or changing 1Password session limits.
+## v0.14.0 - 2026-10-30
+
+Session-history search that stays inside a time budget, shared 1Password
+sessions for agents, and a terminal-host startup that no longer blocks the app.
+
+### Features
+
+- **Shared 1Password CLI terminal sessions** for agent presets, opt-in with
+  `AYA_OP_SESSION=1`: fewer repeated biometric prompts for read-only `op`
+  commands, with no cached secrets and no change to 1Password session limits
+  (#302).
+- **History search stays inside a time budget** and says when a result was cut
+  short (#298).
+- **Teams:** Save team no longer asks for an assignment prompt and moves focus to
+  the next role (#304).
+- **Host telemetry** says why a machine's numbers are unavailable (#307).
+
+### Fixes
+
+- VT snapshots are clipped to the visible width and sends are held while a
+  prompt is clipped; narrowed panes are judged by what is visible (#299, #306).
+- The macOS update handoff is bounded and the updater logs each step (#300).
+- Team debug logging stops as soon as it is switched off (#309); history search
+  memory is checked at the file reads, not process RSS (#308).
+- The terminal host's startup cleanup and legacy sweep no longer block the app
+  while they inspect processes, and stopping the PTY owner can no longer end the
+  host early and leave its record behind (#303).
+
+### Internal
+
+- Settings is split into per-tab components with one window-layout setting,
+  shared project menus, and dead CSS removed (#303).
+- Electron 43.8.1 and routine dependency updates; tests no longer depend on the
+  machine they run on (#303, #310).
 
 ## v0.13.1 - 2026-10-26
 
