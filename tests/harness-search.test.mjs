@@ -582,7 +582,7 @@ test("full-history scan coverage is honest and memory stays bounded", async (t) 
       utimesSync(file, nowSec, nowSec);
       resetHarnessSearchCaches();
       let maxCarry = 0;
-      const before = process.memoryUsage().rss;
+      let maxRetainedBytes = 0;
       const result = await searchHarnessSessions({
         agent: "claude",
         cwd: CWD,
@@ -599,8 +599,8 @@ test("full-history scan coverage is honest and memory stays bounded", async (t) 
         now: fakeClock(budgetHit),
         chunkBytes,
         onMaxCarryBytes: (bytes) => { maxCarry = Math.max(maxCarry, bytes); },
+        onPeakRetainedBytes: (bytes) => { maxRetainedBytes = Math.max(maxRetainedBytes, bytes); },
       });
-      const after = process.memoryUsage().rss;
       const shouldFind = position !== "none" && !(budgetHit && position === "oldest");
       assert.equal(result.hits.length > 0, shouldFind);
       if (shouldFind) {
@@ -615,7 +615,10 @@ test("full-history scan coverage is honest and memory stays bounded", async (t) 
       assert.equal(result.coverage.partial, budgetHit || size === "sparse-1GiB");
       if (result.coverage.partial) assert.ok(result.coverage.searchedBackTo);
       assert.ok(maxCarry <= 64 * 1024, `scanner retained ${maxCarry} bytes in a line carry`);
-      assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
+      assert.ok(
+        maxRetainedBytes <= 2 * chunkBytes + 2 * 64 * 1024 + 256 * 1024,
+        `scanner retained ${maxRetainedBytes} bytes across its read and carry buffers`,
+      );
     });
   }
 });
