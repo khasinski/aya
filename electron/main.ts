@@ -60,7 +60,8 @@ import { withLaunchHolds, withSpawnHolds, type TeamControlDeps } from "./team-co
 import { roleLaunchCheck } from "./launch-config";
 import { launchBlockOf, launchHoldOf, launchNoteOf, launchUnsure } from "./launch-mode";
 import { reachedAyaPanes } from "./reached-aya";
-import { debugPane, watchDebugSwitch } from "./team-debug";
+import { watchDebugSwitch } from "./team-debug";
+import { debugPane } from "./team-debug-route";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./ipc/team-ipc";
 import { askProjectWindow, askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";

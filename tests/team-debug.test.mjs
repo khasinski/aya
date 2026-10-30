@@ -25,6 +25,7 @@ const { reachedAyaPanes } = await import("../dist-electron/reached-aya.js");
 const { recordAgentStatus } = await import("../dist-electron/agent-status.js");
 const { HOLD_APPROVAL } = await import("../dist-electron/pane-holds.js");
 const debug = await import("../dist-electron/team-debug.js");
+const { debugAnswer, debugPane } = await import("../dist-electron/team-debug-route.js");
 const { SILENCE_FIRST_MS, SILENCE_REPEAT_MS } = await import("../dist-electron/team-times.js");
 
 const HOME = process.env.AYA_HOME;
@@ -239,7 +240,7 @@ test("debug on | a socket answer to aya team: command, caller, result or refusal
 
 debugTest("debug on | a pane's launch verdict settles: unknown -> reached, once", async (x) => {
   const table = new Map([[200, { ppid: 100, command: "aya" }], [100, { ppid: 1, command: "codex" }]]);
-  const panes = reachedAyaPanes({ panePid: async (id) => (id === "pane-i" ? 100 : null), processTable: async () => table, onReached: (pane) => debug.debugPane(x.w.deps, pane, "launch", { verdict: "reached" }) });
+  const panes = reachedAyaPanes({ panePid: async (id) => (id === "pane-i" ? 100 : null), processTable: async () => table, onReached: (pane) => debugPane(x.w.deps, pane, "launch", { verdict: "reached" }) });
   await panes.called({ terminalId: "pane-i", pid: 200 });
   await panes.called({ terminalId: "pane-i", pid: 200 });
   await waitFor(() => x.events().length > 0);
@@ -319,7 +320,7 @@ test("debug on | a socket answer from a pane that names its team is logged once"
   await setDebug(true);
   const x = await world();
   try {
-    await debug.debugAnswer(x.w.deps, { type: "team-start", team: "ux-review", cwd: x.t.project.directory }, { terminalId: "pane-t" }, Promise.resolve({ output: "started" }));
+    await debugAnswer(x.w.deps, { type: "team-start", team: "ux-review", cwd: x.t.project.directory }, { terminalId: "pane-t" }, Promise.resolve({ output: "started" }));
     assert.equal(x.events().filter((e) => e.event === "socket").length, 1);
   } finally {
     x.cleanup();
