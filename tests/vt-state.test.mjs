@@ -20,7 +20,7 @@ import {
 import { snapshotOf, vtSnapshot } from "../dist-electron/vt-mirror.js";
 import { asVtSnapshot, vtSnapshotValidationError } from "../dist-electron/pty-host-protocol.js";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "../dist-electron/constants.js";
-import { HOLD_APPROVAL, HOLD_SCREEN_CLIPPED } from "../dist-electron/pane-holds.js";
+import { HOLD_APPROVAL } from "../dist-electron/pane-holds.js";
 import { snapshotHold } from "../dist-electron/vt-state.js";
 
 // xterm parses writes asynchronously, so a scan must come after a tick.
@@ -184,6 +184,7 @@ test("snapshots stay within visible columns after resize across screen content s
           await settle();
 
           const pane = __testVtPane(id);
+          pane.composerSeen = true;
           const snapshot = snapshotOf(pane);
           assert.ok(asVtSnapshot(snapshot), "producer output satisfies the strict snapshot validator");
           assert.ok(snapshot.cells.flat().every(([column]) => column >= 0 && column < snapshot.cols));
@@ -206,7 +207,7 @@ test("snapshots stay within visible columns after resize across screen content s
           }
           if (retainedTail) {
             assert.equal(snapshot.clippedVisible, true, "a real xterm visible tail must be marked clipped");
-            assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED, "a real xterm clipped tail must hold sends");
+            assert.equal(snapshotHold(snapshot).hold, null, "harmless visible content does not add a clip-specific hold");
           }
         } finally {
           closeVtPane(id);
@@ -231,7 +232,7 @@ test("snapshot validation still rejects a cell beyond the reported columns", asy
   }
 });
 
-test("a narrowed visible approval prompt is held until widening restores its full text", async (t) => {
+test("only the visible text controls approval hold before and after widening", async (t) => {
   for (const prompt of ["Do you want to proceed? [y/n]", "Allow this action?"]) {
     await t.test(prompt, async () => {
       const cols = { value: 120 };
@@ -269,7 +270,8 @@ test("a narrowed visible approval prompt is held until widening restores its ful
       assert.equal(narrow.rows.join("\n").includes(prompt), false, "the dialog tail is outside the visible width");
       assert.equal(narrow.clippedVisible, true);
       assert.ok(asVtSnapshot(narrow), vtSnapshotValidationError(narrow));
-      assert.equal(snapshotHold(narrow).hold, HOLD_SCREEN_CLIPPED);
+      assert.equal(snapshotHold(narrow).hold, null, "an incomplete phrase is judged only as visible text");
+      assert.equal(snapshotStatus(narrow).waiting, false);
 
       cols.value = 120;
       const wide = snapshotOf(pane);
@@ -279,7 +281,61 @@ test("a narrowed visible approval prompt is held until widening restores its ful
   }
 });
 
-test("a clipped snapshot cannot publish a definitive status from its visible dialog text", () => {
+test("harmless retained alternate-screen tails do not hold input after redraw", async (t) => {
+  for (const [name, redraw] of [
+    ["EL redraw", "\x1b[1;1H\x1b[0K"],
+    ["overwrite without erase", "\x1b[1;1H" + " ".repeat(80)],
+    ["ED 0 redraw", "\x1b[1;1H\x1b[0J"],
+  ]) await t.test(name, async () => {
+    const id = `visible-tail-${name.replaceAll(" ", "-")}`;
+    openVtPane(id, 120, 24, () => {}, "claude");
+    try {
+      __testVtPane(id).composerSeen = true;
+      writeVtPane(id, "\x1b[?1049h\x1b[1;90Hharmless historical output");
+      await settle();
+      resizeVtPane(id, 80, 24);
+      await settle();
+      writeVtPane(id, redraw);
+      await settle();
+      const snapshot = snapshotOf(__testVtPane(id));
+      assert.equal(snapshotHold(snapshot).hold, null);
+      assert.equal(snapshotStatus(snapshot).waiting, false);
+    } finally { closeVtPane(id); }
+  });
+});
+
+test("a visible approval prefix after narrowing remains a normal waiting hold", async () => {
+  const id = "visible-approval-after-narrowing";
+  openVtPane(id, 120, 24, () => {}, "claude");
+  try {
+    __testVtPane(id).composerSeen = true;
+    writeVtPane(id, "\x1b[?1049h\x1b[1;52HDo you want to proceed? with this action?");
+    await settle();
+    resizeVtPane(id, 80, 24);
+    await settle();
+    const snapshot = snapshotOf(__testVtPane(id));
+    assert.match(snapshot.rows[0], /Do you want to proceed\? wit/);
+    assert.equal(snapshotStatus(snapshot).waiting, true);
+    assert.equal(snapshotHold(snapshot).hold, HOLD_APPROVAL);
+  } finally { closeVtPane(id); }
+});
+
+test("busy detection uses the visible rows of a narrowed pane", async () => {
+  const id = "visible-busy-after-narrowing";
+  openVtPane(id, 120, 24, () => {}, "claude");
+  try {
+    writeVtPane(id, "\x1b[?1049h\x1b[1;90Hharmless tail\x1b[2;10Hesc to interrupt");
+    await settle();
+    resizeVtPane(id, 80, 24);
+    await settle();
+    const snapshot = snapshotOf(__testVtPane(id));
+    assert.equal(snapshot.clippedVisible, true);
+    assert.match(snapshot.rows[1], /esc to interrupt/);
+    assert.equal(snapshotBusy(snapshot), true);
+  } finally { closeVtPane(id); }
+});
+
+test("visible dialog text remains definitive when another part of the row is clipped", () => {
   const cols = 24;
   const text = "Do you want to proceed? [y/n]";
   const chars = Array.from(text);
@@ -299,11 +355,9 @@ test("a clipped snapshot cannot publish a definitive status from its visible dia
   const clipped = snapshotOf(pane);
   assert.equal(clipped.rows[23], "Do you want to proceed?", "the visible portion still matches an approval dialog");
   assert.equal(clipped.clippedVisible, true, "the answer controls are clipped beyond the viewport");
-  assert.equal(snapshotStatus({ ...clipped, clippedVisible: undefined }).waiting, true,
-    "the visible dialog would otherwise publish a definitive waiting status");
-  assert.deepEqual(snapshotStatus(clipped), { waiting: null, composerSeen: false },
-    "clipping keeps status unknown and does not advance composer evidence");
-  assert.equal(snapshotBusy(clipped), false, "a clipped screen is unknown, not busy");
+  assert.equal(snapshotStatus(clipped).waiting, true, "the visible approval remains a normal waiting state");
+  assert.equal(snapshotHold(clipped).hold, HOLD_APPROVAL);
+  assert.equal(snapshotBusy(clipped), false);
 });
 
 test("a wide glyph starting at the last visible column marks the snapshot clipped", () => {
@@ -322,7 +376,7 @@ test("a wide glyph starting at the last visible column marks the snapshot clippe
   };
   const snapshot = snapshotOf(pane);
   assert.equal(snapshot.clippedVisible, true, "the glyph occupies one column beyond the visible edge");
-  assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+  assert.equal(snapshotHold(snapshot).hold, null);
   assert.equal(snapshotBusy(snapshot), false);
 });
 
@@ -344,12 +398,12 @@ test("blank dim and inverse cells beyond the visible width mark the snapshot cli
       };
       const snapshot = snapshotOf(pane);
       assert.equal(snapshot.clippedVisible, true, "style metadata keeps an otherwise empty cell meaningful");
-      assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+      assert.equal(snapshotHold(snapshot).hold, null);
     });
   }
 });
 
-test("a real xterm wide glyph retained across narrowing is marked clipped and held", async () => {
+test("a real xterm wide glyph retained across narrowing does not add a clip hold", async () => {
   const id = "real-wide-glyph-retained-after-narrowing";
   openVtPane(id, 120, 24, () => {}, "claude");
   try {
@@ -357,19 +411,20 @@ test("a real xterm wide glyph retained across narrowing is marked clipped and he
     await settle();
     resizeVtPane(id, 40, 24);
     await settle();
+    __testVtPane(id).composerSeen = true;
     const snapshot = snapshotOf(__testVtPane(id));
     const edge = __testVtPane(id).terminal.buffer.active.getLine(0)?.getCell(39);
     assert.equal(edge?.getChars(), "漢", "xterm retained the wide glyph at the narrowed edge");
     assert.equal(edge?.getWidth(), 2, "its continuation extends beyond the last visible column");
     assert.equal(snapshot.clippedVisible, true);
-    assert.equal(snapshotHold(snapshot).hold, HOLD_SCREEN_CLIPPED);
+    assert.equal(snapshotHold(snapshot).hold, null);
     assert.equal(snapshotBusy(snapshot), false);
   } finally {
     closeVtPane(id);
   }
 });
 
-test("live scan clears cached waiting when the visible snapshot becomes clipped", async () => {
+test("live scan retains waiting when the visible prompt remains after narrowing", async () => {
   const id = "live-clipped-scan-clears-waiting";
   const events = [];
   openVtPane(id, 40, 24, (waiting, dialog) => events.push({ waiting, dialog }), "claude");
@@ -394,9 +449,9 @@ test("live scan clears cached waiting when the visible snapshot becomes clipped"
     const snapshot = snapshotOf(pane);
     assert.equal(snapshot.clippedVisible, true);
     pane.onSnapshot?.(snapshot);
-    assert.equal(pane.lastWaiting, false, "the incomplete prompt is not replayed as waiting on attach");
+    assert.equal(pane.lastWaiting, true, "the visible approval remains waiting after narrowing");
     assert.equal(pane.lastDialog, undefined);
-    assert.deepEqual(events, [{ waiting: true, dialog: undefined }], "unknown clipping does not publish a false clear event");
+    assert.deepEqual(events, [{ waiting: true, dialog: undefined }], "the unchanged visible approval does not publish a false clear event");
   } finally {
     closeVtPane(id);
   }

@@ -164,7 +164,7 @@ export interface VtSnapshot {
   /** Absent on older hosts or while parser work is not fully applied. */
   revision?: string;
   recoveryUnknown?: boolean;
-  /** Visible rows still contain cells beyond cols after a narrowing resize. */
+  /** Informational only: visible rows still have retained cells beyond cols after narrowing. */
   clippedVisible?: boolean;
   agent?: AgentKind;
   shell: boolean;
