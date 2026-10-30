@@ -26,4 +26,3 @@ export const isDialogHold = (hold: string | null | undefined): hold is string =>
 export const isUserOnlyHold = (hold: string | null | undefined): boolean => hold === HOLD_ACCOUNT_SETTING;
 
 export const HOLD_RECOVERY_UNKNOWN = "screen unknown after the terminal host restarted";
-export const HOLD_SCREEN_CLIPPED = "The pane was narrowed and part of its screen is outside the terminal width";

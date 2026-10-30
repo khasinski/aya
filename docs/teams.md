@@ -389,11 +389,14 @@ placeholder names the recipient before Start ("Task for tester (the lead)"), and
 select next to it picks another role.
 `user` is reserved when a team is saved, not when a saved one loads: a team
 saved with a `user` role before keeps working, and starts, but takes no task,
-so its log never mixes the role with the user. A team saved with `aya team save` from a pane is
-marked as the agent's, so the window's "Assign team roles?" prompt does not
-compete with the agent's proposal; a team that arrives with a pull still
-gets the prompt. The mark goes once a role gets a pane or the team is saved
-from the window, so a team whose panes all closed later is offered again.
+so its log never mixes the role with the user. Aya never opens an assignment
+prompt, whether a team is found on project open, after a restart, or after a
+save. Save team writes the definition and returns to its team card; use the
+Pane selector for each role there, or use `aya team open` from a terminal.
+When `aya team save` writes a team with roles that have no panes, its output
+names only the roles without a live pane and shows the actual team name, for
+example: `roles without a pane: tester, implementer; assign them in Teams or
+with aya team open ux-fix tester=<pane or preset> implementer=<pane or preset>`.
 
 The Teams window runs the same `openTeamPanes`: per role it offers the open
 panes, each labelled with the role it already plays, and `New: <preset>`

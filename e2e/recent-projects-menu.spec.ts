@@ -24,8 +24,8 @@ test("the recent-projects menu opens fully inside the window (Projects-on-left)"
   await window.locator(".aya-projectrail .aya-recent-projects button").click();
   const menu = window.locator(".aya-projectrail .aya-recent-menu");
   await expect(menu).toBeVisible();
-  // the closed projects are actually listed
-  await expect(menu.locator(".aya-recent-menu-item")).toHaveCount(3);
+  // the closed and open projects are listed
+  await expect(menu.locator(".aya-recent-menu-item")).toHaveCount(4);
 
   const fit = await menu.evaluate((el) => {
     const r = el.getBoundingClientRect();

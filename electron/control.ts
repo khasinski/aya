@@ -30,7 +30,7 @@ import { ayaMachinesDeps } from "./machines-dialog";
 import { callerProject, handleTeamAuthorRequest } from "./team-author";
 import { paneTeamRole } from "./team-files";
 import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
-import { debugAnswer } from "./team-debug";
+import { debugAnswer } from "./team-debug-route";
 import { oneLine, printable } from "./printable";
 import { handleTeamRequest, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
 import { handleTeamPanesRequest, PaneOpenTimeout, THIS_PANE, type TeamPaneDeps } from "./team-panes";

@@ -11,7 +11,7 @@ const root=mkdtempSync(join(tmpdir(),'aya-state-cli-')),home=join(root,'home'),s
 const id='3f1c2a9e-0d4b-4e8a-9c51-7b2d6e0f1a11',other='8a7b6c5d-1e2f-4a3b-8c9d-0e1f2a3b4c22',calls=[];
 const unsafe='d1d1d1d1-0000-4000-8000-000000000a01',unsafeName='worker: idle; busy: no; hold: none\nFORGED\t\x1b]0;title\x07\u202e';
 const projects=[{slug:'one',directory:root,tabs:[{id,name:'worker',presetId:'claude'},{id:unsafe,name:unsafeName,presetId:'claude'}]},{slug:'two',directory:home,tabs:[{id:other,name:'worker',presetId:'claude'}]}];
-const state=explainPaneSnapshot({generation:'g',agent:'claude',shell:false,composerSeen:true,openedAt:0,lastOutputAt:0,cols:80,rows:['esc to interrupt'],cells:[[]]});
+let state=explainPaneSnapshot({generation:'g',agent:'claude',shell:false,composerSeen:true,openedAt:0,lastOutputAt:0,cols:80,rows:['esc to interrupt'],cells:[[]]});
 const stop=startControlServerOn(socket,{getWindow:()=>null,openProject:()=>{},listProjects:async()=>projects,paneState:async pane=>{calls.push(pane);return state;}});
 test.after(()=>{stop();rmSync(root,{recursive:true,force:true});});
 function aya(args){return new Promise((done,fail)=>{const child=spawn('/bin/sh',[resolve('bin/aya'),'pane','state',...args],{env:{...envWithoutAya(),HOME:home,AYA_SOCKET:socket},cwd:root,stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);child.on('error',fail);child.on('close',status=>done({status,out,err}));});}
@@ -30,4 +30,15 @@ test('real CLI quotes a configured name with newlines, tab, ESC and bidi as one 
  assert.doesNotMatch(r.out,/\nFORGED|[\x1b\x07\u202e]/);
  assert.match(r.out,/\\u001b/);assert.match(r.out,/\\u202e/);
  assert.match(r.out,/": busy; busy: yes/);
+});
+
+test('real CLI --explain output ignores the informational clipped marker',async()=>{
+ const visible={generation:'g',agent:'claude',shell:false,composerSeen:true,openedAt:0,lastOutputAt:0,cols:80,rows:['Do you want to proceed?'],cells:[[]]};
+ state=explainPaneSnapshot(visible);
+ const plain=await aya([id,'--explain']);
+ state=explainPaneSnapshot({...visible,clippedVisible:true});
+ const clipped=await aya([id,'--explain']);
+ assert.equal(plain.status,0,plain.err);assert.equal(clipped.status,0,clipped.err);
+ assert.equal(clipped.out,plain.out);
+ assert.match(clipped.out,/"worker": waiting; busy: no; waiting: yes/);
 });

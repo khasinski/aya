@@ -24,6 +24,11 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary: "Alias of `aya open`.",
   },
   {
+    command: "op-session",
+    usage: "aya op-session -- command [args...]",
+    summary: "Start a command with a shared read-only 1Password CLI terminal session.",
+  },
+  {
     command: "focus",
     usage: "aya focus",
     summary: "Bring the Aya window to the front.",

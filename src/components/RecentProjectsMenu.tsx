@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectConfig } from "../types";
 import { compactDir } from "../project-path";
+import { recentMenuProjects } from "../project-reload";
 
-/** The folder button and its dropdown of closed projects, with a filter. Shared by the top bar and
- *  both left-rail layouts, which style the button and the menu differently. */
+/** The folder button and its dropdown of closed and open projects, with a filter. Shared by the top
+ *  bar and both left-rail layouts, which style the button and the menu differently. */
 export function RecentProjectsMenu({
   closedProjects,
+  openProjects = [],
   homeDir,
   blockChrome,
   onOpenProject,
@@ -13,6 +15,7 @@ export function RecentProjectsMenu({
   menuClassName = "",
 }: {
   closedProjects: ProjectConfig[];
+  openProjects?: ProjectConfig[];
   homeDir: string;
   blockChrome: boolean;
   onOpenProject: (slug: string) => void;
@@ -24,20 +27,13 @@ export function RecentProjectsMenu({
   const recentRef = useRef<HTMLDivElement>(null);
   const recentFilterRef = useRef<HTMLInputElement>(null);
 
-  const normalizedRecentFilter = recentFilter.trim().toLowerCase();
-  const filteredClosedProjects = useMemo(
-    () =>
-      normalizedRecentFilter.length === 0
-        ? closedProjects
-        : closedProjects.filter((p) => {
-            const path = compactDir(p.directory, homeDir);
-            return (
-              p.name.toLowerCase().includes(normalizedRecentFilter) ||
-              path.toLowerCase().includes(normalizedRecentFilter) ||
-              p.directory.toLowerCase().includes(normalizedRecentFilter)
-            );
-          }),
-    [normalizedRecentFilter, closedProjects, homeDir],
+  const recentProjects = useMemo(
+    () => recentMenuProjects(closedProjects, openProjects, "", homeDir),
+    [closedProjects, openProjects, homeDir],
+  );
+  const filteredRecentProjects = useMemo(
+    () => recentMenuProjects(closedProjects, openProjects, recentFilter, homeDir),
+    [closedProjects, openProjects, recentFilter, homeDir],
   );
 
   useEffect(() => {
@@ -54,12 +50,13 @@ export function RecentProjectsMenu({
       setRecentFilter("");
       return;
     }
+    if (recentProjects.length <= 1) return;
     const id = window.requestAnimationFrame(() => {
       recentFilterRef.current?.focus();
       recentFilterRef.current?.select();
     });
     return () => window.cancelAnimationFrame(id);
-  }, [showRecent]);
+  }, [showRecent, recentProjects.length]);
 
   return (
     <div className="aya-recent-projects" ref={recentRef}>
@@ -86,7 +83,7 @@ export function RecentProjectsMenu({
       {showRecent && (
         <div className={`aya-recent-menu ${menuClassName}`.trim()} role="menu">
           <div className="aya-recent-menu-title">Recent projects</div>
-          {closedProjects.length > 0 && (
+          {recentProjects.length > 0 && (
             <div className="aya-recent-menu-filter">
               <span
                 className="aya-recent-menu-filter-icon"
@@ -110,12 +107,12 @@ export function RecentProjectsMenu({
               />
             </div>
           )}
-          {closedProjects.length === 0 ? (
+          {recentProjects.length === 0 ? (
             <div className="aya-recent-menu-empty">No closed projects</div>
-          ) : filteredClosedProjects.length === 0 ? (
+          ) : filteredRecentProjects.length === 0 ? (
             <div className="aya-recent-menu-empty">No matching projects</div>
           ) : (
-            filteredClosedProjects.map((p) => (
+            filteredRecentProjects.map((p) => (
               <button
                 key={p.slug}
                 className="aya-recent-menu-item"

@@ -28,7 +28,6 @@ import {
 import { PaneGrid } from "./components/PaneGrid";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { TeamsModal } from "./components/TeamsModal";
-import { TeamAssignPrompt } from "./components/TeamRole";
 import { StatusRail } from "./components/StatusRail";
 import { EmptyState, LoadingState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -921,10 +920,12 @@ export function App() {
   // App render and defeats their React.memo.
   const openProjectBySlug = useCallback(
     (slug: string) => {
-      const project = allProjects.find((p) => p.slug === slug);
+      const project =
+        allProjects.find((p) => p.slug === slug) ??
+        projects.find((p) => p.slug === slug);
       if (project) void openKnownProject(project);
     },
-    [allProjects, openKnownProject],
+    [allProjects, projects, openKnownProject],
   );
   const openSearch = useCallback(() => setShowSearch(true), []);
   const reorderActiveProjectTerminals = useCallback(
@@ -977,9 +978,7 @@ export function App() {
   const {
     teamsByProject,
     activeTeams,
-    teamToPrompt,
     onAssignTeamRole,
-    dismissTeamPrompt,
     onTeamsWindowClosed,
   } = useTeams({ projects, activeProjectId, activeProjectRemote: !!activeProject?.remote });
 
@@ -992,7 +991,6 @@ export function App() {
     showSearch ||
     showAttentionCenter ||
     showTeams ||
-    !!teamToPrompt ||
     !!pendingRepoImport;
   const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
   const closeTabQueue = useRef(Promise.resolve());
@@ -1501,23 +1499,13 @@ export function App() {
         <TeamsModal
           project={activeProject}
           waiting={waitingPanes}
+          terminals={terminals}
           intelligence={ayaIntelligence}
           onRestartPane={forceRestartTerminal}
           onClose={() => {
             setShowTeams(false);
             onTeamsWindowClosed(activeProject.slug);
           }}
-        />
-      )}
-      {!showTeams && teamToPrompt && activeProject && !chromeBlocked && (
-        <TeamAssignPrompt
-          project={activeProject}
-          team={teamToPrompt}
-          onOpenTeams={() => {
-            dismissTeamPrompt(activeProject.slug, teamToPrompt.name);
-            setShowTeams(true);
-          }}
-          onDismiss={() => dismissTeamPrompt(activeProject.slug, teamToPrompt.name)}
         />
       )}
       {showAttentionCenter && (

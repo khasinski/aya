@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
-import { teamPromptKey, unassignedTeams } from "../team-view";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectConfig, TeamSummary } from "../types";
 import { pollVisible } from "../poll-visible";
 
@@ -15,56 +14,67 @@ interface TeamsOptions {
 
 export function useTeams({ projects, activeProjectId, activeProjectRemote }: TeamsOptions) {
   const [teamsByProject, setTeamsByProject] = useState<Record<string, TeamSummary[]>>({});
-  const [dismissedTeamPrompts, setDismissedTeamPrompts] = useState<Set<string>>(() => new Set());
+  const refreshGeneration = useRef(0);
+  const refreshesInFlight = useRef(0);
+  const currentProjectSlugs = useRef("");
 
   const projectSlugsKey = projects.map((p) => p.slug).join("\n");
-  const refreshTeams = useCallback(async () => {
-    const slugs = projectSlugsKey ? projectSlugsKey.split("\n") : [];
-    const entries = await Promise.all(
-      slugs.map(async (slug) => [slug, await window.aya.teamList(slug).catch(() => [])] as const),
-    );
-    const next = Object.fromEntries(entries);
-    // Same data, same object: the memoized tab lists skip the render.
-    setTeamsByProject((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+  currentProjectSlugs.current = projectSlugsKey;
+  const refreshTeams = useCallback((force = false) => {
+    if (!force && refreshesInFlight.current > 0) return Promise.resolve();
+    const generation = ++refreshGeneration.current;
+    const slugsKey = projectSlugsKey;
+    const slugs = slugsKey ? slugsKey.split("\n") : [];
+    refreshesInFlight.current++;
+    return Promise.all(slugs.map(async (slug) => [slug, await window.aya.teamList(slug).catch(() => null)] as const))
+      .then((entries) => {
+        if (generation !== refreshGeneration.current || slugsKey !== currentProjectSlugs.current) return;
+        setTeamsByProject((prev) => {
+          const next = { ...prev };
+          for (const [slug, teams] of entries) if (teams !== null) next[slug] = teams;
+          for (const slug of slugs) if (!(slug in next)) next[slug] = [];
+          return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+        });
+      })
+      .finally(() => { refreshesInFlight.current--; });
   }, [projectSlugsKey]);
+  const currentRefreshTeams = useRef(refreshTeams);
+  currentRefreshTeams.current = refreshTeams;
   useEffect(() => {
     // teamList reads team files in the main process per project: skip it while the window is hidden.
-    return pollVisible(() => void refreshTeams(), TEAMS_REFRESH_MS);
-  }, [refreshTeams]);
+    // A changed project list must get a trailing read even if an older batch is in flight.
+    let first = true;
+    return pollVisible(() => {
+      void refreshTeams(first);
+      first = false;
+    }, TEAMS_REFRESH_MS);
+  }, [projectSlugsKey, refreshTeams]);
   const assignTeamRole = useCallback(
     (team: string, role: string, paneId: string | null) => {
       if (!activeProjectId) return;
       void window.aya
         .teamAssign(activeProjectId, team, role, paneId)
         .catch((err) => console.warn("[aya] team role not assigned:", err))
-        .then(() => refreshTeams());
+      .then(() => {
+          // The assigned project may still be open after the project list changes.
+          // Refresh the current scope so a batch that started before the assignment
+          // cannot leave its chips stale until the next interval tick.
+          if (currentProjectSlugs.current.split("\n").includes(activeProjectId)) return currentRefreshTeams.current(true);
+        });
     },
-    [activeProjectId, refreshTeams],
+    [activeProjectId],
   );
   const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || EMPTY_TEAMS;
-  const teamToPrompt = activeProjectRemote
-    ? undefined
-    : unassignedTeams(activeTeams).find((t) => !dismissedTeamPrompts.has(teamPromptKey(activeProjectId ?? "", t.name)));
-
-  const dismissTeamPrompt = (slug: string, team: string) =>
-    setDismissedTeamPrompts((prev) => new Set(prev).add(teamPromptKey(slug, team)));
-  // Teams seen in the window need no "assign roles?" prompt after it.
+  // Closing the Teams window refreshes definitions and role chips.
   const onTeamsWindowClosed = (slug: string) => {
-    void window.aya
-      .teamList(slug)
-      .catch(() => [])
-      .then((seen) =>
-        setDismissedTeamPrompts((prev) => new Set([...prev, ...seen.map((t) => teamPromptKey(slug, t.name))])),
-      )
-      .then(() => refreshTeams());
+    void slug;
+    void refreshTeams(true);
   };
 
   return {
     teamsByProject,
     activeTeams,
-    teamToPrompt,
     onAssignTeamRole: activeProjectRemote ? undefined : assignTeamRole,
-    dismissTeamPrompt,
     onTeamsWindowClosed,
   };
 }

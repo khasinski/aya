@@ -44,7 +44,7 @@ const FILES = [
 
 function setup(teamFile) {
   const t = teamProject("aya-leader-", { tabs: [{ id: "pane-1" }], teamFile });
-  const deps = { teamHome: t.teamHome, listProjects: async () => [t.project] };
+  const deps = { teamHome: t.teamHome, listProjects: async () => [t.project], assignments: async () => ({}) };
   const agentSave = (text) => handleTeamAuthorRequest({ type: "team-save", text, replace: false }, "pane-1", deps, async () => {});
   return { ...t, agentSave, file: join(t.directory, ".aya", "teams", "duo.md") };
 }

@@ -1,9 +1,9 @@
-import { _electron as electron, type ElectronApplication } from "@playwright/test";
+import { type ElectronApplication } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test, expect, ciElectronFlags, closeAndWait, hostPidsForHome, delay } from "./fixtures";
+import { test, expect, ciElectronFlags, closeAndWait, hostPidsForHome, delay, launchE2eElectron, handleRendererDialogs } from "./fixtures";
 import { appEnv, type SeededEnv } from "./helpers/seed";
 import { waitForShellReady } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
@@ -11,7 +11,7 @@ const root = join(__dirname, "..");
 const apps: ElectronApplication[] = [];
 test.afterEach(async () => { for (const app of apps.splice(0)) await closeAndWait(app); });
 async function launch(seeded: SeededEnv, answer: number) {
-  const app = await electron.launch({ cwd: root, args: [join(__dirname, "helpers/owner-question-main.cjs"), `--user-data-dir=${seeded.userDataDir}`, ...ciElectronFlags()],
+  const app = await launchE2eElectron({ cwd: root, args: [join(__dirname, "helpers/owner-question-main.cjs"), `--user-data-dir=${seeded.userDataDir}`, ...ciElectronFlags()],
     env: { ...appEnv(seeded), AYA_E2E_PTY_SHUTDOWN: "0", AYA_OWNER_TEST_ANSWER: String(answer) } });
   apps.push(app); return { app, window: await app.firstWindow() };
 }
@@ -33,7 +33,7 @@ for (const answer of [1, 0]) test(`legacy migration ${answer ? "Cancel preserves
       expect(alive(before.child)).toBe(true);expect(alive(before.unknownChild)).toBe(true); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(false);
       await fireShortcut(apps.at(-1)!, "open-settings"); const settings = window.locator(".aya-modal--settings");
       await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
-      window.once("dialog", dialog => void dialog.accept());
+      await handleRendererDialogs(window, seeded, { "renderer.confirm": { message: "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.", response: true } });
       await settings.locator(".aya-settings-general-row", { hasText: "PTY host" }).getByRole("button", { name: "Restart" }).click();
       await expect.poll(() => questions(seeded.ayaHome).length).toBe(2);
       expect(questions(seeded.ayaHome)[1].detail).toContain("reported by the old host");
@@ -81,13 +81,14 @@ for (const action of ["restart", "close pane", "close project"]) test(`a real in
     (globalThis as unknown as { watchOwnerSpawnRequests(): void }).watchOwnerSpawnRequests();
   });
   const row = second.window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');
-  const told = new Promise<string>(resolve => second.window.once("dialog", dialog => { resolve(dialog.message()); void dialog.accept(); }));
+  const rendererDialogs = await handleRendererDialogs(second.window, seeded, { "renderer.alert": { messagePrefix: "Aya did not ", response: undefined } });
   if (action === "close project") await second.window.getByTitle(/^Close project /).click();
   else {
     await row.click({ button: "right" });
     await second.window.locator(".aya-context-menu-item", { hasText: action === "restart" ? "Restart terminal" : "Close terminal" }).click();
   }
-  const message = await told;
+  await expect.poll(async () => (await rendererDialogs.read()).map((event) => event.message).join("\n")).toContain(`Aya did not ${action === "restart" ? "restart shell 1" : action === "close pane" ? "close shell 1" : "close e2e"}`);
+  const message = (await rendererDialogs.read()).at(-1)?.message ?? "";
   expect(message).toContain(`Aya did not ${action === "restart" ? "restart shell 1" : action === "close pane" ? "close shell 1" : "close e2e"}`);
   expect(message).toContain("The native owner cannot authenticate this Aya");
   await expect(row).toBeVisible();

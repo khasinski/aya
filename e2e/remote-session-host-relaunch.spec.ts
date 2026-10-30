@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test, expect, cleanUpSeeded, closeAndWait, hostPidsForHome, launchApp } from "./fixtures";
+import { test, expect, cleanUpSeeded, closeAndWait, hostPidsForHome, launchApp, assertHeadlessUiEvents, expectHeadlessUiEvents } from "./fixtures";
 import { seedEnv } from "./helpers/seed";
 
 test.use({
@@ -35,6 +35,9 @@ test("a real host Aya relaunch restores a remote PTY and replays the exact gap",
     presetList: [{ id: "shell", name: "Shell", icon: "$", color: "", command }],
     launchEnv: { AYA_E2E_PTY_SHUTDOWN: "0" },
   });
+  // The remote API intentionally asks the host window to focus when opening
+  // the remote project; the headless router records and suppresses that request.
+  expectHeadlessUiEvents(hostSeed, [{ kind: "window.focus", detail: "Aya — agentic terminal manager" }]);
   const remoteSocket = join(hostSeed.ayaHome, "aya-remote.sock");
   let hostApp: Awaited<ReturnType<typeof launchApp>> | undefined;
   let clientApp: Awaited<ReturnType<typeof launchApp>> | undefined;
@@ -106,6 +109,7 @@ test("a real host Aya relaunch restores a remote PTY and replays the exact gap",
   } finally {
     if (clientApp) await closeAndWait(clientApp);
     if (hostApp) await closeAndWait(hostApp);
-    await cleanUpSeeded(hostSeed);
+    try { assertHeadlessUiEvents(hostSeed); }
+    finally { await cleanUpSeeded(hostSeed); }
   }
 });

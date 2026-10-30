@@ -234,6 +234,7 @@ function CommandRailLayoutImpl({
         <div className="aya-cr-rail-foot">
           <RecentProjectsMenu
             closedProjects={closedProjects}
+            openProjects={projects}
             homeDir={homeDir}
             blockChrome={blockChrome}
             onOpenProject={onOpenProject}

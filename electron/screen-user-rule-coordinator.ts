@@ -8,7 +8,8 @@ import type {UserRuleManifest} from "./screen-user-rule-data";
 import type {UserRuleRequest, UserRuleResult} from "./screen-user-rule-runtime";
 import {composeUserRuleDecision, HOLD_USER_RULES_UNKNOWN, type AdditivePaneDecision} from "./screen-user-rule-policy";
 import {snapshotHold, snapshotBusy, snapshotStatus, withoutPasted} from "./vt-state";
-import {validVtSnapshotFence, type VtSnapshot, type VtSnapshotFence} from "./vt-mirror";
+import type {VtSnapshot} from "./vt-mirror";
+import {validVtSnapshotFence, type VtSnapshotFence} from "./vt-snapshot-fence";
 
 export interface UserRuleConfiguration {epoch:number;available:boolean;manifest:UserRuleManifest|null}
 export interface CoordinatedRuleDecision {

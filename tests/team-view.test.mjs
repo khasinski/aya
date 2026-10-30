@@ -10,8 +10,6 @@ import {
   messageDeliveryText,
   paneRoles,
   startSummary as startNote,
-  teamPromptKey,
-  unassignedTeams,
   unreadTotal,
 } from "../dist-test/team-view.js";
 
@@ -46,15 +44,6 @@ test("a role with no unread entry shows zero, not undefined", () => {
 
 test("unread messages add up across a project's teams", () => {
   assert.equal(unreadTotal([team("a", {}, { x: 2, y: 1 }), team("b", {}, { z: 4 })]), 7);
-});
-
-test("only valid teams with no pane assigned are offered on project open", () => {
-  const teams = [team("new", {}, {}), team("busy", { x: "p1" }, {}), team("broken", {}, {}, null)];
-  assert.deepEqual(unassignedTeams(teams).map((t) => t.name), ["new"]);
-});
-
-test("a dismissed team prompt is keyed by project slug and team name", () => {
-  assert.equal(teamPromptKey("my-app", "review"), "my-app/review");
 });
 
 test("a logged message says how far it got, in the teams window's words", () => {
@@ -163,11 +152,6 @@ test("after Apply: a pane main marks unsure is May not reach, whatever its texts
     rolePanesSummary({ panes: [pane("tester", "Aya does not know yet how this pane was launched", true), pane("fixer", "can't reach Aya: read-only", false)], leftWithoutPane: [] }, false),
     "tester: tester, fixer: fixer. Can't reach Aya: fixer; its status below says why. May not reach Aya: tester; its status below says why. Start the team when you are ready.",
   );
-});
-
-test("a team an agent saved from a pane is not offered: the agent proposes its panes", () => {
-  const agents = { ...team("agents", {}, {}), agentAuthored: true };
-  assert.deepEqual(unassignedTeams([team("new", {}, {}), agents]).map((t) => t.name), ["new"]);
 });
 
 test("a role's status: no pane, ready, or why its pane would not take a message", async () => {

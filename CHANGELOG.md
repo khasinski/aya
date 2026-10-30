@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Opt-in shared 1Password CLI terminal sessions for agent presets
+  (`AYA_OP_SESSION=1`), reducing repeated biometric prompts for read-only
+  `op` commands without caching secrets or changing 1Password session limits.
+
 ## v0.13.1 - 2026-10-26
 
 Crash fixes and clearer diagnostics for terminal-host updates.

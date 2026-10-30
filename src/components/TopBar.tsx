@@ -529,6 +529,7 @@ function TopBarImpl({
         )}
         <RecentProjectsMenu
           closedProjects={closedProjects}
+          openProjects={projects}
           homeDir={homeDir}
           blockChrome={blockChrome}
           onOpenProject={onOpenProject}

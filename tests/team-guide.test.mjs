@@ -50,7 +50,7 @@ test("the example is a complete file the real save accepts, every route with a w
   }
   const t = teamProject("aya-guide-", { tabs: [{ id: "pane-1" }] });
   try {
-    const deps = { teamHome: t.teamHome, listProjects: async () => [t.project] };
+    const deps = { teamHome: t.teamHome, listProjects: async () => [t.project], assignments: async () => ({}) };
     const { output } = await handleTeamAuthorRequest({ type: "team-save", text, replace: false }, "pane-1", deps, async () => {});
     assert.match(output, /^saved team ux-fix: /);
     assert.ok(readFileSync(join(t.directory, ".aya", "teams", "ux-fix.md"), "utf8").startsWith("# ux-fix\n"));

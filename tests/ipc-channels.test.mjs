@@ -33,7 +33,7 @@ function registered(text) {
 }
 
 const invokedByWindow = new Set(
-  [...readFileSync(join(ROOT, "electron/preload.ts"), "utf8").matchAll(/ipcRenderer\.(?:invoke|send)\(\s*"([^"]+)"/g)].map((m) => m[1]),
+  [...readFileSync(join(ROOT, "electron/preload.ts"), "utf8").matchAll(/ipcRenderer\.(?:invoke|send|sendSync)\(\s*"([^"]+)"/g)].map((m) => m[1]),
 );
 // Some IPC calls are intentionally kept in the isolated preload gesture helper
 // rather than exposed on window.aya. Scan those calls as first-class invocations.

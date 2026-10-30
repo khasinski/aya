@@ -6,6 +6,7 @@ import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
 import type { AgentKind } from "./presets";
 import { RecoveryScreen } from "./vt-recovery-screen";
 import { randomUUID } from "node:crypto";
+import { validVtSnapshotFence, type VtSnapshotFence } from "./vt-snapshot-fence";
 import type { ReplayModeState } from "./pty-replay-modes";
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
@@ -62,13 +63,6 @@ function advanceRevision(pane: VtPane): void {
 function appliedRevision(pane: VtPane): string | undefined {
   const state = revisionState(pane);
   return state.valid && state.pending === 0 ? `${state.epoch}:${state.sequence}` : undefined;
-}
-export interface VtSnapshotFence { generation: string; revision: string }
-export function validVtSnapshotFence(value: unknown): value is VtSnapshotFence {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const v = value as Partial<VtSnapshotFence>;
-  return Object.keys(v).length === 2 && Object.hasOwn(v, "generation") && Object.hasOwn(v, "revision") && typeof v.generation === "string" && v.generation.length > 0 && v.generation.length <= 128 &&
-    typeof v.revision === "string" && /^[a-f0-9-]{36}:[1-9][0-9]{0,15}$/.test(v.revision);
 }
 /** Checked synchronously at the actual write boundary, not RPC arrival. */
 export function vtSnapshotMatches(id: string, fence: VtSnapshotFence): boolean {
@@ -164,7 +158,7 @@ export interface VtSnapshot {
   /** Absent on older hosts or while parser work is not fully applied. */
   revision?: string;
   recoveryUnknown?: boolean;
-  /** Visible rows still contain cells beyond cols after a narrowing resize. */
+  /** Informational only: visible rows still have retained cells beyond cols after narrowing. */
   clippedVisible?: boolean;
   agent?: AgentKind;
   shell: boolean;

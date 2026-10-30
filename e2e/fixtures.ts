@@ -5,9 +5,10 @@ import {
   type Page,
 } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
+import { headlessUiEventMismatch, type HeadlessUiEventExpectation, type HeadlessUiEventRecord } from "../dist-electron/e2e-headless-ui.js";
 import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
 export const {spawnAuthenticatedHost,authenticateFixtureSocket,redeemFixtureQuit,forgetFixtureAuthority}=require("../tests/helpers/pty-host-launch.cjs") as {
@@ -196,7 +197,162 @@ export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
     "--mute-audio",
   ];
   launchArgs.push(...ciElectronFlags());
-  return electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
+  return launchE2eElectron({ args: launchArgs, cwd: APP_ROOT, env });
+}
+
+/** Every Electron e2e launch, including wrapper-main launches, shares this local headless gate. */
+export function launchE2eElectron(options: Parameters<typeof electron.launch>[0]): Promise<ElectronApplication> {
+  const env = { ...(options.env as NodeJS.ProcessEnv | undefined) };
+  if (env.AYA_E2E_RUN === "1" && !process.env.CI && env.AYA_E2E_HEADLESS !== "1") {
+    throw new Error("Local e2e must launch Aya with hidden windows");
+  }
+  if (env.AYA_E2E_HEADLESS === "1") {
+    if (!env.AYA_E2E_HEADLESS_UI_LOG) throw new Error("Headless e2e launch is missing its UI event log");
+    const args = [...(options.args ?? [])];
+    const originalMain = args[0];
+    if (!originalMain || originalMain.startsWith("-")) {
+      throw new Error("Headless e2e launch must name its Electron main entry as the first argument");
+    }
+    env.AYA_E2E_REAL_MAIN = originalMain;
+    env.AYA_E2E_HEADLESS_UI_MODULE = join(APP_ROOT, "dist-electron", "e2e-headless-ui.js");
+    args[0] = join(APP_ROOT, "e2e", "helpers", "headless-main.cjs");
+    return electron.launch({ ...options, args, env });
+  }
+  return electron.launch({ ...options, env });
+}
+
+/** Raw Electron subprocesses use the same headless bootstrap and launch guard as Playwright launches. */
+export function spawnE2eElectron(
+  binary: string,
+  inputArgs: string[],
+  options: import("node:child_process").SpawnOptions,
+): ReturnType<typeof spawn> {
+  const env = { ...(options.env as NodeJS.ProcessEnv | undefined) };
+  if (env.AYA_E2E_RUN === "1" && !process.env.CI && env.AYA_E2E_HEADLESS !== "1") {
+    throw new Error("Local e2e must launch Aya with hidden windows");
+  }
+  // Electron-run-as-Node helpers (the prestart host ticket issuer) do not load
+  // Aya main or create windows. Keep the local headless check above, then avoid
+  // wrapping this plain Node entry in the Electron UI bootstrap.
+  if (env.ELECTRON_RUN_AS_NODE === "1") {
+    delete env.AYA_E2E_HEADLESS;
+    delete env.AYA_E2E_HEADLESS_UI_LOG;
+    delete env.AYA_E2E_HEADLESS_UI_MODULE;
+    delete env.AYA_E2E_HEADLESS_UI_ACTIVE;
+    return spawn(binary, [...inputArgs], { ...options, env });
+  }
+  const args = [...inputArgs];
+  if (env.AYA_E2E_HEADLESS === "1") {
+    if (!env.AYA_E2E_HEADLESS_UI_LOG) throw new Error("Headless e2e launch is missing its UI event log");
+    const originalMain = args[0];
+    if (!originalMain || originalMain.startsWith("-")) throw new Error("Headless Electron spawn must name its entry as the first argument");
+    env.AYA_E2E_REAL_MAIN = originalMain;
+    env.AYA_E2E_HEADLESS_UI_MODULE = join(APP_ROOT, "dist-electron", "e2e-headless-ui.js");
+    args[0] = join(APP_ROOT, "e2e", "helpers", "headless-main.cjs");
+  }
+  return spawn(binary, args, { ...options, env });
+}
+
+/** Declare the native UI requests a test intentionally exercises in headless mode. */
+export function expectHeadlessUiEvents(seeded: SeededEnv, events: HeadlessUiEventExpectation[]): void {
+  writeFileSync(join(seeded.root, "e2e-headless-ui-expected.json"), JSON.stringify(events), { mode: 0o600 });
+}
+
+/** Handle renderer JS dialogs in both local-headless runs and visible CI/Xvfb runs. */
+export type RendererDialogResponse = { message?: string; messagePrefix?: string; response: boolean | string | null | undefined };
+type RendererDialogKind = "renderer.alert" | "renderer.confirm" | "renderer.prompt";
+type RendererDialogLike = { type(): string; message(): string; accept(): Promise<void>; dismiss(): Promise<void> };
+function rendererDialogMatches(configured: RendererDialogResponse | undefined, message: string): boolean {
+  return configured?.message === message
+    || (configured?.messagePrefix !== undefined && message.startsWith(configured.messagePrefix));
+}
+
+export function rendererDialogHandler(
+  responses: Partial<Record<RendererDialogKind, RendererDialogResponse>>,
+  events: Array<{ kind: string; message: string }>,
+): (dialog: RendererDialogLike) => Promise<void> {
+  return async (dialog) => {
+    const kind = `renderer.${dialog.type()}`;
+    events.push({ kind, message: dialog.message() });
+    const configured = responses[kind as keyof typeof responses];
+    const matches = rendererDialogMatches(configured, dialog.message());
+    if (matches) delete responses[kind as RendererDialogKind];
+    const response = matches ? configured?.response : undefined;
+    if (dialog.type() === "confirm" && response === true) await dialog.accept();
+    else if (dialog.type() === "prompt" && typeof response === "string") await dialog.accept(response);
+    else if (dialog.type() === "alert") await dialog.accept();
+    else await dialog.dismiss();
+  };
+}
+
+export async function handleRendererDialogs(
+  page: Page,
+  seeded: SeededEnv,
+  responses: Partial<Record<RendererDialogKind, RendererDialogResponse>> = {},
+): Promise<{ read: () => Promise<Array<{ kind: string; message: string }>>; respond: (kind: RendererDialogKind, response: RendererDialogResponse) => Promise<void> }> {
+  const headless = appEnv(seeded).AYA_E2E_HEADLESS === "1";
+  const respond = async (kind: RendererDialogKind, response: RendererDialogResponse) => {
+    if ((response.message === undefined) === (response.messagePrefix === undefined)) {
+      throw new Error("A renderer dialog response needs exactly one exact message or message prefix");
+    }
+    responses[kind] = response;
+    if (headless) {
+      await page.evaluate(({ kind, response }) => {
+        const w = window as Window & { __ayaE2eHeadlessUi: { setResponse: (kind: string, matcher: { message?: string; messagePrefix?: string }, response: unknown) => void } };
+        const matcher = response.message !== undefined ? { message: response.message } : { messagePrefix: response.messagePrefix };
+        w.__ayaE2eHeadlessUi.setResponse(kind, matcher, response.response);
+      }, { kind, response });
+    }
+  };
+  if (headless) {
+    await page.evaluate(() => {
+      const w = window as Window & { __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> };
+      w.__ayaE2eRendererEvents = [];
+      window.addEventListener("aya:e2e-headless-dialog", (event) => w.__ayaE2eRendererEvents?.push((event as CustomEvent).detail));
+    });
+    for (const [kind, response] of Object.entries(responses)) await respond(kind as RendererDialogKind, response);
+    return { read: () => page.evaluate(() => (window as Window & { __ayaE2eRendererEvents?: Array<{ kind: string; message: string }> }).__ayaE2eRendererEvents ?? []), respond };
+  }
+  const events: Array<{ kind: string; message: string }> = [];
+  page.on("dialog", rendererDialogHandler(responses, events));
+  return { read: async () => events, respond };
+}
+
+function headlessUiFailure(seeded: SeededEnv): Error | null {
+  const env = appEnv(seeded);
+  if (env.AYA_E2E_HEADLESS !== "1") return null;
+  const logPath = env.AYA_E2E_HEADLESS_UI_LOG;
+  if (!logPath) return new Error("Headless e2e has no native UI event log path");
+  try {
+    const logged = existsSync(logPath)
+      ? readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((line, index) => {
+        const record: unknown = JSON.parse(line);
+        if (!isHeadlessUiEventRecord(record)) throw new Error(`Invalid headless e2e UI record at line ${index + 1}`);
+        return record;
+      })
+      : [];
+    const expectedPath = join(seeded.root, "e2e-headless-ui-expected.json");
+    const expected = existsSync(expectedPath) ? JSON.parse(readFileSync(expectedPath, "utf8")) as HeadlessUiEventExpectation[] : [];
+    const mismatch = headlessUiEventMismatch(logged, expected);
+    return mismatch ? new Error(`Headless e2e requested native UI: ${mismatch}`) : null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Error(`Headless e2e UI log is invalid: ${message}`);
+  }
+}
+
+function isHeadlessUiEventRecord(value: unknown): value is HeadlessUiEventRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.kind === "string" && record.kind.length > 0
+    && (record.detail === undefined || typeof record.detail === "string")
+    && (record.expected === undefined || typeof record.expected === "boolean")
+    && (record.at === undefined || typeof record.at === "string");
+}
+
+export function assertHeadlessUiEvents(seeded: SeededEnv): void {
+  const error = headlessUiFailure(seeded);
+  if (error) throw error;
 }
 
 export async function closeAndWait(app: ElectronApplication): Promise<void> {
@@ -240,17 +396,25 @@ export const test = base.extend<{
   seeded: async ({ seedOptions }, use, testInfo) => {
     const s = seedEnv(seedOptions);
     await use(s);
-    // Attach the PTY lifecycle log before the root is wiped: the only record.
-    if (testInfo.status !== testInfo.expectedStatus) {
-      for (const name of ["pty-events.log", "pty-events.log.1"]) {
-        const p = join(s.ayaHome, name);
-        if (existsSync(p)) {
-          await testInfo.attach(name, { path: p, contentType: "text/plain" });
+    const uiError = headlessUiFailure(s);
+    try {
+      // Attach logs before the root is wiped, including malformed UI logs that
+      // turn an otherwise passing test into a teardown failure.
+      if (testInfo.status !== testInfo.expectedStatus || uiError) {
+        for (const name of ["pty-events.log", "pty-events.log.1", "e2e-headless-ui.log"]) {
+          const p = join(s.ayaHome, name);
+          const uiLog = join(s.root, name);
+          const evidence = name === "e2e-headless-ui.log" ? uiLog : p;
+          if (existsSync(evidence)) {
+            await testInfo.attach(name, { path: evidence, contentType: "text/plain" });
+          }
         }
       }
+    } finally {
+      // Here, not in `app`: this teardown also runs when launching the app failed.
+      try { await cleanUpSeeded(s); } finally { forgetFixtureAuthority(s.ayaHome); }
     }
-    // Here, not in `app`: this teardown also runs when launching the app failed.
-    try{await cleanUpSeeded(s);}finally{forgetFixtureAuthority(s.ayaHome);}
+    if (uiError) throw uiError;
   },
 
   app: async ({ seeded, seedOptions }, use) => {
@@ -292,8 +456,8 @@ export const test = base.extend<{
     // tabs must attach-only instead of respawning.
     if (seedOptions.preStartPtyHost) {
       // Match main's startHost: the Node/Electron runtime is part of the host content identity.
-      const issuer=spawn(require("electron") as string,[join(APP_ROOT,'tests/helpers/pty-prestart-announced.cjs')],{
-        env:{...appEnv(seeded,process.env,false),ELECTRON_RUN_AS_NODE:'1',AYA_TEST_HOST_SCRIPT:PTY_HOST_SCRIPT},stdio:['ignore','ignore','pipe'],
+      const issuer=spawnE2eElectron(require("electron") as string,[join(APP_ROOT,'tests/helpers/pty-prestart-announced.cjs')],{
+        env:{...appEnv(seeded),ELECTRON_RUN_AS_NODE:'1',AYA_TEST_HOST_SCRIPT:PTY_HOST_SCRIPT},stdio:['ignore','ignore','pipe'],
       });
       let issuerError='';issuer.stderr?.on('data',chunk=>{issuerError+=String(chunk);});
       await new Promise<void>((resolve,reject)=>{issuer.once('error',reject);issuer.once('exit',code=>code===0?resolve():reject(Error('Announced prestart issuer failed: '+issuerError)));});

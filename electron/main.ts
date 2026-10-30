@@ -60,7 +60,8 @@ import { withLaunchHolds, withSpawnHolds, type TeamControlDeps } from "./team-co
 import { roleLaunchCheck } from "./launch-config";
 import { launchBlockOf, launchHoldOf, launchNoteOf, launchUnsure } from "./launch-mode";
 import { reachedAyaPanes } from "./reached-aya";
-import { debugPane, watchDebugSwitch } from "./team-debug";
+import { watchDebugSwitch } from "./team-debug";
+import { debugPane } from "./team-debug-route";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./ipc/team-ipc";
 import { askProjectWindow, askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
@@ -70,6 +71,7 @@ import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { attachSquirrelUpdaterEvents } from "./squirrel-updater-events";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
+import { openTeamStore } from "./team-store";
 import { startRemoteServer } from "./remote-server";
 import { RemotePtySessions } from "./remote-pty-sessions";
 import { RemoteTerminalClient } from "./remote-client";
@@ -92,6 +94,7 @@ import {
   PANE_LAUNCH_ROLES_FILE,
   AGENT_BRIEF_FILES_FILE,
 } from "./paths";
+import { installHeadlessUiRouter } from "./e2e-headless-ui";
 import { createPtyLog } from "./pty-log";
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
@@ -149,6 +152,8 @@ import type {
   PtyEvent,
   SpawnRequest,
 } from "./types";
+
+const headlessWindowOptions = installHeadlessUiRouter({ env: process.env, app, dialog, BrowserWindow, Notification, ipcMain });
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
@@ -227,6 +232,11 @@ async function launchNote(terminalId: string): Promise<string | null> {
 const teamDeps: TeamControlDeps = {
   teamHome: AYA_HOME,
   listProjects: () => listProjects(),
+  assignments: (projectSlug, team) => openTeamStore(AYA_HOME, projectSlug, team).assignments(),
+  paneIsLive: async (terminalId) => {
+    const pid = await ptyHost.getPid(terminalId);
+    return pid === undefined ? null : typeof pid === "number";
+  },
   deliver: (terminalId, text, cancelled, entered, pasting) =>
     deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, teamHold, cancelled, turnProbe, entered, pasting,
       (id, data, context, wasCancelled) => userRuleInput.write("team", id, data, context, wasCancelled)),
@@ -321,6 +331,7 @@ let forgetRemoteOutputSink: (webContentsId: number) => void = () => {};
 
 const windows = createAyaWindows({
   BrowserWindow,
+  headlessWindowOptions,
   ptyHost,
   platform: process.platform,
   mainDirname: __dirname,
@@ -489,7 +500,7 @@ const aboutPanelDeps = {
   darkBackground: COLOR_DARK_BG,
   lightText: COLOR_LIGHT_TEXT,
   focusedAyaWindow,
-  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(options),
+  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(headlessWindowOptions(options)),
   devIconPath,
 };
 

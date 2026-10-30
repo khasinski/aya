@@ -24,6 +24,8 @@ Usage:
   aya [path]                         Open a project directory
   aya open [path]                    Open a project directory
   aya project open [path]            Open a project directory (alias)
+  aya op-session -- command [args...]
+                                     Start an agent with a shared 1Password CLI terminal session
   aya focus                          Focus the Aya window
   aya notify [--title title] body    Show an Aya notification
   aya remote --stdio                 Bridge remote Aya over stdio
@@ -733,6 +735,12 @@ case "$command" in
     if [ "${1:-}" != "open" ]; then usage_fail; fi
     [ "$#" -eq 0 ] || shift
     open_project "${1:-.}"
+    ;;
+  op-session)
+    shift
+    [ "${1:-}" != "--" ] || shift
+    [ "$#" -gt 0 ] || usage_fail
+    exec node "$(dirname "$(aya_modules_dir)")/shared/op-session.cjs" launch -- "$@"
     ;;
   focus)
     send_control focus

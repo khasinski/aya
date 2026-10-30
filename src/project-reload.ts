@@ -9,6 +9,7 @@
 // the user closes it.
 
 import type { ProjectConfig, TerminalState } from "./types";
+import { compactDir } from "./project-path";
 
 /** Disk wins for every project it still contains; a project missing from disk
  *  survives only while it is open (it becomes "unsaved" - the next in-app save
@@ -92,4 +93,25 @@ export function withTabUpdatesFromDisk(
     next[tab.id] = { ...t, name: tab.name, presetId: tab.presetId };
   }
   return next ?? (terminals as Record<string, TerminalState>);
+}
+
+/** Projects shown in the recent-projects dropdown: closed projects and already-open
+ *  projects (selecting an open project switches to its tab), filtered by name or path. */
+export function recentMenuProjects(
+  closedProjects: ProjectConfig[],
+  openProjects: ProjectConfig[],
+  filter: string,
+  homeDir: string,
+): ProjectConfig[] {
+  const all = [...closedProjects, ...openProjects];
+  const q = filter.trim().toLowerCase();
+  if (q.length === 0) return all;
+  return all.filter((p) => {
+    const path = compactDir(p.directory, homeDir);
+    return (
+      p.name.toLowerCase().includes(q) ||
+      path.toLowerCase().includes(q) ||
+      p.directory.toLowerCase().includes(q)
+    );
+  });
 }
