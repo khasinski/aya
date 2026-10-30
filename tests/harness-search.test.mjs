@@ -5,9 +5,11 @@
 
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeSync, ftruncateSync, mkdtempSync, mkdirSync, openSync, rmSync, writeSync, writeFileSync, utimesSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { closeSync, ftruncateSync, mkdtempSync, mkdirSync, openSync, rmSync, statSync, writeSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const {
   claudeProjectDirName,
@@ -540,6 +542,59 @@ function fakeClock(hitBudget) {
   };
 }
 
+async function auditTranscriptReads(file, run) {
+  const target = resolve(file);
+  const stats = { opens: 0, largestRead: 0, totalBytesRead: 0, wholeFileCalls: [] };
+  const promises = fs.promises;
+  const originalOpen = promises.open;
+  const originalReadFile = promises.readFile;
+  const originalReadFileSync = fs.readFileSync;
+  const originalCreateReadStream = fs.createReadStream;
+  const matches = (path) => typeof path === "string" && resolve(path) === target;
+
+  promises.open = async function (path, ...args) {
+    const handle = await originalOpen.call(this, path, ...args);
+    if (matches(path)) {
+      stats.opens += 1;
+      const read = handle.read.bind(handle);
+      Object.defineProperty(handle, "read", {
+        configurable: true,
+        value: async (...readArgs) => {
+          const requested = typeof readArgs[2] === "number" ? readArgs[2] : 0;
+          stats.largestRead = Math.max(stats.largestRead, requested);
+          const result = await read(...readArgs);
+          stats.totalBytesRead += result.bytesRead;
+          return result;
+        },
+      });
+    }
+    return handle;
+  };
+  promises.readFile = function (path, ...args) {
+    if (matches(path)) stats.wholeFileCalls.push("fs.promises.readFile");
+    return originalReadFile.call(this, path, ...args);
+  };
+  fs.readFileSync = function (path, ...args) {
+    if (matches(path)) stats.wholeFileCalls.push("fs.readFileSync");
+    return originalReadFileSync.call(this, path, ...args);
+  };
+  fs.createReadStream = function (path, ...args) {
+    if (matches(path)) stats.wholeFileCalls.push("fs.createReadStream");
+    return originalCreateReadStream.call(this, path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    await run();
+  } finally {
+    promises.open = originalOpen;
+    promises.readFile = originalReadFile;
+    fs.readFileSync = originalReadFileSync;
+    fs.createReadStream = originalCreateReadStream;
+    syncBuiltinESMExports();
+  }
+  return stats;
+}
+
 test("full-history scan coverage is honest and memory stays bounded", async (t) => {
   const cases = [];
   for (const size of ["small", "over-8MiB", "sparse-1GiB"]) {
@@ -565,6 +620,7 @@ test("full-history scan coverage is honest and memory stays bounded", async (t) 
         writeFileSync(file, `${oldest}\n${noise.repeat(3)}${newest}\n`);
       } else if (size === "over-8MiB") {
         writeFileSync(file, `${oldest}\n${noise.repeat(145)}${newest}\n`);
+        chunkBytes = 64 * 1024;
       } else {
         const fd = openSync(file, "w+");
         const fileBytes = 1024 * 1024 * 1024;
@@ -582,25 +638,30 @@ test("full-history scan coverage is honest and memory stays bounded", async (t) 
       utimesSync(file, nowSec, nowSec);
       resetHarnessSearchCaches();
       let maxCarry = 0;
-      const before = process.memoryUsage().rss;
-      const result = await searchHarnessSessions({
-        agent: "claude",
-        cwd: CWD,
-        configDir: root,
-        query: size === "over-8MiB" && position === "newest" && !budgetHit
-          ? "coverage"
-          : position === "newest"
-            ? "newest coverage"
-            : position === "oldest"
-              ? "oldest coverage"
-              : "absent term",
-      }, {
-        timeBudgetMs: budgetHit ? 5 : 30_000,
-        now: fakeClock(budgetHit),
-        chunkBytes,
-        onMaxCarryBytes: (bytes) => { maxCarry = Math.max(maxCarry, bytes); },
+      let result;
+      const readStats = await auditTranscriptReads(file, async () => {
+        result = await searchHarnessSessions({
+          agent: "claude",
+          cwd: CWD,
+          configDir: root,
+          query: size === "over-8MiB" && position === "newest" && !budgetHit
+            ? "coverage"
+            : position === "newest"
+              ? "newest coverage"
+              : position === "oldest"
+                ? "oldest coverage"
+                : "absent term",
+        }, {
+          timeBudgetMs: budgetHit ? 5 : 30_000,
+          now: fakeClock(budgetHit),
+          chunkBytes,
+          onMaxCarryBytes: (bytes) => { maxCarry = Math.max(maxCarry, bytes); },
+        });
       });
-      const after = process.memoryUsage().rss;
+      assert.deepEqual(readStats.wholeFileCalls, [], "scanner must not load the transcript with a whole-file API");
+      assert.ok(readStats.opens > 0 && readStats.totalBytesRead > 0, "scanner must read the transcript through bounded chunks");
+      assert.ok(readStats.largestRead <= chunkBytes, `scanner requested a ${readStats.largestRead}-byte read (chunk cap ${chunkBytes})`);
+      assert.ok(readStats.totalBytesRead <= statSync(file).size, "scanner must not reread beyond the transcript size");
       const shouldFind = position !== "none" && !(budgetHit && position === "oldest");
       assert.equal(result.hits.length > 0, shouldFind);
       if (shouldFind) {
@@ -615,7 +676,6 @@ test("full-history scan coverage is honest and memory stays bounded", async (t) 
       assert.equal(result.coverage.partial, budgetHit || size === "sparse-1GiB");
       if (result.coverage.partial) assert.ok(result.coverage.searchedBackTo);
       assert.ok(maxCarry <= 64 * 1024, `scanner retained ${maxCarry} bytes in a line carry`);
-      assert.ok(after - before < 128 * 1024 * 1024, `RSS grew by ${after - before} bytes`);
     });
   }
 });
