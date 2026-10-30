@@ -284,16 +284,22 @@ export async function scanJsonlLinesReverse(
     let stopped = false;
     let partial = start > 0;
     let skippedOversizedLines = false;
-    const reportRetainedBytes = (chunk: Buffer, ...temporary: Buffer[]) => {
-      const backingStores = new Set<ArrayBufferLike>();
-      let retainedBytes = 0;
-      for (const buffer of [chunk, ...carry, ...oversizedPrefix, ...temporary]) {
-        if (backingStores.has(buffer.buffer)) continue;
-        backingStores.add(buffer.buffer);
-        retainedBytes += buffer.buffer.byteLength;
-      }
-      options.onPeakRetainedBytes?.(retainedBytes);
-    };
+    const reportRetainedBytes = options.onPeakRetainedBytes
+      ? (chunk: Buffer, temporary?: Buffer) => {
+          const backingStores = new Set<ArrayBufferLike>();
+          let retainedBytes = 0;
+          const add = (buffer: Buffer) => {
+            if (backingStores.has(buffer.buffer)) return;
+            backingStores.add(buffer.buffer);
+            retainedBytes += buffer.buffer.byteLength;
+          };
+          add(chunk);
+          for (const buffer of carry) add(buffer);
+          for (const buffer of oversizedPrefix) add(buffer);
+          if (temporary) add(temporary);
+          options.onPeakRetainedBytes?.(retainedBytes);
+        }
+      : undefined;
     while (offset > start) {
       if (options.shouldStop?.()) {
         stopped = true;
@@ -303,7 +309,7 @@ export async function scanJsonlLinesReverse(
       const length = Math.min(chunkBytes, offset - start);
       const chunkStart = offset - length;
       const chunk = Buffer.allocUnsafe(length);
-      reportRetainedBytes(chunk);
+      reportRetainedBytes?.(chunk);
       const result = await readBufferAtMost(
         (buffer, bufferOffset, readLength, position) => handle.read(buffer, bufferOffset, readLength, position),
         chunk,
@@ -336,7 +342,7 @@ export async function scanJsonlLinesReverse(
           const lineBuffer = carryBytes === 0
             ? segment
             : Buffer.concat([segment, ...carry], lineBytes);
-          reportRetainedBytes(chunk, lineBuffer);
+          reportRetainedBytes?.(chunk, lineBuffer);
           const lineEndOffset = chunkStart + end + carryBytes;
           if (visit(lineBuffer.toString("utf8"), {
             startOffset: chunkStart + newline + 1,
@@ -361,12 +367,12 @@ export async function scanJsonlLinesReverse(
           addOversizedPrefix(chunk.subarray(0, end));
           partial = true;
           skippedOversizedLines = true;
-          reportRetainedBytes(chunk);
+          reportRetainedBytes?.(chunk);
         } else {
           carry.unshift(chunk.subarray(0, end));
           carryBytes += end;
           options.onMaxCarryBytes?.(carryBytes);
-          reportRetainedBytes(chunk);
+          reportRetainedBytes?.(chunk);
         }
       }
       offset = chunkStart;
