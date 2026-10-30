@@ -18,6 +18,16 @@ test('state explains busy, generic approval, suppression, usage/account and poli
  assert.equal(explainPaneSnapshot(snapshot(['text'],'custom',{shell:true})).state,'shell');
 });
 
+test('clipped marker does not change pane state, explanation evidence or --explain output',()=>{
+ const visible=snapshot(['Do you want to proceed?']);
+ const marked={...visible,clippedVisible:true};
+ const plain=explainPaneSnapshot(visible),clipped=explainPaneSnapshot(marked);
+ assert.equal(clipped.state,plain.state);
+ assert.equal(clipped.reason,plain.reason);
+ assert.deepEqual(clipped.evidence,plain.evidence);
+ assert.equal(formatPaneState('worker',clipped,true),formatPaneState('worker',plain,true));
+});
+
 test('paneState reads one fresh applied snapshot and never sends composer metadata or mutates it',async()=>{
  const client=new PtyHostClient('/unused'),calls=[],s=snapshot(['❯ '],'claude',{composerSeen:false});
  client.socket={destroyed:false,destroy(){this.destroyed=true;}};client.sendRequest=async (_socket,request)=>{calls.push(request);return s;};

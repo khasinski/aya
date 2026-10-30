@@ -424,7 +424,7 @@ test("a real xterm wide glyph retained across narrowing does not add a clip hold
   }
 });
 
-test("live scan retains waiting when the visible prompt remains after narrowing", async () => {
+test("live scan publishes waiting appearance and disappearance on clipped screens", async () => {
   const id = "live-clipped-scan-clears-waiting";
   const events = [];
   openVtPane(id, 40, 24, (waiting, dialog) => events.push({ waiting, dialog }), "claude");
@@ -451,7 +451,31 @@ test("live scan retains waiting when the visible prompt remains after narrowing"
     pane.onSnapshot?.(snapshot);
     assert.equal(pane.lastWaiting, true, "the visible approval remains waiting after narrowing");
     assert.equal(pane.lastDialog, undefined);
-    assert.deepEqual(events, [{ waiting: true, dialog: undefined }], "the unchanged visible approval does not publish a false clear event");
+    assert.deepEqual(events, [{ waiting: true, dialog: undefined }], "the clipped visible approval does not publish a duplicate transition");
+
+    writeVtPane(id, "\x1b[1;1H\x1b[2K");
+    await settle();
+    __testScanVtPane(id);
+    assert.equal(pane.lastWaiting, false, "clearing the visible approval publishes a waiting clear even while a tail remains");
+    assert.equal(snapshotOf(pane).clippedVisible, true);
+
+    writeVtPane(id, "\x1b[1;1HDo you want to proceed? [y/n]");
+    await settle();
+    __testScanVtPane(id);
+    assert.equal(pane.lastWaiting, true, "a new visible approval publishes waiting while the screen remains clipped");
+    assert.equal(snapshotOf(pane).clippedVisible, true);
+
+    writeVtPane(id, "\x1b[1;1H\x1b[2K");
+    await settle();
+    __testScanVtPane(id);
+    assert.equal(pane.lastWaiting, false, "a second clear also publishes while the screen remains clipped");
+    assert.equal(snapshotOf(pane).clippedVisible, true);
+    assert.deepEqual(events, [
+      { waiting: true, dialog: undefined },
+      { waiting: false, dialog: undefined },
+      { waiting: true, dialog: undefined },
+      { waiting: false, dialog: undefined },
+    ]);
   } finally {
     closeVtPane(id);
   }
