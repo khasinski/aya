@@ -481,7 +481,6 @@ export interface HarnessSearchOptions {
   now?: () => number;
   chunkBytes?: number;
   onMaxCarryBytes?: (bytes: number) => void;
-  onPeakRetainedBytes?: (bytes: number) => void;
   onBytesRead?: (bytes: number) => void;
   signal?: AbortSignal;
 }
@@ -615,7 +614,6 @@ export async function searchHarnessSessions(
         shouldStop,
         chunkBytes: options.chunkBytes,
         onMaxCarryBytes: options.onMaxCarryBytes,
-        onPeakRetainedBytes: options.onPeakRetainedBytes,
         onBytesRead: options.onBytesRead,
         onOversizedLinePrefix: (prefix) => {
           if (oversizedPrefixIsMessage(prefix, req.agent)) longMessagesSkipped = true;
