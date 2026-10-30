@@ -133,14 +133,14 @@ test("selectOrphanCandidates: only dead-leader groups, never our group or hosts"
   assert.deepEqual(got.map((r) => r.pid).sort((a, b) => a - b), [200, 204]);
 });
 
-test("sweep S1: a verified stray host gets ONE group kill; scope mismatch and probe failure are skipped", () => {
+test("sweep S1: a verified stray host gets ONE group kill; scope mismatch and probe failure are skipped", async () => {
   const rows = [
     row({ pid: 900, pgid: 900, command: HOST_CMD }), // ours - swept
     row({ pid: 910, pgid: 910, command: HOST_CMD }), // dev-scoped - skipped
     row({ pid: 920, pgid: 920, command: HOST_CMD }), // probe fails - skipped
   ];
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -161,10 +161,10 @@ test("sweep S1: a verified stray host gets ONE group kill; scope mismatch and pr
   assert.deepEqual(summary.skipped.sort((a, b) => a - b), [910, 920]);
 });
 
-test("sweep S1: a probe WITHOUT ELECTRON_RUN_AS_NODE=1 is skipped (editor/grep can't fake a host)", () => {
+test("sweep S1: a probe WITHOUT ELECTRON_RUN_AS_NODE=1 is skipped (editor/grep can't fake a host)", async () => {
   const rows = [row({ pid: 900, pgid: 900, command: HOST_CMD })];
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -178,10 +178,10 @@ test("sweep S1: a probe WITHOUT ELECTRON_RUN_AS_NODE=1 is skipped (editor/grep c
   assert.deepEqual(summary.skipped, [900]);
 });
 
-test("sweep S1: a pid reused since the snapshot (argv no longer host-shaped) is skipped", () => {
+test("sweep S1: a pid reused since the snapshot (argv no longer host-shaped) is skipped", async () => {
   const rows = [row({ pid: 900, pgid: 900, command: HOST_CMD })];
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -193,13 +193,13 @@ test("sweep S1: a pid reused since the snapshot (argv no longer host-shaped) is 
   assert.deepEqual(summary.skipped, [900]);
 });
 
-test("sweep S1 disabled (current host unidentifiable) never kills hosts; S2 still runs", () => {
+test("sweep S1 disabled (current host unidentifiable) never kills hosts; S2 still runs", async () => {
   const rows = [
     row({ pid: 900, pgid: 900, command: HOST_CMD }), // would-be stray
     row({ pid: 200, pgid: 7777 }), // dead-leader orphan
   ];
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -215,7 +215,7 @@ test("sweep S1 disabled (current host unidentifiable) never kills hosts; S2 stil
   assert.deepEqual(killed, [200]);
 });
 
-test("sweep S2: kills ONLY confirmed-dead-leader members carrying BOTH safeEnv markers", () => {
+test("sweep S2: kills ONLY confirmed-dead-leader members carrying BOTH safeEnv markers", async () => {
   const rows = [
     row({ pid: 200, pgid: 7777, command: "claude --chrome" }), // both markers - swept
     row({ pid: 201, pgid: 7777, command: "some-daemon" }), // no markers - skipped
@@ -223,7 +223,7 @@ test("sweep S2: kills ONLY confirmed-dead-leader members carrying BOTH safeEnv m
     row({ pid: 205, pgid: 7777, command: "grep AYA_TERMINAL_ID= ." }), // one marker only (argv) - skipped
   ];
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -249,12 +249,12 @@ test("sweep S2: kills ONLY confirmed-dead-leader members carrying BOTH safeEnv m
   assert.deepEqual(summary.skipped.sort((a, b) => a - b), [201, 202, 205]);
 });
 
-test("sweep S2: a leader that is actually ALIVE (snapshot lied) blocks the whole group", () => {
+test("sweep S2: a leader that is actually ALIVE (snapshot lied) blocks the whole group", async () => {
   // The snapshot dropped the live host's row (parse hiccup) - its children look
   // orphaned. The direct leader probe must catch this and kill NOTHING.
   const rows = [row({ pid: 200, pgid: 7777, command: "claude --chrome" })];
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -267,10 +267,10 @@ test("sweep S2: a leader that is actually ALIVE (snapshot lied) blocks the whole
   assert.deepEqual(summary.skipped, [200]);
 });
 
-test("sweep S2: a failed leader probe (unknown state) blocks the group", () => {
+test("sweep S2: a failed leader probe (unknown state) blocks the group", async () => {
   const rows = [row({ pid: 200, pgid: 7777, command: "claude --chrome" })];
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -283,13 +283,13 @@ test("sweep S2: a failed leader probe (unknown state) blocks the group", () => {
   assert.deepEqual(summary.skipped, [200]);
 });
 
-test("sweep S2: the leader probe is cached per group (one ps per dead group, not per member)", () => {
+test("sweep S2: the leader probe is cached per group (one ps per dead group, not per member)", async () => {
   const rows = [
     row({ pid: 200, pgid: 7777, command: "a" }),
     row({ pid: 204, pgid: 7777, command: "b" }),
   ];
   let leaderProbes = 0;
-  sweepLegacyAyaProcesses(
+  await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -304,13 +304,13 @@ test("sweep S2: the leader probe is cached per group (one ps per dead group, not
   assert.equal(leaderProbes, 1, "one leader probe per group");
 });
 
-test("sweep S2: the probe cap bounds work and reports truncation (no silent cap)", () => {
+test("sweep S2: the probe cap bounds work and reports truncation (no silent cap)", async () => {
   const rows = [];
   for (let i = 0; i < MAX_ORPHAN_PROBES + 10; i++) {
     rows.push(row({ pid: 10_000 + i, pgid: 7777 }));
   }
   let envProbes = 0;
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,
@@ -326,16 +326,16 @@ test("sweep S2: the probe cap bounds work and reports truncation (no silent cap)
   assert.equal(summary.truncated, 10, "overflow is reported, not silently dropped");
 });
 
-test("sweep: empty snapshot or missing uid is a total no-op", () => {
+test("sweep: empty snapshot or missing uid is a total no-op", async () => {
   assert.deepEqual(
-    sweepLegacyAyaProcesses(new Set(), baseDeps({ snapshot: () => [] })).sweptHosts,
+    (await sweepLegacyAyaProcesses(new Set(), baseDeps({ snapshot: () => [] }))).sweptHosts,
     [],
   );
   assert.deepEqual(
-    sweepLegacyAyaProcesses(
+    (await sweepLegacyAyaProcesses(
       new Set(),
       baseDeps({ uid: -1, snapshot: () => assert.fail("uid gate first") }),
-    ).sweptHosts,
+    )).sweptHosts,
     [],
   );
 });
@@ -346,7 +346,7 @@ test("readSnapshot reads the real process table on this OS (procps on Linux refu
   assert.equal(self.ppid, process.ppid);
 });
 
-test("sweep S2: an orphan from another Aya's scope (dev build, an isolated AYA_HOME) is left to that Aya", () => {
+test("sweep S2: an orphan from another Aya's scope (dev build, an isolated AYA_HOME) is left to that Aya", async () => {
   // The same check S1 makes for hosts: the scope in the orphan's env must be this Aya's own.
   const rows = [row({ pid: 300, pgid: 8888 }), row({ pid: 301, pgid: 8888 }), row({ pid: 302, pgid: 8888 })];
   const envs = {
@@ -355,7 +355,7 @@ test("sweep S2: an orphan from another Aya's scope (dev build, an isolated AYA_H
     302: `claude AYA_TERMINAL_ID=x AYA_HOME= AYA_DEV=1 PATH=/b`,
   };
   const killed = [];
-  const summary = sweepLegacyAyaProcesses(
+  const summary = await sweepLegacyAyaProcesses(
     new Set(),
     baseDeps({
       snapshot: () => rows,

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { AYA_HOME } from "./pty-host-paths";
-import { readProcInfo } from "./pty-host-registry";
+import { readProcInfo, readProcInfoAsync, type ProcInfo } from "./pty-host-registry";
 import { MAX_PTY_PANES } from "./pty-pane-limits";
 import type { OwnerPane } from "./pty-owner-client";
 export const OWNER_DIRECTORY = path.join(AYA_HOME, "pty-owner");
@@ -68,16 +68,19 @@ function readOwnerRecordOnce(): OwnerRecord | null {
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   finally{if(fd!==undefined)fs.closeSync(fd);}
 }
-export function ownerRecordIsLive(r: OwnerRecord): boolean {
-  const p = readProcInfo(r.pid);
+function ownerLive(r: OwnerRecord, p: ProcInfo): boolean {
   if (p.probeFailed) throw new Error("Cannot verify the PTY owner process; its terminals were kept");
   return p.alive && p.startTime === r.startTime && !!p.command?.includes(r.executable);
 }
-export function ownerReaderIsLive(r: OwnerRecord): boolean {
-  const p = readProcInfo(r.jsPid);
+function readerLive(r: OwnerRecord, p: ProcInfo): boolean {
   if (p.probeFailed) throw new Error("Cannot verify the previous PTY reader; its terminals were kept");
   return p.alive && p.startTime === r.jsStartTime;
 }
+export function ownerRecordIsLive(r: OwnerRecord): boolean { return ownerLive(r, readProcInfo(r.pid)); }
+export function ownerReaderIsLive(r: OwnerRecord): boolean { return readerLive(r, readProcInfo(r.jsPid)); }
+/** The same answers without blocking the event loop (main's crash recovery). */
+export async function ownerRecordIsLiveAsync(r: OwnerRecord): Promise<boolean> { return ownerLive(r, await readProcInfoAsync(r.pid)); }
+export async function ownerReaderIsLiveAsync(r: OwnerRecord): Promise<boolean> { return readerLive(r, await readProcInfoAsync(r.jsPid)); }
 export function writeOwnerRecord(r: OwnerRecord): void {
   const bytes=JSON.stringify(r);if(Buffer.byteLength(bytes)>65536)throw new Error("PTY owner record length limit");
   const temporary = `${RECORD}.${process.pid}.${randomBytes(6).toString("hex")}`;

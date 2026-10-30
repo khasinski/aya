@@ -6,6 +6,7 @@ import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop"
 import { TeamCard } from "./TeamCard";
 import { TeamEditor } from "./TeamEditor";
 import { ErrorLine, ipcMessage } from "./use-async-action";
+import { pollVisible } from "../poll-visible";
 
 // While open, the log and assignments refresh at this pace.
 const REFRESH_MS = 3000;
@@ -134,9 +135,11 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
   }, []);
 
   useEffect(() => {
-    void reload(true);
-    const id = window.setInterval(() => void reload(), REFRESH_MS);
-    return () => window.clearInterval(id);
+    let first = true;
+    return pollVisible(() => {
+      void reload(first);
+      first = false;
+    }, REFRESH_MS);
   }, [reload]);
 
   useEffect(() => {

@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { writeExecutable } from "./helpers/executable.mjs";
+import { protocolShell } from "./helpers/login-shell.mjs";
 import { join, relative } from "node:path";
 import { paneLaunchMode, readLaunchConfig, roleLaunchCheck } from "../dist-electron/launch-config.js";
 
@@ -169,8 +170,10 @@ test("a preset checked for a role's pane: as the host would launch it, --no-daem
   const w = world(t);
   fakeCodex(join(w.root, "new"), "--no-daemon");
   fakeCodex(join(w.root, "old"), "--model <MODEL>");
+  // Not /bin/sh: its login profile (macOS path_helper) puts an installed codex ahead of the fake one.
+  const shell = protocolShell();
   const check = (command, dir) =>
-    roleLaunchCheck(command, w.repo, { ...w.env, PATH: `${join(w.root, dir)}:/usr/bin:/bin` }, w.socket, "/bin/sh");
+    roleLaunchCheck(command, w.repo, { ...w.env, PATH: `${join(w.root, dir)}:/usr/bin:/bin` }, w.socket, shell);
   assert.deepEqual(await check("codex", "new"), { reach: "reaches", refused: null });
   assert.match((await check("codex -s read-only", "new")).refused, /^Codex is read-only, so it cannot do this role's work; Choose a preset/);
   const old = await check("codex --yolo", "old");

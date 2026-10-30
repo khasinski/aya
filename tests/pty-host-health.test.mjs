@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const { gatherHostHealth, hostWarnings, probeSocketPid } = await import("../dist-electron/pty-host-health.js");
-const { liveHostRecords } = await import("../dist-electron/pty-host-registry.js");
+const { liveHostRecords, liveHostRecordsAsync } = await import("../dist-electron/pty-host-registry.js");
 
 const EXPECTED = { version: "0.13.0", scriptHash: "a".repeat(64) };
 const OLD = { version: "0.12.0", scriptHash: "b".repeat(64) };
@@ -140,6 +140,31 @@ test("liveHostRecords keeps only records whose pid is that host now", (t) => {
     liveHostRecords("/app/dist-electron/pty-host.js", registry, probe).map((r) => r.pid),
     [500],
   );
+});
+
+test("liveHostRecordsAsync gives the sync answer, fails closed on a throwing probe, and lets the event loop run", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-live-async-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const registry = join(dir, "pty-hosts");
+  mkdirSync(registry);
+  for (const rec of [record(500), record(501), record(502), record(503), record(504)]) {
+    writeFileSync(join(registry, `${rec.pid}.json`), JSON.stringify(rec));
+  }
+  const infos = {
+    500: { alive: true, probeFailed: false, startTime: "start-500", command: "Aya /x/pty-host.js" },
+    501: { alive: true, probeFailed: false, startTime: "other", command: "Aya /x/pty-host.js" },
+    502: { alive: false, probeFailed: false, startTime: null, command: null },
+    503: { alive: false, probeFailed: true, startTime: null, command: null },
+  };
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 1);
+  t.after(() => clearInterval(timer));
+  const probe = (pid) => new Promise((resolve, reject) => setTimeout(() => (pid === 504 ? reject(new Error("ps failed")) : resolve(infos[pid])), 5));
+  const script = "/app/dist-electron/pty-host.js";
+  assert.deepEqual((await liveHostRecordsAsync(script, registry, probe)).map((r) => r.pid), [500]);
+  assert.ok(ticks > 0, "timers ran while the probes were outstanding");
+  assert.deepEqual((await liveHostRecordsAsync(script, registry, (pid) => infos[pid] ?? infos[503])).map((r) => r.pid),
+    liveHostRecords(script, registry, (pid) => infos[pid] ?? infos[503]).map((r) => r.pid), "a sync fake still works");
 });
 
 test("an unreadable expected hash keeps the host with an indeterminate warning", async () => {

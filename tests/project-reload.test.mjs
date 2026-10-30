@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   applyExternalProjectEdits,
   mergeProjectsFromDisk,
+  recentMenuProjects,
   terminalsForNewTabs,
   withTabUpdatesFromDisk,
 } from "../dist-test/project-reload.js";
@@ -173,4 +174,28 @@ test("a tab belonging to another project's terminal id is not touched", () => {
   });
   const existing = { "shared-id": termState("shared-id", "b") };
   assert.equal(withTabUpdatesFromDisk(existing, p), existing);
+});
+
+test("recentMenuProjects includes both closed and already-open projects when filtering", () => {
+  const closed = [
+    project("closed-a", { name: "Alpha Closed", directory: "/Users/me/code/alpha-closed" }),
+    project("closed-b", { name: "Beta Archive", directory: "/Users/me/archive/beta" }),
+  ];
+  const open = [
+    project("open-c", { name: "Alpha Open", directory: "/Users/me/code/alpha-open" }),
+    project("open-d", { name: "Delta App", directory: "/Users/me/work/delta" }),
+  ];
+
+  assert.deepEqual(
+    recentMenuProjects(closed, open, "", "/Users/me").map((p) => p.slug),
+    ["closed-a", "closed-b", "open-c", "open-d"],
+  );
+  assert.deepEqual(
+    recentMenuProjects(closed, open, "alpha", "/Users/me").map((p) => p.slug),
+    ["closed-a", "open-c"],
+  );
+  assert.deepEqual(
+    recentMenuProjects(closed, open, "~/work", "/Users/me").map((p) => p.slug),
+    ["open-d"],
+  );
 });

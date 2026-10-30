@@ -251,7 +251,8 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
         const pids = path.join(fake.bin, "rc.pids");
         for (const f of [".bash_profile", ".zshrc"]) writeFileSync(path.join(fake.bin, f), rc(pids));
         const started = Date.now();
-        const answer = await probe(shell, cwd, { ...fake.env, ZDOTDIR: fake.bin }, "codex", ends === "timeout" ? 600 : 5000);
+        // By path: a login profile (macOS path_helper) would otherwise put an installed codex ahead of the fake one.
+        const answer = await probe(shell, cwd, { ...fake.env, ZDOTDIR: fake.bin }, path.join(fake.bin, "codex"), ends === "timeout" ? 600 : 5000);
         const took = Date.now() - started;
         assert.equal(answer, true, "a timeout adds the flag; a closed stdin ends the read and codex answers");
         assert.ok(took < (ends === "timeout" ? 2500 : 4000), `returned after ${took} ms`);

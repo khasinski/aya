@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { restartDialog, waitingNotification } = await import("../dist-electron/native-ui-text.js");
+const { quietWhenTesting, restartDialog, waitingNotification } = await import("../dist-electron/native-ui-text.js");
 
 const RLO = String.fromCharCode(0x202e);
 const U = (hex) => `\\u${hex}`;
@@ -23,4 +23,12 @@ test("the restart dialog shows its button and its list as text, with Cancel the 
   assert.deepEqual(options.buttons, [`Restart ${U("202e")}tset`, "Cancel"]);
   assert.equal(options.detail, `pane w${U("001b")}[2J: a dev server\nother: a watcher`);
   assert.deepEqual([options.defaultId, options.cancelId, options.message], [1, 1, "Work in progress will stop"]);
+});
+
+test("a hidden test run's notifications are silent, a normal run's are left as they were", () => {
+  assert.equal(quietWhenTesting({ title: "t", silent: false }, true).silent, true);
+  assert.deepEqual(quietWhenTesting({ title: "t", silent: false }, false), { title: "t", silent: false });
+  const original = { title: "t", silent: false };
+  quietWhenTesting(original, true);
+  assert.equal(original.silent, false, "the caller's options are not mutated");
 });

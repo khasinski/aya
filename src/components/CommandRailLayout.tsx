@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useDragReorder } from "../hooks/useDragReorder";
 import type { ProjectConfig, TeamSummary, UsageAccount } from "../types";
@@ -6,6 +6,10 @@ import type { SettingsTab } from "../settings-tabs";
 import { unreadTotal } from "../team-view";
 import { averageUsagePct, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
+import { compactDir } from "../project-path";
+import { RecentProjectsMenu } from "./RecentProjectsMenu";
+import { moveItem } from "../keyboard-navigation";
+import { ProjectContextMenu } from "./ProjectContextMenu";
 
 interface ProjectAttention {
   count: number;
@@ -13,14 +17,6 @@ interface ProjectAttention {
 }
 
 const NO_TEAMS_BY_PROJECT: Record<string, TeamSummary[]> = {};
-
-function compactDir(directory: string, home: string): string {
-  if (!directory) return "";
-  if (!home) return directory;
-  if (directory === home) return "~";
-  if (directory.startsWith(home + "/")) return "~" + directory.slice(home.length);
-  return directory;
-}
 
 function projectPath(project: ProjectConfig, home: string): string {
   return project.remote
@@ -140,6 +136,10 @@ function CommandRailLayoutImpl({
     remote: boolean;
     windows: Array<{ id: number; activeProject: string | null }>;
   } | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (projectMenu) projectMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [projectMenu]);
   useEffect(() => {
     if (!projectMenu) return;
     const close = () => setProjectMenu(null);
@@ -153,17 +153,6 @@ function CommandRailLayoutImpl({
       window.removeEventListener("keydown", onKey);
     };
   }, [projectMenu]);
-
-  const [showRecent, setShowRecent] = useState(false);
-  const recentRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showRecent) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!recentRef.current?.contains(e.target as Node)) setShowRecent(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [showRecent]);
 
   const openMenu = (e: React.MouseEvent, project: ProjectConfig) => {
     e.preventDefault();
@@ -243,46 +232,15 @@ function CommandRailLayoutImpl({
           </button>
         </div>
         <div className="aya-cr-rail-foot">
-          <div className="aya-recent-projects" ref={recentRef}>
-            <button
-              type="button"
-              className="aya-cr-rail-btn"
-              title="Recent projects"
-              aria-label="Recent projects"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setShowRecent((v) => !v)}
-              disabled={blockChrome}
-              aria-haspopup="menu"
-              aria-expanded={showRecent}
-            >
-              <span style={{ fontFamily: "Material Symbols Outlined" }}>folder_open</span>
-            </button>
-            {showRecent && (
-              <div className="aya-recent-menu aya-cr-recent-menu" role="menu">
-                <div className="aya-recent-menu-title">Recent projects</div>
-                {closedProjects.length === 0 ? (
-                  <div className="aya-recent-menu-empty">No closed projects</div>
-                ) : (
-                  closedProjects.map((p) => (
-                    <button
-                      key={p.slug}
-                      className="aya-recent-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        setShowRecent(false);
-                        onOpenProject(p.slug);
-                      }}
-                    >
-                      <span className="aya-recent-menu-name">{p.name}</span>
-                      <span className="aya-recent-menu-path">
-                        {compactDir(p.directory, homeDir)}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+          <RecentProjectsMenu
+            closedProjects={closedProjects}
+            openProjects={projects}
+            homeDir={homeDir}
+            blockChrome={blockChrome}
+            onOpenProject={onOpenProject}
+            buttonClassName="aya-cr-rail-btn"
+            menuClassName="aya-cr-recent-menu"
+          />
           <button
             type="button"
             className="aya-cr-rail-btn"
@@ -336,48 +294,26 @@ function CommandRailLayoutImpl({
           </div>
         </main>
       )}
-      {projectMenu && (
-        <div
-          className="aya-context-menu"
-          style={{ left: projectMenu.x, top: projectMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {onMoveProjectToWindow && !projectMenu.remote && (
-            <>
-              <button
-                className="aya-context-menu-item"
-                onClick={() => {
-                  onMoveProjectToWindow(projectMenu.slug, "new");
-                  setProjectMenu(null);
-                }}
-              >
-                Move to New Window
-              </button>
-              {projectMenu.windows.map((w) => (
-                <button
-                  key={w.id}
-                  className="aya-context-menu-item"
-                  onClick={() => {
-                    onMoveProjectToWindow(projectMenu.slug, w.id);
-                    setProjectMenu(null);
-                  }}
-                >
-                  Move to Window: {w.activeProject ?? "(empty)"}
-                </button>
-              ))}
-            </>
-          )}
-          <button
-            className="aya-context-menu-item aya-context-menu-item--danger"
-            onClick={() => {
-              onCloseProject(projectMenu.slug);
+      {projectMenu && (() => {
+        const index = projects.findIndex((project) => project.slug === projectMenu.slug);
+        return (
+          <ProjectContextMenu
+            menuRef={projectMenuRef}
+            x={projectMenu.x}
+            y={projectMenu.y}
+            index={index}
+            projectCount={projects.length}
+            windows={projectMenu.windows}
+            canMoveToWindow={!!onMoveProjectToWindow && !projectMenu.remote}
+            onMove={(delta) => {
+              onReorderProjects(moveItem(projects.map((project) => project.slug), index, delta));
               setProjectMenu(null);
             }}
-          >
-            Close project
-          </button>
-        </div>
-      )}
+            onClose={() => { onCloseProject(projectMenu.slug); setProjectMenu(null); }}
+            onMoveToWindow={(target) => { onMoveProjectToWindow?.(projectMenu.slug, target); setProjectMenu(null); }}
+          />
+        );
+      })()}
     </div>
   );
 }

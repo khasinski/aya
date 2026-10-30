@@ -101,6 +101,7 @@ import {
   type Theme,
   type UpdateStatus,
 } from "./types";
+import { windowLayoutOf, windowLayoutParts } from "./window-layout";
 
 // Cap on preset suggestions offered during repo preset import.
 const MAX_SUGGESTED_PRESETS = 8;
@@ -919,10 +920,12 @@ export function App() {
   // App render and defeats their React.memo.
   const openProjectBySlug = useCallback(
     (slug: string) => {
-      const project = allProjects.find((p) => p.slug === slug);
+      const project =
+        allProjects.find((p) => p.slug === slug) ??
+        projects.find((p) => p.slug === slug);
       if (project) void openKnownProject(project);
     },
-    [allProjects, openKnownProject],
+    [allProjects, projects, openKnownProject],
   );
   const openSearch = useCallback(() => setShowSearch(true), []);
   const reorderActiveProjectTerminals = useCallback(
@@ -1565,10 +1568,12 @@ export function App() {
           onShowUsageHarnessNameChange={setShowUsageHarnessName}
           showGitHubLink={showGitHubLink}
           onShowGitHubLinkChange={updateShowGitHubLink}
-          layoutMode={layoutMode}
-          onLayoutModeChange={setLayoutMode}
-          chromeStyle={chromeStyle}
-          onChromeStyleChange={setChromeStyle}
+          windowLayout={windowLayoutOf(layoutMode, chromeStyle)}
+          onWindowLayoutChange={(layout) => {
+            const parts = windowLayoutParts(layout);
+            setLayoutMode(parts.layoutMode);
+            setChromeStyle(parts.chromeStyle);
+          }}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}

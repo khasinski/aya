@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectConfig, TeamSummary } from "../types";
+import { pollVisible } from "../poll-visible";
 
 // Teams of every open project are re-read this often, for chips and badges.
 export const TEAMS_REFRESH_MS = 5000;
@@ -40,10 +41,13 @@ export function useTeams({ projects, activeProjectId, activeProjectRemote }: Tea
   const currentRefreshTeams = useRef(refreshTeams);
   currentRefreshTeams.current = refreshTeams;
   useEffect(() => {
+    // teamList reads team files in the main process per project: skip it while the window is hidden.
     // A changed project list must get a trailing read even if an older batch is in flight.
-    void refreshTeams(true);
-    const id = window.setInterval(() => void refreshTeams(), TEAMS_REFRESH_MS);
-    return () => window.clearInterval(id);
+    let first = true;
+    return pollVisible(() => {
+      void refreshTeams(first);
+      first = false;
+    }, TEAMS_REFRESH_MS);
   }, [projectSlugsKey, refreshTeams]);
   const assignTeamRole = useCallback(
     (team: string, role: string, paneId: string | null) => {

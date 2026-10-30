@@ -24,7 +24,7 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AYA_DEV_HOME_DIRNAME, AYA_DEV_ON, AYA_DEV_VAR, AYA_HOME, AYA_HOME_DIRNAME } from "./paths";
-import { PS_ENV } from "./pty-host-registry";
+import { execPs, PS_ENV } from "./pty-host-registry";
 import { PTY_HOST_SCRIPT_NAME, RUN_AS_NODE_VALUE, RUN_AS_NODE_VAR } from "./pty-host-staleness";
 
 /** One row of the system process snapshot. */
@@ -147,15 +147,16 @@ export function selectOrphanCandidates(
   );
 }
 
+/** Probes may answer synchronously or with a promise; the sweep awaits both. */
 export interface SweepDeps {
-  snapshot: () => ProcRow[];
-  envProbe: (pid: number) => EnvProbe | null;
+  snapshot: () => ProcRow[] | Promise<ProcRow[]>;
+  envProbe: (pid: number) => EnvProbe | null | Promise<EnvProbe | null>;
   /** Fresh, direct leader-liveness check: true = leader CONFIRMED gone (ps ran
    *  and found no such pid), false = leader alive, null = probe failed
    *  (unknown). S2 kills only on a confirmed-gone leader - the snapshot alone
    *  could have silently dropped a LIVE host's row (parse hiccup, truncation)
    *  and its children must never be mistaken for orphans. */
-  leaderGone: (pgid: number) => boolean | null;
+  leaderGone: (pgid: number) => boolean | null | Promise<boolean | null>;
   kill: (pid: number, signal: NodeJS.Signals) => void;
   uid: number;
   selfPid: number;
@@ -171,7 +172,7 @@ export interface SweepSummary {
   truncated: number; // orphan candidates beyond the probe cap (retried next launch)
 }
 
-const defaultDeps = (): SweepDeps => ({
+export const defaultSweepDeps = (): SweepDeps => ({
   snapshot: readSnapshot,
   envProbe: readEnvProbe,
   leaderGone: readLeaderGone,
@@ -189,20 +190,44 @@ const defaultDeps = (): SweepDeps => ({
   homedir: os.homedir(),
 });
 
+/** defaultSweepDeps with every ps run asynchronously, our own group included: what the sweep uses by default. */
+export const defaultSweepDepsAsync = async (): Promise<SweepDeps> => {
+  let selfPgid = -1;
+  try {
+    selfPgid = (await readEnvProbeAsync(process.pid))?.pgid ?? -1;
+  } catch {
+    // -1: no group of ours to leave out, as in defaultSweepDeps
+  }
+  return {
+    snapshot: readSnapshotAsync,
+    envProbe: readEnvProbeAsync,
+    leaderGone: readLeaderGoneAsync,
+    kill: (pid, signal) => process.kill(pid, signal),
+    uid: process.getuid?.() ?? -1,
+    selfPid: process.pid,
+    selfPgid,
+    ayaHome: AYA_HOME,
+    homedir: os.homedir(),
+  };
+};
+
 /** Run the legacy sweep. Both passes re-verify every candidate with a fresh
  *  per-pid probe right before signaling; anything ambiguous is skipped. The
  *  stray-host pass can be disabled (passes.strayHosts=false) when the caller
  *  cannot positively identify the CURRENT socket host to exclude it - killing
  *  hosts without that exclusion would risk sweeping the live one. */
-export function sweepLegacyAyaProcesses(
+export async function sweepLegacyAyaProcesses(
   excludePids: ReadonlySet<number>,
-  deps: SweepDeps = defaultDeps(),
-  passes: { strayHosts: boolean } = { strayHosts: true },
-): SweepSummary {
+  depsIn?: SweepDeps,
+  passes: { strayHosts: boolean; cancelled?: () => boolean } = { strayHosts: true },
+): Promise<SweepSummary> {
   const summary: SweepSummary = { sweptHosts: [], sweptOrphans: [], skipped: [], truncated: 0 };
+  const deps = depsIn ?? (await defaultSweepDepsAsync());
   if (deps.uid < 0) return summary; // no uid (should not happen on mac/linux) -> do nothing
-  const rows = deps.snapshot();
-  if (rows.length === 0) return summary;
+  // The pass spans many awaited probes: once the caller says stop (the app is quitting), nothing more is signalled.
+  const cancelled = (): boolean => passes.cancelled?.() === true;
+  const rows = await deps.snapshot();
+  if (rows.length === 0 || cancelled()) return summary;
 
   // --- S1: stray PTY hosts (no registry record needed) ---
   const strayCandidates = passes.strayHosts
@@ -213,7 +238,9 @@ export function sweepLegacyAyaProcesses(
       })
     : [];
   for (const cand of strayCandidates) {
-    const probe = deps.envProbe(cand.pid);
+    const probe = await deps.envProbe(cand.pid);
+    if (cancelled()) return summary;
+    // From here to the kill: no await, so the probe just read is what justifies the signal.
     if (
       !probe ||
       probe.pgid !== cand.pid || // no longer (or never was) its own leader
@@ -248,7 +275,7 @@ export function sweepLegacyAyaProcesses(
   for (const cand of bounded) {
     let gone = leaderGoneCache.get(cand.pgid);
     if (gone === undefined) {
-      gone = deps.leaderGone(cand.pgid);
+      gone = await deps.leaderGone(cand.pgid);
       leaderGoneCache.set(cand.pgid, gone);
     }
     if (gone !== true) {
@@ -256,7 +283,10 @@ export function sweepLegacyAyaProcesses(
       summary.skipped.push(cand.pid);
       continue;
     }
-    const probe = deps.envProbe(cand.pid);
+    const probe = await deps.envProbe(cand.pid);
+    if (cancelled()) return summary;
+    // From here to the kill: no await (the leader check above is per group and may be cached; this per-pid
+    // probe is the fresh one).
     if (
       !probe ||
       probe.pgid !== cand.pgid || // moved groups since the snapshot (pid reuse)
@@ -279,10 +309,12 @@ export function sweepLegacyAyaProcesses(
 
 // --- Impure OS probes (injected in tests) ----------------------------------
 
+const SNAPSHOT_ARGS = ["-A", "-o", "uid=,pid=,ppid=,pgid=,command="];
+
 /** Full system snapshot: uid, pid, ppid, pgid, command per process. */
 export function readSnapshot(): ProcRow[] {
   try {
-    const out = execFileSync("ps", ["-A", "-o", "uid=,pid=,ppid=,pgid=,command="], {
+    const out = execFileSync("ps", SNAPSHOT_ARGS, {
       encoding: "utf8",
       env: PS_ENV,
       maxBuffer: PS_SNAPSHOT_MAX_BUFFER_BYTES,
@@ -293,34 +325,71 @@ export function readSnapshot(): ProcRow[] {
   }
 }
 
+/** readSnapshot without blocking the main process: the 30-60 ms full-table `ps` is the sweep's one big call. The
+ *  sweep re-verifies every candidate with a fresh per-pid probe, so a snapshot read just before it is as good as
+ *  one read inside it. */
+export async function readSnapshotAsync(): Promise<ProcRow[]> {
+  try {
+    return parseSnapshot(await execPs(SNAPSHOT_ARGS, { maxBuffer: PS_SNAPSHOT_MAX_BUFFER_BYTES }));
+  } catch {
+    return [];
+  }
+}
+
+const leaderArgs = (pid: number): string[] => ["-p", String(pid), "-o", "pid="];
+const envProbeArgs = (pid: number): string[] => ["eww", "-p", String(pid), "-o", "pgid=,command="];
+
+/** Kernel presence after a failed/empty ps: ESRCH is gone, EPERM present, anything else unknown. */
+function leaderAbsent(pid: number): boolean | null {
+  try{process.kill(pid,0);return false;}
+  catch(error){const code=(error as NodeJS.ErrnoException).code;return code==="ESRCH"?true:code==="EPERM"?false:null;}
+}
+
 /** Direct leader presence: true requires kernel ESRCH after failed/empty ps;
  * false means present (including EPERM), null means undecidable. */
 export function readLeaderGone(pid: number): boolean | null {
-  const absent=():boolean|null=>{
-    try{process.kill(pid,0);return false;}
-    catch(error){const code=(error as NodeJS.ErrnoException).code;return code==="ESRCH"?true:code==="EPERM"?false:null;}
-  };
   try {
-    const out = execFileSync("ps", ["-p", String(pid), "-o", "pid="], {
+    const out = execFileSync("ps", leaderArgs(pid), {
       encoding: "utf8",
       env: PS_ENV,
     }).trim();
-    return out ? false : absent();
-  } catch {return absent();}
+    return out ? false : leaderAbsent(pid);
+  } catch {return leaderAbsent(pid);}
+}
+
+/** readLeaderGone without blocking: the kernel check runs right after ps returns, as there. */
+export async function readLeaderGoneAsync(pid: number): Promise<boolean | null> {
+  let out: string;
+  try {
+    out = (await execPs(leaderArgs(pid))).trim();
+  } catch {return leaderAbsent(pid);}
+  return out ? false : leaderAbsent(pid);
+}
+
+function parseEnvProbe(raw: string): EnvProbe | null {
+  const m = raw.trim().match(/^\s*(\d+)\s+(.+)$/s);
+  if (!m) return null;
+  return { pgid: Number(m[1]), commandWithEnv: m[2] };
 }
 
 /** Per-pid probe: current pgid + command INCLUDING the environment (`ps eww`).
  *  Null when the pid is gone or ps failed - callers must skip, never kill. */
 export function readEnvProbe(pid: number): EnvProbe | null {
   try {
-    const out = execFileSync("ps", ["eww", "-p", String(pid), "-o", "pgid=,command="], {
+    return parseEnvProbe(execFileSync("ps", envProbeArgs(pid), {
       encoding: "utf8",
       env: PS_ENV,
       maxBuffer: PS_ENV_PROBE_MAX_BUFFER_BYTES,
-    }).trim();
-    const m = out.match(/^\s*(\d+)\s+(.+)$/s);
-    if (!m) return null;
-    return { pgid: Number(m[1]), commandWithEnv: m[2] };
+    }));
+  } catch {
+    return null;
+  }
+}
+
+/** readEnvProbe without blocking: same ps, same buffer cap, null on any failure. */
+export async function readEnvProbeAsync(pid: number): Promise<EnvProbe | null> {
+  try {
+    return parseEnvProbe(await execPs(envProbeArgs(pid), { maxBuffer: PS_ENV_PROBE_MAX_BUFFER_BYTES }));
   } catch {
     return null;
   }

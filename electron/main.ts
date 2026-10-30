@@ -112,7 +112,7 @@ import { PtyHostClient, waitForExit } from "./pty-host-client";
 import { MAX_PTY_PANES, paneLimitFailureMessage } from "./pty-pane-limits";
 import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
-import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
+import { liveHostRecordsAsync, reapStaleHostRecords } from "./pty-host-registry";
 import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { createPtyHostHealth, probeSocketPid } from "./pty-host-health";
 import { HOOK_VIA } from "./constants";
@@ -145,7 +145,7 @@ import {
   validateLocalSummaryRequest,
   validateOllamaModelName,
 } from "./aya-intelligence";
-import { restartDialog } from "./native-ui-text";
+import { quietWhenTesting, restartDialog } from "./native-ui-text";
 import { UPDATE_SPAWN_REFUSAL } from "./update-spawn";
 import type {
   ControlStatusUpdate,
@@ -405,7 +405,8 @@ const { EXPECTED_HOST_VERSION, handleStaleHost, hostHealth, restartHostFromWindo
   setStaleMenuIcon: () => setStaleMenuIcon(applicationMenuDeps),
   socketExists: () => pathExists(PTY_HOST_SOCKET_PATH),
   probeSocket: () => probeSocketPid(PTY_HOST_SOCKET_PATH),
-  liveRecords: () => liveHostRecords(PTY_HOST_SCRIPT),
+  liveRecords: () => liveHostRecordsAsync(PTY_HOST_SCRIPT),
+  processIdentity: (pid) => ownerProcessStartIdentity(pid),
   kill: (pid, signal) => process.kill(pid, signal),
   waitForExit,
 });
@@ -563,7 +564,7 @@ const updates = createUpdates({
   shell: externalShell,
   notifications: {
     isSupported: () => Notification.isSupported(),
-    create: (options) => new Notification(options),
+    create: (options) => new Notification(quietWhenTesting(options, IS_E2E_HEADLESS)),
   },
   relaunchDeps,
   askRestart,
@@ -875,7 +876,7 @@ function registerIpc(): TeamRunner {
     platform: process.platform,
     notifications: {
       isSupported: () => Notification.isSupported(),
-      create: (options) => new Notification(options),
+      create: (options) => new Notification(quietWhenTesting(options, IS_E2E_HEADLESS)),
     },
     shell: externalShell,
     systemPreferences,
@@ -1039,7 +1040,7 @@ app.whenReady().then(async () => {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
     const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
     keepReplacedBuildHost ||= ptyHost.hasCompletedReplacedBuildHandover;
-    const summary = reapStaleHostRecords(
+    const summary = await reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       PTY_HOST_SCRIPT,
       undefined,
@@ -1214,7 +1215,10 @@ app.whenReady().then(async () => {
             );
           }
         }
-        const summary = sweepLegacyAyaProcesses(exclude, undefined, { strayHosts });
+        if (appQuitting) return;
+        // Every ps runs asynchronously; the sweep stops signalling once the app starts quitting.
+        // Logged even if a quit began meanwhile: whatever it killed before stopping is worth the line.
+        const summary = await sweepLegacyAyaProcesses(exclude, undefined, { strayHosts, cancelled: () => appQuitting });
         if (summary.sweptHosts.length > 0 || summary.sweptOrphans.length > 0) {
           console.log(
             `[aya] legacy sweep: killed ${summary.sweptHosts.length} stray host group(s) ${JSON.stringify(summary.sweptHosts)} + ${summary.sweptOrphans.length} orphaned terminal process(es)`,

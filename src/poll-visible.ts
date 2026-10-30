@@ -9,14 +9,15 @@ export const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
 export function pollVisible(refresh: () => void, intervalMs: number): () => void {
   refresh();
   const id = window.setInterval(() => {
-    if (!document.hidden) refresh();
+    if (typeof document === "undefined" || !document.hidden) refresh();
   }, intervalMs);
   const onVisible = () => {
-    if (!document.hidden) refresh();
+    if (typeof document === "undefined" || !document.hidden) refresh();
   };
-  document.addEventListener("visibilitychange", onVisible);
+  const doc = typeof document !== "undefined" ? document : undefined;
+  doc?.addEventListener?.("visibilitychange", onVisible);
   return () => {
     window.clearInterval(id);
-    document.removeEventListener("visibilitychange", onVisible);
+    doc?.removeEventListener?.("visibilitychange", onVisible);
   };
 }

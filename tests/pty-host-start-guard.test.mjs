@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 fs.mkdirSync('test-results',{recursive:true});const home=fs.mkdtempSync(path.resolve('test-results/start-proof-'));
 process.env.AYA_HOME=home;process.env.HOME=home;
-const {hostCreationProof}=require('../dist-electron/pty-host-start-guard.js');
+const {hostCreationProof,hostCreationPermit}=require('../dist-electron/pty-host-start-guard.js');
 const {readProcInfo}=require('../dist-electron/pty-host-registry.js');
 const {PtyHostClient}=require('../dist-electron/pty-host-client.js');
 const registry=path.join(home,'pty-hosts'),ownerDir=path.join(home,'pty-owner'),ownerFile=path.join(ownerDir,'record.json');
@@ -18,6 +18,15 @@ function record(pid=process.pid,startTime=readProcInfo(pid).startTime){
  fs.writeFileSync(file,JSON.stringify({pid,pgid:pid,startTime,version:'test',scriptHash:'a'.repeat(64),nonce:'a'.repeat(16)}),{mode:0o600});return file;
 }
 const observation=(alive,startTime,probeFailed=false)=>({alive,startTime,probeFailed,command:null});
+const realExecFile=childProcess.execFile,execSync=childProcess.execFileSync;
+/** One fake ps for both readers: impl's return is stdout and its throw the failure; the async form answers on a later
+ *  turn, as a real ps would. Returns the restore function. */
+function fakePs(impl){
+ const exec=childProcess.execFileSync;
+ childProcess.execFileSync=(...args)=>impl(...args);
+ childProcess.execFile=(command,args,options,callback)=>{let out,error=null;try{out=impl(command,args,options);}catch(e){error=e;}setImmediate(()=>error?callback(error,'',''):callback(null,out,''));return {pid:0};};
+ return ()=>{childProcess.execFileSync=exec;childProcess.execFile=realExecFile;};
+}
 test('creation has three states; only verified gone/reused records and an absent/empty registry allow it',()=>{
  reset();assert.equal(hostCreationProof().state,'gone');const file=record();
  for(const [info,expected] of [[observation(true,'same'),'alive'],[observation(false,null),'gone'],[observation(true,'other'),'gone'],[observation(false,null,true),'unknown'],[observation(true,null),'unknown']]){
@@ -46,14 +55,14 @@ test('read failures, malformed/private-file failures and incomplete temporary re
 test('a recorded live PID followed by ps EAGAIN is unknown for both absent and refused sockets, with no start attempt',async()=>{
  for(const code of ['ENOENT','ECONNREFUSED']){
   reset();record();assert.equal(hostCreationProof().state,'alive');let starts=0;
-  const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),exec=childProcess.execFileSync;
+  const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let restore=()=>{};
   client.openSocket=async()=>{throw Object.assign(Error('fixture socket absent'),{code});};client.startHost=()=>{starts++;};
   try{
-   childProcess.execFileSync=()=>{throw Object.assign(Error('injected ps failure'),{code:'EAGAIN'});};
-   assert.equal(hostCreationProof().state,'unknown');
+   restore=fakePs(()=>{throw Object.assign(Error('injected ps failure'),{code:'EAGAIN'});});
+   assert.equal(hostCreationProof().state,'unknown');assert.equal((await hostCreationPermit()).state,'unknown');
    await assert.rejects(client.connectWithHostStart(),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state==='unknown');
    assert.equal(starts,0);assert.equal(fs.existsSync(path.join(home,'pty-host-auth')),false);
-  }finally{childProcess.execFileSync=exec;client.dispose();}
+  }finally{restore();client.dispose();}
  }
 });
 test('absent/refused socket with a proven live record or unreadable registry never reaches startHost',async()=>{
@@ -88,17 +97,17 @@ test('the final startHost check precedes unlinking the socket and forking',()=>{
 test('spawn maps live and unknown start refusals to one friendly disconnected state without start or unlink',async()=>{
  for(const code of ['ENOENT','ECONNREFUSED'])for(const unknown of [false,true]){
   reset();record();const socket=path.join(home,'pty-host.sock');fs.writeFileSync(socket,'kept-socket-inode');const before=fs.statSync(socket);
-  const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),exec=childProcess.execFileSync,remove=fs.rmSync;let starts=0,unlinks=0;const events=[];
+  const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),remove=fs.rmSync;let starts=0,unlinks=0,restore=()=>{};const events=[];
   const sink={isDestroyed:()=>false,send:(_channel,event)=>events.push(event)};client.attachWebContents(sink);
   client.openSocket=async()=>{throw Object.assign(Error('injected socket failure'),{code});};client.startHost=()=>{starts++;throw Error('must not start');};
   try{
    fs.rmSync=(file,...args)=>{if(file===socket)unlinks++;return remove(file,...args);};
-   if(unknown)childProcess.execFileSync=()=>{throw Object.assign(Error('injected ps EAGAIN'),{code:'EAGAIN'});};
+   if(unknown)restore=fakePs(()=>{throw Object.assign(Error('injected ps EAGAIN'),{code:'EAGAIN'});});
    await assert.rejects(client.spawn({ptyId:'blocked',command:'cat',cwd:home,cols:80,rows:24}),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.message==='The terminal host is disconnected or recovering. This request was not sent.');
    assert.equal(events.length,1);assert.equal(events[0].type,'disconnected');assert.equal(events[0].ptyId,'blocked');assert.match(events[0].reason,/inventory could not be verified/);
    const late=[];client.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>late.push(event)});assert.deepEqual(late,events);
    assert.equal(starts,0);assert.equal(unlinks,0);assert.equal(fs.statSync(socket).ino,before.ino);assert.equal(fs.readFileSync(socket,'utf8'),'kept-socket-inode');
-  }finally{childProcess.execFileSync=exec;fs.rmSync=remove;client.dispose();fs.unlinkSync(socket);}
+  }finally{restore();fs.rmSync=remove;client.dispose();fs.unlinkSync(socket);}
  }
 });
 
@@ -129,23 +138,24 @@ test('a live shutdown candidate that becomes unknown is never treated as gone du
 
 test('actual client.dispose interrupts the default shutdown grace before any host creation',async()=>{
  reset();fs.rmSync(path.join(home,'pty-host-auth'),{recursive:true,force:true});record();const client=new PtyHostClient('unused');let starts=0,ready;
- const began=new Promise(resolve=>{ready=resolve;}),exec=childProcess.execFileSync;
+ const began=new Promise(resolve=>{ready=resolve;});
  client.openSocket=async()=>{throw Object.assign(Error('missing'),{code:'ENOENT'});};client.startHost=()=>{starts++;};
  let timeout;
  try{
-  childProcess.execFileSync=(...args)=>{const result=exec(...args);ready();return result;};
+  childProcess.execFile=(...args)=>{const child=realExecFile(...args);ready();return child;};
   const starting=client.connectWithHostStart(),rejected=assert.rejects(starting,/disposed/);await began;client.dispose();
   await Promise.race([rejected,new Promise((_resolve,reject)=>{timeout=setTimeout(()=>reject(Error('dispose did not interrupt the three-second grace')),500);})]);
   assert.equal(starts,0);assert.equal(fs.existsSync(path.join(home,'pty-host-auth')),false);
- }finally{clearTimeout(timeout);client.dispose();client.startupCancelled.abort();childProcess.execFileSync=exec;}
+ }finally{clearTimeout(timeout);client.dispose();client.startupCancelled.abort();childProcess.execFile=realExecFile;}
 });
 test('default grace passes the decreasing remaining deadline to its actual ps caller',async()=>{
- reset();record();const {waitForHostShutdown}=require('../dist-electron/pty-host-start-guard.js'),cancelled=new AbortController(),exec=childProcess.execFileSync,timeouts=[];let now=0;
+ reset();record();const {waitForHostShutdown}=require('../dist-electron/pty-host-start-guard.js'),cancelled=new AbortController(),timeouts=[];let now=0;
  try{
-  childProcess.execFileSync=(...args)=>{timeouts.push(args[2].timeout);return exec(...args);};
+  childProcess.execFileSync=()=>{throw Error('the shutdown grace must not block on ps');};
+  childProcess.execFile=(...args)=>{timeouts.push([args[2].timeout,args[2].killSignal]);return realExecFile(...args);};
   await assert.rejects(waitForHostShutdown(path.join(home,'pty-host.sock'),cancelled.signal,{now:()=>now,wait:async()=>{now+=150;if(timeouts.length>=2)cancelled.abort();}}),/cancelled/);
-  assert.deepEqual(timeouts,[3000,2850]);
- }finally{cancelled.abort();childProcess.execFileSync=exec;}
+  assert.deepEqual(timeouts,[[3000,'SIGKILL'],[2850,'SIGKILL']]);
+ }finally{cancelled.abort();childProcess.execFileSync=execSync;childProcess.execFile=realExecFile;}
 });
 
 test('startHost repeats the absence proof after stderr open immediately before fork',()=>{
@@ -160,13 +170,93 @@ test('startHost repeats the absence proof after stderr open immediately before f
 
 test('failed or empty ps for this still-live fixture cannot reach the cold start branch',async()=>{
  for(const code of ['ENOENT','ECONNREFUSED'])for(const status of [1,2,'empty']){
-  reset();record();const exec=childProcess.execFileSync;let starts=0;
+  reset();record();let starts=0,restore=()=>{};
   const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
   client.openSocket=async()=>{throw Object.assign(Error('fixture socket absent'),{code});};client.startHost=()=>{starts++;throw Error('must not start');};
   try{
-   childProcess.execFileSync=()=>{if(status==='empty')return '';throw Object.assign(Error('injected ps nonzero'),{status});};
+   restore=fakePs(()=>{if(status==='empty')return '';throw Object.assign(Error('injected ps nonzero'),{status});});
    await assert.rejects(client.connectWithHostStart(),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state==='unknown');
    assert.equal(starts,0);assert.doesNotThrow(()=>process.kill(process.pid,0));
-  }finally{childProcess.execFileSync=exec;client.dispose();}
+  }finally{restore();client.dispose();}
  }
+});
+
+// --- the async permit startHost confirms ----------------------------------------------------------------------------
+
+test('the async permit gives the sync proof\'s verdicts, with sync or async probes, and fails closed on a throwing probe',async()=>{
+ reset();assert.equal((await hostCreationPermit()).state,'gone');const file=record();
+ for(const [info,expected] of [[observation(true,'same'),'alive'],[observation(false,null),'gone'],[observation(true,'other'),'gone'],[observation(false,null,true),'unknown'],[observation(true,null),'unknown']]){
+  fs.writeFileSync(file,JSON.stringify({pid:process.pid,pgid:process.pid,startTime:'same'}));
+  assert.equal(hostCreationProof(registry,()=>info).state,expected);
+  assert.equal((await hostCreationPermit(registry,()=>info)).state,expected);
+  assert.equal((await hostCreationPermit(registry,async()=>info)).state,expected);
+ }
+ assert.equal((await hostCreationPermit(registry,async()=>{throw Error('injected');})).state,'unknown');
+ fs.mkdirSync(ownerDir,{mode:0o700});fs.writeFileSync(ownerFile,JSON.stringify({jsPid:process.pid,jsStartTime:'same'}),{mode:0o600});
+ assert.equal((await hostCreationPermit(registry,async pid=>pid===process.pid?observation(true,'same'):observation(false,null))).state,'alive');
+});
+test('failed, empty, timed-out or overflowing async ps keeps a live record unknown',async()=>{
+ for(const failure of ['EAGAIN','empty','timeout','maxBuffer']){
+  reset();record();const restore=fakePs(()=>{
+   if(failure==='empty')return '';
+   if(failure==='timeout')throw Object.assign(Error('timed out'),{killed:true,signal:'SIGKILL'});
+   if(failure==='maxBuffer')throw Object.assign(Error('stdout maxBuffer length exceeded'),{code:'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'});
+   throw Object.assign(Error('injected'),{code:'EAGAIN'});
+  });
+  try{const permit=await hostCreationPermit();assert.equal(permit.state,'unknown',failure);assert.equal(permit.confirm().state,'unknown',failure);}
+  finally{restore();}
+ }
+});
+test('the permit probe lets the event loop run',async()=>{
+ reset();record();let ticks=0;const timer=setInterval(()=>ticks++,1);
+ try{const permit=await hostCreationPermit(registry,pid=>new Promise(resolve=>setTimeout(()=>resolve(readProcInfo(pid)),20)));assert.equal(permit.state,'alive');assert.ok(ticks>0);}
+ finally{clearInterval(timer);}
+});
+test('permit.confirm is spawn-free and turns gone into unknown for any new, rewritten or newly present record',async()=>{
+ const gone=async()=>{const permit=await hostCreationPermit(registry,async()=>observation(false,null));assert.equal(permit.state,'gone');return permit;};
+ const changes={
+  'new host record':()=>record(process.pid,'later'),
+  'rewritten record':()=>{const file=path.join(registry,'4242.json');const payload=fs.readFileSync(file);fs.unlinkSync(file);fs.writeFileSync(file,payload,{mode:0o600});},
+  'registry created':()=>{fs.rmSync(registry,{recursive:true,force:true});fs.mkdirSync(registry,{mode:0o700});},
+  'owner directory created':()=>fs.mkdirSync(ownerDir,{mode:0o700}),
+  'owner record created':()=>{fs.writeFileSync(ownerFile,JSON.stringify({jsPid:process.pid,jsStartTime:'same'}),{mode:0o600});},
+ };
+ for(const [name,change] of Object.entries(changes)){
+  reset();
+  if(name!=='registry created')record(4242,'old');
+  if(name==='registry created')fs.rmSync(registry,{recursive:true,force:true});
+  if(name==='owner record created')fs.mkdirSync(ownerDir,{mode:0o700});
+  const permit=await gone();
+  const restore=fakePs(()=>{throw Error('confirm must not spawn ps');});
+  try{assert.equal(permit.confirm().state,'gone',`${name}: unchanged`);change();assert.equal(permit.confirm().state,'unknown',name);}
+  finally{restore();}
+ }
+});
+test('startHost with a permit confirms after stderr open, right before fork, without a ps',async()=>{
+ reset();record(4242,'old');const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));client.hostAuthKey=Buffer.alloc(32);
+ const permit=await hostCreationPermit(registry,async()=>observation(false,null));assert.equal(permit.state,'gone');
+ const open=fs.openSync,spawn=childProcess.spawn;let opened=false,spawns=0;const restore=fakePs(()=>{throw Error('startHost with a permit must not spawn ps');});
+ try{
+  fs.openSync=(file,...args)=>{const fd=open(file,...args);if(String(file)===path.join(home,'pty-host.stderr.log')&&!opened){opened=true;record(process.pid,'live');}return fd;};
+  childProcess.spawn=()=>{spawns++;throw Error('fork passed a newly live record');};
+  assert.throws(()=>client.startHost(undefined,permit),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state==='unknown'&&!('confirm' in error.proof));
+  assert.equal(opened,true);assert.equal(spawns,0);
+  // Unchanged inventory: confirm passes both checks and the fork is reached in the same synchronous call.
+  reset();record(4242,'old');const fresh=await hostCreationPermit(registry,async()=>observation(false,null));
+  childProcess.spawn=()=>{spawns++;throw Error('reached fork');};
+  assert.throws(()=>client.startHost(undefined,fresh),/reached fork/);assert.equal(spawns,1);
+ }finally{fs.openSync=open;childProcess.spawn=spawn;restore();client.dispose();reset();}
+});
+test('a live host recorded while the cold-start permit probes ps blocks the start before unlink or fork',async()=>{
+ reset();const ended=childProcess.spawnSync(process.execPath,['-e','process.exit(0)'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});record(ended.pid,'old');
+ const socket=path.join(home,'pty-host.sock');fs.writeFileSync(socket,'kept');
+ const guard=require('../dist-electron/pty-host-start-guard.js'),wait=guard.waitForHostShutdown,spawn=childProcess.spawn;let spawns=0;
+ const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ client.openSocket=async()=>{throw Object.assign(Error('fixture socket absent'),{code:'ENOENT'});};
+ const restore=fakePs(()=>{record(process.pid,'live');return '';}); // the ps that reads the old pid answers after a live host recorded itself
+ try{
+  guard.waitForHostShutdown=async()=>{};childProcess.spawn=()=>{spawns++;throw Error('unexpected fork');};
+  await assert.rejects(client.connectWithHostStart(),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state==='unknown');
+  assert.equal(spawns,0);assert.equal(fs.readFileSync(socket,'utf8'),'kept');
+ }finally{guard.waitForHostShutdown=wait;childProcess.spawn=spawn;restore();client.dispose();fs.rmSync(socket,{force:true});reset();}
 });

@@ -39,6 +39,7 @@ const require = createRequire(import.meta.url);
 const cp = require("node:child_process");
 const crypto = require("node:crypto");
 const realExecFileSync = cp.execFileSync;
+const realExecFile = cp.execFile;
 
 const home = mkdtempSync(join(tmpdir(), "aya-pty-host-registry-more-"));
 process.env.AYA_HOME = home;
@@ -67,7 +68,9 @@ const {
   readHostRecords,
   removeHostRecord,
   readProcInfo,
+  readProcInfoAsync,
   listProcs,
+  listProcsAsync,
   ownStartTime,
   ownPgid,
   reapStaleHostRecords,
@@ -94,6 +97,24 @@ function fakePs(t, impl) {
   cp.execFileSync = impl;
   t.after(() => {
     cp.execFileSync = realExecFileSync;
+  });
+}
+
+/** Replaces execFile for this test only: `impl` gets (cmd, args, opts); its return is stdout and a throw is the
+ *  callback's error, both delivered on a later turn as a real ps would. */
+function fakePsAsync(t, impl) {
+  cp.execFile = (cmd, args, opts, cb) => {
+    let out, error = null;
+    try {
+      out = impl(cmd, args, opts);
+    } catch (e) {
+      error = e;
+    }
+    setImmediate(() => (error ? cb(error, "", "") : cb(null, out, "")));
+    return { pid: 0 };
+  };
+  t.after(() => {
+    cp.execFile = realExecFile;
   });
 }
 
@@ -351,14 +372,14 @@ test(
 
 test(
   "reap: a record whose file name disagrees with its pid never deletes another host's record",
-  (t) => {
+  async (t) => {
     const dir = freshDir(t);
     const live = { pid: 7001, pgid: 7001, ...EXPECTED, startTime: "T-live", nonce: "live" };
     writeHostRecord(live, dir);
     // e.g. a copy left by a restore, or a host's file renamed by hand
     writeFileSync(join(dir, "5000.json"), JSON.stringify({ ...live, startTime: "T-old", nonce: "copy" }), { mode: 0o600 });
     const { deps, killed } = fakeDeps({ 7001: liveAs("T-live") });
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, deps);
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, deps);
     assert.deepEqual(killed, []);
     assert.ok(summary.keptCompatible.includes(7001));
     assert.ok(existsSync(join(dir, "7001.json")), "the live compatible host lost its record");
@@ -407,7 +428,7 @@ test("two writer processes and a reader racing on one dir: every record stays wh
 test(
   "reap: GC does not delete a record a new host rewrote while the reaper probed (pid reused)",
   { todo: "known, not fixed: needs the pid reused by a new host within the milliseconds between probe and unlink" },
-  (t) => {
+  async (t) => {
     const dir = freshDir(t);
     const old = { pid: 8100, pgid: 8100, version: "0.7.0", scriptHash: "old", startTime: "T-old", nonce: "old" };
     const fresh = { pid: 8100, pgid: 8100, ...EXPECTED, startTime: "T-new", nonce: "new" };
@@ -423,7 +444,7 @@ test(
         },
       },
     );
-    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, deps);
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, deps);
     assert.deepEqual(killed, [], "the reused pid is never signalled");
     assert.deepEqual(summary.gc, [8100]);
     assert.deepEqual(readHostRecords(dir), [fresh], "the new host's record was deleted with the old one's");
@@ -432,7 +453,7 @@ test(
 
 // --- reaper orchestration ------------------------------------------------------------
 
-test("reap: the system-wide ps snapshot runs only when a kill happens, and once per pass", (t) => {
+test("reap: the system-wide ps snapshot runs only when a kill happens, and once per pass", async (t) => {
   const keep = { pid: 7000, pgid: 7000, ...EXPECTED, startTime: "T-keep", nonce: "k" };
   const dead = { pid: 7002, pgid: 7002, ...EXPECTED, startTime: "T-dead", nonce: "d" };
   const staleA = { pid: 7003, pgid: 7003, version: "0.7.0", scriptHash: "old", startTime: "T-a", nonce: "a" };
@@ -443,14 +464,14 @@ test("reap: the system-wide ps snapshot runs only when a kill happens, and once 
   writeHostRecord(keep, quiet);
   writeHostRecord(dead, quiet);
   const q = fakeDeps(infos);
-  const qs = reapStaleHostRecords(EXPECTED, SCRIPT, quiet, q.deps);
+  const qs = await reapStaleHostRecords(EXPECTED, SCRIPT, quiet, q.deps);
   assert.deepEqual([qs.keptCompatible, qs.gc], [[7000], [7002]]);
   assert.equal(q.snapshots(), 0, "the keep/GC path pays no system-wide ps");
 
   const busy = freshDir(t);
   for (const r of [keep, staleA, staleB]) writeHostRecord(r, busy);
   const b = fakeDeps(infos);
-  const bs = reapStaleHostRecords(EXPECTED, SCRIPT, busy, b.deps);
+  const bs = await reapStaleHostRecords(EXPECTED, SCRIPT, busy, b.deps);
   assert.deepEqual(bs.reaped.sort((x, y) => x - y), [7003, 7004]);
   assert.deepEqual(b.killed.map(([pid]) => pid).sort((x, y) => x - y), [-7004, -7003]);
   assert.equal(b.snapshots(), 1, "two kills share one snapshot");
@@ -578,7 +599,7 @@ test("reap (default deps): a verified stale host's whole group is SIGKILLed and 
   assert.equal(readHostRecords().length, 1, "written to AYA_HOME/pty-hosts by default");
   const kills = guardKill(t, new Set([-host.pid]));
 
-  const summary = reapStaleHostRecords(EXPECTED, host.script);
+  const summary = await reapStaleHostRecords(EXPECTED, host.script);
 
   assert.deepEqual(kills, [[-host.pid, "SIGKILL"]], "one group kill, nothing else");
   assert.deepEqual(summary.reaped, [host.pid]);
@@ -598,7 +619,7 @@ test("reap (default deps): a same-build host is kept, a record with a foreign st
   writeHostRecord({ pid: reused.pid, pgid: reused.pid, version: "0.7.0", scriptHash: "old", startTime: "Thu Jan  1 00:00:00 1970", nonce: "r" });
   const kills = guardKill(t, new Set());
 
-  const summary = reapStaleHostRecords(EXPECTED, same.script);
+  const summary = await reapStaleHostRecords(EXPECTED, same.script);
 
   assert.deepEqual(kills, []);
   assert.deepEqual(summary.keptCompatible, [same.pid]);
@@ -621,4 +642,154 @@ test('failed ps requires independent ESRCH; denied or undecidable kernel presenc
   process.kill=(pid,signal)=>{calls.push([pid,signal]);throw Object.assign(Error('injected kernel result'),{code});};
   assert.deepEqual(readProcInfo(4242),{alive:code==='EPERM',probeFailed:code!=='ESRCH',startTime:null,command:null});
  }assert.deepEqual(calls,[[4242,0],[4242,0],[4242,0]]);}finally{process.kill=kill;}
+});
+
+// --- the async readers the startup reap uses -------------------------------------
+
+test("readProcInfoAsync and listProcsAsync give what the sync readers give, live and gone", async (t) => {
+  const host = await startFakeHost(t, { detached: false });
+  assert.deepEqual(await readProcInfoAsync(host.pid), readProcInfo(host.pid));
+  assert.deepEqual(await readProcInfoAsync(process.pid), readProcInfo(process.pid));
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((r) => child.on("exit", r));
+  const gone = { alive: false, probeFailed: false, startTime: null, command: null };
+  assert.deepEqual(readProcInfo(child.pid), gone);
+  assert.deepEqual(await readProcInfoAsync(child.pid), gone);
+  const rows = await listProcsAsync();
+  assert.ok(rows.some((r) => r.pid === process.pid && r.ppid === process.ppid));
+  assert.ok(rows.some((r) => r.pid === host.pid && r.ppid === process.pid));
+});
+
+test("readProcInfoAsync and listProcsAsync leave the event loop running while ps runs", async () => {
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 0);
+  try {
+    let before = ticks;
+    await readProcInfoAsync(process.pid);
+    assert.ok(ticks > before, "timers fired during the per-pid probe");
+    before = ticks;
+    await listProcsAsync();
+    assert.ok(ticks > before, "timers fired during the snapshot");
+  } finally {
+    clearInterval(timer);
+  }
+});
+
+test("readProcInfoAsync: a failing or empty ps stays fail-closed, under the same ps arguments and environment", async (t) => {
+  const calls = [];
+  let mode = "spawn-error";
+  fakePsAsync(t, (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    if (mode === "spawn-error") throw spawnError();
+    if (mode === "timeout") throw Object.assign(new Error("timed out"), { killed: true, signal: "SIGKILL" });
+    return mode === "empty" ? "\n" : "Wed Jul  2 10:00:00 2026   /Apps/Aya /x/pty-host.js\n";
+  });
+  assert.deepEqual(await readProcInfoAsync(process.pid), { alive: true, probeFailed: true, startTime: null, command: null });
+  mode = "timeout";
+  assert.deepEqual(await readProcInfoAsync(process.pid, 50), { alive: true, probeFailed: true, startTime: null, command: null });
+  assert.equal(calls[1].opts.timeout, 50);
+  assert.equal(calls[1].opts.killSignal, "SIGKILL");
+  const kill = process.kill;
+  let kernel = "ESRCH";
+  try {
+    process.kill = (pid, signal) => {
+      assert.equal(pid, 4242);
+      assert.equal(signal, 0);
+      if (kernel) throw Object.assign(Error("fixture"), { code: kernel });
+      return true;
+    };
+    mode = "empty";
+    assert.deepEqual(await readProcInfoAsync(4242), { alive: false, probeFailed: false, startTime: null, command: null });
+    kernel = "EPERM";
+    assert.deepEqual(await readProcInfoAsync(4242), { alive: true, probeFailed: true, startTime: null, command: null });
+    kernel = "EAGAIN";
+    assert.deepEqual(await readProcInfoAsync(4242), { alive: false, probeFailed: true, startTime: null, command: null });
+    kernel = null;
+    mode = "spawn-error";
+    assert.deepEqual(await readProcInfoAsync(4242), { alive: true, probeFailed: true, startTime: null, command: null });
+  } finally {
+    process.kill = kill;
+  }
+  mode = "ok";
+  assert.deepEqual(await readProcInfoAsync(4242), {
+    alive: true,
+    probeFailed: false,
+    startTime: "Wed Jul  2 10:00:00 2026",
+    command: "/Apps/Aya /x/pty-host.js",
+  });
+  for (const c of calls) {
+    assert.equal(c.cmd, "ps");
+    assert.deepEqual(c.args.slice(2), ["-o", "lstart=,command="]);
+    assert.equal(c.opts.env.TZ, "UTC");
+    assert.equal(c.opts.env.LC_ALL, "C");
+  }
+  assert.equal(calls[0].opts.timeout, undefined, "no timeout unless asked for");
+});
+
+test("listProcsAsync: a failing ps -> []", async (t) => {
+  fakePsAsync(t, () => {
+    throw spawnError();
+  });
+  assert.deepEqual(await listProcsAsync(), []);
+});
+
+test("reap with async probes: each kill follows a fresh identity probe in the same turn, after the snapshot", async (t) => {
+  const staleA = { pid: 7003, pgid: 7003, version: "0.7.0", scriptHash: "old", startTime: "T-a", nonce: "a" };
+  const staleB = { pid: 7004, pgid: 7004, version: "0.7.0", scriptHash: "old", startTime: "T-b", nonce: "b" };
+  const dir = freshDir(t);
+  for (const r of [staleA, staleB]) writeHostRecord(r, dir);
+  const events = [];
+  // `turn` counts event-loop turns: a kill on a later turn than the probe that justified it means an await
+  // (a gap another process could use) came between them.
+  let turn = 0;
+  let spinning = true;
+  const spin = () => {
+    turn++;
+    if (spinning) setImmediate(spin);
+  };
+  setImmediate(spin);
+  t.after(() => (spinning = false));
+  const later = (value) => new Promise((r) => setImmediate(() => r(value)));
+  let probeTurn = -1;
+  const { deps, killed } = fakeDeps({}, {
+    readProcInfo: async (pid) => {
+      const info = await later(liveAs(pid === 7003 ? "T-a" : "T-b"));
+      events.push(`probe ${pid}`);
+      probeTurn = turn;
+      return info;
+    },
+    listProcs: async () => {
+      const rows = await later([]);
+      events.push("snapshot");
+      return rows;
+    },
+    kill: (pid, sig) => {
+      assert.equal(turn, probeTurn, "no await between the verifying probe and the kill");
+      events.push(`kill ${pid}`);
+      killed.push([pid, sig]);
+    },
+  });
+  const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, deps);
+  const order = (x) => events.filter((e) => e.endsWith(x));
+  assert.deepEqual(order("7003"), ["probe 7003", "probe 7003", "kill -7003"], "re-probed after the snapshot");
+  assert.deepEqual(order("7004"), ["probe 7004", "kill -7004"]);
+  assert.ok(events.indexOf("snapshot") < events.lastIndexOf("probe 7003"));
+  assert.deepEqual(summary.reaped.sort((a, b) => a - b), [7003, 7004]);
+});
+
+test("reap with async probes: a host that died while the snapshot ran is GC'd unsignalled, a failed re-probe kept", async (t) => {
+  for (const [second, gc, skipped] of [
+    [{ alive: false, probeFailed: false, startTime: null, command: null }, [7003], []],
+    [{ alive: true, probeFailed: true, startTime: null, command: null }, [], [7003]],
+    [liveAs("T-reused"), [7003], []],
+  ]) {
+    const dir = freshDir(t);
+    writeHostRecord({ pid: 7003, pgid: 7003, version: "0.7.0", scriptHash: "old", startTime: "T-a", nonce: "a" }, dir);
+    let probes = 0;
+    const { deps, killed } = fakeDeps({}, { readProcInfo: async () => (++probes === 1 ? liveAs("T-a") : second) });
+    const summary = await reapStaleHostRecords(EXPECTED, SCRIPT, dir, deps);
+    assert.deepEqual(killed, []);
+    assert.deepEqual([summary.gc, summary.skipped, summary.reaped], [gc, skipped, []]);
+    assert.equal(readHostRecords(dir).length, skipped.length, "the record stays only when the probe failed");
+  }
 });

@@ -19,3 +19,8 @@ export function restartDialog(yes: string, text: string) {
     detail: printable(text),
   };
 }
+
+/** A hidden test run (AYA_E2E_HEADLESS) must not ding at whoever is at the machine: its notifications are silent. */
+export function quietWhenTesting<T extends { silent?: boolean }>(options: T, headless: boolean): T {
+  return headless ? { ...options, silent: true } : options;
+}

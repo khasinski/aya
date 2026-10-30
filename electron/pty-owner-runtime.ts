@@ -58,6 +58,11 @@ export class OwnerRuntime {
   private ending = false;
   private shutdownTask: Promise<void> | null = null;
   private ownerExit: Promise<number | null> | null = null;
+  // The spawned owner is unref'd so it never keeps this process alive. ps
+  // reports an exited, not yet reaped owner as "<defunct>" (not live) before
+  // libuv has read its SIGCHLD; awaiting ownerExit then waits on an unref'd
+  // handle, and with nothing else pending Node exits 0 mid-stop. Ref it first.
+  private refOwnerChild: (() => void) | null = null;
   get isStopping(): boolean { return !!this.shutdownTask; }
   pendingSpawns = 0;
   private retainedRestorations=0;
@@ -152,6 +157,7 @@ export class OwnerRuntime {
       });
       const pipe = child.stdio[3] as NodeJS.WritableStream;
       result.ownerExit = new Promise(resolve => child.once("exit", code => resolve(code)));
+      result.refOwnerChild = () => child.ref();
       pipe.on("error", () => {}); pipe.end(secret);
       let errorText = ""; child.stderr!.on("data", b => { errorText += String(b); });
       let timer: NodeJS.Timeout | undefined;
@@ -248,6 +254,7 @@ export class OwnerRuntime {
       if (Date.now() > deadline) throw new Error("PTY owner did not stop; its inventory was kept");
       await new Promise(resolve => setTimeout(resolve, 10));
     }
+    this.refOwnerChild?.(); // no-op once reaped; otherwise holds the loop until the exit status arrives
     await this.recoverRetainedGroups(this.ownerExit !== null && await this.ownerExit === 0);
     removeOwnerRecord(this.record);
     // The original recovery instance was orderly retired and its survivors

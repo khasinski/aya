@@ -11,7 +11,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useDragReorder } from "../hooks/useDragReorder";
-import { handleMenuNavigation, handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
+import { handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
 import type {
   GrokUsage,
   MonitoredSession,
@@ -21,6 +21,9 @@ import type {
 import type { SettingsTab } from "../settings-tabs";
 import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
+import { compactDir } from "../project-path";
+import { RecentProjectsMenu } from "./RecentProjectsMenu";
+import { ProjectContextMenu } from "./ProjectContextMenu";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
 const TAB_MIN_WIDTH_PX = 120;
@@ -79,14 +82,6 @@ interface Props {
   showUsageHarnessName: boolean;
 }
 
-function compactDir(directory: string, home: string): string {
-  if (!directory) return "";
-  if (!home) return directory;
-  if (directory === home) return "~";
-  if (directory.startsWith(home + "/")) return "~" + directory.slice(home.length);
-  return directory;
-}
-
 function TopBarImpl({
   projects,
   closedProjects,
@@ -122,14 +117,10 @@ function TopBarImpl({
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const recentFilterRef = useRef<HTMLInputElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
-  const recentRef = useRef<HTMLDivElement>(null);
   const sessionsRef = useRef<HTMLDivElement>(null);
   const tabMenuRef = useRef<HTMLDivElement>(null);
   const tabMenuOpenerRef = useRef<HTMLElement | null>(null);
-  const [showRecent, setShowRecent] = useState(false);
-  const [recentFilter, setRecentFilter] = useState("");
   const [showSessions, setShowSessions] = useState(false);
   // Right-click menu on a project tab (multi-window move). The other-windows
   // list is fetched when the menu opens, so labels are current.
@@ -222,43 +213,6 @@ function TopBarImpl({
         .sort((a, b) => b.updatedAt - a.updatedAt),
     [monitoredSessionsByProject],
   );
-  const normalizedRecentFilter = recentFilter.trim().toLowerCase();
-  const filteredClosedProjects = useMemo(
-    () =>
-      normalizedRecentFilter.length === 0
-        ? closedProjects
-        : closedProjects.filter((p) => {
-            const path = compactDir(p.directory, homeDir);
-            return (
-              p.name.toLowerCase().includes(normalizedRecentFilter) ||
-              path.toLowerCase().includes(normalizedRecentFilter) ||
-              p.directory.toLowerCase().includes(normalizedRecentFilter)
-            );
-          }),
-    [normalizedRecentFilter, closedProjects, homeDir],
-  );
-
-  useEffect(() => {
-    if (!showRecent) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!recentRef.current?.contains(e.target as Node)) setShowRecent(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [showRecent]);
-
-  useEffect(() => {
-    if (!showRecent) {
-      setRecentFilter("");
-      return;
-    }
-    const id = window.requestAnimationFrame(() => {
-      recentFilterRef.current?.focus();
-      recentFilterRef.current?.select();
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [showRecent]);
-
   useEffect(() => {
     if (!showSessions) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -573,80 +527,14 @@ function TopBarImpl({
             showHarnessName={showUsageHarnessName}
           />
         )}
-        <div className="aya-recent-projects" ref={recentRef}>
-          <button
-            className="aya-iconbtn"
-            title={
-              blockChrome
-                ? "Recent projects (close the open dialog first)"
-                : "Recent projects"
-            }
-            aria-label="Recent projects"
-            // Inline dropdown, not a modal — keep terminal focus (same reason
-            // as the usage chips); without this the folder toggle forces a
-            // re-click to resume typing.
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setShowRecent((v) => !v)}
-            disabled={blockChrome}
-            aria-haspopup="menu"
-            aria-expanded={showRecent}
-          >
-            <span style={{ fontFamily: "Material Symbols Outlined" }}>
-              folder_open
-            </span>
-          </button>
-          {showRecent && (
-            <div className="aya-recent-menu" role="menu">
-              <div className="aya-recent-menu-title">Recent projects</div>
-              {closedProjects.length > 0 && (
-                <div className="aya-recent-menu-filter">
-                  <span
-                    className="aya-recent-menu-filter-icon"
-                    style={{ fontFamily: "Material Symbols Outlined" }}
-                    aria-hidden="true"
-                  >
-                    search
-                  </span>
-                  <input
-                    ref={recentFilterRef}
-                    value={recentFilter}
-                    onChange={(e) => setRecentFilter(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        e.stopPropagation();
-                        setShowRecent(false);
-                      }
-                    }}
-                    placeholder="Filter projects"
-                    aria-label="Filter recent projects"
-                  />
-                </div>
-              )}
-              {closedProjects.length === 0 ? (
-                <div className="aya-recent-menu-empty">No closed projects</div>
-              ) : filteredClosedProjects.length === 0 ? (
-                <div className="aya-recent-menu-empty">No matching projects</div>
-              ) : (
-                filteredClosedProjects.map((p) => (
-                  <button
-                    key={p.slug}
-                    className="aya-recent-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setShowRecent(false);
-                      onOpenProject(p.slug);
-                    }}
-                  >
-                    <span className="aya-recent-menu-name">{p.name}</span>
-                    <span className="aya-recent-menu-path">
-                      {compactDir(p.directory, homeDir)}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </div>
+        <RecentProjectsMenu
+          closedProjects={closedProjects}
+          openProjects={projects}
+          homeDir={homeDir}
+          blockChrome={blockChrome}
+          onOpenProject={onOpenProject}
+          buttonClassName="aya-iconbtn"
+        />
         <button
           className="aya-iconbtn"
           title={
@@ -676,50 +564,27 @@ function TopBarImpl({
           onClose={onCloseWindow}
         />
       </div>
-      {tabMenu && (
-        <div
-          ref={tabMenuRef}
-          role="menu"
-          className="aya-context-menu"
-          style={{ left: tabMenu.x, top: tabMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onKeyDown={handleMenuNavigation}
-        >
-          {(() => {
-            const index = projects.findIndex((project) => project.slug === tabMenu.slug);
-            return (
-              <>
-                <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
-                  const slug = tabMenu.slug;
-                  setFocusProjectAfterMove({ slug, index: index - 1 });
-                  onReorderProjects(moveItem(projects.map((project) => project.slug), index, -1));
-                  closeTabMenu(false);
-                }}>Move left</button>
-                <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= projects.length - 1} className="aya-context-menu-item" onClick={() => {
-                  const slug = tabMenu.slug;
-                  setFocusProjectAfterMove({ slug, index: index + 1 });
-                  onReorderProjects(moveItem(projects.map((project) => project.slug), index, 1));
-                  closeTabMenu(false);
-                }}>Move right</button>
-                <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item aya-context-menu-item--danger" onClick={() => { onCloseProject(tabMenu.slug); closeTabMenu(); }}>Close project</button>
-              </>
-            );
-          })()}
-          {onMoveProjectToWindow && <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item" onClick={() => { onMoveProjectToWindow(tabMenu.slug, "new"); closeTabMenu(); }}>Move to New Window</button>}
-          {onMoveProjectToWindow && tabMenu.windows.map((w) => (
-            <button type="button" role="menuitem" tabIndex={-1}
-              key={w.id}
-              className="aya-context-menu-item"
-              onClick={() => {
-                onMoveProjectToWindow(tabMenu.slug, w.id);
-                closeTabMenu();
-              }}
-            >
-              Move to Window: {w.activeProject ?? "(empty)"}
-            </button>
-          ))}
-        </div>
-      )}
+      {tabMenu && (() => {
+        const index = projects.findIndex((project) => project.slug === tabMenu.slug);
+        return (
+          <ProjectContextMenu
+            menuRef={tabMenuRef}
+            x={tabMenu.x}
+            y={tabMenu.y}
+            index={index}
+            projectCount={projects.length}
+            windows={tabMenu.windows}
+            canMoveToWindow={!!onMoveProjectToWindow}
+            onMove={(delta) => {
+              setFocusProjectAfterMove({ slug: tabMenu.slug, index: index + delta });
+              onReorderProjects(moveItem(projects.map((project) => project.slug), index, delta));
+              closeTabMenu(false);
+            }}
+            onClose={() => { onCloseProject(tabMenu.slug); closeTabMenu(); }}
+            onMoveToWindow={(target) => { onMoveProjectToWindow?.(tabMenu.slug, target); closeTabMenu(); }}
+          />
+        );
+      })()}
     </header>
   );
 }
