@@ -22,6 +22,8 @@ case "$mode" in
   ok:*) cat "\${mode#ok:}" ;;
   down) echo "ssh: connect to host $alias port 22: Operation timed out" >&2; exit 255 ;;
   denied) echo "$alias: Permission denied (publickey)." >&2; exit 255 ;;
+  unknown-key) printf "No ED25519 host key is known for %s and you have requested strict checking.\nHost key verification failed.\n" "$alias" >&2; exit 255 ;;
+  changed-key) printf "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nOffending ED25519 key in /private/fake/known_hosts:4\nHost key verification failed.\n" >&2; exit 255 ;;
   hang) sleep 30 ;;
   *) echo "ssh: Could not resolve hostname $alias: nodename nor servname provided, or not known" >&2; exit 255 ;;
 esac

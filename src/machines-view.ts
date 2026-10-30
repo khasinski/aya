@@ -2,6 +2,9 @@
 
 import type { MachineClaim, MachineReach, MachineStatus, MachineView } from "./types";
 import { gib, gibFromMiB } from "./units";
+import { hostTelemetryUnavailableText } from "../shared/machines-status-text.cjs";
+
+export { hostTelemetryUnavailableText };
 
 export const clock = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
 

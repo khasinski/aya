@@ -77,6 +77,7 @@ for (const c of callers) {
 const failures = [
   { name: "connect timeout (255)", run: { code: 255, stderr: "ssh: connect to host athena port 22: Operation timed out\n", timedOut: false, spawnError: null }, expect: "ssh: connect to host athena port 22: Operation timed out" },
   { name: "auth (255, no ssh: prefix)", run: { code: 255, stderr: "debug\nathena: Permission denied (publickey).\n", timedOut: false, spawnError: null }, expect: "ssh: athena: Permission denied (publickey)." },
+  { name: "changed host key is distinguished without reflecting known_hosts details", run: { code: 255, stderr: "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nOffending ED25519 key in /private/user/.ssh/known_hosts:4\nHost key verification failed.\n", timedOut: false, spawnError: null }, expect: "ssh: host key changed for athena" },
   { name: "255 with nothing said", run: { code: 255, stderr: "", timedOut: false, spawnError: null }, expect: "ssh athena exited with 255" },
   { name: "deadline", run: { code: null, stderr: "", timedOut: true, spawnError: null }, expect: "ssh athena did not finish within 1.5s." },
   { name: "no ssh binary", run: { code: null, stderr: "", timedOut: false, spawnError: "spawn ssh ENOENT" }, expect: "ssh could not be started: spawn ssh ENOENT" },

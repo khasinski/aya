@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addAnswerText, barLabel, claimText, hardware, shortCpuName, health, hotText, loadText, modelLines, needsLocalNetworkSettings, readyFirst, troubleText } from "../dist-test/machines-view.js";
+import { addAnswerText, barLabel, claimText, hardware, shortCpuName, health, hostTelemetryUnavailableText, hotText, loadText, modelLines, needsLocalNetworkSettings, readyFirst, troubleText } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -99,6 +99,16 @@ test("a machine in trouble is one line: its state and the reason's last clause",
   assert.equal(troubleText(status({ reachable: false, error: "ssh: connect to host 192.168.0.65 port 22: Operation timed out" })), "Unreachable: Operation timed out");
   assert.equal(troubleText(status({ reachable: false, error: "the probe did not finish within 10s." })), "Unreachable: the probe did not finish within 10s.");
   assert.equal(troubleText(status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: false, running: false } })), "Ollama not installed");
+});
+
+test("host telemetry explains SSH key, timeout and authentication failures with only safe key guidance", () => {
+  const cases = [
+    ["unknown key", "ssh: Host key verification failed.", "gpu-box", "Host telemetry unavailable: ssh: Host key verification failed. Verify the host key once in a terminal: ssh gpu-box"],
+    ["changed key", "ssh: host key changed for gpu-box", "gpu-box", "Host telemetry unavailable: ssh: host key changed for gpu-box. Verify the changed host key in a terminal: ssh gpu-box. Do not re-add the key before verifying the change."],
+    ["timeout", "ssh gpu-box did not finish within 10s.", "gpu-box", "Host telemetry unavailable: ssh gpu-box did not finish within 10s."],
+    ["auth failure", "ssh: gpu-box: Permission denied (publickey).", "gpu-box", "Host telemetry unavailable: ssh: gpu-box: Permission denied (publickey)."],
+  ];
+  for (const [name, error, alias, expected] of cases) assert.equal(hostTelemetryUnavailableText(error, alias), expected, name);
 });
 
 test("ready machines come first, then the least broken; the user's order within each", () => {

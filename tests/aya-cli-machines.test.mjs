@@ -21,6 +21,7 @@ process.env.PATH = `${fake.bin}:${process.env.PATH}`;
 
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { clearMachineStatusCache } = await import("../dist-electron/machines.js");
+const { formatMachines } = await import("../dist-electron/machines.js");
 
 const cli = resolve("bin/aya");
 const registryFile = join(ayaHome, "machines.json");
@@ -262,6 +263,23 @@ const statusRows = [
     json: { reachable: false, error: "ssh: connect to host athena port 22: Operation timed out", ollama: { up: false } },
   },
 ];
+
+test("CLI and status-bar telemetry line share the reason and safe host-key guidance", () => {
+  const output = formatMachines([{
+    id: "gpu-box",
+    reach: { ssh: "gpu-box" },
+    ollama: { port: 11434 },
+    status: {
+      reachable: false, checkedAt: new Date("2026-10-30T10:00:00Z").toISOString(),
+      error: "ssh: Host key verification failed.", cpuName: null, cpus: null, load1: null,
+      memUsedBytes: null, memTotalBytes: null, gpus: [], gpuError: null,
+      ollama: { up: false, version: null, loaded: null, modelsError: null, installed: null, running: null },
+      api: { up: true, models: [], error: null },
+    },
+  }]);
+  assert.match(output, /gpu-box  Host telemetry unavailable: ssh: Host key verification failed\. Verify the host key once in a terminal: ssh gpu-box/);
+  assert.match(output, /API available \(OpenAI-compatible\)/);
+});
 for (const row of statusRows) {
   test(`aya machines: ${row.name}`, async () => {
     reset();

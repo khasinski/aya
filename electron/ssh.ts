@@ -117,6 +117,11 @@ export function sshFailure(run: SshRun, target: string, deadlineMs: number): str
   if (run.timedOut) return `ssh ${target} did not finish within ${seconds(deadlineMs)}.`;
   // 255 is ssh's own exit code: connection, host key or authentication.
   if (run.code !== 255) return null;
+  // OpenSSH prints the changed-key warning before its generic verification-failed final line. Preserve the
+  // distinction without reflecting known_hosts paths, fingerprints or other stderr text into the UI.
+  if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key for .+ has changed|Offending .+ key in .+known_hosts/i.test(run.stderr)) {
+    return `ssh: host key changed for ${target}`;
+  }
   return lastStderrLine(run.stderr) ?? `ssh ${target} exited with 255`;
 }
 
