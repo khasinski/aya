@@ -1,6 +1,7 @@
 import {validAuthTransferDeadline} from "./pty-host-auth-transfer";
 import type { PreparedSpawn } from "./pty-core";
-import { validVtSnapshotFence, type VtSnapshot, type VtSnapshotFence } from "./vt-mirror";
+import type { VtSnapshot } from "./vt-mirror";
+import { validVtSnapshotFence, type VtSnapshotFence } from "./vt-snapshot-fence";
 import type { PaneSize } from "./pane-render";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";

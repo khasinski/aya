@@ -1,7 +1,8 @@
 // Main-side policy facade for state, holds and renderer status.
 // Read-only explain never acknowledges a composer; delivery hold reads may do so
 // only against an applied host revision and then must acquire fresh evidence.
-import type {VtSnapshot, VtSnapshotFence} from "./vt-mirror";
+import type {VtSnapshot} from "./vt-mirror";
+import type {VtSnapshotFence} from "./vt-snapshot-fence";
 import {GuardedRuleInput} from "./screen-user-rule-input";
 import type {UserRuleProvider} from "./screen-user-rule-provider";
 import type {CoordinatedRuleDecision} from "./screen-user-rule-coordinator";

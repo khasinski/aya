@@ -1,7 +1,8 @@
 import {test,afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {openVtPane,closeAllVtPanes,closeVtPane,writeVtPane,resizeVtPane,vtSnapshot,snapshotOf,panes,
- markComposerSeen,markComposerSeenChecked,vtSnapshotMatches,validVtSnapshotFence,beginVtRecovery,checkpointVtPane,restoreVtPane} from '../dist-electron/vt-mirror.js';
+ markComposerSeen,markComposerSeenChecked,vtSnapshotMatches,beginVtRecovery,checkpointVtPane,restoreVtPane} from '../dist-electron/vt-mirror.js';
+import {validVtSnapshotFence} from '../dist-electron/vt-snapshot-fence.js';
 import {asVtSnapshot,isPtyHostRequest} from '../dist-electron/pty-host-protocol.js';
 afterEach(()=>closeAllVtPanes());
 const open=()=>openVtPane('p',80,24,()=>{},'claude');

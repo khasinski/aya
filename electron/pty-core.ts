@@ -26,8 +26,6 @@ import {
   panes as vtPanes,
   snapshotOf,
   vtSnapshotMatches,
-  validVtSnapshotFence,
-  type VtSnapshotFence,
   checkpointVtPane,
   restoreVtPane,
   closeAllVtPanes,
@@ -38,6 +36,7 @@ import {
   vtPaneReplayModeState,
   writeVtPane,
 } from "./vt-mirror";
+import { validVtSnapshotFence, type VtSnapshotFence } from "./vt-snapshot-fence";
 import type { OwnerPane } from "./pty-owner-client";
 import type { RecoveryPane } from "./pty-recovery-bootstrap";
 import { validateRecoveryLaunch } from "./pty-core-checkpoint";

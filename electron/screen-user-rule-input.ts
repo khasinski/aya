@@ -1,6 +1,7 @@
 // Main-side automatic-input adapter for direct pane control and team delivery.
 // Explicit user keyboard/paste does not use this policy or its input fence.
-import type {VtSnapshot, VtSnapshotFence} from "./vt-mirror";
+import type {VtSnapshot} from "./vt-mirror";
+import type {VtSnapshotFence} from "./vt-snapshot-fence";
 import type {UserRuleProvider} from "./screen-user-rule-provider";
 import {UserRuleCoordinator, type CoordinatedRuleDecision} from "./screen-user-rule-coordinator";
 import {HOLD_DRAFT} from "./pane-holds";
