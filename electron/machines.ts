@@ -13,6 +13,7 @@ import { gib, gibFromMiB } from "./units";
 import { normalizeApiUrl, probeApi, type ApiBackend } from "./machines-api";
 import { MACHINES_AUTH_FILE, machineToken, savedTokenPreview, saveMachineToken, validateMachineToken } from "./machines-auth";
 import { discoverApiEndpoints, type ApiDiscovery } from "./machines-discovery";
+import { hostTelemetryUnavailableText } from "../shared/machines-status-text.cjs";
 
 export const MACHINES_FILE_NAME = "machines.json";
 export const MACHINES_VERSION = 1;
@@ -425,7 +426,7 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
     const s = v.status;
     const head = `${v.id.padEnd(idWidth)}  `;
     if (!s.reachable) {
-      lines.push(`${head}unreachable  ${reachText(v.reach)}  ${s.error}`);
+      lines.push(`${head}${hostTelemetryUnavailableText(s.error, v.reach === "local" ? null : v.reach.ssh)}`);
       if (s.api) lines.push(...modelLines(s, v.ollama.port, now).map((l) => pad + l));
     } else {
       lines.push(`${head}${machineLine(s)}  ${reachText(v.reach)}`);

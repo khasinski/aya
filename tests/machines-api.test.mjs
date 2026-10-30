@@ -201,7 +201,7 @@ test("API remains visible when SSH telemetry is unavailable", async (t) => {
   await configure(base);
   const status = await machinesStatus(deps);
   assert.equal(health(status.machines[0].status).level, "ok");
-  assert.match(formatMachines(status.machines, NOW), /unreachable.*SSH unavailable/);
+  assert.match(formatMachines(status.machines, NOW), /Host telemetry unavailable: SSH unavailable/);
   assert.match(formatMachines(status.machines, NOW), /qwen \(served by API\)/);
 });
 

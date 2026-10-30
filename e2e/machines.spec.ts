@@ -125,3 +125,36 @@ test.describe("three added", () => {
     await shoot(app, window, "settings-added.png");
   });
 });
+
+test.describe("API up, SSH telemetry down", () => {
+  const ONE_MACHINE = JSON.stringify({
+    version: 1,
+    machines: [{ id: "api-box", reach: { ssh: "api-box" }, ollama: { port: 11434 } }],
+  });
+  test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, "machines.json": ONE_MACHINE } } });
+
+  test("the popover states the SSH cause and tells the user to verify an unknown key in a terminal", async ({ app, window }) => {
+    const bar = window.getByTestId("machines-toggle");
+    await expect(bar).toBeVisible();
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("machines:status");
+      ipcMain.handle("machines:status", () => ({
+        version: 1,
+        machines: [{
+          id: "api-box", reach: { ssh: "api-box" }, ollama: { port: 11434 },
+          status: {
+            reachable: false, checkedAt: new Date().toISOString(), error: "ssh: Host key verification failed.",
+            cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], gpuError: null,
+            ollama: { up: false, version: null, loaded: null, modelsError: null, installed: null, running: null },
+            api: { up: true, models: [], error: null },
+          },
+        }],
+      }));
+    });
+    await window.evaluate(() => window.dispatchEvent(new Event("aya:machines-changed")));
+    await bar.click();
+    const entry = window.getByRole("dialog", { name: "Machines" }).getByTestId("machine-entry");
+    await expect(entry.locator(".aya-machines-state--warn")).toHaveText("Host telemetry unavailable: ssh: Host key verification failed. Verify the host key once in a terminal: ssh api-box");
+    await expect(entry).toContainText("API available (OpenAI-compatible)");
+  });
+});

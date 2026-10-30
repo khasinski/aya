@@ -151,6 +151,8 @@ const ssh = (t) => {
 const remoteCases = [
   { mode: "down", expect: { reachable: false, error: "ssh: connect to host box port 22: Operation timed out" } },
   { mode: "denied", expect: { reachable: false, error: "ssh: box: Permission denied (publickey)." } },
+  { mode: "unknown-key", expect: { reachable: false, error: "ssh: Host key verification failed." } },
+  { mode: "changed-key", expect: { reachable: false, error: "ssh: host key changed for box" } },
   { mode: "unknown", expect: { reachable: false, error: /^ssh: Could not resolve hostname box/ } },
   { mode: "hang", deadlineMs: 300, expect: { reachable: false, error: "ssh box did not finish within 0.3s." } },
 ];
