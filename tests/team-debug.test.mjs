@@ -7,8 +7,9 @@ delete process.env.AYA_DEBUG;
 
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rpc } from "./helpers/control-rpc.mjs";
@@ -33,8 +34,10 @@ const BEAT = TEST_TEAM_MINUTE_MS / S; // seconds: "every 1 min"
 const SILENCE = SILENCE_FIRST_MS / S;
 const REPEAT = SILENCE_REPEAT_MS / S;
 const debugSwitchReads = new Set();
+const debugSwitchEvents = new Set();
 const stopWatch = debug.watchDebugSwitch(HOME, (enabled) => {
   for (const waiter of debugSwitchReads) waiter(enabled);
+  for (const waiter of debugSwitchEvents) waiter(enabled);
 });
 process.on("exit", () => (stopWatch(), rmSync(HOME, { recursive: true, force: true })));
 
@@ -56,6 +59,21 @@ async function setDebug(on) {
   writeFileSync(join(HOME, "debug.json"), JSON.stringify({ on }));
   await observed;
   assert.equal(debug.debugOn(), on);
+}
+
+function nextDebugSwitchEvent() {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      debugSwitchEvents.delete(read);
+      reject(new Error("debug switch watcher did not report a change"));
+    }, 10_000);
+    const read = (enabled) => {
+      clearTimeout(timer);
+      debugSwitchEvents.delete(read);
+      resolve(enabled);
+    };
+    debugSwitchEvents.add(read);
+  });
 }
 
 const TEAM = ({ cadence = true } = {}) => `# ux-review
@@ -320,37 +338,117 @@ worldTest("debug off takes effect before another synchronous log after the atomi
   assert.deepEqual(x.events().filter((e) => e.event === "probe").map((e) => e.n), [1]);
 });
 
-worldTest("debug on stats an unchanged switch without rereading its contents", async () => {
+worldTest("debug on stats an unchanged switch without rereading its contents and off performs no probes", async () => {
   await setDebug(true);
   await new Promise((resolve) => setImmediate(resolve));
   const switchPath = join(HOME, debug.DEBUG_SWITCH_FILE);
   const originalStat = fs.statSync;
   const originalRead = fs.readFileSync;
-  let switchStats = 0;
-  let switchReads = 0;
-  const stat = mock.method(fs, "statSync", (...args) => {
-    if (String(args[0]) === switchPath) switchStats++;
-    return originalStat.apply(fs, args);
-  });
-  const read = mock.method(fs, "readFileSync", (...args) => {
-    if (String(args[0]) === switchPath) switchReads++;
-    return originalRead.apply(fs, args);
-  });
+  const probeNames = ["statSync", "lstatSync", "accessSync", "existsSync", "readFileSync", "openSync", "readSync"];
+  const originals = Object.fromEntries(probeNames.map((name) => [name, fs[name]]));
+  const probes = Object.fromEntries(probeNames.map((name) => [name, 0]));
+  const mocks = probeNames.map((name) => mock.method(fs, name, (...args) => {
+    if (name === "readSync" || String(args[0]) === switchPath) probes[name]++;
+    return originals[name].apply(fs, args);
+  }));
   try {
     for (let i = 0; i < 100; i++) assert.equal(debug.debugOn(), true);
-    assert.equal(switchReads, 0, "unchanged metadata never reparses debug.json");
-    assert.equal(switchStats, 100, "enabled checks stat the switch to detect atomic replacement");
-    rmSync(switchPath);
-    assert.equal(debug.debugOn(), false, "a removed switch immediately turns debugging off");
+    assert.equal(probes.readFileSync, 0, "unchanged metadata never reparses debug.json");
+    assert.equal(probes.statSync, 100, "enabled checks stat the switch to detect atomic replacement");
+    assert.equal(probeNames.filter((name) => name !== "statSync").reduce((sum, name) => sum + probes[name], 0), 0);
+    await setDebug(false);
     await new Promise((resolve) => setImmediate(resolve));
-    switchStats = 0;
-    switchReads = 0;
+    assert.equal(readFileSync(switchPath, "utf8"), '{"on":false}', "the CLI's off marker remains present");
+    for (const name of probeNames) probes[name] = 0;
     for (let i = 0; i < 100; i++) assert.equal(debug.debugOn(), false);
-    assert.equal(switchStats, 0, "the disabled path does not stat or read the switch");
-    assert.equal(switchReads, 0, "the disabled path does not read debug.json");
+    assert.deepEqual(probes, Object.fromEntries(probeNames.map((name) => [name, 0])), "the disabled path performs no filesystem probes");
+  } finally {
+    for (const mock of mocks) mock.mock.restore();
+  }
+});
+
+worldTest("a watcher event rereads the switch even when metadata is unchanged", async () => {
+  await setDebug(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const switchPath = join(HOME, debug.DEBUG_SWITCH_FILE);
+  const originalStat = fs.statSync;
+  const originalOpen = fs.openSync;
+  const frozenStat = originalStat(switchPath);
+  let switchReads = 0;
+  const stat = mock.method(fs, "statSync", (...args) => String(args[0]) === switchPath ? frozenStat : originalStat.apply(fs, args));
+  const open = mock.method(fs, "openSync", (...args) => {
+    if (String(args[0]) === switchPath) switchReads++;
+    return originalOpen.apply(fs, args);
+  });
+  try {
+    const changed = nextDebugSwitchEvent();
+    writeFileSync(switchPath, '{"on":false}');
+    assert.equal(await changed, false);
+    assert.equal(switchReads, 1, "the watcher invalidates metadata and rereads after its event");
+    assert.equal(debug.debugOn(), false);
   } finally {
     stat.mock.restore();
-    read.mock.restore();
+    open.mock.restore();
+  }
+});
+
+worldTest("stopping an older watcher or the newest other-home watcher keeps the surviving watcher", async () => {
+  await setDebug(true);
+  const stopSameHome = debug.watchDebugSwitch(HOME);
+  const otherHome = mkdtempSync(join(tmpdir(), "aya-debug-other-home-"));
+  writeFileSync(join(otherHome, debug.DEBUG_SWITCH_FILE), '{"on":true}');
+  const stopOtherHome = debug.watchDebugSwitch(otherHome);
+  try {
+    stopSameHome();
+    stopOtherHome();
+    const changed = nextDebugSwitchEvent();
+    writeFileSync(join(HOME, debug.DEBUG_SWITCH_FILE), '{"on":false}');
+    assert.equal(await changed, false);
+    assert.equal(debug.debugOn(), false);
+  } finally {
+    stopSameHome();
+    stopOtherHome();
+    rmSync(otherHome, { recursive: true, force: true });
+  }
+});
+
+test("the debug switch reader refuses symlinks and files larger than its bound", () => {
+  const home = mkdtempSync(join(tmpdir(), "aya-debug-switch-read-"));
+  const switchPath = join(home, debug.DEBUG_SWITCH_FILE);
+  const target = join(home, "target.json");
+  try {
+    writeFileSync(target, `{"on":true}${" ".repeat(8192)}`);
+    symlinkSync(target, switchPath);
+    assert.equal(debug.readDebugSwitch(home), false, "the reader does not follow symlinks");
+    rmSync(switchPath);
+    writeFileSync(switchPath, `{"on":true}${" ".repeat(8192)}`);
+    assert.equal(debug.readDebugSwitch(home), false, "the reader refuses oversized switch files");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the debug switch reader does not block on a FIFO or a symlink to one", { skip: process.platform === "win32" }, () => {
+  const home = mkdtempSync(join(tmpdir(), "aya-debug-switch-fifo-"));
+  const target = join(home, "pipe");
+  const switchPath = join(home, debug.DEBUG_SWITCH_FILE);
+  const moduleUrl = new URL("../dist-electron/team-debug.js", import.meta.url).href;
+  const readInChild = () => spawnSync(process.execPath, ["--input-type=module", "-e", `import { readDebugSwitch } from ${JSON.stringify(moduleUrl)}; console.log(readDebugSwitch(${JSON.stringify(home)}));`], { encoding: "utf8", timeout: 3000 });
+  try {
+    execFileSync("mkfifo", [target]);
+    symlinkSync(target, switchPath);
+    let result = readInChild();
+    assert.ifError(result.error);
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "false", "a FIFO symlink is rejected without opening its target");
+    rmSync(switchPath);
+    execFileSync("mkfifo", [switchPath]);
+    result = readInChild();
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, "nonblocking open returns instead of waiting for a FIFO writer");
+    assert.equal(result.stdout.trim(), "false");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
