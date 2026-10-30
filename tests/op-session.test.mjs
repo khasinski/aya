@@ -13,7 +13,9 @@ const runtimes = [
   { name: 'node', command: [process.execPath, script, 'launch', '--'] },
   { name: 'aya CLI', command: ['/bin/sh', path.resolve('bin/aya'), 'op-session', '--'] },
 ];
-if (process.platform === 'darwin') runtimes.push({ name: 'Electron', command: [path.resolve('node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'), script, 'launch', '--'] });
+// CI installs with --ignore-scripts, so there the Electron binary is not downloaded: nothing to run, skip with the reason.
+const electronBinary = path.resolve('node_modules/electron/dist/Electron.app/Contents/MacOS/Electron');
+if (process.platform === 'darwin' && fs.existsSync(electronBinary)) runtimes.push({ name: 'Electron', command: [electronBinary, script, 'launch', '--'] });
 for (const runtime of runtimes) {
 test(`op commands reuse one terminal (${runtime.name}), with private cleanup`, { skip: process.platform === 'win32', timeout: 15000 }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aya-op-test-'));

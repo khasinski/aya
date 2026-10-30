@@ -749,10 +749,14 @@ function lateWindow(t) {
     const late = new Promise((resolve) => (save = async () => (await open(slug, panes), resolve())));
     throw new PaneOpenTimeout(late);
   };
-  return async () => {
+  // `until` names what the late path must have done: wait for it (up to 5 s) rather than a fixed 100 ms a slow CI runner can overrun.
+  return async (until) => {
     await save();
     // The late path runs on its own; let it settle.
-    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 10));
+    for (let i = 0; i < (until ? 500 : 10); i++) {
+      if (until?.()) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
   };
 }
 
@@ -1393,6 +1397,6 @@ panesTest("a window that misses the deadline: the roles stay expected until its 
   const save = lateWindow(t);
   await assert.rejects(() => t.open(picks("reviewer=claude")), /did not open the panes in time/);
   assert.deepEqual(log, ["expect"], "still expected: the pane can spawn after the deadline");
-  await save();
+  await save(() => log.includes("forget"));
   assert.deepEqual(log, ["expect", "forget"]);
 });
