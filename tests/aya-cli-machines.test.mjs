@@ -259,7 +259,7 @@ const statusRows = [
   {
     name: "unreachable: the ssh error and when it was checked",
     mode: "down",
-    text: [/^athena {2}unreachable {2}ssh:athena {2}ssh: connect to host athena port 22: Operation timed out\n {8}not claimed\n/m],
+    text: [/^athena {2}Host telemetry unavailable: ssh: connect to host athena port 22: Operation timed out\n {8}not claimed\n/m],
     json: { reachable: false, error: "ssh: connect to host athena port 22: Operation timed out", ollama: { up: false } },
   },
 ];
@@ -279,6 +279,21 @@ test("CLI and status-bar telemetry line share the reason and safe host-key guida
   }]);
   assert.match(output, /gpu-box  Host telemetry unavailable: ssh: Host key verification failed\. Verify the host key once in a terminal: ssh gpu-box/);
   assert.match(output, /API available \(OpenAI-compatible\)/);
+});
+
+test("CLI keeps the SSH host-key hint when its API is also down", () => {
+  const output = formatMachines([{
+    id: "gpu-box", reach: { ssh: "gpu-box" }, ollama: { port: 11434 },
+    status: {
+      reachable: false, checkedAt: new Date("2026-10-30T10:00:00Z").toISOString(),
+      error: "ssh: Host key verification failed.", cpuName: null, cpus: null, load1: null,
+      memUsedBytes: null, memTotalBytes: null, gpus: [], gpuError: null,
+      ollama: { up: false, version: null, loaded: null, modelsError: null, installed: null, running: null },
+      api: { up: false, models: null, error: "API authentication failed" },
+    },
+  }]);
+  assert.match(output, /gpu-box  Host telemetry unavailable: ssh: Host key verification failed\. Verify the host key once in a terminal: ssh gpu-box/);
+  assert.match(output, /API authentication failed/);
 });
 for (const row of statusRows) {
   test(`aya machines: ${row.name}`, async () => {

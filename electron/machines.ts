@@ -426,9 +426,7 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
     const s = v.status;
     const head = `${v.id.padEnd(idWidth)}  `;
     if (!s.reachable) {
-      lines.push(s.api?.up
-        ? `${head}${hostTelemetryUnavailableText(s.error, v.reach === "local" ? null : v.reach.ssh)}`
-        : `${head}unreachable  ${reachText(v.reach)}  ${s.error}`);
+      lines.push(`${head}${hostTelemetryUnavailableText(s.error, v.reach === "local" ? null : v.reach.ssh)}`);
       if (s.api) lines.push(...modelLines(s, v.ollama.port, now).map((l) => pad + l));
     } else {
       lines.push(`${head}${machineLine(s)}  ${reachText(v.reach)}`);

@@ -117,12 +117,25 @@ export function sshFailure(run: SshRun, target: string, deadlineMs: number): str
   if (run.timedOut) return `ssh ${target} did not finish within ${seconds(deadlineMs)}.`;
   // 255 is ssh's own exit code: connection, host key or authentication.
   if (run.code !== 255) return null;
-  // OpenSSH prints the changed-key warning before its generic verification-failed final line. Preserve the
-  // distinction without reflecting known_hosts paths, fingerprints or other stderr text into the UI.
-  if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key for .+ has changed|Offending .+ key in .+known_hosts/i.test(run.stderr)) {
+  const changedWarning = /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key for .+ has changed|Offending .+ key in .+known_hosts/i.test(run.stderr);
+  const revokedWarning = /REVOKED HOST KEY DETECTED|(?:host )?key (?:was )?revoked/i.test(run.stderr);
+  const finalLine = lastStderrLine(run.stderr);
+  // Warnings can precede a different terminating failure. The last line is the actionable cause;
+  // retain only the fact of an earlier key warning, never its path or fingerprint.
+  if (finalLine && /Permission denied \(publickey\)/i.test(finalLine)) {
+    return changedWarning || revokedWarning
+      ? `${finalLine} (OpenSSH also reported a host-key warning)`
+      : finalLine;
+  }
+  // OpenSSH's revoked-key warning is followed by the same generic verification failure as an
+  // unknown key, so preserve the more specific host-side classification from the full stderr.
+  if (revokedWarning) return `ssh: host key revoked for ${target}`;
+  // OpenSSH prints the changed-key warning before its generic verification-failed final line.
+  // Preserve the distinction without reflecting known_hosts paths, fingerprints or other stderr.
+  if (changedWarning) {
     return `ssh: host key changed for ${target}`;
   }
-  return lastStderrLine(run.stderr) ?? `ssh ${target} exited with 255`;
+  return finalLine ?? `ssh ${target} exited with 255`;
 }
 
 /** The last line ssh or the remote command printed on stderr, which names the reason. */

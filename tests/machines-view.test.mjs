@@ -105,8 +105,10 @@ test("host telemetry explains SSH key, timeout and authentication failures with 
   const cases = [
     ["unknown key", "ssh: Host key verification failed.", "gpu-box", "Host telemetry unavailable: ssh: Host key verification failed. Verify the host key once in a terminal: ssh gpu-box"],
     ["changed key", "ssh: host key changed for gpu-box", "gpu-box", "Host telemetry unavailable: ssh: host key changed for gpu-box. Verify the changed host key in a terminal: ssh gpu-box. Do not re-add the key before verifying the change."],
+    ["revoked key", "ssh: host key revoked for gpu-box", "gpu-box", "Host telemetry unavailable: ssh: host key revoked for gpu-box. This key was revoked; do not use it or accept it."],
     ["timeout", "ssh gpu-box did not finish within 10s.", "gpu-box", "Host telemetry unavailable: ssh gpu-box did not finish within 10s."],
     ["auth failure", "ssh: gpu-box: Permission denied (publickey).", "gpu-box", "Host telemetry unavailable: ssh: gpu-box: Permission denied (publickey)."],
+    ["bidi control is made visible", "\u202essh: Host key verification failed.", "gpu-box", "Host telemetry unavailable: \\u202essh: Host key verification failed. Verify the host key once in a terminal: ssh gpu-box"],
   ];
   for (const [name, error, alias, expected] of cases) assert.equal(hostTelemetryUnavailableText(error, alias), expected, name);
 });
