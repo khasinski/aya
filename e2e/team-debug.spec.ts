@@ -35,9 +35,13 @@ test.describe("debug on", () => {
     expect(printed.stdout).toMatch(new RegExp(`round +round=\\d+ held=brake unanswered=${UNANSWERED_ROUNDS}`));
 
     expect(cli("debug", "off").status).toBe(0);
+    const offReturnedAt = Date.now();
     await window.waitForTimeout(RHYTHM_MINUTE_MS);
     const after = events().length;
     await window.waitForTimeout(3 * RHYTHM_MINUTE_MS);
-    expect(events().length, "off again: nothing more").toBe(after);
+    const finalEvents = events();
+    const postOffRequest = finalEvents.filter((event) => Date.parse(event.time) >= offReturnedAt);
+    expect(postOffRequest.length, `debug events written after debug off returned at ${new Date(offReturnedAt).toISOString()}: ${JSON.stringify(postOffRequest)}`).toBe(0);
+    expect(finalEvents.length, `off again: nothing more; late events: ${JSON.stringify(finalEvents.slice(after))}`).toBe(after);
   });
 });
