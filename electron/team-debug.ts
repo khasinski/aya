@@ -21,14 +21,16 @@ const STATE_EVENTS = new Set(["liveness", "launch"]);
 const fromEnv = process.env.AYA_DEBUG === "1";
 let fromFile = false;
 let debugSwitchPath: string | null = null;
+let debugSwitchStat: { mtimeMs: number; ino: number; size: number } | null = null;
 const sizes = new Map<string, number>();
 const states = new Map<string, string>();
 
 export const debugOn = (): boolean => {
   if (fromEnv) return true;
-  // The filesystem watcher is asynchronous. Recheck while enabled so a log call
-  // immediately after `aya debug off` cannot use a stale on value.
-  if (fromFile && debugSwitchPath) fromFile = readDebugSwitch(path.dirname(debugSwitchPath));
+  // The watcher is asynchronous. While enabled, stat the switch so a log call
+  // after `aya debug off` can notice its atomic replacement without reparsing it
+  // on every decision.
+  if (fromFile && debugSwitchPath) refreshDebugSwitch();
   return fromFile;
 };
 
@@ -41,23 +43,48 @@ export function readDebugSwitch(ayaHome: string): boolean {
   }
 }
 
+function refreshDebugSwitch(): void {
+  if (!debugSwitchPath) return;
+  let current: { mtimeMs: number; ino: number; size: number } | null = null;
+  try {
+    const stat = fs.statSync(debugSwitchPath);
+    current = { mtimeMs: stat.mtimeMs, ino: stat.ino, size: stat.size };
+  } catch {
+    // A missing switch is off. Other stat failures are also fail-closed.
+  }
+  if (!current) {
+    debugSwitchStat = null;
+    fromFile = false;
+    return;
+  }
+  if (!debugSwitchStat || current.mtimeMs !== debugSwitchStat.mtimeMs || current.ino !== debugSwitchStat.ino || current.size !== debugSwitchStat.size) {
+    debugSwitchStat = current;
+    fromFile = readDebugSwitch(path.dirname(debugSwitchPath));
+  }
+}
+
 /** Reads the switch now and again whenever debug.json changes (aya debug on|off), with no restart; returns a stop. */
 export function watchDebugSwitch(ayaHome: string, onRead?: (enabled: boolean) => void): () => void {
   debugSwitchPath = path.join(ayaHome, DEBUG_SWITCH_FILE);
   const read = () => {
-    fromFile = readDebugSwitch(ayaHome);
+    refreshDebugSwitch();
     onRead?.(fromFile);
   };
+  debugSwitchStat = null;
   read();
   try {
     const watcher = fs.watch(ayaHome, (_event, name) => (!name || String(name) === DEBUG_SWITCH_FILE ? read() : undefined));
     watcher.unref();
     return () => {
       watcher.close();
-      if (debugSwitchPath === path.join(ayaHome, DEBUG_SWITCH_FILE)) debugSwitchPath = null;
+      if (debugSwitchPath === path.join(ayaHome, DEBUG_SWITCH_FILE)) {
+        debugSwitchPath = null;
+        debugSwitchStat = null;
+      }
     };
   } catch {
     debugSwitchPath = null;
+    debugSwitchStat = null;
     return () => {};
   }
 }

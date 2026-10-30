@@ -320,6 +320,40 @@ worldTest("debug off takes effect before another synchronous log after the atomi
   assert.deepEqual(x.events().filter((e) => e.event === "probe").map((e) => e.n), [1]);
 });
 
+worldTest("debug on stats an unchanged switch without rereading its contents", async () => {
+  await setDebug(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const switchPath = join(HOME, debug.DEBUG_SWITCH_FILE);
+  const originalStat = fs.statSync;
+  const originalRead = fs.readFileSync;
+  let switchStats = 0;
+  let switchReads = 0;
+  const stat = mock.method(fs, "statSync", (...args) => {
+    if (String(args[0]) === switchPath) switchStats++;
+    return originalStat.apply(fs, args);
+  });
+  const read = mock.method(fs, "readFileSync", (...args) => {
+    if (String(args[0]) === switchPath) switchReads++;
+    return originalRead.apply(fs, args);
+  });
+  try {
+    for (let i = 0; i < 100; i++) assert.equal(debug.debugOn(), true);
+    assert.equal(switchReads, 0, "unchanged metadata never reparses debug.json");
+    assert.equal(switchStats, 100, "enabled checks stat the switch to detect atomic replacement");
+    rmSync(switchPath);
+    assert.equal(debug.debugOn(), false, "a removed switch immediately turns debugging off");
+    await new Promise((resolve) => setImmediate(resolve));
+    switchStats = 0;
+    switchReads = 0;
+    for (let i = 0; i < 100; i++) assert.equal(debug.debugOn(), false);
+    assert.equal(switchStats, 0, "the disabled path does not stat or read the switch");
+    assert.equal(switchReads, 0, "the disabled path does not read debug.json");
+  } finally {
+    stat.mock.restore();
+    read.mock.restore();
+  }
+});
+
 debugTest("debug on | debug.jsonl rotates past 5 MB: the older half is debug.1.jsonl, the new file starts empty", async (x) => {
   assert.equal(debug.DEBUG_LOG_MAX_BYTES, 5 * 1024 * 1024);
   const file = join(x.store.dir, "debug.jsonl");
