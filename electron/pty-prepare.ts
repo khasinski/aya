@@ -257,5 +257,19 @@ export async function prepareSpawn(req: SpawnRequest, cwd: string, signal?: Abor
   if (signal?.aborted) return cancelled();
   const { command, added } = req.teamLaunch ? await roleLaunch(req.ptyId, plain, cwd, env) : { command: plain, added: [] };
   const launch = await paneLaunchRecord(command, cwd, added, env, CONTROL_SOCKET_PATH);
-  return { argv: shellArgv(command, cwd), env, command, launch, ownSessionId, spawnedAt };
+  const argv = shellArgv(command, cwd);
+  // Opt-in on the preset: agent recognition/resume/team checks above still see
+  // the real command. Only its process launch gets the persistent op parent.
+  const opSession = leadingEnvAssignments(command).assignments.some((value) =>
+    /^AYA_OP_SESSION=(?:1|'1'|"1")$/.test(value));
+  if (opSession && process.platform !== "win32") {
+    const prefix = path.basename(userShell()) === "fish"
+      ? 'set -gx PATH "$AYA_OP_SESSION_BIN" $PATH; '
+      : 'export PATH="$AYA_OP_SESSION_BIN:$PATH"; ';
+    argv[4] = prefix + argv[4];
+    const script = path.join(path.dirname(bundledAyaCliPath(__dirname)), "..", "shared", "op-session.cjs");
+    env.ELECTRON_RUN_AS_NODE = "1";
+    return { argv: [process.execPath, script, "launch", "--", ...argv], env, command, launch, ownSessionId, spawnedAt };
+  }
+  return { argv, env, command, launch, ownSessionId, spawnedAt };
 }

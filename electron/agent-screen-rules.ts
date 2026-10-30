@@ -77,7 +77,7 @@ export function evaluateScreenEvidence(rows: readonly string[], agent: AgentKind
   return { verdict: "clear", match: null };
 }
 export function evaluateScreen(rows: readonly string[], agent: AgentKind | undefined): "waiting" | "clear" | null { return evaluateScreenEvidence(rows, agent).verdict; }
-const AYA_COMMAND = /(?:^|[^\w./-])aya\s+(?:open|project|focus|debug|notify|remote|status|pane|team|presets|capabilities|machines)\b/;
+const AYA_COMMAND = /(?:^|[^\w./-])aya\s+(?:open|project|op-session|focus|debug|notify|remote|status|pane|team|presets|capabilities|machines)\b/;
 export function asksToRunAya(rows: readonly string[]): boolean { return AYA_COMMAND.test(regionText(rows, "tail")); }
 export function screenOffersAccountSetting(rows: readonly string[], agent: AgentKind | undefined): boolean { return matchingScreenRule(rows, agent, "account-setting") !== null; }
 export function screenShowsUsageLimit(rows: readonly string[], agent: AgentKind | undefined): boolean { return matchingScreenRule(rows, agent, "usage-limit") !== null; }
