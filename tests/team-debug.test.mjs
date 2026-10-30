@@ -8,12 +8,11 @@ delete process.env.AYA_DEBUG;
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rpc } from "./helpers/control-rpc.mjs";
 import { teamProject } from "./helpers/team.mjs";
-import { waitFor } from "./helpers/wait-for.mjs";
 import { TEST_TEAM_MINUTE_MS } from "./helpers/timings.mjs";
 
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
@@ -33,13 +32,30 @@ const S = 1000;
 const BEAT = TEST_TEAM_MINUTE_MS / S; // seconds: "every 1 min"
 const SILENCE = SILENCE_FIRST_MS / S;
 const REPEAT = SILENCE_REPEAT_MS / S;
-const stopWatch = debug.watchDebugSwitch(HOME);
+const debugSwitchReads = new Set();
+const stopWatch = debug.watchDebugSwitch(HOME, (enabled) => {
+  for (const waiter of debugSwitchReads) waiter(enabled);
+});
 process.on("exit", () => (stopWatch(), rmSync(HOME, { recursive: true, force: true })));
 
 /** aya debug on|off: the file the CLI writes; the running process sees it with no restart. */
 async function setDebug(on) {
+  const observed = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      debugSwitchReads.delete(read);
+      reject(new Error(`debug switch watcher did not observe ${on}`));
+    }, 10_000);
+    const read = (enabled) => {
+      if (enabled !== on) return;
+      clearTimeout(timer);
+      debugSwitchReads.delete(read);
+      resolve();
+    };
+    debugSwitchReads.add(read);
+  });
   writeFileSync(join(HOME, "debug.json"), JSON.stringify({ on }));
-  await waitFor(() => debug.debugOn() === on, 4000);
+  await observed;
+  assert.equal(debug.debugOn(), on);
 }
 
 const TEAM = ({ cadence = true } = {}) => `# ux-review
@@ -240,10 +256,11 @@ test("debug on | a socket answer to aya team: command, caller, result or refusal
 
 debugTest("debug on | a pane's launch verdict settles: unknown -> reached, once", async (x) => {
   const table = new Map([[200, { ppid: 100, command: "aya" }], [100, { ppid: 1, command: "codex" }]]);
-  const panes = reachedAyaPanes({ panePid: async (id) => (id === "pane-i" ? 100 : null), processTable: async () => table, onReached: (pane) => debugPane(x.w.deps, pane, "launch", { verdict: "reached" }) });
+  let logged;
+  const panes = reachedAyaPanes({ panePid: async (id) => (id === "pane-i" ? 100 : null), processTable: async () => table, onReached: (pane) => (logged = debugPane(x.w.deps, pane, "launch", { verdict: "reached" })) });
   await panes.called({ terminalId: "pane-i", pid: 200 });
   await panes.called({ terminalId: "pane-i", pid: 200 });
-  await waitFor(() => x.events().length > 0);
+  await logged;
   const launches = x.events().filter((e) => e.event === "launch");
   assert.deepEqual(launches.map(({ pane, role, verdict }) => ({ pane, role, verdict })), [{ pane: "pane-i", role: "implementer", verdict: "reached" }]);
 });
@@ -290,6 +307,17 @@ worldTest("debug on and off without a restart: aya debug on|off is read on its c
   await setDebug(true);
   debug.debugLog(x.store, "probe", { n: 3 });
   assert.deepEqual(x.events().filter((e) => e.event === "probe").map((e) => e.n), [1, 3]);
+});
+
+worldTest("debug off takes effect before another synchronous log after the atomic switch", async (x) => {
+  await setDebug(true);
+  debug.debugLog(x.store, "probe", { n: 1 });
+  const file = join(HOME, debug.DEBUG_SWITCH_FILE);
+  const temporary = `${file}.tmp`;
+  writeFileSync(temporary, '{"on":false}\n');
+  renameSync(temporary, file);
+  debug.debugLog(x.store, "probe", { n: 2 });
+  assert.deepEqual(x.events().filter((e) => e.event === "probe").map((e) => e.n), [1]);
 });
 
 debugTest("debug on | debug.jsonl rotates past 5 MB: the older half is debug.1.jsonl, the new file starts empty", async (x) => {

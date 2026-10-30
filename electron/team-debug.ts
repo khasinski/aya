@@ -1,5 +1,5 @@
 // "debug on": every decision a team's runner makes, one JSON line each in the team's debug.jsonl, for
-// `aya team debug <team>`. Off (the default) a call costs one boolean read: nothing is formatted or written.
+// `aya team debug <team>`. Off (the default) nothing is formatted or written.
 // A leaf: the team store, files and runner import it, so it imports none of them. Finding the team a pane
 // or a socket answer belongs to is in team-debug-route.ts.
 
@@ -20,10 +20,17 @@ const STATE_EVENTS = new Set(["liveness", "launch"]);
 
 const fromEnv = process.env.AYA_DEBUG === "1";
 let fromFile = false;
+let debugSwitchPath: string | null = null;
 const sizes = new Map<string, number>();
 const states = new Map<string, string>();
 
-export const debugOn = (): boolean => fromEnv || fromFile;
+export const debugOn = (): boolean => {
+  if (fromEnv) return true;
+  // The filesystem watcher is asynchronous. Recheck while enabled so a log call
+  // immediately after `aya debug off` cannot use a stale on value.
+  if (fromFile && debugSwitchPath) fromFile = readDebugSwitch(path.dirname(debugSwitchPath));
+  return fromFile;
+};
 
 /** The switch as $AYA_HOME/debug.json has it ({"on": true}); off when absent or unreadable. */
 export function readDebugSwitch(ayaHome: string): boolean {
@@ -35,14 +42,22 @@ export function readDebugSwitch(ayaHome: string): boolean {
 }
 
 /** Reads the switch now and again whenever debug.json changes (aya debug on|off), with no restart; returns a stop. */
-export function watchDebugSwitch(ayaHome: string): () => void {
-  const read = () => void (fromFile = readDebugSwitch(ayaHome));
+export function watchDebugSwitch(ayaHome: string, onRead?: (enabled: boolean) => void): () => void {
+  debugSwitchPath = path.join(ayaHome, DEBUG_SWITCH_FILE);
+  const read = () => {
+    fromFile = readDebugSwitch(ayaHome);
+    onRead?.(fromFile);
+  };
   read();
   try {
     const watcher = fs.watch(ayaHome, (_event, name) => (!name || String(name) === DEBUG_SWITCH_FILE ? read() : undefined));
     watcher.unref();
-    return () => watcher.close();
+    return () => {
+      watcher.close();
+      if (debugSwitchPath === path.join(ayaHome, DEBUG_SWITCH_FILE)) debugSwitchPath = null;
+    };
   } catch {
+    debugSwitchPath = null;
     return () => {};
   }
 }
