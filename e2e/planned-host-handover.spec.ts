@@ -12,11 +12,11 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
  const wrapper=join(seeded.root,'handover-main.js');
  // Wrapper code is constant; disposable paths/options are data, never JS source.
  writeFileSync(wrapper,`const electron=require('electron'),path=require('node:path'),root=process.env.AYA_TEST_APP_ROOT;
- globalThis.handoverQuestions=[];globalThis.handoverOrder=[];globalThis.handoverSpawns=[];globalThis.handoverWrites=[];
+ globalThis.handoverQuestions=[];globalThis.handoverOrder=[];globalThis.handoverSpawns=[];globalThis.handoverWrites=[];globalThis.handoverAcks=[];
  const MainClient=require(path.join(root,'dist-electron/pty-host-client.js')).PtyHostClient,mainRequest=MainClient.prototype.request;
  MainClient.prototype.request=function(...args){globalThis.handoverMainClient??=this;return mainRequest.apply(this,args);};
  const trackHandle=electron.ipcMain.handle.bind(electron.ipcMain);
- electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);return handler(event,...args);});
+ electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);if(channel==='pty-checkpoint:display-ack')globalThis.handoverAcks.push(args[0]);return handler(event,...args);});
  electron.dialog.showMessageBox=async(...args)=>{const fs=require('node:fs'),options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');fs.writeFileSync(process.env.AYA_TEST_QUESTIONS_FILE,JSON.stringify(globalThis.handoverQuestions));return{response:Number(process.env.AYA_TEST_HANDOVER_CHOICE),checkboxChecked:false};};
  if(process.env.AYA_TEST_PLAIN_HOST==='1'){
   const cp=require('node:child_process'),spawn=cp.spawn,hostScript=path.join(root,'dist-electron/pty-host.js');
@@ -123,6 +123,9 @@ for(const change of ['core','rules','version','runtime'])test(`a planned ${chang
  expect(hostPidsForHome(seeded.ayaHome)).toHaveLength(1);if(change==='core'||change==='runtime')expect(hostPidsForHome(seeded.ayaHome)[0]).not.toBe(hosts[0]);else expect(hostPidsForHome(seeded.ayaHome)[0]).toBe(hosts[0]);
  await expect(second.window.getByTestId('terminal-history-notice')).toHaveCount(0);
  expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
+ // The view acknowledges its display once its attach passed the host and its replay is applied. Capturing earlier
+ // freezes the core under that attach, and the host refuses it into the view being compared.
+ await expect.poll(()=>second.app.evaluate(()=> (globalThis as unknown as {handoverAcks:string[]}).handoverAcks)).toContain('tab-left');
  const restored=await captureCurrent(second.app);expect(restored.views['tab-left']).toEqual(captured.views['tab-left']);
 });
 for(const yes of [false,true])test(`one ineligible process is asked alone before quitting, yes=${yes}`,async({seeded})=>{
