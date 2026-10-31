@@ -220,6 +220,9 @@ export function applyPtyEvent(
   if (event.type === "osc-status") {
     const t = prev[event.ptyId];
     if (!t || t.disconnected) return prev;
+    if (event.level === "clear") {
+      return { ...prev, [event.ptyId]: clearedTerminalStatus(t) };
+    }
     const text = event.text.trim();
     if (!text) return prev;
     return { ...prev, [event.ptyId]: applyReportedStatus(t, { level: event.level, text, updatedAt: event.updatedAt }) };

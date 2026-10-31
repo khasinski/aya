@@ -14,7 +14,6 @@ const EXPECTED = {
   USAGE_HARNESS_NAME_STORAGE_KEY: "aya:usage-show-harness-name",
   STATUSBAR_GITHUB_LINK_STORAGE_KEY: "aya:statusbar-github-link",
   LAYOUT_MODE_STORAGE_KEY: "aya:layout-mode",
-  CHROME_STYLE_STORAGE_KEY: "aya:chrome-style",
   WORKTREES_STORAGE_KEY: "aya:worktrees",
   HARNESS_SEARCH_STORAGE_KEY: "aya:harness-search",
   TERMINAL_SOUNDS_STORAGE_KEY: "aya:terminal-sounds",

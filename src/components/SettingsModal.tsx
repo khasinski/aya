@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   type AyaIntelligenceConfig,
   type HarnessDef,
+  type LayoutMode,
   type Preset,
   type Snippet,
   type Theme,
@@ -23,7 +24,6 @@ import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { StatusConsentDialog, UsageConsentDialog } from "./settings/HookConsentDialogs";
-import type { WindowLayout } from "../window-layout";
 
 interface Props {
   presets: Preset[];
@@ -41,8 +41,8 @@ interface Props {
   onShowUsageHarnessNameChange: (show: boolean) => void;
   showGitHubLink: boolean;
   onShowGitHubLinkChange: (show: boolean) => void;
-  windowLayout: WindowLayout;
-  onWindowLayoutChange: (layout: WindowLayout) => void;
+  layoutMode: LayoutMode;
+  onLayoutModeChange: (mode: LayoutMode) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   terminalSoundsEnabled: boolean;
@@ -93,8 +93,8 @@ export function SettingsModal({
   onShowUsageHarnessNameChange,
   showGitHubLink,
   onShowGitHubLinkChange,
-  windowLayout,
-  onWindowLayoutChange,
+  layoutMode,
+  onLayoutModeChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
   terminalSoundsEnabled,
@@ -356,8 +356,8 @@ export function SettingsModal({
                 onShowUsageHarnessNameChange={onShowUsageHarnessNameChange}
                 showGitHubLink={showGitHubLink}
                 onShowGitHubLinkChange={onShowGitHubLinkChange}
-                windowLayout={windowLayout}
-                onWindowLayoutChange={onWindowLayoutChange}
+                layoutMode={layoutMode}
+                onLayoutModeChange={onLayoutModeChange}
                 harnessSearchEnabled={harnessSearchEnabled}
                 onHarnessSearchEnabledChange={onHarnessSearchEnabledChange}
                 usageHook={usageHook}

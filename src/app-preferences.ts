@@ -5,7 +5,7 @@ import {
   type MacOptionKeyMode,
 } from "./terminal-option-key";
 import { TERMINAL_FONT_FAMILY_STORAGE_KEY } from "./storage-keys";
-import type { ChromeStyle, LayoutMode } from "./types";
+import type { LayoutMode } from "./types";
 
 export type AppThemePreference = "system" | "light" | "dark" | "omarchy";
 
@@ -25,11 +25,6 @@ export const MAC_OPTION_CODEC: PreferenceCodec<MacOptionKeyMode> = {
 // "projects-left": project tabs in a left rail, terminal tabs on top.
 export const LAYOUT_CODEC = enumPreference<LayoutMode>(
   ["classic", "projects-left"],
-  "classic",
-);
-// "classic" (default) or the opt-in dark "command-rail" chrome skin.
-export const CHROME_STYLE_CODEC = enumPreference<ChromeStyle>(
-  ["classic", "command-rail"],
   "classic",
 );
 // Harness names show by default; the PR/branch link is opt-in (needs gh).

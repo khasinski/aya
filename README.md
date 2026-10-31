@@ -82,8 +82,6 @@ run commands.
 - **Many agents.** Presets for Claude Code, Codex, Cursor Agent, GitHub Copilot,
   Grok, Gemini, Aider, OpenCode, Kilo Code, Pi, Droid, Devin, and more, with
   session-precise resume via OSC 9001.
-- **Command Rail.** An optional compact interface in Settings → Window layout,
-  available with projects on top or on the left. Colors follow your theme.
 - **Usage in view.** Claude, Codex and Grok usage from local snapshots, plus
   Antigravity quota groups from its official CLI. Aya does not proxy provider
   APIs or read provider auth tokens.

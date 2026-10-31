@@ -10,6 +10,8 @@ import {
   extractAyaOsc,
   parseAyaOscSession,
   parseAyaOscStatus,
+  parseProgramStatusOsc,
+  PROGRAM_STATUS_OSC_KEY,
   SESSION_ID_RE,
 } from "../dist-electron/osc-extractor.js";
 
@@ -117,6 +119,79 @@ test("parseAyaOscStatus: unrecognized level is ignored", () => {
 test("parseAyaOscStatus: missing colon or empty text is ignored", () => {
   assert.equal(parseAyaOscStatus({ key: "status", value: "waiting" }), null);
   assert.equal(parseAyaOscStatus({ key: "status", value: "waiting :   " }), null);
+});
+
+test("parseAyaOscStatus: clear value parses to clear level with empty text", () => {
+  assert.deepEqual(parseAyaOscStatus({ key: "status", value: "clear" }), {
+    level: "clear",
+    text: "",
+  });
+  assert.deepEqual(parseAyaOscStatus({ key: "status", value: "clear : done" }), {
+    level: "clear",
+    text: "",
+  });
+});
+
+// --- OSC 7501 (Program Status Escape Sequence) -----------------------------
+
+test("OSC 7501 bare status text is stripped and parsed as active status", () => {
+  const result = extractAyaOsc("before \x1b]7501;Running tests\x07 after", "");
+  assert.equal(result.cleaned, "before  after");
+  assert.deepEqual(result.events, [
+    { key: PROGRAM_STATUS_OSC_KEY, value: "Running tests" },
+  ]);
+  assert.deepEqual(parseAyaOscStatus(result.events[0]), {
+    level: "active",
+    text: "Running tests",
+  });
+});
+
+test("OSC 7501 empty payload clears status", () => {
+  const result = extractAyaOsc("\x1b]7501;\x07", "");
+  assert.equal(result.cleaned, "");
+  assert.deepEqual(result.events, [{ key: PROGRAM_STATUS_OSC_KEY, value: "" }]);
+  assert.deepEqual(parseAyaOscStatus(result.events[0]), {
+    level: "clear",
+    text: "",
+  });
+});
+
+test("OSC 7501 level-prefixed payload maps to that level, while ordinary colons stay active", () => {
+  assert.deepEqual(parseProgramStatusOsc("waiting : Approval needed"), {
+    level: "waiting",
+    text: "Approval needed",
+  });
+  assert.deepEqual(parseProgramStatusOsc("done : All tests passed"), {
+    level: "done",
+    text: "All tests passed",
+  });
+  assert.deepEqual(parseProgramStatusOsc("error : Build failed"), {
+    level: "error",
+    text: "Build failed",
+  });
+  assert.deepEqual(parseProgramStatusOsc("Step 1: Compiling"), {
+    level: "active",
+    text: "Step 1: Compiling",
+  });
+});
+
+test("OSC 7501 truncates status text to 80 characters and strips control chars", () => {
+  const longText = "x".repeat(120);
+  assert.deepEqual(parseProgramStatusOsc(longText), {
+    level: "active",
+    text: "x".repeat(80),
+  });
+});
+
+test("OSC 7501 split across chunk boundaries is held back then completed", () => {
+  const first = extractAyaOsc("hi\x1b]750", "");
+  assert.equal(first.cleaned, "hi");
+  assert.equal(first.carry, "\x1b]750");
+
+  const second = extractAyaOsc("1;Indexing repo\x1b\\bye", first.carry);
+  assert.equal(second.cleaned, "bye");
+  assert.deepEqual(second.events, [{ key: PROGRAM_STATUS_OSC_KEY, value: "Indexing repo" }]);
+  assert.equal(second.carry, "");
 });
 
 // --- aya.session ------------------------------------------------------------

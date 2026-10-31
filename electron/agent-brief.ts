@@ -24,7 +24,7 @@ export function roleChannel(agent: string | undefined): RoleChannel {
 
 const BRIEF_BODY = [
   "the `aya` command reaches the Aya app: it can show your status on your tab,",
-  "notify the user, and read or type into the other panes of the project.",
+  "notify the user, and open, read or type into the other panes of the project.",
   "Run `aya capabilities` for the full command list (JSON) before using it.",
   "In an Aya team, `aya team whoami` tells you your role; run it after /clear or /resume.",
   'Teams: `aya team new "<what for>"` defines one, `aya team open` gives its roles panes, `aya team start <team> "<task>"` starts it; open and start only on the user\'s word, never to give a role work (that is `aya team send`).',

@@ -8,21 +8,25 @@
 // xterm.js: whether or not Aya recognizes/consumes a given key, an agent's
 // visible output must never leak escape-sequence noise.
 
-// Only sequences beginning with this exact introducer are ever held back
-// across a chunk boundary. Bounding the carry to our own namespaced prefix
-// means an unrelated program's use of OSC 9001 (collision risk called out in
+// Only sequences beginning with an exact supported introducer are ever held
+// back across a chunk boundary. Bounding the carry to our own namespaced prefix
+// (or the open OSC 7501 Program Status Escape Sequence specification) means an
+// unrelated program's use of OSC 9001 (collision risk called out in
 // integrations.md) is never mistaken for a truncated Aya sequence and is left
 // untouched in the output.
 const AYA_OSC_INTRODUCER = "\x1b]9001;aya.";
+const PROGRAM_STATUS_OSC_INTRODUCER = "\x1b]7501;";
+const OSC_INTRODUCERS = [AYA_OSC_INTRODUCER, PROGRAM_STATUS_OSC_INTRODUCER];
+export const PROGRAM_STATUS_OSC_KEY = "program-status";
 
 // Guards against an unterminated (malformed, or truncated by a misbehaving
 // process) sequence growing the carry buffer forever. Comfortably larger than
 // any real vocabulary value (see integrations.md's key list) plus key name.
 const MAX_CARRY_LENGTH = 4096;
 
-// `aya.<key>=<value>` terminated by BEL or ST (ESC \\). Value excludes BEL/ESC
-// so a truncated terminator can never be swallowed into it.
-const AYA_OSC_RE = /\x1b\]9001;aya\.([a-zA-Z][a-zA-Z0-9_-]*)=([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+// `aya.<key>=<value>` or `OSC 7501;<payload>` terminated by BEL or ST (ESC \\).
+// Value excludes BEL/ESC so a truncated terminator can never be swallowed into it.
+const AYA_OSC_RE = /\x1b\](?:9001;aya\.([a-zA-Z][a-zA-Z0-9_-]*)=([^\x07\x1b]*)|7501;([^\x07\x1b]*))(?:\x07|\x1b\\)/g;
 
 export interface AyaOscEvent {
   key: string;
@@ -30,7 +34,7 @@ export interface AyaOscEvent {
 }
 
 export interface OscExtractResult {
-  /** Chunk with every complete + held-back Aya OSC 9001 sequence removed. */
+  /** Chunk with every complete + held-back Aya OSC 9001 / 7501 sequence removed. */
   cleaned: string;
   /** Structured events parsed from any complete sequences in this call. */
   events: AyaOscEvent[];
@@ -38,23 +42,41 @@ export interface OscExtractResult {
   carry: string;
 }
 
-/** Index within `rest` where a trailing partial match of AYA_OSC_INTRODUCER
- *  starts (i.e. `rest.slice(idx)` is a proper prefix of the introducer, with
- *  more possibly still to come next chunk), or -1 if `rest` doesn't end with
- *  any prefix of it. The introducer is short, so this is a cheap scan. */
+/** Index within `rest` where a trailing partial match of any supported OSC
+ *  introducer starts (i.e. `rest.slice(idx)` is a proper prefix of an
+ *  introducer, with more possibly still to come next chunk), or -1 if `rest`
+ *  doesn't end with any prefix of it. The introducers are short, so this is a
+ *  cheap scan. */
 function trailingPartialIntroducerStart(rest: string): number {
-  const maxLen = Math.min(rest.length, AYA_OSC_INTRODUCER.length - 1);
-  for (let k = maxLen; k >= 1; k -= 1) {
-    const suffix = rest.slice(rest.length - k);
-    if (AYA_OSC_INTRODUCER.startsWith(suffix)) return rest.length - k;
+  let earliest = -1;
+  for (const introducer of OSC_INTRODUCERS) {
+    const maxLen = Math.min(rest.length, introducer.length - 1);
+    for (let k = maxLen; k >= 1; k -= 1) {
+      const start = rest.length - k;
+      const suffix = rest.slice(start);
+      if (introducer.startsWith(suffix)) {
+        if (earliest < 0 || start < earliest) earliest = start;
+        break;
+      }
+    }
   }
-  return -1;
+  return earliest;
 }
 
-/** Strip Aya's OSC 9001 sequences from a chunk and parse any complete ones.
- *  `carry` is whatever the previous call returned — a sequence that started
- *  in an earlier chunk but hadn't seen its terminator yet. Pure and
- *  side-effect free; callers own the per-ptyId carry state. */
+/** Last index in `rest` where a full supported OSC introducer begins, or -1. */
+function lastFullIntroducerStart(rest: string): number {
+  let latest = -1;
+  for (const introducer of OSC_INTRODUCERS) {
+    const idx = rest.lastIndexOf(introducer);
+    if (idx > latest) latest = idx;
+  }
+  return latest;
+}
+
+/** Strip Aya's OSC 9001 / OSC 7501 sequences from a chunk and parse any
+ *  complete ones. `carry` is whatever the previous call returned — a sequence
+ *  that started in an earlier chunk but hadn't seen its terminator yet. Pure
+ *  and side-effect free; callers own the per-ptyId carry state. */
 export function extractAyaOsc(chunk: string, carry: string): OscExtractResult {
   const combined = carry + chunk;
   const events: AyaOscEvent[] = [];
@@ -65,7 +87,11 @@ export function extractAyaOsc(chunk: string, carry: string): OscExtractResult {
   let match: RegExpExecArray | null;
   while ((match = AYA_OSC_RE.exec(combined)) !== null) {
     cleaned += combined.slice(lastIndex, match.index);
-    events.push({ key: match[1], value: match[2] });
+    if (match[1] !== undefined) {
+      events.push({ key: match[1], value: match[2] });
+    } else {
+      events.push({ key: PROGRAM_STATUS_OSC_KEY, value: match[3] ?? "" });
+    }
     lastIndex = AYA_OSC_RE.lastIndex;
   }
 
@@ -75,7 +101,7 @@ export function extractAyaOsc(chunk: string, carry: string): OscExtractResult {
   // loop above (it's global), so any occurrence still in `rest` must be the
   // start of an unterminated sequence — hold it back rather than let a
   // truncated escape sequence leak into the visible stream.
-  const fullIntroducerIdx = rest.lastIndexOf(AYA_OSC_INTRODUCER);
+  const fullIntroducerIdx = lastFullIntroducerStart(rest);
   if (fullIntroducerIdx >= 0) {
     const candidate = rest.slice(fullIntroducerIdx);
     if (candidate.length <= MAX_CARRY_LENGTH) {
@@ -97,19 +123,55 @@ export function extractAyaOsc(chunk: string, carry: string): OscExtractResult {
 const STATUS_LEVELS = new Set(["active", "waiting", "done", "error"]);
 
 export interface AyaOscStatus {
-  level: "active" | "waiting" | "done" | "error";
+  level: "active" | "waiting" | "done" | "error" | "clear";
   text: string;
 }
 
-/** Parse an `aya.status` event's `level : text` value. Returns null for any
- *  other key, an unrecognized level, or empty text — never throws, since this
- *  reads untrusted process output. */
+const PROGRAM_STATUS_MAX_LENGTH = 80;
+
+function stripControlChars(s: string): string {
+  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim();
+}
+
+/** Parse an `OSC 7501` Program Status Escape Sequence payload (`ESC ] 7501 ; ... ST`).
+ *  Supports:
+ *  - empty payload (`\x1b]7501;\x07`) -> `{ level: "clear", text: "" }`
+ *  - level-prefixed payload (`waiting : Approval needed` or `done : Tests passed`)
+ *  - bare status text (`Running tests`) -> `{ level: "active", text: "Running tests" }`
+ *  Capped at 80 chars and stripped of C0/C1 control characters per the spec. */
+export function parseProgramStatusOsc(raw: string): AyaOscStatus | null {
+  const cleaned = stripControlChars(raw);
+  if (!cleaned) return { level: "clear", text: "" };
+  const sep = cleaned.indexOf(":");
+  if (sep >= 0) {
+    const maybeLevel = cleaned.slice(0, sep).trim();
+    const rest = cleaned.slice(sep + 1).trim().slice(0, PROGRAM_STATUS_MAX_LENGTH);
+    if (maybeLevel === "clear") return { level: "clear", text: "" };
+    if (STATUS_LEVELS.has(maybeLevel)) {
+      if (!rest) return null;
+      return { level: maybeLevel as AyaOscStatus["level"], text: rest };
+    }
+  }
+  return { level: "active", text: cleaned.slice(0, PROGRAM_STATUS_MAX_LENGTH) };
+}
+
+/** Parse an `aya.status` event's `level : text` (or `clear`) value, or an
+ *  `OSC 7501` Program Status event. Returns null for any other key, an
+ *  unrecognized level, or empty text — never throws, since this reads
+ *  untrusted process output. */
 export function parseAyaOscStatus(event: AyaOscEvent): AyaOscStatus | null {
+  if (event.key === PROGRAM_STATUS_OSC_KEY) {
+    return parseProgramStatusOsc(event.value);
+  }
   if (event.key !== "status") return null;
-  const sep = event.value.indexOf(":");
+  const trimmed = stripControlChars(event.value);
+  if (trimmed === "clear" || trimmed.startsWith("clear:") || trimmed.startsWith("clear :")) {
+    return { level: "clear", text: "" };
+  }
+  const sep = trimmed.indexOf(":");
   if (sep < 0) return null;
-  const level = event.value.slice(0, sep).trim();
-  const text = event.value.slice(sep + 1).trim();
+  const level = trimmed.slice(0, sep).trim();
+  const text = trimmed.slice(sep + 1).trim();
   if (!STATUS_LEVELS.has(level) || !text) return null;
   return { level: level as AyaOscStatus["level"], text };
 }

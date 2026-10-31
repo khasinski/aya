@@ -428,6 +428,26 @@ test("osc-status: blank text is a no-op (same map reference)", () => {
   assert.equal(next, prev);
 });
 
+test("osc-status: clear drops externalStatus and reverts status to lifecycle truth", () => {
+  const prev = {
+    t1: termState("t1", {
+      status: "waiting",
+      bell: true,
+      externalStatus: { level: "waiting", text: "Needs input", updatedAt: 1000 },
+    }),
+  };
+  const next = applyPtyEvent(prev, {
+    type: "osc-status",
+    ptyId: "t1",
+    level: "clear",
+    text: "",
+    updatedAt: 2000,
+  });
+  assert.equal(next.t1.externalStatus, undefined);
+  assert.equal(next.t1.bell, false);
+  assert.equal(next.t1.status, "idle");
+});
+
 test("osc-status: unknown ptyId is a no-op", () => {
   const prev = { t1: termState("t1") };
   const next = applyPtyEvent(prev, {

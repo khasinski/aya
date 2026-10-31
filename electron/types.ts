@@ -349,15 +349,15 @@ export type PtyEvent =
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
   | {type:"recovery-screen";ptyId:string;generation:string;known:boolean}
   | {type:"recovery-state";ptyId:string;generation:string;notice:string;screenUnknown:boolean}
-  // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
-  // a wrapper script) emitted inline in its own output — see integrations.md.
-  // Carries the same vocabulary as ControlStatusUpdate's "status" request,
-  // just delivered in-band through the PTY stream instead of the control
-  // socket.
+  // Explicit status parsed from an OSC 9001 `aya.status` or OSC 7501 sequence
+  // the TUI (or a wrapper script) emitted inline in its own output — see
+  // integrations.md. Carries the same vocabulary as ControlStatusUpdate's
+  // "status" request (including "clear"), just delivered in-band through the
+  // PTY stream instead of the control socket.
   | {
       type: "osc-status";
       ptyId: string;
-      level: ControlStatusLevel;
+      level: ControlStatusLevel | "clear";
       text: string;
       updatedAt: number;
     }

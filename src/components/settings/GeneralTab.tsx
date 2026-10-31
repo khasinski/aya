@@ -1,12 +1,11 @@
 import { useEffect, useState, type Dispatch, type SetStateAction, type RefObject } from "react";
 import { PRESET_ID_SHELL } from "../../preset-ids";
-import { type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus } from "../../types";
+import { type LayoutMode, type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus } from "../../types";
 import { type MacOptionKeyMode } from "../../terminal-option-key";
 import { type TerminalSoundCue } from "../../terminal-sound-prefs";
 import { SettingsHeader, SettingsRow } from "./parts";
 import { AyaWebRow } from "./AyaWebRow";
 import { CliRow, MicrophoneRow, NotificationsRow } from "./SystemRows";
-import { WINDOW_LAYOUTS, type WindowLayout } from "../../window-layout";
 
 interface GeneralTabProps {
   omarchy: OmarchyStatus | null;
@@ -21,8 +20,8 @@ interface GeneralTabProps {
   onShowUsageHarnessNameChange: (show: boolean) => void;
   showGitHubLink: boolean;
   onShowGitHubLinkChange: (show: boolean) => void;
-  windowLayout: WindowLayout;
-  onWindowLayoutChange: (layout: WindowLayout) => void;
+  layoutMode: LayoutMode;
+  onLayoutModeChange: (mode: LayoutMode) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   usageHook: UsageHookStatus | null;
@@ -57,8 +56,8 @@ export function GeneralTab({
   onShowUsageHarnessNameChange,
   showGitHubLink,
   onShowGitHubLinkChange,
-  windowLayout,
-  onWindowLayoutChange,
+  layoutMode,
+  onLayoutModeChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
   usageHook,
@@ -266,14 +265,17 @@ export function GeneralTab({
     }
     control={(
     <div className="aya-settings-segmented" aria-label="Window layout">
-      {WINDOW_LAYOUTS.map(({ id, label }) => (
+      {([
+        ["classic", "Projects on top"],
+        ["projects-left", "Projects on left"],
+      ] as const).map(([mode, label]) => (
         <button
-          key={id}
+          key={mode}
           type="button"
           className={`aya-settings-segment ${
-            windowLayout === id ? "aya-settings-segment--active" : ""
+            layoutMode === mode ? "aya-settings-segment--active" : ""
           }`}
-          onClick={() => onWindowLayoutChange(id)}
+          onClick={() => onLayoutModeChange(mode)}
         >
           {label}
         </button>
@@ -281,13 +283,9 @@ export function GeneralTab({
     </div>
     )}
     >
-    "Projects on top" keeps project tabs on top with the terminal list
-    on the left. "Projects on left" moves projects into a left rail and
-    puts terminal tabs along the top; split panes are disabled there.
-    The two Command Rail options are the same two arrangements in a
-    denser look: a rail of project avatars, flat rows with a marker on
-    the selected terminal, and amber or red pane headers when an agent
-    is waiting or failed. Colors follow your theme.
+    Classic keeps project tabs on top with the terminal list on the
+    left. "Projects on left" moves projects into a left rail and puts
+    terminal tabs along the top. Split panes are disabled in this layout.
     </SettingsRow>
     <SettingsRow
     icon="manage_search"

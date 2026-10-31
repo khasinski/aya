@@ -46,6 +46,7 @@ export function projectEventForPtyEvent(
     };
   }
   if (event.type === "osc-status") {
+    if (event.level === "clear") return null;
     return {
       projectSlug: terminal.projectSlug,
       terminalId: terminal.id,

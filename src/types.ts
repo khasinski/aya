@@ -303,10 +303,6 @@ export interface ProjectGitInfo {
  *  top. The two are rendered by separate, self-contained layout components. */
 export type LayoutMode = "classic" | "projects-left";
 
-/** App-chrome look. "classic" is the original; "command-rail" is the denser
- *  slate-blue skin (dark only). Independent of the window layout. */
-export type ChromeStyle = "classic" | "command-rail";
-
 export type GitHubLinkKind = "pr" | "branch";
 
 /** A GitHub URL for the active project's current branch: its open PR, or the
@@ -503,14 +499,15 @@ export type PtyEvent =
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
   | {type:"recovery-screen";ptyId:string;generation:string;known:boolean}
   | {type:"recovery-state";ptyId:string;generation:string;notice:string;screenUnknown:boolean}
-  // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
-  // a wrapper script) emitted inline in its own output - see integrations.md.
-  // Same vocabulary as ControlStatusUpdate's "status" request, delivered
-  // in-band through the PTY stream instead of the control socket.
+  // Explicit status parsed from an OSC 9001 `aya.status` or OSC 7501 sequence
+  // the TUI (or a wrapper script) emitted inline in its own output - see
+  // integrations.md. Same vocabulary as ControlStatusUpdate's "status" request
+  // (including "clear"), delivered in-band through the PTY stream instead of
+  // the control socket.
   | {
       type: "osc-status";
       ptyId: string;
-      level: ControlStatusLevel;
+      level: ControlStatusLevel | "clear";
       text: string;
       updatedAt: number;
     }

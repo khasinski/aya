@@ -35,12 +35,6 @@ import { NewProjectModal } from "./components/NewProjectModal";
 import { ProjectPresetImportModal } from "./components/ProjectPresetImportModal";
 import { SearchModal } from "./components/SearchModal";
 import { SettingsModal } from "./components/SettingsModal";
-import {
-  CommandRailLayout,
-  CommandRailProjects,
-  CommandRailSidebarHeader,
-  CommandRailUsage,
-} from "./components/CommandRailLayout";
 import { ProjectsLeftLayout } from "./components/ProjectsLeftLayout";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -101,7 +95,6 @@ import {
   type Theme,
   type UpdateStatus,
 } from "./types";
-import { windowLayoutOf, windowLayoutParts } from "./window-layout";
 
 // Cap on preset suggestions offered during repo preset import.
 const MAX_SUGGESTED_PRESETS = 8;
@@ -213,8 +206,6 @@ export function App() {
     setShowGitHubLink,
     layoutMode,
     setLayoutMode,
-    chromeStyle,
-    setChromeStyle,
     harnessSearchEnabled,
     setHarnessSearchEnabled,
     terminalSoundsEnabled,
@@ -1090,7 +1081,6 @@ export function App() {
         isFullScreen ? "aya-app--fullscreen" : "",
       ].filter(Boolean).join(" ")}
       data-theme={appThemePreference === "system" ? undefined : appThemePreference}
-      data-chrome={chromeStyle === "classic" ? undefined : chromeStyle}
       data-accent="green"
     >
       <WebWaitingBanners
@@ -1163,7 +1153,6 @@ export function App() {
             projectTerminals={projectTerminals}
           />
         );
-        const commandRail = chromeStyle === "command-rail";
         const sidebarNode = (
           <Sidebar
             teams={activeTeams}
@@ -1212,75 +1201,10 @@ export function App() {
                 onSelectTerminal={focusTerminalFromNotification}
               />
             }
-            header={
-              commandRail ? (
-                <CommandRailSidebarHeader
-                  project={activeProject ?? null}
-                  summary={localSummariesEnabled && activeProjectId ? projectSummaries[activeProjectId] : undefined}
-                  homeDir={homeDir}
-                  onRename={renameProject}
-                />
-              ) : undefined
-            }
-            extraSection={
-              commandRail ? (
-                <CommandRailProjects
-                  projects={projects}
-                  activeProjectId={activeProjectId}
-                  homeDir={homeDir}
-                  projectBadges={projectBadges}
-                  projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
-                  onSelectProject={setActiveProjectId}
-                />
-              ) : undefined
-            }
-            footer={
-              commandRail ? (
-                <CommandRailUsage claude={usageAccounts} codex={codexUsageAccounts} antigravity={antigravityUsageAccounts} />
-              ) : undefined
-            }
           />
         );
         const body =
           !didBootstrap ? loadingNode : isEmpty ? emptyStateNode : null;
-        // Variant A (classic layout) gets the avatar-rail shell; variant B
-        // (projects-left) keeps its own layout, skinned by the same CSS.
-        if (commandRail && layoutMode !== "projects-left") {
-          return (
-            <CommandRailLayout
-              projects={projects}
-              closedProjects={closedProjects}
-              activeProjectId={activeProjectId}
-              homeDir={homeDir}
-              isDev={window.aya.isDev}
-              platform={window.aya.platform}
-              isFullScreen={isFullScreen}
-              isMaximized={isMaximized}
-              blockChrome={chromeBlocked}
-              onSelectProject={setActiveProjectId}
-              onOpenProject={openProjectBySlug}
-              onNewProject={showNewProjectModal}
-              onCloseProject={closeProject}
-              onMoveProjectToWindow={moveProjectToWindow}
-              onReorderProjects={reorderProjects}
-              onOpenSearch={openSearch}
-              onOpenSettings={openSettings}
-              onMinimizeWindow={minimizeWindow}
-              onToggleMaximizeWindow={toggleMaximizeWindow}
-              onToggleFullScreenWindow={toggleFullScreenWindow}
-              onCloseWindow={closeWindow}
-              projectBadges={projectBadges}
-              projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
-              teamsByProject={teamsByProject}
-              sidebar={sidebarNode}
-              sidebarWidth={sidebarWidth}
-              panes={panesNode}
-              body={body}
-              activeProjectName={activeProject?.name}
-              activeTerminalName={activeTerminal?.name}
-            />
-          );
-        }
         if (layoutMode === "projects-left") {
           return (
             <ProjectsLeftLayout
@@ -1317,8 +1241,6 @@ export function App() {
               antigravityUsageAccounts={antigravityUsageAccounts}
               grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
-              commandRail={commandRail}
-              worktrees={worktrees}
               terminals={projectTerminals}
               activeTerminalId={activeTabId}
               presets={activePresets}
@@ -1393,20 +1315,6 @@ export function App() {
         );
       })()}
       <StatusBar
-        leading={
-          chromeStyle === "command-rail" ? (
-            <button
-              type="button"
-              className="aya-statusbar-item aya-statusbar-button aya-cr-cmdk"
-              onClick={openSearch}
-              disabled={chromeBlocked}
-              title="Search (Cmd/Ctrl+K or Shift Shift)"
-            >
-              <kbd>{window.aya.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd>
-              Jump to a terminal, search, run a command
-            </button>
-          ) : undefined
-        }
         project={activeProject}
         reviewTargets={reviewTargets}
         git={activeGit}
@@ -1568,12 +1476,8 @@ export function App() {
           onShowUsageHarnessNameChange={setShowUsageHarnessName}
           showGitHubLink={showGitHubLink}
           onShowGitHubLinkChange={updateShowGitHubLink}
-          windowLayout={windowLayoutOf(layoutMode, chromeStyle)}
-          onWindowLayoutChange={(layout) => {
-            const parts = windowLayoutParts(layout);
-            setLayoutMode(parts.layoutMode);
-            setChromeStyle(parts.chromeStyle);
-          }}
+          layoutMode={layoutMode}
+          onLayoutModeChange={setLayoutMode}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}
