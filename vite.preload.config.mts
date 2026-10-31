@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 
 // The window's preload, bundled into one file: a sandboxed preload can require only
-// `electron` and a few built-ins, never its own modules (./zoom-preload and the rest).
+// `electron` and a few built-ins, never its own modules (./open-project-buffer and the rest).
 // tsc still type-checks electron/preload.ts; the window loads this bundle (main.ts).
 
 export default defineConfig({

@@ -32,14 +32,13 @@ test("zoom shortcuts work with terminal focus and reset to the original size", a
   await expect.poll(() => zoomLevel(app)).toBe(0);
 });
 
-test("Ctrl+wheel zooms over a terminal while ordinary wheel does not", async ({ app, window }) => {
+test("pinch / Ctrl+wheel does not zoom over a terminal", async ({ app, window }) => {
   await key(app, "0");
   const terminal = window.locator(".xterm-screen").first();
   await terminal.hover();
   await window.mouse.wheel(0, -120);
   await expect.poll(() => zoomLevel(app)).toBe(0);
 
-  // Send real wheel input, rather than emitting zoom-changed directly.
   const box = await terminal.boundingBox();
   if (!box) throw new Error("terminal is not visible");
   const point = { x: Math.round(box.x + 20), y: Math.round(box.y + 20) };
@@ -49,7 +48,7 @@ test("Ctrl+wheel zooms over a terminal while ordinary wheel does not", async ({ 
     });
   }, { ...point, deltaY });
   await wheel(120);
-  await expect.poll(() => zoomLevel(app)).toBe(1);
+  await expect.poll(() => zoomLevel(app)).toBe(0);
   await wheel(-120);
   await expect.poll(() => zoomLevel(app)).toBe(0);
 });

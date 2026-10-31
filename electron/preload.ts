@@ -1,10 +1,10 @@
+/// <reference lib="dom" />
 // Preload — exposes a typed `window.aya` API to the renderer using
 // contextBridge. The renderer has no direct Node access.
 
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 import { createOpenProjectBuffer } from "./open-project-buffer";
 import { installPromptAttachmentGestures } from "./prompt-attachment-gestures";
-import { installWheelZoom } from "./zoom-preload";
 const E2E_HEADLESS_UI_ACTIVE_ENV = "AYA_E2E_HEADLESS_UI_ACTIVE";
 
 import type {
@@ -41,7 +41,7 @@ if (process.env[E2E_HEADLESS_UI_ACTIVE_ENV] === "1") {
   });
 }
 
-installWheelZoom();
+webFrame?.setVisualZoomLevelLimits?.(1, 1);
 
 // Keep OS paths and the clipboard behind the preload event boundary. A page
 // script can manufacture a DOM event, but it cannot make it trusted or invoke

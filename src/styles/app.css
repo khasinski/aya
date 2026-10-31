@@ -257,12 +257,8 @@ body {
 }
 .aya-project-tablist,
 .aya-termtab-list {
-  display: flex;
-  flex: 1 0 auto;
-  min-width: 0;
+  display: contents;
 }
-.aya-project-tablist { flex: 1 0 auto; }
-.aya-termtab-list { flex: 0 0 auto; }
 .aya-tab {
   -webkit-app-region: no-drag;
   display: flex; align-items: center; gap: 8px;

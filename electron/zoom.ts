@@ -1,6 +1,6 @@
 import type { WebContents } from "electron";
 
-// Keep keyboard and wheel zoom within Chromium's usual 50–300% range.
+// Keep keyboard zoom within Chromium's usual 50–300% range.
 const MIN_ZOOM = Math.log(0.5) / Math.log(1.2);
 const MAX_ZOOM = Math.log(3) / Math.log(1.2);
 
