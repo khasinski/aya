@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v0.14.1 - 2026-10-31
+
+Program status escape sequence (`OSC 7501`), simplified window layouts, and
+restored top-bar tab sizing.
+
+### Features
+
+- **Program Status Escape Sequence (`OSC 7501`) and `aya.status=clear`.**
+  Terminal programs can report pane status (`busy`, `done`, `waiting`, `error`,
+  or `clear`) and an optional summary inline via `\e]7501;<state>[;<summary>]\a`
+  without spawning a subprocess, or clear an explicit status override over the
+  control socket.
+
+### Fixes
+
+- Restore dynamic top-bar tab sizing in both **Projects on top** and **Projects
+  on left** layouts while keeping the `role="tablist"` keyboard navigation
+  wrappers intact.
+- Disable trackpad pinch-to-zoom (`Ctrl+wheel`) so scrolling and two-finger
+  gestures over terminals do not accidentally rescale the window; keyboard zoom
+  shortcuts (`Cmd/Ctrl` + `=`, `-`, `0`) remain unchanged.
+- Remove the experimental Command Rail window layouts, keeping **Projects on
+  top** and **Projects on left**.
+
 ## v0.14.0 - 2026-10-30
 
 Session-history search that stays inside a time budget, shared 1Password
