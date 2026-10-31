@@ -2,6 +2,8 @@
 // precedence rules — global toggle, per-preset override, custom file — are
 // testable without React or an audio device.
 
+import { PRESET_ID_SHELL } from "./preset-ids";
+
 export type TerminalSoundCue = "waiting" | "done";
 
 export interface TerminalSoundPrefs {
@@ -20,6 +22,7 @@ export function shouldPlayTerminalSound(
   presetId: string,
 ): boolean {
   if (!prefs.enabled) return false;
+  if (presetId === PRESET_ID_SHELL) return false;
   return prefs.overrides[presetId] ?? true;
 }
 

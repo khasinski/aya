@@ -1334,6 +1334,8 @@ export function App() {
         }}
         snippetsOpen={snippetsOpenForActiveTerminal}
         snippetsDisabled={!activeTerminal}
+        terminalSoundsEnabled={terminalSoundsEnabled}
+        onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
         onToggleSnippets={toggleSnippetsDrawer}
         onOpenAttentionCenter={openAttentionCenter}
         onOpenTeams={() => setShowTeams(true)}

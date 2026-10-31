@@ -53,6 +53,8 @@ interface Props {
   onGitStatusRefresh: (directory: string) => Promise<void>;
   snippetsOpen: boolean;
   snippetsDisabled: boolean;
+  terminalSoundsEnabled: boolean;
+  onTerminalSoundsEnabledChange: (enabled: boolean) => void;
   /** Agent panes of the active project a diff review can go to, the default
    *  first. Empty: comments can be written, not sent. */
   reviewTargets: ReviewTarget[];
@@ -101,6 +103,8 @@ function StatusBarImpl({
   onGitStatusRefresh,
   snippetsOpen,
   snippetsDisabled,
+  terminalSoundsEnabled,
+  onTerminalSoundsEnabledChange,
   reviewTargets,
   onOpenProjectDirectory,
   onToggleSnippets,
@@ -689,6 +693,24 @@ function StatusBarImpl({
         <MachinesStatus onManage={() => onOpenSettings("machines")} onOpenTerminal={onOpenMachineTerminal} />
       )}
       <button
+        data-testid="sound-toggle"
+        className="aya-statusbar-item aya-statusbar-button"
+        type="button"
+        aria-label={terminalSoundsEnabled ? "Mute terminal sounds" : "Unmute terminal sounds"}
+        aria-pressed={terminalSoundsEnabled}
+        title={
+          terminalSoundsEnabled
+            ? "Terminal sounds: on (click to mute)"
+            : "Terminal sounds: off (click to unmute)"
+        }
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onTerminalSoundsEnabledChange(!terminalSoundsEnabled)}
+      >
+        <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
+          {terminalSoundsEnabled ? "volume_up" : "volume_off"}
+        </span>
+      </button>
+      <button
         data-testid="snippet-toggle"
         className={`aya-statusbar-item aya-statusbar-button aya-pane-snippettoggle aya-statusbar-snippet ${
           snippetsOpen ? "aya-pane-snippettoggle--on" : ""
@@ -752,6 +774,7 @@ function StatusBarImpl({
         </button>
         {showMobileActions && (
           <div className="aya-statusbar-popover aya-mobile-status-actions-menu" role="menu" aria-label="More actions">
+            <button type="button" role="menuitem" onClick={() => { setShowMobileActions(false); onTerminalSoundsEnabledChange(!terminalSoundsEnabled); }}>{terminalSoundsEnabled ? "Mute terminal sounds" : "Unmute terminal sounds"}</button>
             <button type="button" role="menuitem" disabled={snippetsDisabled} onClick={() => { setShowMobileActions(false); onToggleSnippets(); }}>Saved snippets</button>
             <button type="button" role="menuitem" disabled={!project} onClick={() => { setShowMobileActions(false); onOpenTeams(); }}>Teams</button>
             <button type="button" role="menuitem" onClick={() => { setShowMobileActions(false); onOpenAttentionCenter(); }}>Activity</button>

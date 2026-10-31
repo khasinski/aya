@@ -29,6 +29,7 @@ npm-debug.log*
 # Env (in case we ever add)
 .env
 .env.*
+electron-builder.env
 
 # Playwright E2E artifacts
 test-results/

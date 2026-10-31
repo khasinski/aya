@@ -28,8 +28,9 @@ function prefs(overrides = {}) {
 
 // --- shouldPlayTerminalSound ----------------------------------------------
 
-test("defaults play for any preset", () => {
+test("defaults play for any preset except shell", () => {
   assert.equal(shouldPlayTerminalSound(prefs(), "claude"), true);
+  assert.equal(shouldPlayTerminalSound(prefs(), "shell"), false);
 });
 
 test("the master switch silences every preset, overrides included", () => {

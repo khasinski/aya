@@ -14,9 +14,14 @@ restored top-bar tab sizing.
   or `clear`) and an optional summary inline via `\e]7501;<state>[;<summary>]\a`
   without spawning a subprocess, or clear an explicit status override over the
   control socket.
+- **Status-bar sound toggle.** Mute or unmute terminal chimes directly from the
+  status bar next to `snippets`.
 
 ### Fixes
 
+- Silence the macOS waiting-notification sound (`silent: true`) so `Terminal
+  sounds: Off` truly mutes waiting transitions, sync `localStorage` preferences
+  across open Aya windows via `storage` events, and keep `Shell` panes silent.
 - Restore dynamic top-bar tab sizing in both **Projects on top** and **Projects
   on left** layouts while keeping the `role="tablist"` keyboard navigation
   wrappers intact.

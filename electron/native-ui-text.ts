@@ -3,9 +3,11 @@
 
 import { printable } from "./printable";
 
-/** The waiting-for-input notification; `body` names the tab and its project. */
+/** The waiting-for-input notification; `body` names the tab and its project.
+ *  Always `silent: true` because renderer `useTerminalSounds` owns the waiting chime
+ *  (and respects the Terminal sounds toggle and per-preset overrides). */
 export function waitingNotification(body: string): { title: string; body: string; silent: boolean } {
-  return { title: "Aya - waiting for input", body: printable(body), silent: false };
+  return { title: "Aya - waiting for input", body: printable(body), silent: true };
 }
 
 /** The yes/no before a restart that stops work in panes; `yes` names the restart, `text` lists what stops. */

@@ -41,6 +41,17 @@ const fakeReact = {
     h.slots[i] = { fn, deps };
     return fn;
   },
+  useEffect(fn, deps) {
+    const h = rendering;
+    const i = h.index++;
+    const prev = h.slots[i];
+    if (prev && prev.deps.length === deps.length && prev.deps.every((d, j) => Object.is(d, deps[j]))) {
+      return;
+    }
+    if (prev?.cleanup) prev.cleanup();
+    const cleanup = fn();
+    h.slots[i] = { deps, cleanup };
+  },
 };
 const savedReact = require.cache[reactId];
 require.cache[reactId] = { id: reactId, filename: reactId, loaded: true, exports: fakeReact };
@@ -241,4 +252,35 @@ test("a new key or codec gives a new setter that writes with them", (t) => {
   assert.notEqual(hook.set, second);
   hook.act(() => hook.set(false));
   assert.equal(store.get("aya.github"), "no");
+});
+
+test("a storage event from another window updates the value for that key", (t) => {
+  fakeStorage(t, { "aya.sounds": "1" });
+  const listeners = new Map();
+  const savedWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    value: {
+      addEventListener: (type, fn) => listeners.set(type, fn),
+      removeEventListener: (type) => listeners.delete(type),
+    },
+    configurable: true,
+    writable: true,
+  });
+  t.after(() => {
+    if (savedWindow) Object.defineProperty(globalThis, "window", savedWindow);
+    else delete globalThis.window;
+  });
+
+  const hook = renderHook("aya.sounds", ON);
+  assert.equal(hook.value, true);
+  assert.ok(listeners.has("storage"));
+
+  hook.act(() => listeners.get("storage")({ key: "other", newValue: "0" }));
+  assert.equal(hook.value, true, "ignores unrelated keys");
+
+  hook.act(() => listeners.get("storage")({ key: "aya.sounds", newValue: "0" }));
+  assert.equal(hook.value, false, "updates from another window's write");
+
+  hook.act(() => listeners.get("storage")({ key: "aya.sounds", newValue: null }));
+  assert.equal(hook.value, true, "falls back to default when the key is removed");
 });

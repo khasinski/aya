@@ -14,7 +14,7 @@ test("the waiting notification shows a hostile tab name as text", () => {
   assert.deepEqual(waitingNotification(`worker${RLO}TXT in game\x1b]0;x\x07`), {
     title: "Aya - waiting for input",
     body: `worker${U("202e")}TXT in game${U("001b")}]0;x${U("0007")}`,
-    silent: false,
+    silent: true,
   });
 });
 
