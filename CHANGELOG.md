@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.15.1 - 2026-11-01
+
+- Fix missing updater dependencies in the macOS package, which prevented Aya
+  from starting. Build release packages from a clean dependency installation.
+- Verify the complete required production dependency tree inside the packaged
+  ASAR before signing or publishing, using the packaged Electron runtime.
+
 ## v0.15.0 - 2026-11-01
 
 - Add experimental conversation history with a searchable `/resume` picker,
