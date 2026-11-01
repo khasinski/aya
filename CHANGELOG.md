@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.15.3 - 2026-11-01
+
+- Fix Claude conversation GUI sessions requesting `/login` despite an existing
+  terminal login when using the default configuration directory on macOS.
+  Preserve support for custom account configuration directories.
+- Honor preset skip-permissions mode in Antigravity conversation GUI sessions,
+  both for new and resumed conversations.
+- Keep terminal restart warnings compact: show at most five panes, truncate long
+  descriptions, and show how many more panes are affected while retaining work
+  interruption warnings.
+
 ## v0.15.2 - 2026-11-01
 
 - Clean up conversation GUI typography, toolbar icons, composer controls,

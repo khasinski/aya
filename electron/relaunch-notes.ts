@@ -10,6 +10,7 @@ import { typeFromAya, type TeamControlDeps } from "./team-control";
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import { runnableTeamNames } from "./team-files";
 import { openTeamStore } from "./team-store";
+import { printable } from "./printable";
 
 export const RELAUNCH_NOTE = "Aya restarted this pane; background tasks and monitors you had are gone; start again the ones you still need.";
 /** A pane that never comes back (closed, left stopped) drops its note after this. */
@@ -155,7 +156,15 @@ export async function backgroundWorkKnown(deps: RelaunchDeps): Promise<PaneWork[
 
 /** The warning before a restart that stops `work`; `action` names the restart. */
 export function restartWarning(action: string, work: readonly PaneWork[]): string {
-  const shown = work.map((w) => `${w.name}: ${w.work}`).join("; ");
+  // Keep the native dialog small even with many panes or long command lines.
+  const limit = 5;
+  const compact = (text: string) => {
+    const value = printable(text).replace(/\s+/g, " ").trim();
+    return value.length > 100 ? `${value.slice(0, 99)}…` : value;
+  };
+  const entries = work.slice(0, limit).map((w) => compact(`${w.name}: ${w.work}`));
+  if (work.length > limit) entries.push(`and ${work.length - limit} more panes`);
+  const shown = entries.join("; ");
   return [
     `${action} stops what these panes are doing (${shown}).`,
     work.some((w) => w.turn) && "An agent mid-turn stops before its turn ends.",

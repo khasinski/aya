@@ -1,7 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, symlink, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 const isolatedHome = await mkdtemp(path.join(tmpdir(), 'aya-gui-unit-'));
 process.env.AYA_HOME = isolatedHome;
@@ -282,6 +282,35 @@ for (const unsafeMode of [false, true]) {
     const config = events.find(e => e.method === 'fixture/config').params;
     assert.equal(config.args.includes('--dangerously-skip-permissions'), unsafeMode);
   });
+}
+
+test('Claude GUI preserves the terminal login for the default directory and selects custom accounts', async t => {
+  const inherited = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = '/inherited-claude-account';
+  t.after(() => {
+    if (inherited === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = inherited;
+  });
+  for (const configDir of [undefined, '~/.claude', '$HOME/.claude', path.join(homedir(), '.claude'), path.join(homedir(), '.claude', ''), '/custom-claude-account']) {
+    const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+    try {
+      await session.connect(process.cwd(), '', configDir);
+      const config = events.find(e => e.method === 'fixture/config').params;
+      assert.equal(config.configDir, configDir === '/custom-claude-account' ? configDir : '/inherited-claude-account');
+    } finally { session.close(); }
+  }
+});
+
+for (const unsafeMode of [undefined, false, true]) {
+  for (const resumeThreadId of [undefined, 'existing-thread']) {
+    test(`Antigravity GUI forwards skip permissions (${unsafeMode}) when ${resumeThreadId ? 'resuming' : 'starting'}`, async t => {
+      const events = [], session = new AntigravityGuiSession(e => events.push(e), process.execPath, [agyFixture]);
+      t.after(() => session.close());
+      await session.connect(process.cwd(), '', undefined, resumeThreadId, unsafeMode);
+      const config = events.find(e => e.method === 'fixture/config').params;
+      assert.equal(config.args.includes('--dangerously-skip-permissions'), unsafeMode === true);
+    });
+  }
 }
 
 for (const decision of ['acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'status'] } }]) {

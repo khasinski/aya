@@ -56,6 +56,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         method: 'fixture/config',
         params: {
           args: process.argv.slice(2),
+          configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
           sdkMcpServers: req.sdkMcpServers,
           appendSystemPrompt: req.appendSystemPrompt,
         },

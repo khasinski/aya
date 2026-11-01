@@ -1,6 +1,7 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat, readFile, mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { AYA_HOME } from './paths';
@@ -854,7 +855,11 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       '--permission-prompt-tool=stdio',
       ...(resumeThreadId ? ['--resume', resumeThreadId] : ['--session-id', this.threadId]),
     ]), ...(unsafeMode ? ['--dangerously-skip-permissions'] : [])];
-    const env = this.cleanEnv(configDir ? { CLAUDE_CONFIG_DIR: configDir } : {});
+    // Explicitly setting even ~/.claude changes Claude's macOS Keychain account.
+    // Match the terminal preset: only override the environment for a custom directory.
+    const claudeDir = configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir());
+    const customDir = claudeDir && path.resolve(claudeDir) !== path.join(homedir(), '.claude');
+    const env = this.cleanEnv(customDir ? { CLAUDE_CONFIG_DIR: claudeDir } : {});
     this.child = spawn(this.executable, args, {
       cwd: this.cwd,
       env,
@@ -1339,14 +1344,14 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
   }
 
-  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string) {
+  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
     if (this.child) throw Error('Start a new window for a separate session');
     this.cwd = await realpath(cwd);
     if (!(await stat(this.cwd)).isDirectory()) throw Error('Workspace must be a directory');
     this.configDir = configDir;
     this.currentModel = model;
     this.threadId = resumeThreadId || randomUUID();
-    const args = this.customArgs ?? [
+    const args = [...(this.customArgs ?? [
       '--input-format',
       'stream-json',
       '--output-format',
@@ -1354,7 +1359,7 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
       ...(model ? ['--model', model] : []),
       ...(this.currentEffort ? ['--effort', this.currentEffort] : []),
       ...(resumeThreadId ? ['--conversation', resumeThreadId] : []),
-    ];
+    ]), ...(unsafeMode ? ['--dangerously-skip-permissions'] : [])];
     const env = this.cleanEnv(configDir ? { ANTIGRAVITY_GEMINI_DIR: configDir } : {});
     this.child = spawn(this.executable, args, {
       cwd: this.cwd,
