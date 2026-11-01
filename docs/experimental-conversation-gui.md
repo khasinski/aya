@@ -48,7 +48,7 @@ Goal changes are also recorded as conversation entries; the goal bar shows a sep
 
 Current limitations: local harnesses only; custom command flags and unsafe mode are not applied (GUI uses workspace-write and on-request approvals); review, skills and MCP management are not exposed yet. Existing Codex session records remain managed by Codex. Local conversation snapshots are limited to 32 MiB each.
 
-The built-in **Violet** appearance applies the GUI prototype palette to Aya chrome and terminal defaults.
+The built-in **Violet** appearance applies the GUI prototype palette to Aya chrome and terminal defaults. Select **Settings → General → Appearance → Violet** in either development or packaged Aya. This is a saved, optional color scheme alongside System, Light and Dark; switching back removes the palette overrides. Explicit per-tab terminal themes retain their own colors.
 
 ## Conversation history
 

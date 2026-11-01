@@ -37,7 +37,7 @@ function checkEnum(codec, values, fallback) {
 }
 
 test("theme codec preserves every theme and falls back to system", () => {
-  checkEnum(THEME_CODEC, ["system", "light", "dark", "omarchy"], "system");
+  checkEnum(THEME_CODEC, ["system", "light", "dark", "omarchy", "violet"], "system");
 });
 
 test("Mac option codec preserves both modes and defaults to right-option-compose", () => {
