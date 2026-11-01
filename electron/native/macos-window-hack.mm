@@ -15,6 +15,11 @@ void ApplyWindowChromeHack(NSWindow *window) {
   if (!window) return;
 
   [window setStyleMask:AyaWindowChromeStyleMask([window styleMask])];
+  // Restoring Titled recreates AppKit's standard buttons on fullscreen exit.
+  // Keep native buttons only in windowed mode; fullscreen uses Aya controls.
+  for (NSNumber *kind in @[@(NSWindowCloseButton), @(NSWindowMiniaturizeButton), @(NSWindowZoomButton)]) {
+    [[window standardWindowButton:(NSWindowButton)[kind unsignedIntegerValue]] setHidden:([window styleMask] & NSWindowStyleMaskFullScreen) != 0];
+  }
   [window setTitleVisibility:NSWindowTitleHidden];
   [window setTitlebarAppearsTransparent:YES];
   [window setMovableByWindowBackground:NO];

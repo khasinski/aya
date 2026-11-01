@@ -19,6 +19,9 @@ export function MacWindowControls({
   onToggleFullScreen,
 }: MacProps) {
   if (platform !== "darwin") return null;
+  if (!isFullScreen) {
+    return <div className="aya-native-window-controls-space" aria-hidden="true" />;
+  }
   return (
     <div className="aya-mac-window-controls" aria-label="Window controls">
       <button

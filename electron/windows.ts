@@ -93,6 +93,7 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
 
   function applyMacOsWindowHack(win: BrowserWindow): void {
     if (platform !== "darwin" || win.isDestroyed()) return;
+    win.setWindowButtonVisibility(!win.isFullScreen());
     if (macosWindowHack === undefined) {
       try {
         macosWindowHack = (deps.loadMacOsWindowHack ?? (() => require(path.join(mainDirname, "macos-window-hack.node"))))() as {
@@ -195,7 +196,7 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
       minHeight: WINDOW_MIN_HEIGHT,
       title: WINDOW_TITLE,
       ...(platform === "darwin"
-        ? { titleBarStyle: "hidden" as const }
+        ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 14, y: 18 } }
         : {}),
       ...(platform === "linux"
         ? { frame: false, roundedCorners: false }
@@ -221,7 +222,6 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
     const win = new BrowserWindow(deps.headlessWindowOptions?.(options) ?? options);
 
     if (platform === "darwin") {
-      win.setWindowButtonVisibility(false);
       applyMacOsWindowHack(win);
     }
 
@@ -288,6 +288,9 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
     win.on("leave-full-screen", () => {
       sendFullScreen(false);
       applyMacOsWindowHack(win);
+      // AppKit/Electron recreate the buttons while restoring windowed chrome.
+      // Refresh after the animation too, using the current fullscreen state.
+      setTimeout(() => applyMacOsWindowHack(win), MACOS_FULLSCREEN_HACK_DELAY_MS);
     });
     win.on("maximize", () => sendMaximized(true));
     win.on("unmaximize", () => sendMaximized(false));

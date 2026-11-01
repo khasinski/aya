@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Remove the native macOS title bar while fullscreen so revealing the system
+- Use native macOS traffic lights in windowed mode and Aya controls in
+  fullscreen. Remove the fullscreen native title bar so revealing the system
   menu cannot leave its transparent hit area over the project tabs.
 
 ## v0.14.1 - 2026-10-31

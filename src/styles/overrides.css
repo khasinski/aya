@@ -98,6 +98,11 @@
 }
 .aya-topbar { transition: padding-left 120ms ease-out; }
 
+.aya-native-window-controls-space {
+  flex: 0 0 81px;
+  border-right: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
 .aya-mac-window-controls {
   -webkit-app-region: no-drag;
   display: inline-flex;
