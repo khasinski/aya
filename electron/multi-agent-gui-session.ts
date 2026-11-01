@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { AYA_HOME } from './paths';
 import { PROGRESS_TOOL, progressUpdate } from './gui-progress';
-import { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, presentArtifact, workspaceImage, type CodexGuiSession } from './codex-gui-session';
+import { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, presentArtifact, workspaceImage } from './gui-artifact-tools';
+import type { CodexGuiSession } from './codex-gui-session';
 import type { GuiProgress } from '../shared/gui-progress';
 import type { GuiArtifact, GuiEvent } from '../shared/codex-gui';
 
