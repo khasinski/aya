@@ -93,7 +93,7 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
 
   function applyMacOsWindowHack(win: BrowserWindow): void {
     if (platform !== "darwin" || win.isDestroyed()) return;
-    win.setWindowButtonVisibility(!win.isFullScreen());
+    win.setWindowButtonVisibility(false);
     if (macosWindowHack === undefined) {
       try {
         macosWindowHack = (deps.loadMacOsWindowHack ?? (() => require(path.join(mainDirname, "macos-window-hack.node"))))() as {
@@ -196,7 +196,7 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
       minHeight: WINDOW_MIN_HEIGHT,
       title: WINDOW_TITLE,
       ...(platform === "darwin"
-        ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 14, y: 18 } }
+        ? { titleBarStyle: "hidden" as const }
         : {}),
       ...(platform === "linux"
         ? { frame: false, roundedCorners: false }

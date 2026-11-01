@@ -251,14 +251,13 @@ test("fullscreen setters broadcast the actual state, toggle live windows and ign
   assert.deepEqual(log, []);
 });
 
-test("macOS uses native window buttons when windowed and hides them in fullscreen", (t) => {
+test("macOS keeps native buttons hidden before and after fullscreen transitions", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { windows, log } = setup({ platform: "darwin" });
   const win = windows.createWindow(initial);
   assert.equal(win.options.titleBarStyle, "hidden");
-  assert.deepEqual(log.slice(0, 4), [["create", 1], ["buttons", 1, true], ["load-hack"], ["hack", 1]]);
+  assert.deepEqual(log.slice(0, 4), [["create", 1], ["buttons", 1, false], ["load-hack"], ["hack", 1]]);
   log.length = 0;
-  assert.deepEqual(win.options.trafficLightPosition, { x: 14, y: 18 });
   win.fullScreen = true;
   win.emit("enter-full-screen");
   assert.deepEqual(log, [["send", 1, "app:fullscreen", true], ["buttons", 1, false], ["hack", 1]]);
@@ -268,12 +267,12 @@ test("macOS uses native window buttons when windowed and hides them in fullscree
   assert.deepEqual(log.at(-1), ["hack", 1]);
   win.fullScreen = false;
   win.emit("leave-full-screen");
-  assert.deepEqual(log.slice(-3), [["send", 1, "app:fullscreen", false], ["buttons", 1, true], ["hack", 1]]);
+  assert.deepEqual(log.slice(-3), [["send", 1, "app:fullscreen", false], ["buttons", 1, false], ["hack", 1]]);
   const afterExit = log.length;
   t.mock.timers.tick(249);
   assert.equal(log.length, afterExit);
   t.mock.timers.tick(1);
-  assert.deepEqual(log.slice(-2), [["buttons", 1, true], ["hack", 1]]);
+  assert.deepEqual(log.slice(-2), [["buttons", 1, false], ["hack", 1]]);
   windows.createWindow(initial);
   assert.equal(log.some(([what]) => what === "load-hack"), false);
   win.emit("enter-full-screen");
