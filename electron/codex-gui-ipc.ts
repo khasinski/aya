@@ -99,7 +99,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     }
     if (action === 'close') return panels.close(key, value && typeof value === 'object' ? value as Record<string, unknown> : undefined);
     if (action === 'connect') {
-      const params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind };
+      const params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean };
       if (sessions.has(key)) throw Error('Panel already connected');
       const agent = normalizeGuiAgent(params.agent);
       const cached = snapshots.get(key);
@@ -119,7 +119,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       sessions.set(key, { session, cwd: params.cwd, agent });
       try {
         const saved = snapshots.get(key);
-        const result = await session.connect(params.cwd, '', params.configDir?.replace(/^~(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.delivery !== 'failed'))) ? saved?.threadId : undefined);
+        const result = await session.connect(params.cwd, '', params.configDir?.replace(/^~(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, params.unsafeMode === true);
         session.restoreArtifacts([...(artifacts.get(key)?.values() || [])]);
         if (Array.isArray(saved?.view?.messages)) session.restoreProgress(saved.view.messages.filter((m: { progress?: unknown }) => !!m.progress).map((m: { progress: import('../shared/gui-progress').GuiProgress }) => m.progress));
         const snapshot = { ...saved, cwd: params.cwd, configDir: params.configDir, agent, threadId: result.threadId };

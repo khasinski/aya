@@ -40,11 +40,28 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (prompt === 'delay-ack') { event('turn/started', { turn: { id: 'turn' } }); setTimeout(() => { write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } }); complete('Delayed acknowledgement'); }, 700); return; }
     write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
     event('turn/started', { turn: { id: 'turn' } });
+    if (prompt === 'long-stream') {
+      const itemId = 'stream-' + Date.now();
+      let chunk = 0;
+      const timer = setInterval(() => {
+        event('item/agentMessage/delta', { itemId, delta: `Paragraph ${++chunk}: Streaming a response with enough text to exercise the conversation viewport.\n\n` });
+        if (chunk === 80) { clearInterval(timer); event('turn/completed', { turn: { id: 'turn', status: 'completed' } }); busy = false; }
+      }, 30);
+      return;
+    }
     if (prompt === 'reopen' || prompt === 'open-missing') write({ id: 'open-artifact', method: 'item/tool/call', params: { tool: 'aya_open_artifact', arguments: { artifactId: prompt === 'open-missing' ? 'missing' : lastArtifactId } } });
     else if (prompt === 'html-widget' || prompt === 'update-widget') write({ id: 'present', method: 'item/tool/call', params: { tool: 'aya_present', arguments: { kind: 'html', title: 'Capacity planner', ...(prompt === 'update-widget' ? { artifactId: lastArtifactId } : {}), open: true, html: `<style>button{padding:12px 20px;background:#b9a6f7;border:0;border-radius:8px}h2{font-weight:500}</style><h2>${prompt === 'update-widget' ? 'Updated capacity' : 'Team capacity'}</h2><p>Choose a scenario to discuss with Codex.</p><button onclick="window.ayaWidget.suggest('Explore a four-person team')">Four-person team</button><p id="sandbox-check"></p><script>document.querySelector('#sandbox-check').textContent = typeof window.aya === 'undefined' ? 'Isolated preview' : 'Unsafe preview';</script>` } } });
     else if (prompt === 'graphic') write({ id: 'present', method: 'item/tool/call', params: { tool: 'aya_present', arguments: { kind: 'image', title: 'Aya mark', path: 'graphic.svg', open: true } } });
     else if ((prompt === 'progress' || prompt === 'progress-wait')) { progressStep = 0; holdProgress = prompt === 'progress-wait'; write({ id: 'progress', method: 'item/tool/call', params: { tool: 'aya_progress', arguments: { label: 'Decompiling functions', current: 0, total: 10, detail: 'Reading the function list' } } }); }
     else if (prompt === 'complete-goal') { goal = { ...goal, status: 'complete' }; event('thread/goal/updated', { goal }); event('thread/goal/updated', { goal: { ...goal, tokensUsed: 24 } }); complete('The goal is complete.'); }
+    else if (prompt === 'completed-tools-wait' || prompt === 'mixed-tools-wait') {
+      event('item/started', { item: { id: 'read', type: 'commandExecution', command: 'cat README.md' } });
+      event('item/completed', { item: { id: 'read', type: 'commandExecution', command: 'cat README.md', status: 'completed' } });
+      event('item/completed', { item: { id: 'check', type: 'commandExecution', command: 'check', status: prompt === 'mixed-tools-wait' ? 'failed' : 'completed' } });
+      if (prompt === 'mixed-tools-wait') event('item/started', { item: { id: 'test', type: 'commandExecution', command: 'npm test' } });
+    }
+    else if (prompt === 'approval-options') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'git status', proposedExecpolicyAmendment: ['git', 'status'], availableDecisions: ['accept', 'acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'status'] } }, 'decline'] } });
+    else if (prompt === 'permissions') write({ id: 'approve', method: 'item/permissions/requestApproval', params: { permissions: { network: { enabled: true } } } });
     else if (prompt === 'approval') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval' } });
     else if (prompt === 'wait') return;
     else if (prompt === 'question') write({ id: 'question', method: 'item/tool/requestUserInput', params: { questions: [{ id: 'choice', question: 'Which option?', options: [{ label: 'A', description: 'First' }] }] } });
@@ -56,7 +73,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (holdProgress && progressStep === 1) return;
     if (++progressStep <= 2) write({ id: 'progress', method: 'item/tool/call', params: { tool: 'aya_progress', arguments: { progressId, label: 'Decompiling functions', current: progressStep === 1 ? 4 : 10, total: 10, detail: progressStep === 1 ? 'Decompiled four functions' : 'All ten functions are ready' } } });
     else complete('All functions have been decompiled.');
-  } else if (!message.method && message.id === 'approve') complete(message.result.decision);
+  } else if (!message.method && message.id === 'approve') { event('fixture/approval', message.result); complete(typeof message.result.decision === 'string' ? message.result.decision : JSON.stringify(message.result)); }
   else if (!message.method && message.id === 'question') complete(message.result.answers.choice.answers[0]);
   else if (!message.method && message.id === 'open-artifact') complete(message.result.success ? 'Artifact opened' : 'Unknown artifact');
   else if (!message.method && message.id === 'present') { lastArtifactId = message.result.contentItems[0].text.match(/artifactId: ([^.]+)\./)?.[1] || ''; complete(message.result.success ? '## Wynik\n\nTabela jest w panelu artefaktów.\n\n| Element | Stan |\n| --- | --- |\n| Aya | Gotowe |' : 'Tool failed'); }

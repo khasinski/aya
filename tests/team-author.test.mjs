@@ -313,6 +313,8 @@ test("through the real CLI and control server: saved, summarized, the runner tol
   const socket = join(t.root, "aya.sock");
   const refreshed = [];
   const stop = startControlServerOn(socket, {
+    // Model a standalone CLI; the test runner may itself descend from a Codex daemon.
+    processTable: async pid => new Map([[pid, { ppid: 0, command: '/bin/sh bin/aya' }]]),
     getWindow: () => null,
     openProject: () => {},
     team: {
@@ -359,6 +361,8 @@ test("a team file's own text in a save error reaches the terminal as text, not a
   const t = setup();
   const socket = join(t.root, "aya.sock");
   const stop = startControlServerOn(socket, {
+    // Model a standalone CLI; the test runner may itself descend from a Codex daemon.
+    processTable: async pid => new Map([[pid, { ppid: 0, command: '/bin/sh bin/aya' }]]),
     getWindow: () => null,
     openProject: () => {},
     team: { teamHome: t.teamHome, listProjects: async () => [t.project], deliver: async () => {}, headCommit: async () => null, holdReason: async () => null },

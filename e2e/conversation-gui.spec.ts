@@ -61,6 +61,29 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await gui.getByRole('button', { name: 'Close side question' }).click();
     await prompt.fill('/unknown'); await prompt.press('Enter');
     await expect(gui.getByRole('alert')).toContainText('Unknown GUI command');
+    await prompt.fill('completed-tools-wait'); await prompt.press('Enter');
+    const activitySummary = gui.getByLabel('Tool activity', { exact: true });
+    await expect(activitySummary).toHaveText('2 actions · 2 completedDetails');
+    await expect(turnStatus).toHaveText('Codex is working…');
+    await gui.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(turnStatus).toHaveText('Interrupted');
+    await expect(activitySummary).toContainText('2 completed');
+    await prompt.fill('mixed-tools-wait'); await prompt.press('Enter');
+    await expect(activitySummary).toContainText('3 actions · 1 running · 1 completed · 1 failed');
+    await activitySummary.click();
+    await expect(gui.locator('.aya-gui-activity')).toContainText('npm test');
+    await expect(gui.locator('.aya-gui-activity > details > summary').first()).toHaveCSS('font-family', /mono/i);
+    await gui.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(activitySummary).toContainText('3 actions · 1 completed · 1 failed · 1 interrupted');
+    await prompt.fill('approval-options'); await prompt.press('Enter');
+    const approval = gui.locator('.aya-gui-request');
+    await expect(approval.getByRole('button', { name: 'Allow for this session', exact: true })).toBeVisible();
+    const allowOnce = await approval.getByRole('button', { name: 'Allow once', exact: true }).boundingBox();
+    const allowSession = await approval.getByRole('button', { name: 'Allow for this session', exact: true }).boundingBox();
+    expect(allowSession!.x - allowOnce!.x - allowOnce!.width).toBeGreaterThanOrEqual(8);
+    await approval.getByRole('button', { name: 'Always allow: git status', exact: true }).click();
+    await expect(approval).toHaveCount(0);
+    await expect(turnStatus).toHaveText('Turn complete');
     await prompt.fill('approval'); await prompt.press('Enter');
     await expect(gui.getByText('Approval required')).toBeVisible();
     await expect(turnStatus).toHaveText('Waiting for your response');
@@ -334,5 +357,53 @@ test('resume picker preserves drafts and artifacts, imports native history and s
     }, seed.projectDir);
     expect(bindingCheck).toEqual({ loaded: null, resumedPreviousAccount: false, latePersistRejected: true });
 
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
+test('GUI keeps consistent controls and follows streaming only while reading the latest messages', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow();
+    const gui = window.locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    const viewport = gui.locator('.aya-gui-messages');
+    const bottomGap = () => viewport.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop);
+    const historyButton = gui.getByRole('button', { name: 'Resume a saved conversation' });
+    for (const button of [historyButton, gui.getByRole('button', { name: 'Artifacts', exact: true }), gui.getByRole('button', { name: 'Attach files', exact: true })]) {
+      const box = await button.boundingBox();
+      expect(box?.width).toBe(32);
+      expect(box?.height).toBe(32);
+      await expect(button.locator('.aya-gui-icon')).toHaveCSS('font-size', '18px');
+    }
+    await expect(gui.locator('.aya-gui-compose-footer select').first()).toHaveCSS('height', '32px');
+    await expect(prompt).toHaveCSS('font-size', '14px');
+    await prompt.fill('long-stream'); await prompt.press('Enter');
+    await expect(gui.locator('article.assistant')).toContainText('Paragraph 30:');
+    await expect.poll(bottomGap).toBeLessThan(3);
+    await expect(gui.locator('article.assistant')).toHaveCSS('font-size', '14px');
+    // Reading older text must not be interrupted by incoming chunks.
+    await viewport.evaluate(node => { node.scrollTop = 0; });
+    await expect(gui.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+    await expect(gui.locator('article.assistant')).toContainText('Paragraph 60:');
+    expect(await viewport.evaluate(node => node.scrollTop)).toBe(0);
+    await gui.getByRole('button', { name: 'Jump to latest' }).click();
+    await expect(gui.getByRole('status', { name: 'Turn status' })).toHaveText('Turn complete');
+    await expect.poll(bottomGap).toBeLessThan(3);
+    // Resizing the reading surface (opening artifacts) keeps the latest text visible.
+    await gui.locator('header').getByRole('button', { name: 'Artifacts' }).click();
+    const emptyPanel = gui.getByRole('complementary', { name: 'Artifacts' });
+    await expect(emptyPanel.getByRole('heading', { name: 'No artifacts yet' })).toBeVisible();
+    const titleBox = await emptyPanel.locator('h3').boundingBox();
+    const descriptionBox = await emptyPanel.locator('p').boundingBox();
+    expect(descriptionBox!.y).toBeGreaterThan(titleBox!.y + titleBox!.height);
+    await expect(emptyPanel.locator('h3')).toHaveCSS('font-size', '14px');
+    await expect(emptyPanel.locator('p')).toHaveCSS('font-size', '12px');
+    await expect.poll(bottomGap).toBeLessThan(3);
+    await gui.locator('header').getByRole('button', { name: 'Artifacts' }).click();
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
-import type { GuiArtifact, GuiEvent } from '../../shared/codex-gui';
+import type { GuiArtifact, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
 import type { Preset, TerminalState } from '../types';
 import './conversation.css';
 import { ArtifactPanel } from './ArtifactPanel';
@@ -42,6 +42,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
   const [plan, setPlan] = useState<{ step: string; status: string }[]>([]);
   const [showJump, setShowJump] = useState(false);
   const follow = useRef(true);
+  const scrollViewport = useRef<HTMLDivElement>(null);
+  const scrollContent = useRef<HTMLDivElement>(null);
   const dispatching = useRef(false);
   const pendingSnapshot = useRef<Record<string, unknown> | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,7 +81,6 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     try { await invoke('switch-conversation', { conversationId, view: pendingSnapshot.current }); pendingSnapshot.current = null; onSwitch(); }
     catch (error) { setSwitching(false); setReady(true); setRestored(true); throw error; }
   };
-  const end = useRef<HTMLDivElement>(null);
   const lastGoal = useRef<{ objective: string; status: string } | null>(null);
   const applyGoal = useCallback((value: unknown) => {
     const data = obj(value), objective = str(data.objective), status = str(data.status) || 'active';
@@ -112,8 +113,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       if (event.id !== undefined) setRequests(old => [...old.filter(r => r.id !== event.id), event]);
       if (event.method === 'aya/requestResolved' || event.method === 'serverRequest/resolved') setRequests(old => old.filter(r => r.id !== (p.id ?? p.requestId)));
       if (event.method === 'turn/started') { setBusy(true); setTurnOutcome(null); }
-      if (event.method === 'turn/completed') { setBusy(false); setRequests([]); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: turn.status === 'completed' ? 'completed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); if (turn.error) fail(obj(turn.error).message); }
-      if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); fail(p.message); }
+      if (event.method === 'turn/completed') { setBusy(false); setRequests([]); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); if (turn.error) fail(obj(turn.error).message); }
+      if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: 'interrupted' } : a)); fail(p.message); }
       if (event.method === 'error' || event.method === 'aya/notice') fail(p.message || obj(p.error).message);
       if (event.method === 'turn/plan/updated' && Array.isArray(p.plan)) setPlan(p.plan as { step: string; status: string }[]);
       if (event.method === 'item/started' || event.method === 'item/completed') {
@@ -157,7 +158,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       if (Array.isArray(saved.plan)) setPlan(saved.plan as { step: string; status: string }[]);
       if (saved.busy) setTurnOutcome('interrupted');
       else if (saved.turnOutcome) setTurnOutcome(saved.turnOutcome as 'complete' | 'interrupted' | 'failed');
-      const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent });
+      const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true });
       if (mounted) { setReady(true); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
     })().catch(fail);
     return () => { mounted = false; off(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; void api.invoke(terminal.id, 'close', pendingSnapshot.current || undefined).catch(() => {}); };
@@ -175,7 +176,20 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     window.addEventListener('pagehide', flush);
     return () => { window.removeEventListener('pagehide', flush); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; };
   }, [api, terminal.id]);
-  useEffect(() => { if (!hidden && follow.current) end.current?.scrollIntoView({ block: 'end' }); }, [messages, requests, hidden, busy, turnOutcome, ready]);
+  const scrollToLatest = useCallback(() => {
+    const viewport = scrollViewport.current;
+    if (viewport && follow.current) {
+      viewport.scrollTop = viewport.scrollHeight;
+      setShowJump(false);
+    }
+  }, []);
+  useLayoutEffect(() => { if (!hidden) scrollToLatest(); });
+  useEffect(() => {
+    const observer = new ResizeObserver(scrollToLatest);
+    if (scrollViewport.current) observer.observe(scrollViewport.current);
+    if (scrollContent.current) observer.observe(scrollContent.current);
+    return () => observer.disconnect();
+  }, [scrollToLatest]);
   const command = async (name: string, argument: string) => {
     if (name === 'resume') { await openHistory(argument); return; }
     if (name === 'new' || name === 'clear') { await switchConversation(); return; }
@@ -234,9 +248,24 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     try { await invoke('steer', text); setMessages(old => [...old, { id: crypto.randomUUID(), type: 'user', text: `↳ ${text}` }]); if (queuedId) setQueue(old => old.filter(q => q.id !== queuedId)); else if (draftRevision.current === revision) setPrompt(''); }
     catch (e) { fail(e); }
   };
+  const activityCounts = activities.reduce((counts, activity) => {
+    const status = activity.status === 'inProgress' ? 'running'
+      : activity.status === 'failed' || activity.status === 'declined' ? 'failed'
+      : activity.status === 'interrupted' || activity.status === 'cancelled' ? 'interrupted' : 'completed';
+    counts[status]++;
+    return counts;
+  }, { running: 0, completed: 0, failed: 0, interrupted: 0 });
+  const activitySummary = [`${activities.length} ${activities.length === 1 ? 'action' : 'actions'}`,
+    ...Object.entries(activityCounts).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`),
+  ].join(' · ');
   const closeArtifacts = () => { setDrawer(false); artifactButton.current?.focus(); };
   return <section className="aya-pane aya-conversation" style={{ ...paneStyle, ...(hidden ? { display: 'none' } : {}) }} onKeyDown={e => { if (e.key === 'Escape' && !e.defaultPrevented) { if (history !== null) { setHistory(null); composer.current?.focus(); } else if (suggestion) setSuggestion(''); else { closeArtifacts(); setSide(''); } } }}>
-    <header><div><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></div><span role="status">{switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span><button disabled={!ready || switching} title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button><button ref={artifactButton} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}>Artifacts {artifacts.length > 0 && <b>{artifacts.length}</b>}</button></header>
+    <header className="aya-gui-header">
+      <div className="aya-gui-heading"><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></div>
+      <span className="aya-sr-only" role="status">{switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
+      <button className="aya-gui-icon-button" disabled={!ready || switching} aria-label="Resume a saved conversation" title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button>
+      <button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${artifacts.length ? ' ' + artifacts.length : ''}`} title="Artifacts" aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{artifacts.length > 0 && <b aria-hidden="true">{artifacts.length}</b>}</button>
+    </header>
     {history !== null && <div className="aya-session-picker" role="dialog" aria-label="Resume conversation" onKeyDown={e => {
       if (e.key === 'Escape') { e.preventDefault(); setHistory(null); composer.current?.focus(); }
       if (e.key === 'Tab') { const nodes = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input')); const first = nodes[0], last = nodes[nodes.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } }
@@ -253,18 +282,17 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       {goalDetails.status !== 'complete' && <button className="aya-gui-icon-button" disabled={goalPending} aria-label={goalDetails.status === 'active' ? 'Pause goal' : 'Resume goal'} title={goalDetails.status === 'active' ? 'Pause goal' : 'Resume goal'} onClick={() => void command('goal', goalDetails.status === 'active' ? 'pause' : 'resume').catch(fail)}><span className="aya-gui-icon" aria-hidden="true">{goalDetails.status === 'active' ? 'pause' : 'play_arrow'}</span></button>}
       <button className="aya-gui-icon-button" disabled={goalPending} aria-label="Clear goal" title="Clear goal" onClick={() => void command('goal', 'clear').catch(fail)}><span className="aya-gui-icon" aria-hidden="true">close</span></button>
     </div>}
-    <div className="aya-gui-body"><main><div className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; setShowJump(!follow.current); }}>
+    <div className="aya-gui-body"><main><div className="aya-gui-scroll-area"><div ref={scrollViewport} className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {messages.map(m => m.type === 'progress' && m.progress ? m.progress.status === 'running' ? null : <TaskProgress key={m.id} progress={m.progress} /> : m.type === 'goal' ? <article className="aya-gui-goal-message" key={m.id} aria-label={m.title}><span aria-hidden="true">◎</span><div><strong>{m.title}</strong><p>{m.text}</p></div></article> : <article key={m.id} className={m.type}><small>{m.type === 'user' ? `YOU${m.delivery === 'sending' ? ' · Sending…' : m.delivery === 'failed' ? ' · Not sent' : m.delivery === 'unconfirmed' ? ' · Delivery unconfirmed' : ''}` : agentBadge}</small><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: ({ src, alt }) => <WorkspaceImage path={String(src || '')} alt={alt || 'Image'} load={path => invoke('image', path)} />, a: ({ children }) => <span>{children}</span> }}>{m.text}</ReactMarkdown></article>)}
-      {requests.map(request => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
-      {activities.length > 0 && <details className="aya-gui-activity"><summary><span className="aya-gui-turn-dot" />{busy ? [...activities].reverse().find(a => a.status === 'inProgress')?.label || 'Finishing up' : `${activities.length} ${activities.length === 1 ? 'action' : 'actions'}`}<small>Details</small></summary>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</details>}
+      {requests.map(request => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
+      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</details>}
       {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
         {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
       </div>}
-      <div ref={end} />
-    </div>
-    {showJump && <button className="aya-gui-jump" onClick={() => { follow.current = true; setShowJump(false); end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }}>Jump to latest ↓</button>}
+    </div></div>
+    {showJump && <button className="aya-gui-jump" onClick={() => { follow.current = true; setShowJump(false); scrollToLatest(); }}>Jump to latest ↓</button>}</div>
     {side && <aside className="aya-gui-side"><button aria-label="Close side question" onClick={() => setSide('')}>×</button><strong>Side question</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
       {messages.filter(m => m.progress?.status === 'running').slice(-3).map(m => <TaskProgress key={m.id} progress={m.progress!} compact />)}
@@ -275,7 +303,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       {prompt.startsWith('/') && <div className="aya-gui-commands">{['resume', 'new', 'help', 'model', 'status', 'goal', 'btw', 'compact'].filter(name => name.startsWith(prompt.slice(1).split(/\s/)[0])).map(name => <button type="button" key={name} onClick={() => setPrompt('/' + name + ' ')}>/{name}</button>)}<small>/btw requires a completed turn in this experimental version.</small></div>}
       {attachments.length > 0 && <div className="aya-gui-attachments">{attachments.map(a => <span key={a.id} title={a.path}>📎 {a.name}<button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments(old => old.filter(f => f.id !== a.id))}>×</button></span>)}</div>}
       <textarea ref={composer} aria-label={`Message ${agentLabel}`} placeholder={`Message ${agentLabel}… (/ for commands)`} value={prompt} onChange={e => setPrompt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(prompt); } }} />
-      <div className="aya-gui-compose-footer"><button type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => setAttachments(old => [...old, ...(files as Attachment[])].slice(0, 20))).catch(fail)}>＋</button>
+      <div className="aya-gui-compose-footer"><button className="aya-gui-icon-button" type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => setAttachments(old => [...old, ...(files as Attachment[])].slice(0, 20))).catch(fail)}><span className="aya-gui-icon" aria-hidden="true">add</span></button>
       {models.length > 0 && <><select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => { setSelectedModel(e.target.value); setEffort(''); }}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => setEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select>}</>}
       <span className="aya-gui-compose-spacer" /><small className="aya-gui-enter-hint">Shift+Enter for a new line</small>{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{busy && !prompt.startsWith('/') ? 'Queue ↑' : 'Send ↑'}</button></div>
     </form></main>
@@ -298,9 +326,20 @@ function WorkspaceImage({ path, alt, load }: { path: string; alt: string; load: 
   }, [path, attempt]);
   return src ? <img src={src} alt={alt} /> : <span role={error ? 'alert' : 'status'}>{error ? `Cannot display ${path}: ${error}` : 'Loading image…'}{error && <button onClick={() => setAttempt(attempt + 1)}>Retry</button>}</span>;
 }
-function GuiRequest({ request, agentLabel, respond }: { request: GuiEvent; agentLabel: string; respond: (value: unknown) => Promise<unknown> }) {
+function GuiRequest({ request, agentLabel, codex, respond }: { request: GuiEvent; agentLabel: string; codex: boolean; respond: (value: unknown) => Promise<unknown> }) {
+  const decisions: GuiApprovalDecision[] = codex && Array.isArray(request.params.availableDecisions)
+    ? request.params.availableDecisions as GuiApprovalDecision[]
+    : ['accept', ...(codex ? ['acceptForSession' as const] : []), ...(codex && Array.isArray(request.params.proposedExecpolicyAmendment) ? [{ acceptWithExecpolicyAmendment: { execpolicy_amendment: request.params.proposedExecpolicyAmendment as string[] } }] : []), 'decline'];
+  const decisionLabel = (decision: GuiApprovalDecision) => {
+    if (decision === 'accept') return 'Allow once';
+    if (decision === 'acceptForSession') return 'Allow for this session';
+    if (decision === 'decline') return 'Decline';
+    if (decision === 'cancel') return 'Cancel';
+    if ('acceptWithExecpolicyAmendment' in decision) return `Always allow: ${decision.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}`;
+    return `${decision.applyNetworkPolicyAmendment.network_policy_amendment.action === 'allow' ? 'Always allow' : 'Block'} host: ${decision.applyNetworkPolicyAmendment.network_policy_amendment.host}`;
+  };
   const questions = Array.isArray(request.params.questions) ? request.params.questions.map(obj) : [];
   const [answers, setAnswers] = useState<Record<string, string>>({}); const [sending, setSending] = useState(false);
   const submit = async (value: unknown) => { setSending(true); try { await respond(value); } finally { setSending(false); } };
-  return <section className="aya-gui-request"><strong>{questions.length ? `${agentLabel} has a question` : 'Approval required'}</strong>{questions.length ? questions.map(q => <label key={str(q.id)}>{str(q.question)}<input type={q.isSecret ? 'password' : 'text'} value={answers[str(q.id)] || ''} onChange={e => setAnswers(old => ({ ...old, [str(q.id)]: e.target.value }))} />{Array.isArray(q.options) && q.options.map(obj).map(o => <button key={str(o.label)} onClick={() => setAnswers(old => ({ ...old, [str(q.id)]: str(o.label) }))}>{str(o.label)}</button>)}</label>) : <pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre>}{questions.length ? <button disabled={sending || questions.some(q => !answers[str(q.id)]?.trim())} onClick={() => void submit({ answers })}>Send answer</button> : <><button disabled={sending} onClick={() => void submit({ decision: 'accept' })}>Allow once</button><button disabled={sending} onClick={() => void submit({ decision: 'decline' })}>Decline</button></>}</section>;
+  return <section className="aya-gui-request"><strong>{questions.length ? `${agentLabel} has a question` : 'Approval required'}</strong>{questions.length ? questions.map(q => <label key={str(q.id)}>{str(q.question)}<input type={q.isSecret ? 'password' : 'text'} value={answers[str(q.id)] || ''} onChange={e => setAnswers(old => ({ ...old, [str(q.id)]: e.target.value }))} />{Array.isArray(q.options) && q.options.map(obj).map(o => <button key={str(o.label)} onClick={() => setAnswers(old => ({ ...old, [str(q.id)]: str(o.label) }))}>{str(o.label)}</button>)}</label>) : <pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre>}{questions.length ? <button disabled={sending || questions.some(q => !answers[str(q.id)]?.trim())} onClick={() => void submit({ answers })}>Send answer</button> : <div className="aya-gui-request-actions">{decisions.map((decision, index) => <button key={index} disabled={sending} onClick={() => void submit({ decision })}>{decisionLabel(decision)}</button>)}</div>}</section>;
 }

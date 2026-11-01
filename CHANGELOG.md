@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.15.2 - 2026-11-01
+
+- Clean up conversation GUI typography, toolbar icons, composer controls,
+  preset interface toggles, and empty artifact panels.
+- Keep streaming conversations scrolled to the latest response while preserving
+  the reader's position when they scroll up.
+- Honor preset unsafe approvals in Codex and Claude conversation GUI sessions.
+- Offer Codex session approvals and persistent command/network rules when
+  provided by the agent, with properly spaced approval buttons.
+- Show actual tool activity counts and running, completed, failed and
+  interrupted states instead of the misleading "Finishing up" label.
+
 ## v0.15.1 - 2026-11-01
 
 - Fix missing updater dependencies in the macOS package, which prevented Aya

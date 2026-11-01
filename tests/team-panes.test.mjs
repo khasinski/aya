@@ -1008,7 +1008,11 @@ panesTest("the control request: the caller's project and pane, then the same pat
 panesTest("the real CLI through the control server: presets and team open, or teams unavailable", async (t) => {
   const run = async (options, args) => {
     const socket = join(t.root, "aya.sock");
-    const stop = startControlServerOn(socket, { getWindow: () => null, openProject: () => {}, ...options });
+    const stop = startControlServerOn(socket, {
+      // These assertions concern CLI replies, independently of the runner's process ancestry.
+      processTable: async pid => new Map([[pid, { ppid: 0, command: '/bin/sh bin/aya' }]]),
+      getWindow: () => null, openProject: () => {}, ...options,
+    });
     try {
       return await new Promise((done) => {
         const child = spawn("bin/aya", args, { env: { ...envWithoutAya(), AYA_SOCKET: socket, AYA_TERMINAL_ID: "pane-c" } });

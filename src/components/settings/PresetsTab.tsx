@@ -223,12 +223,32 @@ export function PresetsTab({
       </div>
 
       <div className="aya-preset-section">
-        <div className="aya-settings-section-title">Interface</div><div>
-          <label><span>Conversation GUI · Experimental</span>
-            <input type="checkbox" aria-label="Conversation GUI · Experimental" checked={row.interfaceMode === "gui"} disabled={!guiAgent} onChange={e => updateRow(row.__key, { interfaceMode: e.target.checked ? "gui" : "terminal" })} />
-          </label>
-          <p className="aya-settings-hint">Supports Codex, Claude Code, Pi and Antigravity. Uses each agent's structured local RPC/JSON stream protocol instead of a terminal emulator.</p>
-        </div>
+        <div className="aya-settings-section-title">Interface</div>
+        <label className="aya-preset-toggle">
+          <span>
+            <strong>Conversation GUI · Experimental</strong>
+            <small id="preset-gui-hint">
+              {guiAgent
+                ? "Show conversations in Aya instead of the terminal."
+                : "Choose Claude, Codex, Pi or Antigravity to use conversation GUI."}
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            aria-label="Conversation GUI · Experimental"
+            aria-describedby="preset-gui-hint"
+            checked={row.interfaceMode === "gui"}
+            disabled={!guiAgent}
+            onChange={(e) =>
+              updateRow(row.__key, {
+                interfaceMode: e.target.checked ? "gui" : "terminal",
+              })
+            }
+          />
+        </label>
+      </div>
+
+      <div className="aya-preset-section">
         <div className="aya-settings-section-title">Appearance</div>
         <div className="aya-preset-grid aya-preset-grid--appearance">
           <label>

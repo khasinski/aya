@@ -262,6 +262,7 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
     model: string,
     configDir?: string,
     resumeThreadId?: string,
+    unsafeMode?: boolean,
   ): Promise<{ threadId: string; model: string }>;
   abstract command(name: string, argument: string): Promise<Record<string, unknown>>;
   abstract models(): Promise<Record<string, unknown>>;
@@ -838,12 +839,12 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
   }
 
-  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string) {
+  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
     if (this.child) throw Error('Start a new window for a separate session');
     this.cwd = await realpath(cwd);
     if (!(await stat(this.cwd)).isDirectory()) throw Error('Workspace must be a directory');
     this.threadId = resumeThreadId || randomUUID();
-    const args = this.customArgs ?? [
+    const args = [...(this.customArgs ?? [
       '--output-format',
       'stream-json',
       '--verbose',
@@ -852,7 +853,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       '--include-partial-messages',
       '--permission-prompt-tool=stdio',
       ...(resumeThreadId ? ['--resume', resumeThreadId] : ['--session-id', this.threadId]),
-    ];
+    ]), ...(unsafeMode ? ['--dangerously-skip-permissions'] : [])];
     const env = this.cleanEnv(configDir ? { CLAUDE_CONFIG_DIR: configDir } : {});
     this.child = spawn(this.executable, args, {
       cwd: this.cwd,

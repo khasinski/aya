@@ -4,3 +4,7 @@ export type GuiArtifact = (
   | { id: string; kind: 'html'; title: string; html: string; previewUrl?: string }
   | { id: string; kind: 'image'; title: string; path: string; dataUrl: string }) & { revision?: number };
 export interface GuiEvent { method: string; params: Record<string, unknown>; id?: string | number }
+
+export type GuiApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel'
+  | { acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] } }
+  | { applyNetworkPolicyAmendment: { network_policy_amendment: { host: string; action: 'allow' | 'deny' } } };

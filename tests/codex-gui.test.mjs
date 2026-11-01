@@ -262,3 +262,47 @@ test('late Antigravity initialization corrects the displayed model and resumable
   await wait(() => events.some(event => event.method === 'aya/session'));
   assert.deepEqual(events.find(event => event.method === 'aya/session').params, { threadId: 'agy-test-thread', model: 'fake-agy' });
 });
+
+for (const resumeThreadId of [undefined, 'existing-thread']) {
+  test(`Codex GUI applies YOLO policy when ${resumeThreadId ? 'resuming' : 'starting'} a conversation`, async t => {
+    const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+    t.after(() => session.close());
+    await session.connect(process.cwd(), '', undefined, resumeThreadId, true);
+    const config = events.find(e => e.method === 'fixture/config').params;
+    assert.equal(config.approvalPolicy, 'never');
+    assert.equal(config.sandbox, 'danger-full-access');
+  });
+}
+
+for (const unsafeMode of [false, true]) {
+  test(`Claude GUI forwards unsafe approvals only when enabled (${unsafeMode})`, async t => {
+    const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+    t.after(() => session.close());
+    await session.connect(process.cwd(), '', undefined, undefined, unsafeMode);
+    const config = events.find(e => e.method === 'fixture/config').params;
+    assert.equal(config.args.includes('--dangerously-skip-permissions'), unsafeMode);
+  });
+}
+
+for (const decision of ['acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'status'] } }]) {
+  test(`Codex forwards offered approval choice ${JSON.stringify(decision)}`, async t => {
+    const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+    t.after(() => session.close()); await session.connect(process.cwd(), '');
+    await session.send('approval-options');
+    await wait(() => events.some(e => e.id === 'approve'));
+    await assert.rejects(session.respond('approve', { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['rm'] } } }), /not available/);
+    await session.respond('approve', { decision });
+    await wait(() => events.some(e => e.method === 'turn/completed'));
+    assert.deepEqual(events.find(e => e.method === 'fixture/approval').params, { decision });
+    await assert.rejects(session.respond('approve', { decision }), /already ended/);
+  });
+}
+
+test('Codex permission grants can last for the session', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('permissions'); await wait(() => events.some(e => e.id === 'approve'));
+  await session.respond('approve', { decision: 'acceptForSession' });
+  await wait(() => events.some(e => e.method === 'turn/completed'));
+  assert.deepEqual(events.find(e => e.method === 'fixture/approval').params, { permissions: { network: { enabled: true } }, scope: 'session' });
+});

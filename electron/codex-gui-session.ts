@@ -5,7 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat, readFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { GuiEvent, GuiArtifact } from '../shared/codex-gui';
+import type { GuiEvent, GuiArtifact, GuiApprovalDecision } from '../shared/codex-gui';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
@@ -102,7 +102,7 @@ export class CodexGuiSession {
     this.pending.clear(); this.requests.clear(); this.busy = false; this.turnId = null;
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
   }
-  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string) {
+  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
     if (this.child) throw Error('Start a new window for a separate PoC session');
     this.cwd = await realpath(cwd);
     if (!(await stat(this.cwd)).isDirectory()) throw Error('Workspace must be a directory');
@@ -131,7 +131,7 @@ export class CodexGuiSession {
       this.write({ method: 'initialized', params: {} });
       const result = await this.rpc(resumeThreadId ? 'thread/resume' : 'thread/start', {
         ...(resumeThreadId ? { threadId: resumeThreadId, excludeTurns: true } : {}),
-        cwd: this.cwd, ...(model ? { model } : {}), sandbox: 'workspace-write', approvalPolicy: 'on-request', approvalsReviewer: 'user',
+        cwd: this.cwd, ...(model ? { model } : {}), sandbox: unsafeMode ? 'danger-full-access' : 'workspace-write', approvalPolicy: unsafeMode ? 'never' : 'on-request', approvalsReviewer: 'user',
         ...(resumeThreadId ? {} : { dynamicTools: [PRESENT_TOOL, OPEN_ARTIFACT_TOOL, PROGRESS_TOOL] }),
         developerInstructions: 'You are displayed inside Aya GUI, a local graphical frontend for Codex. Respond in the user’s language. You own the normal Codex tool loop, context and sandbox. Use Markdown freely. For useful tables, metrics and local images, use aya_present to create artifacts. Set open=true when you want to show a newly created artifact immediately; use aya_open_artifact with its returned artifactId to reopen an existing one. Use HTML widgets for interactive visuals, forms, charts and mockups; use local PNG/JPEG/WebP/SVG files for graphics. Widgets are self-contained and cannot access the network or files. Widget row clicks arrive as user follow-ups. For measurable tasks use aya_progress with a label, actual completed units, total units and optional stage detail. Reuse its returned progressId for updates instead of creating new bars. Do not invent progress for tasks without measurable units. Do not start subagents unless the user requests delegation.',
       });
@@ -201,7 +201,7 @@ export class CodexGuiSession {
   async interrupt() {
     if (this.turnId) await this.rpc('turn/interrupt', { threadId: this.threadId, turnId: this.turnId });
   }
-  async respond(id: string | number, value: { decision?: 'accept' | 'decline'; answers?: Record<string, string> }) {
+  async respond(id: string | number, value: { decision?: GuiApprovalDecision; answers?: Record<string, string> }) {
     const request = this.requests.get(id);
     if (!request) throw Error('This request has already ended');
     let result: unknown;
@@ -209,9 +209,15 @@ export class CodexGuiSession {
       const questions = Array.isArray(request.params.questions) ? request.params.questions : [];
       result = { answers: Object.fromEntries(questions.map(q => { const question = object(q), key = text(question.id); return [key, { answers: [text(value.answers?.[key])] }]; })) };
     } else if (request.method === 'item/permissions/requestApproval') {
-      result = { permissions: value.decision === 'accept' ? request.params.permissions : {}, scope: 'turn' };
+      if (!['accept', 'acceptForSession', 'decline'].includes(String(value.decision))) throw Error('Invalid permission decision');
+      result = { permissions: value.decision === 'accept' || value.decision === 'acceptForSession' ? request.params.permissions : {}, scope: value.decision === 'acceptForSession' ? 'session' : 'turn' };
     } else {
-      if (value.decision !== 'accept' && value.decision !== 'decline') throw Error('Choose accept or decline');
+const available = Array.isArray(request.params.availableDecisions) ? request.params.availableDecisions : [
+        'accept', 'acceptForSession', 'decline', 'cancel',
+        ...(Array.isArray(request.params.proposedExecpolicyAmendment) ? [{ acceptWithExecpolicyAmendment: { execpolicy_amendment: request.params.proposedExecpolicyAmendment } }] : []),
+        ...(Array.isArray(request.params.proposedNetworkPolicyAmendments) ? request.params.proposedNetworkPolicyAmendments.map(amendment => ({ applyNetworkPolicyAmendment: { network_policy_amendment: amendment } })) : []),
+      ];
+      if (!available.some(decision => JSON.stringify(decision) === JSON.stringify(value.decision))) throw Error('This approval decision is not available');
       result = { decision: value.decision };
     }
     this.requests.delete(id); this.write({ id, result });

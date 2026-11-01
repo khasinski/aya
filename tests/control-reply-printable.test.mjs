@@ -58,6 +58,8 @@ writeFileSync(join(ayaHome, "machines.json"), JSON.stringify({ version: 1, machi
 
 const socket = join(root, "aya.sock");
 const stop = startControlServerOn(socket, {
+    // Model a standalone CLI; the test runner may itself descend from a Codex daemon.
+    processTable: async pid => new Map([[pid, { ppid: 0, command: '/bin/sh bin/aya' }]]),
   getWindow: () => null,
   openProject: async () => {
     throw new Error(`cannot open ${HOSTILE}`);

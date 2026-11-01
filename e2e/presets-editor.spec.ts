@@ -79,3 +79,25 @@ test("Claude in print mode is flagged for what it does to the pane, not for bill
   await commandInput(settings).fill("ssh -p 2222 devbox");
   await expect(warning).toHaveCount(0);
 });
+
+test("conversation GUI toggle stays beside its label and saves the chosen interface", async ({ window, app, seeded }) => {
+  const settings = await openPresetsTab(window, app);
+  await settings.locator(".aya-settings-add", { hasText: "Add Codex" }).click();
+  const toggle = settings.getByRole("checkbox", { name: "Conversation GUI · Experimental", exact: true });
+  await expect(toggle).toBeEnabled();
+  await toggle.check();
+  const label = toggle.locator("..");
+  const textBox = await label.locator("span").boundingBox();
+  const checkboxBox = await toggle.boundingBox();
+  expect(textBox).not.toBeNull();
+  expect(checkboxBox).not.toBeNull();
+  expect(checkboxBox!.width).toBe(16);
+  expect(checkboxBox!.height).toBe(16);
+  expect(checkboxBox!.x).toBeGreaterThan(textBox!.x + textBox!.width);
+  expect(checkboxBox!.y).toBeLessThan(textBox!.y + textBox!.height);
+  await nameInput(settings).fill("GUI Codex");
+  await settings.locator(".aya-modal-btn--primary", { hasText: "Save" }).click();
+  await expect(settings).toBeHidden();
+  const presets = JSON.parse(readFileSync(join(seeded.ayaHome, "presets.json"), "utf8")).presets;
+  expect(presets.find((p: { name: string }) => p.name === "GUI Codex").interfaceMode).toBe("gui");
+});
