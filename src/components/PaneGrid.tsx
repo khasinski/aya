@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { guiSupportedAgent } from "../agentPreset";
 import { emptyProjectPaneTitle, paneStyleFromRect } from "../pane-grid";
 import { findProject, terminalSpawn } from "../project-helpers";
 import type { SettingsTab } from "../settings-tabs";
@@ -14,6 +15,7 @@ import {
   type ThemeColors,
 } from "../types";
 import { SplitResizeHandle } from "./SplitResizeHandle";
+import { ConversationView } from "./ConversationView";
 import { TerminalView } from "./TerminalView";
 
 interface Props {
@@ -167,7 +169,7 @@ export function PaneGrid({
           : null;
         const colorsForTerminal: ThemeColors =
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
-        return (
+        return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !activeProject?.remote ? null : (
           <TerminalView
             key={terminal.id}
             paneStyle={paneStyle}
@@ -221,7 +223,7 @@ export function PaneGrid({
           : null;
         const colorsForTerminal: ThemeColors =
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
-        return (
+        return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !project?.remote ? null : (
           <TerminalView
             key={t.id}
             terminal={t}
@@ -247,6 +249,13 @@ export function PaneGrid({
             enableWebgl={false}
           />
         );
+      })}
+      {Object.values(terminals).map(terminal => {
+        const project = findProject(projects, terminal.projectSlug);
+        const preset = getPreset(presets, terminal.presetId);
+        if (preset.interfaceMode !== "gui" || !guiSupportedAgent(preset) || project?.remote || terminal.spawnDeferred) return null;
+        const pane = paneRects.find(p => p.terminalId === terminal.id);
+        return <ConversationView key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`} terminal={terminal} preset={preset} hidden={!pane} paneStyle={pane ? paneStyleFromRect(isSplit, pane.rect) : undefined} />;
       })}
       {activeProjectId &&
         paneDividers.map((divider) => (

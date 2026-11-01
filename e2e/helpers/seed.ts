@@ -57,6 +57,7 @@ export interface SeedOptions {
     icon: string;
     color: string;
     command: string;
+    interfaceMode?: "terminal" | "gui";
     agent?: string;
     autoResume?: boolean;
   }>;

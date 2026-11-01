@@ -20,6 +20,7 @@ test("registers exactly the usage and hook channels", () => {
     "usage:get-antigravity",
     "usage:get-codex",
     "usage:get-grok",
+    "usage:history",
   ]);
 });
 

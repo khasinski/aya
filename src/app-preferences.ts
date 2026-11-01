@@ -7,13 +7,13 @@ import {
 import { TERMINAL_FONT_FAMILY_STORAGE_KEY } from "./storage-keys";
 import type { LayoutMode } from "./types";
 
-export type AppThemePreference = "system" | "light" | "dark" | "omarchy";
+export type AppThemePreference = "system" | "light" | "dark" | "omarchy" | "violet";
 
 
 
 // localStorage codecs for the simple preferences (see usePersistentPreference).
 export const THEME_CODEC = enumPreference<AppThemePreference>(
-  ["system", "light", "dark", "omarchy"],
+  ["system", "light", "dark", "omarchy", "violet"],
   "system",
 );
 export const MAC_OPTION_CODEC: PreferenceCodec<MacOptionKeyMode> = {

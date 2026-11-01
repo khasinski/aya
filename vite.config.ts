@@ -13,6 +13,7 @@ const browserVtEngine = createHash("sha256").update(readFileSync(browserVtArtifa
 // 'unsafe-inline' styles: index.html's <style> and the ones xterm.js adds itself.
 const RENDERER_CSP = [
   "default-src 'self'",
+  "frame-src aya-widget:",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",

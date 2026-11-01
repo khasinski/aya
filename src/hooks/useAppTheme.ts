@@ -16,7 +16,7 @@ import {
 import type { Preset, Theme, ThemeColors } from "../types";
 
 interface AppThemeOptions {
-  appThemePreference: "system" | "light" | "dark" | "omarchy";
+  appThemePreference: "system" | "light" | "dark" | "omarchy" | "violet";
   themes: Theme[];
   activeThemeId: string;
   setThemes: Dispatch<SetStateAction<Theme[]>>;
@@ -58,6 +58,15 @@ export function useAppTheme({
   // Omarchy palette, and re-apply live when the Omarchy theme is switched.
   // Leaving the mode removes the inline vars, restoring the built-in theme.
   useEffect(() => {
+    if (appThemePreference === "violet") {
+      const root = document.documentElement;
+      const palette = { mode: "dark" as const, background: "#0c1018", foreground: "#dce3ef", accent: "#b9a6f7", muted: "#8190a8", selection: "#35304c" };
+      const vars = paletteToChromeVars(palette);
+      root.dataset.theme = "dark";
+      for (const [key, value] of Object.entries(vars)) root.style.setProperty(key, value);
+      setSkinThemeColors(paletteToThemeColors(palette));
+      return () => { for (const key of Object.keys(vars)) root.style.removeProperty(key); };
+    }
     if (appThemePreference !== "omarchy") {
       setSkinThemeColors(null);
       return;

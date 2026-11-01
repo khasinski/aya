@@ -1,5 +1,6 @@
 // Aya windows: creation, focus, fullscreen and the shared target for outside opens.
 
+import { isWidgetPreviewUrl } from "./gui-artifact-documents";
 import type { BrowserWindow, BrowserWindowConstructorOptions } from "electron";
 import * as path from "node:path";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
@@ -343,8 +344,14 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
       }
     ).on(
       "will-frame-navigate",
-      (event: { preventDefault(): void }, details: { url: string }) => {
-        handleExternalNavigation(event, details.url);
+      (event: { preventDefault(): void; url?: string; isMainFrame?: boolean }, details?: { url: string; isMainFrame?: boolean }) => {
+        const navigation = details ?? event;
+        if (navigation.isMainFrame === false) {
+          if (navigation.url && isWidgetPreviewUrl(navigation.url, win.webContents.id)) return;
+          event.preventDefault();
+          return;
+        }
+        if (navigation.url) handleExternalNavigation(event, navigation.url);
       },
     );
 

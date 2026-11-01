@@ -37,6 +37,7 @@ import { SearchModal } from "./components/SearchModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { ProjectsLeftLayout } from "./components/ProjectsLeftLayout";
 import { Sidebar } from "./components/Sidebar";
+import { UsageDashboard } from "./components/UsageDashboard";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 import { WebWaitingBanners } from "./components/WebWaitingBanners";
@@ -964,6 +965,14 @@ export function App() {
   );
   focusTerminalRef.current = focusTerminal;
 
+  const [showUsage, setShowUsage] = useState(false);
+  useEffect(() => {
+    const open = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'u' && !(event.target instanceof Element && event.target.closest('.xterm,input,textarea,[contenteditable="true"]'))) { event.preventDefault(); setShowUsage(value => !value); }
+    };
+    window.addEventListener('keydown', open);
+    return () => window.removeEventListener('keydown', open);
+  }, []);
   const currentMissingDir = missingDirQueue[0] ?? null;
   const chromeBlocked = !!currentMissingDir || !!newProjectModal;
   const {
@@ -977,6 +986,7 @@ export function App() {
   // open, no terminal is "active" for focus purposes; closing the last one
   // hands focus back to the active terminal (via TerminalView's isActive effect).
   const anyOverlayOpen =
+    showUsage ||
     chromeBlocked ||
     showSettings ||
     showSearch ||
@@ -1081,7 +1091,7 @@ export function App() {
         isFullScreen ? "aya-app--fullscreen" : "",
       ].filter(Boolean).join(" ")}
       data-theme={appThemePreference === "system" ? undefined : appThemePreference}
-      data-accent="green"
+      data-accent={appThemePreference === "violet" ? undefined : "green"}
     >
       <WebWaitingBanners
         projects={projects}
@@ -1314,7 +1324,9 @@ export function App() {
           </>
         );
       })()}
+      {showUsage && <UsageDashboard onClose={() => setShowUsage(false)} accounts={usageAccounts} codex={codexUsageAccounts} antigravity={antigravityUsageAccounts} grok={grokUsage} />}
       <StatusBar
+        onOpenUsage={() => setShowUsage(true)}
         project={activeProject}
         reviewTargets={reviewTargets}
         git={activeGit}

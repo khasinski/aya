@@ -11,7 +11,7 @@ export default defineConfig({
     emptyOutDir: false,
     minify: false,
     target: "es2022",
-    lib: { entry: "electron/preload.ts", formats: ["cjs"], fileName: () => "preload.bundle.js" },
+    lib: { entry: { preload: "electron/preload.ts", "artifact-preview-preload": "electron/artifact-preview-preload.ts" }, formats: ["cjs"], fileName: (_format, name) => `${name}.bundle.js` },
     rollupOptions: { external: ["electron"] },
   },
 });

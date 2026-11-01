@@ -1,3 +1,4 @@
+import { readUsageHistory } from "../usage-history";
 // Usage and agent-hook IPC: the Claude, Codex and Grok usage snapshots, the optional Claude usage hook, and the
 // automatic-status hooks for Claude Code and Codex.
 
@@ -30,6 +31,7 @@ export function withCodexStatus<T extends object>(claude: T, codex: CodexStatusH
 }
 
 export function registerUsageIpc(ipcMain: Pick<IpcMain, "handle">): void {
+  ipcMain.handle("usage:history", async (_event, days: unknown, refresh: unknown) => readUsageHistory(await listPresets(), days, refresh === true));
   // Read-only: the account-wide usage snapshot a user hook writes (no fetch).
   ipcMain.handle("usage:get", async () => {
     const presets = await listPresets();

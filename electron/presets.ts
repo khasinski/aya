@@ -34,6 +34,7 @@ export type AgentKind =
   | "custom";
 
 export interface Preset {
+  interfaceMode?: "terminal" | "gui";
   id: string;
   name: string;
   icon: string;
@@ -160,6 +161,7 @@ export function normalizePreset(raw: unknown): Preset | null {
     // treated as "default on" for agent presets by the renderer.
     ...(typeof raw.autoResume === "boolean" ? { autoResume: raw.autoResume } : {}),
     ...(raw.agentBrief ? { agentBrief: true } : {}),
+    ...(raw.interfaceMode === "gui" ? { interfaceMode: "gui" as const } : {}),
     ...(themeId ? { themeId } : {}),
   };
 }

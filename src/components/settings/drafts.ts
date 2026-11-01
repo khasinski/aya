@@ -42,6 +42,7 @@ export function fromDraft(p: DraftPreset): Preset {
     // survives - absence is treated as "default on" for agent presets.
     ...(typeof p.autoResume === "boolean" ? { autoResume: p.autoResume } : {}),
     ...(p.agentBrief ? { agentBrief: true } : {}),
+    ...(p.interfaceMode === "gui" ? { interfaceMode: "gui" as const } : {}),
     ...(themeId ? { themeId } : {}),
   };
 }

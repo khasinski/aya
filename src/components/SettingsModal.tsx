@@ -31,9 +31,9 @@ interface Props {
   snippets: Snippet[];
   themes: Theme[];
   activeThemeId: string;
-  appThemePreference: "system" | "light" | "dark" | "omarchy";
+  appThemePreference: "system" | "light" | "dark" | "omarchy" | "violet";
   onAppThemePreferenceChange: (
-    theme: "system" | "light" | "dark" | "omarchy",
+    theme: "system" | "light" | "dark" | "omarchy" | "violet",
   ) => void;
   terminalFontFamily: string;
   onTerminalFontFamilyChange: (fontFamily: string) => void;

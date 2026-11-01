@@ -570,6 +570,10 @@ GitHub Actions runs tests and renderer/main builds on pull requests and pushes
 to `main`. Pushes to `main`, version tags (`v*`), and manual workflow runs also
 package Linux x64 artifacts.
 
+## Roadmap
+
+See [roadmap ideas](docs/roadmap.md) for product directions under consideration.
+
 ## Status
 
 Aya is pre-1.0 and dogfooded daily by the author. macOS Apple Silicon release
