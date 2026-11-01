@@ -1,6 +1,6 @@
 {
   "name": "aya",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "private": true,
   "description": "Agentic terminal manager — Claude Code / Codex / shell sessions organized across projects.",
   "engines": {
@@ -33,7 +33,7 @@
     "test:e2e": "npm run build && npm run build:test-src && playwright test",
     "test:e2e:headed": "npm run build && npm run build:test-src && playwright test --headed",
     "emulator:shot": "node scripts/emulator-shot.cjs",
-    "package": "npm run build && electron-builder --publish never",
+    "package": "npm ci && npm run build && electron-builder --publish never",
     "postinstall": "electron-builder install-app-deps",
     "build:pty-owner": "node scripts/build-pty-owner.cjs",
     "test:owner-package": "node scripts/package-owner-smoke.cjs"

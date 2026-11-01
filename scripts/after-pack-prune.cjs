@@ -50,6 +50,16 @@ function pruneNodePtyPrebuilds(appPath) {
 }
 
 exports.default = async function afterPack(context) {
+  // Validate the actual ASAR before signing/notarizing or publishing any artifact.
+  const { spawnSync } = require("node:child_process");
+  const macApp = context.electronPlatformName === "darwin" ? findApp(context.appOutDir) : null;
+  const resources = macApp ? path.join(macApp, "Contents", "Resources") : path.join(context.appOutDir, "resources");
+  const executable = macApp ? path.join(macApp, "Contents", "MacOS", context.packager.appInfo.productFilename) : path.join(context.appOutDir, context.packager.executableName + (context.electronPlatformName === "win32" ? ".exe" : ""));
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
+  delete env.NODE_OPTIONS;
+  const check = spawnSync(executable, [path.join(__dirname, "check-packaged-dependencies.cjs"), path.join(resources, "app.asar", "package.json")], { env, encoding: "utf8", timeout: 30000 });
+  if (check.status !== 0) throw Error(`Packaged dependency check failed: ${check.stderr || check.stdout || check.error}`);
+  console.info(check.stdout.trim());
   if (context.electronPlatformName !== "darwin") return;
   const appPath = findApp(context.appOutDir);
   if (!appPath) return;
