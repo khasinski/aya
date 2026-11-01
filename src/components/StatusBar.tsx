@@ -33,6 +33,7 @@ interface GitInfo {
 }
 
 interface Props {
+  onOpenUsage?: () => void;
   project: ProjectConfig | null;
   git: GitInfo | null;
   /** The checkout `git` describes and the changed files / diff are read from:
@@ -90,6 +91,7 @@ function ciActionErrorMessage(error: unknown, fallback: string): string {
 }
 
 function StatusBarImpl({
+  onOpenUsage,
   project,
   git,
   gitDirectory,
@@ -649,6 +651,7 @@ function StatusBarImpl({
 
   return (
     <footer className="aya-statusbar">
+      {onOpenUsage && <button className="aya-statusbar-item aya-statusbar-button" type="button" aria-label="Open usage" title="Usage · tokens and account limits" onClick={onOpenUsage}><span style={{ fontFamily: "Material Symbols Outlined", fontSize: 14 }}>bar_chart</span>Usage</button>}
       {project && (
         <button
           className="aya-statusbar-item aya-statusbar-button"

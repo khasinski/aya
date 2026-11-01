@@ -1,3 +1,5 @@
+import { registerWidgetScheme } from './gui-artifact-documents';
+import { registerCodexGuiIpc } from "./codex-gui-ipc";
 import {findAuthTransferTicket} from "./pty-host-auth-ticket";
 import { builtinScreenRules } from "./screen-rule-provider";
 import type { ScreenRuleSet } from "./screen-rule-data";
@@ -153,6 +155,7 @@ import type {
   SpawnRequest,
 } from "./types";
 
+registerWidgetScheme();
 const headlessWindowOptions = installHeadlessUiRouter({ env: process.env, app, dialog, BrowserWindow, Notification, ipcMain });
 
 const DEV_SERVER_URL = "http://localhost:5183";
@@ -577,6 +580,7 @@ function assertSpawnAllowed(): void {
 }
 
 function registerIpc(): TeamRunner {
+  registerCodexGuiIpc(externalShell.openExternal);
   handoverDisplays.register(ipcMain);
   // Aya Web reuses these handlers over WebSocket - record every registration
   // (must run before the first ipcMain.handle below).

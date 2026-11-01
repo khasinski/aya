@@ -9,8 +9,8 @@ import { CliRow, MicrophoneRow, NotificationsRow } from "./SystemRows";
 
 interface GeneralTabProps {
   omarchy: OmarchyStatus | null;
-  appThemePreference: "system" | "light" | "dark" | "omarchy";
-  onAppThemePreferenceChange: (theme: "system" | "light" | "dark" | "omarchy") => void;
+  appThemePreference: "system" | "light" | "dark" | "omarchy" | "violet";
+  onAppThemePreferenceChange: (theme: "system" | "light" | "dark" | "omarchy" | "violet") => void;
   terminalFontFamily: string;
   onTerminalFontFamilyChange: (fontFamily: string) => void;
   macOptionKeyMode: MacOptionKeyMode;
@@ -103,6 +103,7 @@ export function GeneralTab({
         "system",
         "light",
         "dark",
+        "violet",
         // Omarchy is OFFERED only when it is installed with an active
         // theme - but it is always RENDERED while it is the selected
         // value, so the control can never show four unselected
@@ -131,7 +132,7 @@ export function GeneralTab({
             ? "Light"
             : theme === "dark"
               ? "Dark"
-              : "Omarchy"}
+              : theme === "violet" ? "Violet" : "Omarchy"}
       </button>
     ))}
     </div>

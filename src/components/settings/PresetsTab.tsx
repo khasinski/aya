@@ -1,5 +1,5 @@
 import { type Dispatch, type SetStateAction } from "react";
-import { agentBriefHint } from "../../agentPreset";
+import { agentBriefHint, guiSupportedAgent } from "../../agentPreset";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../../colors";
 import { looksNonInteractive, type HarnessDef, type Preset, type Theme } from "../../types";
 import { DEFAULT_CLAUDE_CONFIG_DIR, DEFAULT_CODEX_CONFIG_DIR, agentCommand, type DraftPreset } from "./drafts";
@@ -101,6 +101,7 @@ export function PresetsTab({
     const row = activePreset;
     const warn = looksNonInteractive(row.command);
     const isAgent = row.agent === "claude" || row.agent === "codex";
+    const guiAgent = guiSupportedAgent(row);
     const briefHint = agentBriefHint(row.agent);
     return (
     <div className="aya-preset-card" key={row.__key}>
@@ -161,6 +162,20 @@ export function PresetsTab({
                     ),
                     autoResume: row.autoResume ?? true,
                   });
+                } else if (agent === "pi") {
+                  updateRow(row.__key, {
+                    agent,
+                    icon: row.icon || "π",
+                    command: row.command || "pi",
+                    autoResume: row.autoResume ?? true,
+                  });
+                } else if (agent === "antigravity") {
+                  updateRow(row.__key, {
+                    agent,
+                    icon: row.icon || "✦",
+                    command: row.command || "agy",
+                    autoResume: row.autoResume ?? true,
+                  });
                 } else {
                   updateAgentFields(row.__key, { agent: "custom" });
                 }
@@ -168,6 +183,8 @@ export function PresetsTab({
             >
               <option value="claude">Claude</option>
               <option value="codex">Codex</option>
+              <option value="pi">Pi</option>
+              <option value="antigravity">Antigravity</option>
               <option value="custom">Custom</option>
             </select>
           </label>
@@ -206,6 +223,12 @@ export function PresetsTab({
       </div>
 
       <div className="aya-preset-section">
+        <div className="aya-settings-section-title">Interface</div><div>
+          <label><span>Conversation GUI · Experimental</span>
+            <input type="checkbox" aria-label="Conversation GUI · Experimental" checked={row.interfaceMode === "gui"} disabled={!guiAgent} onChange={e => updateRow(row.__key, { interfaceMode: e.target.checked ? "gui" : "terminal" })} />
+          </label>
+          <p className="aya-settings-hint">Supports Codex, Claude Code, Pi and Antigravity. Uses each agent's structured local RPC/JSON stream protocol instead of a terminal emulator.</p>
+        </div>
         <div className="aya-settings-section-title">Appearance</div>
         <div className="aya-preset-grid aya-preset-grid--appearance">
           <label>

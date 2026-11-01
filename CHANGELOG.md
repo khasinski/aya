@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## v0.15.0 - 2026-11-01
+
+- Add experimental conversation history with a searchable `/resume` picker,
+  native Codex history, `/new`/`/clear`, `/help`, `/model` and `/status`.
+  Preserve drafts and artifacts when switching within a workspace and account.
+- Preserve newly typed drafts while a send is acknowledged, isolate snapshots
+  across account and harness changes, release closed-panel history and images,
+  and retain partial Usage warnings when cached logs omit accounting records.
+
+- Add a Usage screen with local token trends, provider/account/model filters,
+  model breakdowns, and a separate view of provider-reported account limits.
+
+- Add experimental Conversation GUI for Codex, Claude Code, Pi and Antigravity with streamed responses, approvals,
+  native goals, side questions, model/effort controls, attachments, queue and
+  steering, compact tool activity, and local conversation restoration.
+- Add HTML/SVG/canvas widgets and workspace graphics to the artifacts drawer,
+  with version history, search, previous/next navigation, zoom, saving, separate
+  preview windows and system-browser previews.
+- Add labeled, updatable task progress bars through the harness-facing
+  `aya_progress` tool, with measured counts and retained completion history.
+- Add the built-in Violet appearance inspired by the Conversation GUI prototype.
 
 - Keep zoom-aware Aya window controls in both modes, hiding native macOS
   buttons recreated on fullscreen exit. Remove the fullscreen native title bar

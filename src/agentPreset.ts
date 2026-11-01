@@ -167,6 +167,21 @@ export function effectiveAgent(preset: Preset): Agent {
   return preset.agent ?? inferAgent(preset);
 }
 
+export type GuiSupportedAgent = "codex" | "pi" | "claude" | "antigravity";
+
+export function guiSupportedAgent(
+  preset: Pick<Preset, "agent" | "command">,
+): GuiSupportedAgent | null {
+  const candidate =
+    preset.agent && preset.agent !== "custom" ? preset.agent : inferAgent(preset);
+  return candidate === "codex" ||
+    candidate === "pi" ||
+    candidate === "claude" ||
+    candidate === "antigravity"
+    ? candidate
+    : null;
+}
+
 function agentSpec(preset: Preset): AgentSpec | null {
   const agent = effectiveAgent(preset);
   return agent === "custom" ? null : AGENT_SPECS[agent];

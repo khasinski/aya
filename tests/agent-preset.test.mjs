@@ -17,6 +17,7 @@ import {
   resumeSpawn,
   sharingPaneIds,
   launchesAgentDirectly,
+  guiSupportedAgent,
 } from "../dist-test/agentPreset.js";
 import { launchesAgentDirectly as hostLaunchesAgentDirectly } from "../dist-electron/agent-session.js";
 
@@ -436,4 +437,15 @@ test("a grok preset that already names its session with --session-id gets no --r
     assert.equal(commandWithAutoResume(preset({ command, agent: "grok" }), true, "22222222-2222-4222-8222-222222222222"), command, command);
     assert.equal(commandHasResumeFlag(preset({ command, agent: "grok" }), command), true, command);
   }
+});
+
+test("guiSupportedAgent recognizes explicit and inferred codex, claude, pi and antigravity presets", () => {
+  assert.equal(guiSupportedAgent(preset({ agent: "codex", command: "codex" })), "codex");
+  assert.equal(guiSupportedAgent(preset({ agent: "claude", command: "claude" })), "claude");
+  assert.equal(guiSupportedAgent(preset({ agent: "pi", command: "pi" })), "pi");
+  assert.equal(guiSupportedAgent(preset({ agent: "antigravity", command: "agy" })), "antigravity");
+  assert.equal(guiSupportedAgent(preset({ agent: "custom", command: "pi --no-session" })), "pi");
+  assert.equal(guiSupportedAgent(preset({ agent: "custom", command: "agy" })), "antigravity");
+  assert.equal(guiSupportedAgent(preset({ agent: "opencode", command: "opencode" })), null);
+  assert.equal(guiSupportedAgent(preset({ agent: "custom", command: "zsh" })), null);
 });

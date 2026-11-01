@@ -147,6 +147,7 @@ const api: AyaApi = {
   listSnippets: () => ipcRenderer.invoke("snippets:list"),
   saveSnippets: (snippets) => ipcRenderer.invoke("snippets:save", snippets),
 
+  getUsageHistory: (days, refresh) => ipcRenderer.invoke("usage:history", days, refresh),
   getUsage: () => ipcRenderer.invoke("usage:get"),
   getCodexUsage: () => ipcRenderer.invoke("usage:get-codex"),
   getAntigravityUsage: () => ipcRenderer.invoke("usage:get-antigravity"),
@@ -321,3 +322,12 @@ const api: AyaApi = {
 };
 
 contextBridge.exposeInMainWorld("aya", api);
+
+contextBridge.exposeInMainWorld('ayaGui', {
+  invoke: (id: string, action: string, value?: unknown) => ipcRenderer.invoke('codex-gui', id, action, value),
+  onEvent: (id: string, callback: (value: unknown) => void) => {
+    const handler = (_event: unknown, panel: string, value: unknown) => { if (panel === id) callback(value); };
+    ipcRenderer.on('codex-gui:event', handler);
+    return () => ipcRenderer.removeListener('codex-gui:event', handler);
+  },
+});

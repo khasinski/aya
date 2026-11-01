@@ -768,6 +768,7 @@ export interface AyaApi {
 
   /** Read-only account-wide usage snapshots a user hook writes.
    *  Aya never fetches it — see electron/usage.ts. */
+  getUsageHistory?(days: number, refresh?: boolean): Promise<import("../shared/usage-history").UsageHistory>;
   getUsage(): Promise<UsageAccount[]>;
   /** Read-only Codex usage parsed from its local rollout logs. */
   getCodexUsage(): Promise<UsageAccount[]>;

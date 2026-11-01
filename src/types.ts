@@ -21,6 +21,7 @@ export type AgentKind =
   | "custom";
 
 export interface Preset {
+  interfaceMode?: "terminal" | "gui";
   id: string;
   name: string;
   icon: string;
@@ -931,6 +932,7 @@ export interface AyaApi {
   saveSnippets(snippets: Snippet[]): Promise<void>;
 
   /** Read-only account-wide usage snapshots. */
+  getUsageHistory?(days: number, refresh?: boolean): Promise<import("../shared/usage-history").UsageHistory>;
   getUsage(): Promise<UsageAccount[]>;
   /** Read-only Codex usage from its local rollout logs. */
   getCodexUsage(): Promise<UsageAccount[]>;
