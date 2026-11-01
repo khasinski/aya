@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep zoom-aware Aya window controls in both modes, hiding native macOS
+  buttons recreated on fullscreen exit. Remove the fullscreen native title bar
+  so revealing the menu cannot leave its hit area over the project tabs.
+
 ## v0.14.1 - 2026-10-31
 
 Program status escape sequence (`OSC 7501`), simplified window layouts, and
