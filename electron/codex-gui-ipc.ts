@@ -21,7 +21,7 @@ function createGuiSession(agent: GuiAgentKind, emit: (event: GuiEvent) => void):
   if (agent === 'antigravity') return new AntigravityGuiSession(emit, process.env.AYA_E2E_RUN === '1' ? process.env.AYA_E2E_AGY_BIN || 'agy' : 'agy');
   return new CodexGuiSession(emit, process.env.AYA_E2E_RUN === '1' ? process.env.AYA_E2E_CODEX_BIN || 'codex' : 'codex');
 }
-export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>) {
+export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>, createWindow: (options: Electron.BrowserWindowConstructorOptions) => Electron.BrowserWindow) {
   registerWidgetProtocol();
   const panels = new GuiPanelState(async (id, snapshot) => { await saveConversation(id, snapshot); await archiveConversation(snapshot); }, clearWidgetDocuments);
   const { artifacts, artifactVersions, sessions, snapshots, attachments } = panels;
@@ -139,7 +139,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'open-artifact' || action === 'open-artifact-browser') {
       const artifact = requestedArtifact();
       if (!artifact || (artifact.kind !== 'html' && artifact.kind !== 'image')) throw Error('This artifact has no browser preview');
-      if (action === 'open-artifact') { openArtifactWindow(artifact, event.sender, id); return; }
+      if (action === 'open-artifact') { openArtifactWindow(artifact, event.sender, id, createWindow); return; }
       const escape = (text: string) => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
       const content = artifact.kind === 'html' ? artifact.html : `<img alt="${escape(artifact.title)}" src="${escape(artifact.dataUrl)}" style="max-width:100%;height:auto">`;
       const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>${escape(artifact.title)}</title><style>body{margin:0;padding:24px;background:#10151e;color:#dce3ef;font:14px system-ui}#aya-follow-up{position:fixed;bottom:16px;left:16px;right:16px;padding:12px;background:#1b2231;color:#dce3ef;white-space:pre-wrap;border:1px solid #b9a6f7;border-radius:8px}</style><script>window.ayaWidget=Object.freeze({suggest(text){let node=document.getElementById('aya-follow-up');if(!node){node=document.createElement('div');node.id='aya-follow-up';document.body.append(node)}node.textContent='Copy this suggestion into Aya:\\n'+String(text).slice(0,4000);}});</script></head><body>${content}</body></html>`;

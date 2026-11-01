@@ -157,6 +157,7 @@ import type {
 
 registerWidgetScheme();
 const headlessWindowOptions = installHeadlessUiRouter({ env: process.env, app, dialog, BrowserWindow, Notification, ipcMain });
+const createGuardedWindow = (options: BrowserWindowConstructorOptions) => new BrowserWindow(headlessWindowOptions(options));
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
@@ -503,7 +504,7 @@ const aboutPanelDeps = {
   darkBackground: COLOR_DARK_BG,
   lightText: COLOR_LIGHT_TEXT,
   focusedAyaWindow,
-  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(headlessWindowOptions(options)),
+  createWindow: createGuardedWindow,
   devIconPath,
 };
 
@@ -580,7 +581,7 @@ function assertSpawnAllowed(): void {
 }
 
 function registerIpc(): TeamRunner {
-  registerCodexGuiIpc(externalShell.openExternal);
+  registerCodexGuiIpc(externalShell.openExternal, createGuardedWindow);
   handoverDisplays.register(ipcMain);
   // Aya Web reuses these handlers over WebSocket - record every registration
   // (must run before the first ipcMain.handle below).

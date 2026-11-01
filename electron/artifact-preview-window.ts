@@ -1,11 +1,11 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import * as path from 'node:path';
 import type { GuiArtifact } from '../shared/codex-gui';
 import { isWidgetPreviewUrl } from './gui-artifact-documents';
 const previews = new Map<number, { owner: Electron.WebContents; panel: string }>();
 let registered = false;
 const escape = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-export function openArtifactWindow(artifact: GuiArtifact, owner: Electron.WebContents, panel: string) {
+export function openArtifactWindow(artifact: GuiArtifact, owner: Electron.WebContents, panel: string, createWindow: (options: Electron.BrowserWindowConstructorOptions) => Electron.BrowserWindow) {
   if (!registered) {
     registered = true;
     ipcMain.on('artifact-preview:suggest', (event, text: unknown) => {
@@ -14,7 +14,7 @@ export function openArtifactWindow(artifact: GuiArtifact, owner: Electron.WebCon
       preview.owner.send('codex-gui:event', preview.panel, { method: 'aya/widgetSuggestion', params: { text } });
     });
   }
-  const win = new BrowserWindow({ width: 1100, height: 800, acceptFirstMouse: true, minWidth: 480, minHeight: 360, title: artifact.title, show: process.env.AYA_E2E_HEADLESS !== '1', backgroundColor: '#10151e', webPreferences: { preload: path.join(__dirname, 'artifact-preview-preload.bundle.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+  const win = createWindow({ width: 1100, height: 800, acceptFirstMouse: true, minWidth: 480, minHeight: 360, title: artifact.title, show: process.env.AYA_E2E_HEADLESS !== '1', backgroundColor: '#10151e', webPreferences: { preload: path.join(__dirname, 'artifact-preview-preload.bundle.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
   previews.set(win.webContents.id, { owner, panel });
   const contentsId = win.webContents.id;
   win.once('closed', () => previews.delete(contentsId));
