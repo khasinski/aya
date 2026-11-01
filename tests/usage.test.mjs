@@ -55,6 +55,54 @@ test("rejects a snapshot with NO windows, and a present-but-invalid window", () 
   assert.equal(isUsageData({ fiveHour: { pct: "30" }, updatedAt: "x" }), false);
 });
 
+// Claude Code writes `{ pct: null, resetsAt: null }` for a window it has no
+// figure for yet (seen on 2026-11-01). That window is absent, not broken: the
+// other window still shows.
+const liveNullFiveHour = {
+  fiveHour: { pct: null, resetsAt: null },
+  sevenDay: { pct: 47, resetsAt: "2026-11-06T19:59:59.760727+00:00" },
+  updatedAt: "2026-11-01T22:02:00Z",
+};
+
+test("a window with no figure (pct null) is dropped, the other window still shows", () => {
+  assert.deepEqual(parseUsage(JSON.stringify(liveNullFiveHour)), {
+    sevenDay: { pct: 47, resetsAt: "2026-11-06T19:59:59.760727+00:00" },
+    updatedAt: "2026-11-01T22:02:00Z",
+  });
+  assert.deepEqual(parseUsageAccounts(JSON.stringify(liveNullFiveHour)), [
+    usageAccountFromData({
+      sevenDay: { pct: 47, resetsAt: "2026-11-06T19:59:59.760727+00:00" },
+      updatedAt: "2026-11-01T22:02:00Z",
+    }),
+  ]);
+  const accounts = parseUsageAccounts(
+    JSON.stringify({ accounts: [{ id: "work", label: "Work", usage: liveNullFiveHour }] }),
+  );
+  assert.equal(accounts.length, 1);
+  assert.equal(accounts[0].usage.fiveHour, undefined);
+  assert.equal(accounts[0].usage.sevenDay.pct, 47);
+});
+
+test("a snapshot whose every window has no figure still hides the chip", () => {
+  const empty = { fiveHour: { pct: null }, sevenDay: { pct: null, resetsAt: null }, updatedAt: "x" };
+  assert.equal(parseUsage(JSON.stringify(empty)), null);
+  assert.deepEqual(parseUsageAccounts(JSON.stringify(empty)), []);
+});
+
+test("an unset window still rejects real garbage next to it", () => {
+  for (const bad of [{ pct: "55" }, { pct: -1 }, { pct: 30, resetsAt: 5 }, "x"]) {
+    assert.equal(
+      parseUsage(JSON.stringify({ fiveHour: { pct: null }, sevenDay: bad, updatedAt: "x" })),
+      null,
+    );
+  }
+  // A null pct with a real reset time is not "no figure": keep rejecting it.
+  assert.equal(
+    parseUsage(JSON.stringify({ fiveHour: { pct: null, resetsAt: "2026-11-01T23:00:00Z" }, sevenDay: { pct: 1 }, updatedAt: "x" })),
+    null,
+  );
+});
+
 test("rejects a non-numeric pct", () => {
   assert.equal(
     isUsageData({ ...valid, sevenDay: { pct: "55" } }),
