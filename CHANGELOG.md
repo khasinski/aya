@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Remove the native macOS title bar while fullscreen so revealing the system
+  menu cannot leave its transparent hit area over the project tabs.
+
 ## v0.14.1 - 2026-10-31
 
 Program status escape sequence (`OSC 7501`), simplified window layouts, and

@@ -1,6 +1,7 @@
 #include <node_api.h>
 
 #import <Cocoa/Cocoa.h>
+#include "macos-window-chrome.h"
 
 namespace {
 
@@ -13,15 +14,13 @@ napi_value Undefined(napi_env env) {
 void ApplyWindowChromeHack(NSWindow *window) {
   if (!window) return;
 
-  NSWindowStyleMask styleMask = [window styleMask];
-  styleMask |= NSWindowStyleMaskFullSizeContentView;
-  [window setStyleMask:styleMask];
+  [window setStyleMask:AyaWindowChromeStyleMask([window styleMask])];
   [window setTitleVisibility:NSWindowTitleHidden];
   [window setTitlebarAppearsTransparent:YES];
   [window setMovableByWindowBackground:NO];
 
   // Electron/macOS may recreate toolbar chrome around fullscreen transitions.
-  // Clearing it here is the part this spike is testing.
+  // Aya renders its own chrome, so no native toolbar should cover the tabs.
   [window setToolbar:nil];
 
   NSWindowCollectionBehavior behavior = [window collectionBehavior];
