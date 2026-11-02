@@ -13,7 +13,7 @@
 // dev server on an ephemeral port and tears it down when done, so nothing needs
 // to be running first.
 
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const net = require("node:net");
@@ -115,9 +115,14 @@ async function main() {
   const outDir = path.resolve(repoRoot, opts.out);
   fs.mkdirSync(outDir, { recursive: true });
 
+  execFileSync(path.join(repoRoot, "node_modules/.bin/vite"), ["build"], {
+    cwd: repoRoot,
+    stdio: "ignore",
+  });
+
   const vite = spawn(
     path.join(repoRoot, "node_modules/.bin/vite"),
-    ["--port", String(port), "--strictPort"],
+    ["preview", "--port", String(port), "--strictPort"],
     { cwd: repoRoot, stdio: "ignore" },
   );
   const cleanup = () => {

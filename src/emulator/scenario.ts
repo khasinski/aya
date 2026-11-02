@@ -15,6 +15,7 @@ import type {
   ControlStatusLevel,
   GrokUsage,
   ProjectGitInfo,
+  TeamSummary,
   UsageAccount,
 } from "../types";
 
@@ -56,6 +57,8 @@ export interface EmProject {
   /** Explicit pane layout. When omitted, a balanced tree over all tabs is used
    *  so every terminal is visible in a split. */
   split?: SplitNode;
+  /** Optional team summaries for the project (drives role chips + status bar). */
+  teams?: TeamSummary[];
 }
 
 export interface EmScenario {

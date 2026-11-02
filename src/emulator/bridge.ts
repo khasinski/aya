@@ -17,6 +17,7 @@ import type {
   ProjectConfig,
   ProjectGitInfo,
   PtyEvent,
+  TeamSummary,
 } from "../types";
 import type { SplitNode } from "../split-tree";
 import { EMULATOR_PRESETS } from "./presets";
@@ -28,25 +29,26 @@ interface Derived {
   projects: ProjectConfig[];
   state: ProjectCollectionState;
   gitBySlug: Map<string, ProjectGitInfo>;
+  teamsBySlug: Map<string, TeamSummary[]>;
   tabsById: Map<string, { tab: EmTab; projectSlug: string; cwd: string }>;
-  /** First rendered line of a tab's content -> its Apple-Intelligence summary.
+  /** Rendered lines of each tab's content -> its Apple-Intelligence summary.
    *  Used by summarizeLocal to re-apply a terminal summary after App's prune
    *  effect (which wipes summaries for terminals absent at first render, before
    *  hydration) has run. */
-  termSummaryByFirstLine: Map<string, string>;
+  termSummaries: Array<{ lines: string[]; summary: string }>;
 }
 
 const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
-function firstRenderedLine(text: string): string {
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(ANSI_SGR_RE, "").trim();
-    if (line) return line;
-  }
-  return "";
+function renderedLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((raw) => raw.replace(ANSI_SGR_RE, "").trim())
+    .filter(Boolean);
 }
 
 function deriveSplit(project: EmScenario["projects"][number]): SplitNode | undefined {
   if (project.split) return project.split;
+  if (project.singleViewTabId) return undefined;
   const ids = project.tabs.map((t) => t.id);
   // A lone tab renders as a single pane with no stored split.
   if (ids.length <= 1) return undefined;
@@ -56,14 +58,16 @@ function deriveSplit(project: EmScenario["projects"][number]): SplitNode | undef
 function derive(scenario: EmScenario): Derived {
   const homeDir = scenario.homeDir ?? "/Users/you";
   const gitBySlug = new Map<string, ProjectGitInfo>();
+  const teamsBySlug = new Map<string, TeamSummary[]>();
   const tabsById = new Map<
     string,
     { tab: EmTab; projectSlug: string; cwd: string }
   >();
-  const termSummaryByFirstLine = new Map<string, string>();
+  const termSummaries: Array<{ lines: string[]; summary: string }> = [];
 
   const projects: ProjectConfig[] = scenario.projects.map((p) => {
     if (p.git) gitBySlug.set(p.slug, p.git);
+    if (p.teams) teamsBySlug.set(p.slug, p.teams);
     for (const tab of p.tabs) {
       tabsById.set(tab.id, {
         tab,
@@ -71,8 +75,8 @@ function derive(scenario: EmScenario): Derived {
         cwd: tab.cwd ?? p.directory,
       });
       if (tab.summary && tab.content) {
-        const key = firstRenderedLine(tab.content);
-        if (key) termSummaryByFirstLine.set(key, tab.summary);
+        const lines = renderedLines(tab.content);
+        if (lines.length) termSummaries.push({ lines, summary: tab.summary });
       }
     }
     return {
@@ -110,7 +114,7 @@ function derive(scenario: EmScenario): Derived {
   };
 
   void homeDir;
-  return { projects, state, gitBySlug, tabsById, termSummaryByFirstLine };
+  return { projects, state, gitBySlug, teamsBySlug, tabsById, termSummaries };
 }
 
 export function createEmulatorAya(scenario: EmScenario): AyaApi {
@@ -138,6 +142,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     } else if (tab.stopped) {
       emit({ type: "no-session", ptyId });
     }
+    setTimeout(flushStatuses, 0);
   };
 
   // --- control status stream ------------------------------------------------
@@ -248,7 +253,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     teamPause: noopAsync,
     teamRemove: noopAsync,
     teamResume: noopAsync,
-    teamList: async () => [],
+    teamList: async (projectSlug: string) => (d.teamsBySlug.get(projectSlug) ?? []) as never,
     teamSave: noopAsync,
     teamAssign: noopAsync,
     teamReleasePane: noopAsync,
@@ -273,10 +278,19 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     // never pruned), so a "not useful" result there is a harmless no-op.
     summarizeLocal: async (req: { kind: "terminal" | "project"; lines: string[] }) => {
       if (req.kind === "terminal") {
-        const first = req.lines.map((l) => l.replace(ANSI_SGR_RE, "").trim()).find(Boolean);
-        const summary = first ? d.termSummaryByFirstLine.get(first) : undefined;
-        if (summary) {
-          return { available: true, useful: true, summary } as never;
+        const clean = new Set(req.lines.map((l) => l.replace(ANSI_SGR_RE, "").trim()).filter(Boolean));
+        let best: { score: number; summary: string } | null = null;
+        for (const candidate of d.termSummaries) {
+          let score = 0;
+          for (const line of candidate.lines) {
+            if (clean.has(line)) score++;
+          }
+          if (score > 0 && (!best || score > best.score)) {
+            best = { score, summary: candidate.summary };
+          }
+        }
+        if (best) {
+          return { available: true, useful: true, summary: best.summary } as never;
         }
       }
       return { available: true, useful: false, summary: "" } as never;

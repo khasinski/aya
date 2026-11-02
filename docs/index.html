@@ -6,12 +6,12 @@
     <title>Aya - workspace for long-lived coding agents</title>
     <meta
       name="description"
-      content="A free, open-source desktop workspace for long-lived Claude Code, Codex, and other coding agents, organized by project, with tiling splits and a status rail."
+      content="A free, open-source desktop workspace for long-lived Claude Code, Codex, and other coding agents, organized by project, with tiling splits, a waiting-agent status rail, and multi-agent teams."
     />
     <meta property="og:title" content="Aya - workspace for coding agents" />
     <meta
       property="og:description"
-      content="Project tabs, tiling splits, a waiting-pane status rail, usage chips, snippets, and agent-to-agent pane control for Claude Code, Codex, and more."
+      content="Persistent agent terminals that survive quits and updates, tiling splits, a waiting-pane status rail, multi-agent teams, inline diff review, local usage analytics, and an optional Conversation GUI."
     />
     <meta property="og:image" content="https://aya.codes/assets/aya-tiling.png" />
     <meta property="og:url" content="https://aya.codes/" />
@@ -24,27 +24,20 @@
     <style>
       :root {
         --bg: #090c0b;
-        --bg-2: #0f1412;
-        --panel: #121817;
-        --panel-2: #18201e;
-        --panel-3: #202721;
-        --line: rgba(233, 229, 213, 0.14);
-        --line-strong: rgba(233, 229, 213, 0.24);
-        --text: #ebe5d6;
-        --muted: #aaa79d;
-        --dim: #74766f;
+        --bg-2: #0d1110;
+        --panel: #121716;
+        --panel-2: #171e1c;
+        --line: rgba(235, 229, 214, 0.12);
+        --line-strong: rgba(235, 229, 214, 0.22);
+        --text: #ece7da;
+        --muted: #a6a39a;
+        --dim: #6e706a;
         --green: #84db9b;
-        --green-2: #48c274;
-        --red: #ff6268;
-        --red-soft: rgba(255, 98, 104, 0.14);
-        --amber: #e0b94d;
-        --cyan: #72c7d8;
-        --violet: #a78bfa;
-        --shadow: rgba(0, 0, 0, 0.42);
+        --shadow: rgba(0, 0, 0, 0.48);
         color-scheme: dark;
         font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", sans-serif;
+          Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+          sans-serif;
       }
 
       * {
@@ -60,10 +53,10 @@
         min-width: 320px;
         color: var(--text);
         background:
-          linear-gradient(180deg, rgba(132, 219, 155, 0.09), transparent 390px),
-          linear-gradient(135deg, rgba(114, 199, 216, 0.06), transparent 420px),
+          radial-gradient(ellipse 900px 420px at 20% 0%, rgba(132, 219, 155, 0.08), transparent 70%),
           var(--bg);
-        line-height: 1.5;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
       }
 
       a {
@@ -78,14 +71,24 @@
 
       code,
       pre {
-        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        font-family:
+          "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas,
+          monospace;
       }
 
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      /* ---------------- Header ---------------- */
       .site-header {
         position: sticky;
         top: 0;
         z-index: 20;
-        border-bottom: 1px solid rgba(233, 229, 213, 0.1);
+        border-bottom: 1px solid rgba(235, 229, 214, 0.08);
         background: rgba(9, 12, 11, 0.86);
         backdrop-filter: blur(18px);
       }
@@ -93,7 +96,7 @@
       .nav,
       .section-inner,
       .footer-inner {
-        width: min(1180px, calc(100% - 32px));
+        width: min(1180px, calc(100% - 40px));
         margin: 0 auto;
       }
 
@@ -109,19 +112,20 @@
         display: inline-flex;
         align-items: center;
         gap: 12px;
-        font-weight: 760;
+        font-weight: 740;
+        font-size: 1.02rem;
       }
 
       .brand img {
-        width: 36px;
-        height: 36px;
-        border-radius: 9px;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
       }
 
       .nav-links {
         display: flex;
         align-items: center;
-        gap: 20px;
+        gap: 24px;
         color: var(--muted);
         font-size: 0.94rem;
       }
@@ -138,9 +142,11 @@
         justify-content: center;
         border-radius: 8px;
         border: 1px solid var(--line-strong);
-        padding: 0 14px;
-        font-weight: 720;
+        padding: 0 16px;
+        font-size: 0.94rem;
+        font-weight: 680;
         white-space: nowrap;
+        transition: opacity 120ms ease, background 120ms ease;
       }
 
       .nav-cta,
@@ -150,103 +156,95 @@
         background: var(--green);
       }
 
+      .nav-cta:hover,
+      .button.primary:hover {
+        opacity: 0.92;
+      }
+
       .button.secondary {
         color: var(--text);
-        background: rgba(233, 229, 213, 0.06);
+        background: rgba(235, 229, 214, 0.05);
       }
 
+      .button.secondary:hover {
+        background: rgba(235, 229, 214, 0.1);
+      }
+
+      /* ---------------- Main Layout ---------------- */
       main {
         display: grid;
-        gap: 92px;
-        padding-bottom: 80px;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 108px;
+        padding-bottom: 96px;
       }
 
+      /* ---------------- Hero ---------------- */
       .hero {
-        min-height: min(780px, calc(100svh - 66px));
-        display: grid;
-        align-items: center;
-        padding: 64px 0 34px;
+        padding: 72px 0 28px;
       }
 
       .hero-grid {
         display: grid;
-        grid-template-columns: minmax(0, 0.84fr) minmax(430px, 1.16fr);
-        gap: 54px;
+        grid-template-columns: minmax(0, 0.86fr) minmax(440px, 1.14fr);
+        gap: 56px;
         align-items: center;
       }
 
       .eyebrow {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
+        display: inline-block;
         color: var(--green);
-        font-size: 0.82rem;
-        font-weight: 760;
-        letter-spacing: 0.08em;
+        font-size: 0.8rem;
+        font-weight: 720;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
       }
 
-      .eyebrow::before {
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-radius: 999px;
-        background: var(--red);
-        box-shadow: 0 0 20px rgba(255, 98, 104, 0.7);
-      }
-
-      h1,
-      h2,
-      h3,
-      p {
-        margin: 0;
-      }
-
       h1 {
-        margin-top: 22px;
-        max-width: 10ch;
-        font-size: clamp(4.6rem, 12vw, 9rem);
-        line-height: 0.88;
-        letter-spacing: 0;
+        margin-top: 18px;
+        font-size: clamp(4.4rem, 10vw, 8.2rem);
+        line-height: 0.9;
+        letter-spacing: -0.03em;
       }
 
       .hero-lede {
-        max-width: 35rem;
-        margin-top: 28px;
+        max-width: 36rem;
+        margin-top: 26px;
         color: var(--muted);
-        font-size: clamp(1.08rem, 2vw, 1.34rem);
+        font-size: clamp(1.06rem, 1.8vw, 1.26rem);
+        line-height: 1.55;
       }
 
       .hero-actions {
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
-        margin-top: 34px;
+        margin-top: 32px;
       }
 
       .hero-points {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 14px;
+        gap: 18px;
         max-width: 540px;
-        margin-top: 36px;
+        margin-top: 40px;
       }
 
       .hero-point {
         border-top: 1px solid var(--line);
-        padding-top: 13px;
+        padding-top: 14px;
       }
 
       .hero-point strong {
         display: block;
-        font-size: 1.15rem;
+        font-size: 1.05rem;
       }
 
       .hero-point span {
         display: block;
         margin-top: 4px;
         color: var(--muted);
-        font-size: 0.9rem;
+        font-size: 0.88rem;
+        line-height: 1.45;
       }
 
       .app-preview {
@@ -254,97 +252,90 @@
         min-width: 0;
       }
 
-      .logo-mark {
-        position: absolute;
-        top: -28px;
-        right: 18px;
-        z-index: 2;
-        width: clamp(82px, 12vw, 130px);
-        border-radius: 26px;
-        box-shadow:
-          0 0 0 1px rgba(233, 229, 213, 0.18),
-          0 22px 60px var(--shadow);
-      }
-
       .screenshot-frame,
-      .terminal-window {
+      .shot-frame {
         border: 1px solid var(--line);
-        border-radius: 8px;
-        background: var(--panel);
+        border-radius: 10px;
+        background: #0b0f0e;
         box-shadow: 0 34px 90px var(--shadow);
         overflow: hidden;
       }
 
-      .screenshot-frame img {
+      .screenshot-frame img,
+      .shot-frame img {
         width: 100%;
         aspect-ratio: 1440 / 900;
         object-fit: cover;
       }
 
+      /* ---------------- 4-Column Strip ---------------- */
       .strip {
-        border-block: 1px solid rgba(233, 229, 213, 0.1);
-        background: rgba(18, 24, 23, 0.72);
+        border-block: 1px solid rgba(235, 229, 214, 0.1);
+        background: var(--bg-2);
       }
 
       .strip .section-inner {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 1px;
-        background: rgba(233, 229, 213, 0.08);
+        background: rgba(235, 229, 214, 0.08);
       }
 
       .strip-item {
-        min-height: 132px;
-        padding: 24px;
-        background: #0d1110;
+        padding: 28px 24px;
+        background: var(--bg-2);
       }
 
       .strip-item b {
         color: var(--green);
-        font-size: 0.82rem;
+        font-family:
+          "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+        font-size: 0.78rem;
         letter-spacing: 0.08em;
-        text-transform: uppercase;
       }
 
       .strip-item span {
         display: block;
-        margin-top: 12px;
-        font-size: 1.05rem;
-        font-weight: 680;
-        line-height: 1.35;
+        margin-top: 10px;
+        font-size: 1.02rem;
+        font-weight: 640;
+        line-height: 1.4;
       }
 
+      /* ---------------- Section Headings ---------------- */
       .section-heading {
-        max-width: 760px;
+        max-width: 720px;
       }
 
       .section-heading h2 {
-        font-size: clamp(2rem, 4vw, 3.25rem);
-        line-height: 1.02;
-        letter-spacing: 0;
+        font-size: clamp(2rem, 3.8vw, 3.1rem);
+        line-height: 1.06;
+        letter-spacing: -0.02em;
       }
 
       .section-heading p {
-        margin-top: 18px;
+        margin-top: 16px;
         color: var(--muted);
-        font-size: 1.05rem;
+        font-size: 1.06rem;
       }
 
+      /* ---------------- Feature Rows ---------------- */
       .feature-stack {
         display: grid;
-        gap: 28px;
-        margin-top: 38px;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 64px;
+        margin-top: 52px;
       }
 
       .feature-row {
         display: grid;
-        grid-template-columns: minmax(260px, 0.66fr) minmax(0, 1.34fr);
-        gap: 28px;
+        grid-template-columns: minmax(280px, 0.68fr) minmax(0, 1.32fr);
+        gap: 40px;
         align-items: center;
       }
 
       .feature-row:nth-child(even) {
-        grid-template-columns: minmax(0, 1.34fr) minmax(260px, 0.66fr);
+        grid-template-columns: minmax(0, 1.32fr) minmax(280px, 0.68fr);
       }
 
       .feature-copy {
@@ -352,68 +343,65 @@
       }
 
       .feature-copy h3 {
-        font-size: clamp(1.45rem, 2.4vw, 2.1rem);
-        line-height: 1.08;
+        font-size: clamp(1.45rem, 2.3vw, 2rem);
+        line-height: 1.12;
+        letter-spacing: -0.01em;
       }
 
       .feature-copy p {
         margin-top: 14px;
         color: var(--muted);
+        font-size: 0.98rem;
+      }
+
+      .feature-copy code,
+      .mini-feature code,
+      .section-heading code {
+        padding: 2px 6px;
+        border-radius: 5px;
+        background: rgba(235, 229, 214, 0.07);
+        color: var(--text);
+        font-size: 0.86em;
       }
 
       .feature-list {
         display: grid;
-        gap: 9px;
-        margin: 20px 0 0;
+        gap: 10px;
+        margin: 22px 0 0;
         padding: 0;
         color: var(--muted);
+        font-size: 0.94rem;
         list-style: none;
       }
 
       .feature-list li {
-        display: flex;
-        gap: 10px;
+        position: relative;
+        padding-left: 18px;
       }
 
       .feature-list li::before {
         content: "";
-        width: 7px;
-        height: 7px;
-        flex: 0 0 auto;
-        margin-top: 9px;
+        position: absolute;
+        left: 0;
+        top: 9px;
+        width: 6px;
+        height: 6px;
         border-radius: 999px;
         background: var(--green);
       }
 
-
-      .shot-frame {
-        min-width: 0;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        overflow: hidden;
-        background: #0b0f0e;
-        box-shadow: 0 34px 90px var(--shadow);
-      }
-
-
-      .shot-frame img {
-        width: 100%;
-        aspect-ratio: var(--shot-ratio, 16 / 9);
-        object-fit: cover;
-        object-position: var(--shot-position, center);
-      }
-
+      /* ---------------- Grid of Capabilities ---------------- */
       .mini-features {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 16px;
-        margin-top: 46px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 64px;
       }
 
       .mini-feature {
         border: 1px solid var(--line);
         border-radius: 10px;
-        padding: 20px;
+        padding: 24px;
         background: var(--panel);
       }
 
@@ -427,137 +415,73 @@
         margin-top: 8px;
         color: var(--muted);
         font-size: 0.92rem;
-        line-height: 1.45;
+        line-height: 1.5;
       }
 
-      @media (max-width: 900px) {
-        .mini-features {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
+      /* ---------------- CLI Section ---------------- */
+      .terminal-section {
+        display: grid;
+        grid-template-columns: minmax(0, 0.82fr) minmax(420px, 1.18fr);
+        gap: 40px;
+        align-items: start;
       }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-      .terminal-bar {
-        min-height: 42px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        border-bottom: 1px solid rgba(233, 229, 213, 0.1);
-        padding: 0 14px;
-        background: #151b19;
+      .code-block {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #070a09;
+        box-shadow: 0 24px 64px var(--shadow);
+        overflow: hidden;
       }
 
-      .dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-      }
-
-      .dot.red {
-        background: var(--red);
-      }
-
-      .dot.amber {
-        background: var(--amber);
-      }
-
-      .dot.green {
-        background: var(--green);
-      }
-
-      .terminal-title {
-        margin-left: 7px;
-        color: var(--muted);
-        font-size: 0.78rem;
+      .code-block-header {
+        padding: 12px 20px;
+        border-bottom: 1px solid rgba(235, 229, 214, 0.08);
+        color: var(--dim);
+        font-family:
+          "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+        font-size: 0.76rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
       }
 
       pre {
         margin: 0;
         overflow-x: auto;
-        padding: 18px;
-        color: #cbd5d0;
-        font-size: 0.82rem;
-        line-height: 1.62;
+        padding: 22px;
+        color: #d4ddd8;
+        font-size: 0.83rem;
+        line-height: 1.68;
       }
 
       .prompt {
         color: var(--green);
+        user-select: none;
       }
 
       .comment {
         color: var(--dim);
       }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-      .terminal-section {
-        display: grid;
-        grid-template-columns: minmax(0, 0.8fr) minmax(420px, 1.2fr);
-        gap: 28px;
-        align-items: center;
-      }
-
-      .terminal-window {
-        min-width: 0;
-        background: #090d0c;
-      }
-
+      /* ---------------- Install ---------------- */
       .install {
-        border-block: 1px solid rgba(233, 229, 213, 0.1);
+        border-block: 1px solid rgba(235, 229, 214, 0.1);
         background:
-          linear-gradient(90deg, rgba(132, 219, 155, 0.1), transparent 34%),
-          #0d1110;
+          linear-gradient(90deg, rgba(132, 219, 155, 0.08), transparent 38%),
+          var(--bg-2);
       }
 
       .install .section-inner {
         display: grid;
-        grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
-        gap: 32px;
+        grid-template-columns: minmax(0, 0.92fr) minmax(360px, 1.08fr);
+        gap: 40px;
         align-items: center;
-        padding-block: 42px;
+        padding-block: 52px;
       }
 
       .install h2 {
-        font-size: clamp(1.8rem, 3vw, 2.6rem);
+        font-size: clamp(1.85rem, 3vw, 2.6rem);
         line-height: 1.08;
       }
 
@@ -566,15 +490,17 @@
         color: var(--muted);
       }
 
-      .command {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: #070a09;
+      .install-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 24px;
       }
 
+      /* ---------------- Footer ---------------- */
       .site-footer {
-        border-top: 1px solid rgba(233, 229, 213, 0.1);
-        padding: 28px 0;
+        border-top: 1px solid rgba(235, 229, 214, 0.08);
+        padding: 32px 0;
         color: var(--muted);
       }
 
@@ -583,22 +509,27 @@
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        font-size: 0.94rem;
+        font-size: 0.92rem;
       }
 
       .footer-links {
         display: flex;
-        gap: 18px;
+        flex-wrap: wrap;
+        gap: 22px;
       }
 
+      .footer-links a:hover {
+        color: var(--text);
+      }
+
+      /* ---------------- Responsive ---------------- */
       @media (max-width: 980px) {
         main {
-          gap: 70px;
+          gap: 80px;
         }
 
         .hero {
-          min-height: auto;
-          padding-top: 52px;
+          padding-top: 48px;
         }
 
         .hero-grid,
@@ -606,42 +537,32 @@
         .feature-row:nth-child(even),
         .terminal-section,
         .install .section-inner {
-          grid-template-columns: 1fr;
-        }
-
-        h1 {
-          max-width: none;
+          grid-template-columns: minmax(0, 1fr);
         }
 
         .feature-row:nth-child(even) .feature-copy {
-          order: 0;
+          order: -1;
         }
 
-        .strip .section-inner {
+        .strip .section-inner,
+        .mini-features {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
       }
 
       @media (max-width: 680px) {
-        .nav {
-          min-height: 62px;
-        }
-
         .nav-links a:not(.nav-cta) {
           display: none;
         }
 
-        .hero {
-          padding-top: 36px;
-        }
-
         .hero-points,
-        .strip .section-inner {
-          grid-template-columns: 1fr;
+        .strip .section-inner,
+        .mini-features {
+          grid-template-columns: minmax(0, 1fr);
         }
 
-
-        .hero-actions {
+        .hero-actions,
+        .install-actions {
           flex-direction: column;
           align-items: stretch;
         }
@@ -649,8 +570,6 @@
         .button {
           width: 100%;
         }
-
-
 
         pre {
           white-space: pre-wrap;
@@ -673,7 +592,8 @@
         </a>
         <div class="nav-links">
           <a href="#workflows">Workflows</a>
-          <a href="#control">CLI</a>
+          <a href="#more">Capabilities</a>
+          <a href="#control">CLI &amp; Teams</a>
           <a href="#install">Install</a>
           <a class="nav-cta" href="https://github.com/khasinski/aya">GitHub</a>
         </div>
@@ -688,41 +608,40 @@
               <span class="eyebrow">Project-first agent workspace</span>
               <h1 id="hero-title">Aya</h1>
               <p class="hero-lede">
-                Run Claude Code, Codex, and a dozen more coding agents in real
-                terminals that never stop. Aya keeps them alive in a detached
-                host, organized by project and split like a tiling terminal, with
+                Run Claude Code, Codex, Pi, Antigravity, Grok, and a dozen more
+                coding agents in persistent terminals that survive quits and app
+                updates—organized by project, split like a tiling terminal, with
                 one rail that surfaces every agent waiting on you.
               </p>
               <div class="hero-actions" aria-label="Primary actions">
                 <a
                   class="button primary"
                   href="https://github.com/khasinski/aya/releases/latest"
-                  >Download v0.14.1</a
+                  >Download v0.15.4</a
                 >
                 <a class="button secondary" href="#workflows">See workflows</a>
               </div>
               <div class="hero-points" aria-label="Aya highlights">
                 <div class="hero-point">
                   <strong>Persistent</strong>
-                  <span>Agents survive quits, restarts, and disconnects.</span>
+                  <span>Up to 128 panes survive quits, crashes, and updates.</span>
                 </div>
                 <div class="hero-point">
                   <strong>Attention</strong>
                   <span>One rail flags every waiting or failed agent.</span>
                 </div>
                 <div class="hero-point">
-                  <strong>Agent-native</strong>
-                  <span>Read and drive any pane from the <code>aya</code> CLI.</span>
+                  <strong>Coordinated</strong>
+                  <span>Drive panes and run multi-agent teams via <code>aya</code>.</span>
                 </div>
               </div>
             </div>
 
             <div class="app-preview" aria-label="Aya application preview">
-              <img class="logo-mark" src="assets/aya-icon.png" alt="Aya logo" />
               <div class="screenshot-frame">
                 <img
-                  src="assets/aya-tiling.png"
-                  alt="Aya running four coding agents (Claude, Codex, Gemini and a shell) tiled in one project window"
+                  src="assets/aya-default.png?v=0.15.4"
+                  alt="Aya running a Claude Code session with project tabs, usage rings, and Apple Intelligence tab summaries"
                 />
               </div>
             </div>
@@ -734,19 +653,19 @@
         <div class="section-inner">
           <div class="strip-item">
             <b>01</b>
-            <span>Every agent gets a real, persistent terminal.</span>
+            <span>A native PTY owner keeps sessions alive across restarts and updates.</span>
           </div>
           <div class="strip-item">
             <b>02</b>
-            <span>Grouped by project, split like a tiling terminal.</span>
+            <span>Grouped by project, split like a real tiling terminal.</span>
           </div>
           <div class="strip-item">
             <b>03</b>
-            <span>One rail surfaces every waiting or failed agent.</span>
+            <span>Screen-level rules surface every waiting or failed agent.</span>
           </div>
           <div class="strip-item">
             <b>04</b>
-            <span>Read and drive any pane from the aya CLI.</span>
+            <span>Repo-defined teams and CLI commands let agents work together.</span>
           </div>
         </div>
       </section>
@@ -755,10 +674,12 @@
         <div class="section-heading">
           <h2>Built to run many agents at once.</h2>
           <p>
-            Every terminal is real and persistent. Aya keeps them organized,
-            tells you which one is blocked, and lets them work together.
+            Every terminal is real and persistent. Aya keeps them organized
+            across repositories, reads their rendered screens to spot blocked
+            turns, and lets them coordinate without proxying your API keys.
           </p>
         </div>
+
         <div class="feature-stack">
           <article class="feature-row">
             <div class="feature-copy">
@@ -766,160 +687,146 @@
               <p>
                 The status rail lists every terminal that is waiting or failed
                 across all your open projects, even ones you are not looking at.
-                Click a row to jump straight to that pane.
+                Waiting state is read off a headless VT mirror of the pane's
+                real screen, so it clears the moment the agent repaints.
               </p>
               <ul class="feature-list">
-                <li>Waiting and failed counts at a glance.</li>
-                <li>Blocked panes in background projects still surface.</li>
-                <li>Project tabs badge the moment an agent needs you.</li>
+                <li>Click any row in the rail to jump straight to that pane.</li>
+                <li>Inspect decisions with <code>aya pane state --explain</code> or custom screen rules.</li>
+                <li>Report status from scripts inline via <code>OSC 7501</code> or <code>aya status</code>.</li>
               </ul>
             </div>
-            <figure
-              class="shot-frame"
-              style="--shot-ratio: 1440 / 900; --shot-position: center"
-              aria-label="Aya status rail screenshot"
-            >
+            <figure class="shot-frame" aria-label="Aya status rail screenshot">
               <img
-                src="assets/aya-attention.png"
+                src="assets/aya-attention.png?v=0.15.4"
                 alt="Aya with a status rail listing a waiting agent and a failed agent from another project"
+                loading="lazy"
               />
             </figure>
           </article>
 
           <article class="feature-row">
-            <figure
-              class="shot-frame"
-              style="--shot-ratio: 1440 / 900; --shot-position: center"
-              aria-label="Aya tiling splits screenshot"
-            >
+            <figure class="shot-frame" aria-label="Aya tiling splits screenshot">
               <img
-                src="assets/aya-tiling.png"
-                alt="Four coding agents tiled in a 2x2 split inside one Aya project"
+                src="assets/aya-tiling.png?v=0.15.4"
+                alt="Two terminals split side by side inside one Aya project"
+                loading="lazy"
               />
             </figure>
             <div class="feature-copy">
               <h3>Split like a real tiling terminal.</h3>
               <p>
                 Splitting divides only the selected pane, so the rest of the
-                layout keeps its size. Nest splits arbitrarily and watch several
-                agents work side by side in one project.
+                layout keeps its size. Nest splits arbitrarily, choose between
+                projects on top or on the left, and tear project tabs out into
+                separate windows.
               </p>
               <ul class="feature-list">
-                <li>BSP splits, not a fixed grid.</li>
-                <li>Every divider drags independently.</li>
-                <li>Keyboard navigation follows what you see.</li>
+                <li>BSP splits with independent draggable dividers.</li>
+                <li>Start multiple Git worktrees from one prompt and group panes by checkout.</li>
+                <li>Keyboard navigation follows what you see on screen.</li>
               </ul>
             </div>
           </article>
 
           <article class="feature-row">
             <div class="feature-copy">
-              <h3>Let agents hand work to each other.</h3>
+              <h3>Let agents work as a team.</h3>
               <p>
-                <code>aya pane read "reviewer"</code> returns another pane's
-                output and <code>aya pane send</code> types into it. One agent
-                delegates to another and collects the result, with no copy-paste
-                between windows.
+                With <code>aya pane read</code> and <code>aya pane send</code>,
+                one pane delegates work to another and collects the result. For
+                structured workflows, define roles and message routes in
+                <code>.aya/teams/&lt;name&gt;.md</code> and let Aya supervise
+                the rounds.
               </p>
               <ul class="feature-list">
-                <li>Address panes by tab name within a project.</li>
-                <li>Presses Enter for you; <code>--no-submit</code> only types.</li>
-                <li>Documented for agents in a bundled skill.</li>
+                <li>Agents learn their role via <code>aya team whoami</code> and message teammates by role.</li>
+                <li>Holds delivery into <code>aya team inbox</code> when an approval prompt or draft is on screen.</li>
+                <li>Tracks real git commits and file edits to spot teams that are only talking.</li>
               </ul>
             </div>
-            <figure
-              class="shot-frame"
-              style="--shot-ratio: 1440 / 900; --shot-position: center"
-              aria-label="Aya agent orchestration screenshot"
-            >
+            <figure class="shot-frame" aria-label="Aya agent orchestration screenshot">
               <img
-                src="assets/aya-orchestration.png"
-                alt="A coder pane handing a diff to a reviewer pane via aya pane send"
+                src="assets/aya-orchestration.png?v=0.15.4"
+                alt="A coder pane coordinating with a reviewer pane via aya team send"
+                loading="lazy"
               />
             </figure>
           </article>
 
           <article class="feature-row">
-            <figure
-              class="shot-frame"
-              style="--shot-ratio: 1440 / 900; --shot-position: center"
-              aria-label="Aya Apple Intelligence labels screenshot"
-            >
+            <figure class="shot-frame" aria-label="Aya persistent focused session screenshot">
               <img
-                src="assets/aya-default.png"
-                alt="Aya sidebar and project tabs labelled with one-line summaries written by Apple Intelligence"
+                src="assets/aya-focus.png?v=0.15.4"
+                alt="A single focused Claude Code session in Aya with Apple Intelligence tab and project summaries"
+                loading="lazy"
               />
             </figure>
             <div class="feature-copy">
-              <h3>Your tabs and projects name themselves.</h3>
+              <h3>Close the app. Update the app. They keep running.</h3>
               <p>
-                Aya reads each pane's output through Apple Intelligence (or a
-                local model) and writes a one-line label, so a wall of terminals
-                tells you what each one is actually doing.
+                Terminals live in a native PTY owner with headless VT
+                checkpointing, not inside the window. Quit and relaunch, install
+                an update, or reconnect from Aya Web, and every session resumes
+                mid-conversation—with on-device Apple Intelligence labels under
+                every tab and project.
               </p>
               <ul class="feature-list">
-                <li>On-device by default; nothing leaves your machine.</li>
-                <li>Labels under every tab and project.</li>
-                <li>Swap in Ollama or an OpenAI-compatible endpoint.</li>
+                <li>Preserves up to 128 live panes across host restarts and app updates.</li>
+                <li>Session-precise resume for Claude Code, Codex, Grok, OpenCode, and more.</li>
+                <li>On-device summaries via Apple Intelligence or Ollama, plus full-text <code>⌘K</code> search.</li>
               </ul>
             </div>
-          </article>
-
-          <article class="feature-row">
-            <div class="feature-copy">
-              <h3>Close the app. They keep running.</h3>
-              <p>
-                Terminals live in a detached PTY host, not the window. Quit and
-                relaunch, move a project between windows, or reconnect from Aya
-                Web, and the agents keep their context mid-conversation.
-              </p>
-              <ul class="feature-list">
-                <li>A background host owns every session.</li>
-                <li>Restored tabs resume the exact conversation.</li>
-                <li>Reach the same sessions from a browser.</li>
-              </ul>
-            </div>
-            <figure
-              class="shot-frame"
-              style="--shot-ratio: 1440 / 900; --shot-position: center"
-              aria-label="Aya single focused agent session screenshot"
-            >
-              <img
-                src="assets/aya-focus.png"
-                alt="A single focused Claude Code session in Aya"
-              />
-            </figure>
           </article>
         </div>
 
-        <div class="mini-features" aria-label="More in every window">
+        <div class="mini-features" id="more" aria-label="More in every window">
           <div class="mini-feature">
-            <strong>Usage in view</strong>
-            <span
-              >Claude and Codex usage chips in the top bar, read from local
-              snapshots. No token proxying.</span
-            >
+            <strong>Inline diff review &amp; PRs</strong>
+            <span>
+              Comment on diff lines in the Changes panel and send the batch to
+              an agent as one prompt. Commit files, push, open PRs, and hand
+              failing CI checks straight to a pane.
+            </span>
           </div>
           <div class="mini-feature">
-            <strong>Snippets</strong>
-            <span
-              >Save prompts and commands and inject them into the active
-              terminal, without spending agent context.</span
-            >
+            <strong>Usage dashboard &amp; quota rings</strong>
+            <span>
+              Press <code>⌘U</code> for local 24h–90d token charts across Claude,
+              Codex, and Grok, plus live quota limits for Claude, Codex, Google
+              Antigravity, and Grok.
+            </span>
           </div>
           <div class="mini-feature">
-            <strong>Diffs in context</strong>
-            <span
-              >The active branch and changed-file counts stay visible around the
-              agent terminal.</span
-            >
+            <strong>Conversation GUI &amp; Artifacts</strong>
+            <span>
+              Optional native streaming view for Codex, Claude Code, Pi, and
+              Antigravity with <code>/goal</code>, <code>/btw</code>, queue
+              steering, and sandboxed HTML/SVG/Canvas artifacts.
+            </span>
+          </div>
+          <div class="mini-feature">
+            <strong>Machines &amp; Remote SSH</strong>
+            <span>
+              Monitor GPU, VRAM, and hot Ollama models across SSH hosts with
+              <code>aya machines</code>, and open remote SSH projects that
+              reconnect automatically.
+            </span>
+          </div>
+          <div class="mini-feature">
+            <strong>Snippets &amp; 1Password CLI</strong>
+            <span>
+              Inject saved prompts via bracketed paste, drop files or images as
+              paths, and opt into <code>AYA_OP_SESSION=1</code> to share
+              read-only 1Password CLI sessions across panes.
+            </span>
           </div>
           <div class="mini-feature">
             <strong>Yours to theme</strong>
-            <span
-              >A GPU-accelerated terminal, custom color themes, and a light or
-              dark chrome.</span
-            >
+            <span>
+              A WebGL-accelerated terminal, custom color schemes, and Light,
+              Dark, or Violet application chrome.
+            </span>
           </div>
         </div>
       </section>
@@ -929,32 +836,35 @@
           <div class="section-heading">
             <h2 id="control-title">Terminal-native from every side.</h2>
             <p>
-              The <code>aya</code> helper opens projects from any shell, focuses
-              the desktop app, lets agent harnesses report status, and lets one
-              agent read and drive another's pane, all without scraping provider
-              state.
+              The <code>aya</code> CLI opens projects from any shell, lets
+              scripts report status, drives panes by name, and coordinates
+              multi-agent teams. Enable <em>“Tell the agent about aya”</em> on a
+              preset and agents discover the commands themselves via
+              <code>aya capabilities</code>.
             </p>
           </div>
         </div>
 
-        <div class="terminal-window" aria-label="Aya CLI example">
-          <div class="terminal-bar">
-            <span class="dot red"></span>
-            <span class="dot amber"></span>
-            <span class="dot green"></span>
-            <span class="terminal-title">~/Projects/aya</span>
-          </div>
-          <pre><code><span class="prompt">$</span> aya .
-<span class="comment">opens this repo as a project</span>
+        <div class="code-block" aria-label="Aya CLI example">
+          <div class="code-block-header">aya command-line interface</div>
+          <pre><code><span class="prompt">$</span> aya ~/Projects/aya
+<span class="comment"># opens this repository as a project (or focuses it)</span>
 
 <span class="prompt">$</span> aya pane read "reviewer"
-<span class="comment">returns another pane's recent output</span>
+<span class="comment"># returns another pane's rendered screen as plain text</span>
 
-<span class="prompt">$</span> aya pane send "reviewer" "ship it"
-<span class="comment">types into that pane and presses Enter</span>
+<span class="prompt">$</span> aya pane send "reviewer" "Review the diff and run npm test"
+<span class="comment"># types into that pane and presses Enter (--no-submit only types)</span>
 
-<span class="prompt">$</span> aya status waiting "Needs approval"
-<span class="comment">marks the active agent as waiting</span></code></pre>
+<span class="prompt">$</span> aya pane wait "reviewer"
+<span class="comment"># blocks until the pane settles back to waiting or idle</span>
+
+<span class="prompt">$</span> aya team open ux-fix lead=claude fixer=codex tester=this
+<span class="prompt">$</span> aya team start ux-fix "Make the split divider keyboard-resizable"
+<span class="comment"># assigns panes to roles in .aya/teams/ux-fix.md and starts round 1</span>
+
+<span class="prompt">$</span> aya machines
+<span class="comment"># lists GPU, memory, and loaded Ollama models across your SSH hosts</span></code></pre>
         </div>
       </section>
 
@@ -964,20 +874,25 @@
             <h2 id="install-title">Install Aya.</h2>
             <p>
               Download the latest release for macOS Apple Silicon or Linux x64.
-              The macOS DMG and zip are Developer ID signed and
-              Apple-notarized; Linux ships AppImage and deb.
+              The macOS DMG and zip are Developer ID signed and Apple-notarized;
+              Linux ships a FUSE3 AppImage and DEB package.
             </p>
-            <p>
+            <div class="install-actions">
               <a
                 class="button primary"
                 href="https://github.com/khasinski/aya/releases/latest"
-                >Download v0.14.1</a
+                >Download v0.15.4</a
               >
-            </p>
+              <a
+                class="button secondary"
+                href="https://github.com/khasinski/aya/blob/main/CHANGELOG.md"
+                >Changelog</a
+              >
+            </div>
           </div>
-          <div class="command">
-            <pre><code># or build from source
-git clone https://github.com/khasinski/aya.git
+          <div class="code-block">
+            <div class="code-block-header">build from source</div>
+            <pre><code>git clone https://github.com/khasinski/aya.git
 cd aya
 npm install
 npm run package</code></pre>
@@ -988,9 +903,11 @@ npm run package</code></pre>
 
     <footer class="site-footer">
       <div class="footer-inner">
-        <span>Aya is free and open source.</span>
+        <span>Aya is free and open source (MIT).</span>
         <div class="footer-links">
           <a href="https://github.com/khasinski/aya">GitHub</a>
+          <a href="https://github.com/khasinski/aya/releases">Releases</a>
+          <a href="https://github.com/khasinski/aya/blob/main/CHANGELOG.md">Changelog</a>
           <a href="https://github.com/khasinski/aya/blob/main/README.md">README</a>
         </div>
       </div>
