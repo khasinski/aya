@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## v0.15.5 - 2026-11-02
+
+- Recover conversation GUI panels after renderer crashes or React errors without
+  restarting healthy agents. Restore pending approvals, streamed answers and
+  drafts; show disconnected agents honestly and offer explicit reconnect.
+- Fix setting a new goal after a completed goal: start it as active and add a
+  fresh goal entry to conversation history.
+- Load saved artifact contents and revisions only when selected. Keep content
+  search, source previews, image menus and exports available without loading the
+  entire library into memory.
+- Keep expanded tool activity within the window with its own scroll area and
+  an accessible collapse heading. Preserve bounded action history on recovery.
+- Add paged conversation history with search across older entries, coalesce
+  pending saves, enforce bounded file reads and reclaim old unreferenced assets
+  while preserving every referenced artifact revision.
+- Bound agent protocol writes, respect backpressure and distinguish transport
+  failures from response timeouts. Keep autosave within five seconds during
+  continuous typing or streaming.
+- Reduce off-screen conversation layout and paint while preserving text search
+  and selection. Batch streamed text updates and add a repeatable GUI benchmark.
+- Unify modal keyboard navigation and focus restoration, protect shortcuts while
+  dialogs are open, preserve split navigation and prevent delayed terminal
+  resizing from stealing focus. Improve GUI questions, clipboard/file gestures,
+  Markdown links, settings and worktree dialogs.
+- Reduce idle polling, duplicate Git processes and background worktree scans.
+  Bound session-monitor reads and widget preview memory; make widget failures
+  retryable and improve cache invalidation and shutdown persistence.
 - Read Claude limits from Claude Code's own status-line `rate_limits` instead of
   Anthropic's undocumented usage endpoint. No token is read and no request is
   made. Enabling wraps your existing status line, disabling restores it, and the
