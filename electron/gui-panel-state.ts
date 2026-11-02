@@ -32,19 +32,26 @@ export class GuiPanelState {
     this.clearDocuments(key);
     this.closing.delete(key);
   }
-  async close(key: string, finalView?: Record<string, unknown>) {
+  disconnect(key: string) {
+    const entry = this.sessions.get(key);
+    this.sessions.delete(key);
+    entry?.session.close();
+  }
+  async close(key: string, finalView?: Record<string, unknown>, releaseOnFailure = false) {
     this.closing.add(key);
+    let saved = false;
     try {
-      this.sessions.get(key)?.session.close();
+      this.disconnect(key);
       const snapshot = this.snapshots.get(key);
       if (snapshot) {
         if (finalView) snapshot.view = finalView;
         await this.save(key.slice(key.indexOf(':') + 1), snapshot);
       }
-    } finally { this.forget(key); }
+      saved = true;
+    } finally { if (saved || releaseOnFailure) this.forget(key); else this.closing.delete(key); }
   }
   async closeOwner(ownerId: number) {
     const keys = new Set([...this.sessions.keys(), ...this.snapshots.keys(), ...this.attachments.keys(), ...this.artifacts.keys(), ...this.artifactVersions.keys(), ...this.pending.keys()]);
-    return Promise.allSettled([...keys].filter(key => key.startsWith(`${ownerId}:`)).map(key => this.run(key, () => this.close(key))));
+    return Promise.allSettled([...keys].filter(key => key.startsWith(`${ownerId}:`)).map(key => this.run(key, () => this.close(key, undefined, true))));
   }
 }

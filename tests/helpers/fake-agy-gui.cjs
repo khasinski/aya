@@ -98,33 +98,6 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   const evt = message.event;
 
-  if (evt === 'side_question') {
-    write({
-      event: 'side_answer',
-      text: 'A separate side answer from Antigravity',
-    });
-    return;
-  }
-
-  if (evt === 'interrupt') {
-    write({
-      event: 'result',
-      result: {
-        conversation_id: 'agy-test-thread',
-        status: 'INTERRUPTED',
-        finished_reason: 'interrupted',
-        response: '',
-      },
-    });
-    busy = false;
-    return;
-  }
-
-  if (evt === 'approval_response') {
-    complete(message.decision || 'decline');
-    return;
-  }
-
   if (evt === 'question_response') {
     complete(message.answer || '');
     return;
@@ -169,16 +142,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 
   if (evt === 'user') {
     const prompt = message.message?.content || '';
-    if (message.steer) {
-      write({
-        method: 'fixture/steer',
-        params: { prompt, expectedTurnId: message.expectedTurnId },
-      });
-      return;
+    if (prompt.startsWith('/btw ')) {
+      write({ event: 'result', result: { status: 'ERROR', response: '', error: '/btw is not available in print mode' } }); return;
     }
-    if (prompt.startsWith('/compact')) {
-      return;
-    }
+    if (prompt.startsWith('/compact')) { complete('Context compacted'); return; }
     busy = true;
     write({
       method: 'fixture/turn',
@@ -265,3 +232,5 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 });
 
 process.on('SIGTERM', () => process.exit(busy ? 2 : 0));
+
+process.on('SIGINT', () => { write({ event: 'result', result: { status: 'ERROR', error: 'interrupted', response: '', finished_reason: 'interrupted' } }); busy = false; });

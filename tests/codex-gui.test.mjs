@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 const isolatedHome = await mkdtemp(path.join(tmpdir(), 'aya-gui-unit-'));
@@ -68,6 +68,43 @@ test('artifacts reject malformed shapes and images cannot leave the workspace or
     await writeFile(path.join(project, 'graphic.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>');
     assert.match(await workspaceImage(project, 'graphic.svg'), /^data:image\/svg\+xml;base64,/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Codex can steer and stop an automatic goal turn', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.command('goal', 'Start an automatic turn');
+  await wait(() => events.some(e => e.method === 'turn/started'));
+  assert.equal(session.running, true);
+  await session.steer('Focus on this');
+  await wait(() => events.some(e => e.method === 'fixture/steer'));
+  assert.equal(events.find(e => e.method === 'fixture/steer').params.expectedTurnId, 'goal-turn');
+  await session.interrupt();
+  await wait(() => !session.running);
+});
+
+for (const action of ['steer', 'interrupt']) {
+  test(`Codex ${action} waits for an unacknowledged turn to acquire its ID`, async t => {
+    const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+    t.after(() => session.close()); await session.connect(process.cwd(), '');
+    const sending = session.send('slow-start');
+    await session[action]('Focus on this');
+    await sending;
+    await wait(() => events.some(e => e.method === `fixture/${action}`));
+    const params = events.find(e => e.method === `fixture/${action}`).params;
+    assert.equal(params.expectedTurnId || params.turnId, 'turn');
+  });
+}
+
+test('Codex preserves a newer automatic turn across a late start ACK and stale completion', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('handoff-before-ack');
+  assert.equal(session.running, true);
+  await session.steer('Focus on the new turn');
+  await wait(() => events.some(e => e.method === 'fixture/steer'));
+  assert.equal(events.find(e => e.method === 'fixture/steer').params.expectedTurnId, 'next-turn');
+  assert.equal(events.filter(e => e.method === 'turn/completed').length, 1);
 });
 
 test('native goals and side questions use dedicated RPCs, never ordinary turns', async t => {
@@ -208,11 +245,20 @@ for (const spec of [
     // 3. Approval requests
     events.length = 0;
     await session.send('approval');
-    await wait(() => events.some(e => e.method === 'item/commandExecution/requestApproval'));
-    const approvalEvt = events.find(e => e.method === 'item/commandExecution/requestApproval');
-    await session.respond(approvalEvt.id, { decision: 'decline' });
-    await wait(() => events.some(e => e.method === 'turn/completed'));
-    assert.equal(events.find(e => e.method === 'item/completed' && e.params.item.type === 'agentMessage').params.item.text, 'decline');
+    if (spec.name === 'Antigravity') {
+      await wait(() => events.some(e => e.method === 'turn/completed'));
+      const turn = events.find(e => e.method === 'turn/completed').params.turn;
+      assert.equal(turn.status, 'failed');
+      assert.match(turn.error.message, /headless protocol cannot prompt/);
+      assert.equal(events.some(e => e.method === 'item/commandExecution/requestApproval'), false);
+      assert.equal(session.running, false);
+    } else {
+      await wait(() => events.some(e => e.method === 'item/commandExecution/requestApproval'));
+      const approvalEvt = events.find(e => e.method === 'item/commandExecution/requestApproval');
+      await session.respond(approvalEvt.id, { decision: 'decline' });
+      await wait(() => events.some(e => e.method === 'turn/completed'));
+      assert.equal(events.find(e => e.method === 'item/completed' && e.params.item.type === 'agentMessage').params.item.text, 'decline');
+    }
 
     // 4. Clarifying questions
     events.length = 0;
@@ -226,8 +272,8 @@ for (const spec of [
     // 5. Steering & Interruption
     events.length = 0;
     await session.send('wait', { model: spec.nextModel, effort: 'high' });
-    await session.steer('Focus on UX');
-    await wait(() => events.some(e => e.method === 'fixture/steer'));
+    if (spec.name === 'Antigravity') await assert.rejects(session.steer('Focus on UX'), /does not support steering/);
+    else { await session.steer('Focus on UX'); await wait(() => events.some(e => e.method === 'fixture/steer')); }
     await session.interrupt();
     await wait(() => events.some(e => e.method === 'turn/completed' && e.params.turn.status === 'interrupted'));
 
@@ -236,7 +282,8 @@ for (const spec of [
     assert.equal((await session.command('goal', 'Ship the feature')).goal.objective, 'Ship the feature');
     assert.equal((await session.command('goal', 'pause')).goal.status, 'paused');
     assert.equal((await session.command('goal', 'resume')).goal.status, 'active');
-    assert.equal((await session.command('btw', 'Explain the context')).text, spec.expectedSideAnswer);
+    if (spec.name === 'Pi' || spec.name === 'Antigravity') await assert.rejects(session.command('btw', 'Explain the context'), /does not support side questions/);
+    else assert.equal((await session.command('btw', 'Explain the context')).text, spec.expectedSideAnswer);
     await session.send('complete-goal');
     await wait(() => events.some(e => e.method === 'turn/completed'));
     assert.equal(events.filter(e => e.method === 'thread/goal/updated').at(-1).params.goal.status, 'complete');
@@ -245,15 +292,69 @@ for (const spec of [
 
 
 test('Codex native history filters other workspaces and reconstructs user/assistant turns', async t => {
-  const session = new CodexGuiSession(() => {}, process.execPath, [fixture]);
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
   t.after(() => session.close());
   await session.connect(process.cwd(), '');
   const rows = await session.listConversations();
   assert.deepEqual(rows.map(row => row.id), ['codex:native-history']);
   const saved = await session.readConversation('native-history');
   assert.deepEqual(saved.view.messages.map(m => [m.type, m.text]), [['user', 'A question from the CLI'], ['assistant', 'An answer from the CLI']]);
+  const reads = events.filter(e => e.method === 'fixture/history').map(e => e.params);
+  assert.equal(reads[0].includeTurns, false);
+  assert.deepEqual(reads.slice(1).map(p => [p.itemsView, p.cursor]), [['summary', undefined], ['summary', 'older']]);
   await assert.rejects(session.readConversation('wrong-project'), /workspace/);
 });
+
+test('Codex imports only the latest 500 messages using bounded history pages', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  const saved = await session.readConversation('large-history');
+  assert.equal(saved.view.messages.length, 500);
+  assert.equal(saved.view.messages[0].text, 'Answer 100');
+  assert.equal(saved.view.messages.at(-1).text, 'Answer 599');
+  const pages = events.filter(e => e.method === 'fixture/history' && e.params.method === 'thread/turns/list');
+  assert.equal(pages.length, 50);
+  assert.ok(pages.every(e => e.params.limit === 10 && e.params.itemsView === 'summary'));
+});
+
+test('Pi handles extension-consumed prompts without waiting for a nonexistent agent run', async t => {
+  const events = [], session = new PiGuiSession(event => events.push(event), process.execPath, [piFixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('handled-prompt');
+  assert.equal(session.running, false);
+  assert.equal(events.filter(e => e.method === 'turn/completed').length, 1);
+});
+
+test('late Claude initialization updates the resumable session ID and displayed model', async t => {
+  const events = [], session = new ClaudeGuiSession(event => events.push(event), process.execPath, [claudeFixture, '--late-init']);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  await wait(() => events.some(event => event.method === 'aya/session'));
+  assert.deepEqual(events.find(event => event.method === 'aya/session').params, { threadId: 'claude-late-thread', model: 'fake-claude-opus' });
+});
+
+for (const [name, SessionClass, fixturePath] of [['Pi', PiGuiSession, piFixture], ['Claude', ClaudeGuiSession, claudeFixture]]) {
+  test(`${name} does not silently send with a different model when model selection fails`, async t => {
+    const events = [], session = new SessionClass(event => events.push(event), process.execPath, [fixturePath]);
+    t.after(() => session.close());
+    await session.connect(process.cwd(), '');
+    await assert.rejects(session.send('hello', { model: 'unavailable' }), /Model unavailable/);
+    assert.equal(session.running, false);
+    assert.equal(events.some(event => event.method === 'turn/started' || event.method === 'fixture/turn'), false);
+  });
+
+  test(`${name} rejects a missing image before sending and remains usable`, async t => {
+    const events = [], session = new SessionClass(event => events.push(event), process.execPath, [fixturePath]);
+    t.after(() => session.close());
+    await session.connect(process.cwd(), '');
+    await assert.rejects(session.send('Inspect this image', { images: [path.join(isolatedHome, 'missing.png')] }), /ENOENT/);
+    assert.equal(session.running, false);
+    assert.equal(events.some(event => event.method === 'turn/started'), false);
+    await session.send('hello');
+    await wait(() => events.some(event => event.method === 'turn/completed'));
+  });
+}
 
 test('late Antigravity initialization corrects the displayed model and resumable conversation ID', async t => {
   const events = [], session = new AntigravityGuiSession(event => events.push(event), process.execPath, [agyFixture, '--slow-init']);
@@ -261,6 +362,15 @@ test('late Antigravity initialization corrects the displayed model and resumable
   await session.connect(process.cwd(), '');
   await wait(() => events.some(event => event.method === 'aya/session'));
   assert.deepEqual(events.find(event => event.method === 'aya/session').params, { threadId: 'agy-test-thread', model: 'fake-agy' });
+});
+
+test('Antigravity rejects unsupported side questions without starting a different turn', async t => {
+  const events = [], session = new AntigravityGuiSession(e => events.push(e), process.execPath, [agyFixture]);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  await assert.rejects(session.command('btw', 'Side question'), /does not support side questions/);
+  assert.equal(events.some(e => e.method === 'fixture/turn'), false);
+  assert.equal(session.running, false);
 });
 
 for (const resumeThreadId of [undefined, 'existing-thread']) {
@@ -302,6 +412,36 @@ test('Claude GUI preserves the terminal login for the default directory and sele
 });
 
 for (const unsafeMode of [undefined, false, true]) {
+  test(`Pi GUI command approvals follow skip permissions (${unsafeMode})`, async t => {
+    const inherited = process.env.AYA_PI_SKIP_PERMISSIONS;
+    process.env.AYA_PI_SKIP_PERMISSIONS = '1';
+    const events = [], session = new PiGuiSession(e => events.push(e), process.execPath, [piFixture]);
+    t.after(() => {
+      session.close();
+      if (inherited === undefined) delete process.env.AYA_PI_SKIP_PERMISSIONS;
+      else process.env.AYA_PI_SKIP_PERMISSIONS = inherited;
+    });
+    await session.connect(process.cwd(), '', undefined, undefined, unsafeMode);
+    const config = events.find(e => e.method === 'fixture/config').params;
+    assert.equal(config.skipPermissions, unsafeMode === true ? '1' : '0');
+    process.env.AYA_PI_SKIP_PERMISSIONS = config.skipPermissions;
+    const source = await readFile(path.join(isolatedHome, 'pi-gui/aya-pi-gui-extension.mjs'), 'utf8');
+    const extension = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+    let handler;
+    extension.default({ registerTool() {}, on(name, callback) { if (name === 'tool_call') handler = callback; } });
+    let confirmations = 0;
+    const ctx = { ui: { async confirm() { confirmations++; return false; } } };
+    for (const toolName of ['bash', 'powershell']) {
+      const result = await handler({ toolName, input: { command: 'echo hello' } }, ctx);
+      if (unsafeMode === true) assert.equal(result, undefined);
+      else assert.equal(result.block, true);
+    }
+    assert.equal(confirmations, unsafeMode === true ? 0 : 2);
+    assert.equal(await handler({ toolName: 'read' }, ctx), undefined);
+  });
+}
+
+for (const unsafeMode of [undefined, false, true]) {
   for (const resumeThreadId of [undefined, 'existing-thread']) {
     test(`Antigravity GUI forwards skip permissions (${unsafeMode}) when ${resumeThreadId ? 'resuming' : 'starting'}`, async t => {
       const events = [], session = new AntigravityGuiSession(e => events.push(e), process.execPath, [agyFixture]);
@@ -334,4 +474,15 @@ test('Codex permission grants can last for the session', async t => {
   await session.respond('approve', { decision: 'acceptForSession' });
   await wait(() => events.some(e => e.method === 'turn/completed'));
   assert.deepEqual(events.find(e => e.method === 'fixture/approval').params, { permissions: { network: { enabled: true } }, scope: 'session' });
+});
+
+
+test('Codex side questions retry the sampling idle race without sending ordinary turns', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  assert.equal((await session.command('btw', 'idle-race')).text, 'A separate side answer');
+  assert.equal(events.filter(e => e.method === 'fixture/sample').length, 3);
+  assert.equal(events.some(e => e.method === 'turn/started'), false);
+  await assert.rejects(session.command('btw', 'sample-error'), /Sample unavailable/);
+  assert.equal(events.filter(e => e.method === 'fixture/sample').length, 4, 'non-idle errors must not be retried');
 });

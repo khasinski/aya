@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.15.4 - 2026-11-02
+
+- Reconnect disconnected conversation GUI sessions without losing drafts, queued
+  messages, attachments or artifacts. Show persistent local save status and retry
+  failed saves independently of dismissible conversation errors.
+- Store artifact contents and revision history outside conversation snapshots,
+  migrate existing saves, and reload widget previews after cache eviction.
+- Add artifact search, unread revision indicators, table-row action tooltips,
+  and native image copy/save menus in the drawer and separate preview windows.
+- Record model and reasoning effort changes in conversation history. Explain
+  blocked goals beside the goal and in history using the agent's response.
+- Fix Codex resume with large histories, steering and stop state synchronization,
+  and side questions racing the sampling source's idle state.
+- Honor Pi skip permissions, wait for its authoritative settled event, and
+  correctly handle prompts consumed by extensions. Require Pi 0.80.4 or newer.
+- Correct Claude side-question responses, compaction and interrupted turns.
+  Match Antigravity controls to its headless capabilities, report permission
+  denials honestly, and interrupt its process with SIGINT.
+- Keep a reported usage window visible while its other window has no figure yet.
+- Add opt-in checks against installed Codex, Claude Code, Pi and Antigravity
+  clients for login, resume, permissions, steering, stop and side questions.
+
 ## v0.15.3 - 2026-11-01
 
 - Fix Claude conversation GUI sessions requesting `/login` despite an existing

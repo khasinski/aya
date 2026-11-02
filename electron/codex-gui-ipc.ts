@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { loadConversation, saveConversation, archiveConversation, listConversations, readArchivedConversation } from './gui-conversation-store';
 import { clearWidgetDocuments, registerWidgetProtocol, widgetDocument } from './gui-artifact-documents';
-import { writeFile } from 'node:fs/promises';
+import { installArtifactImageMenu, saveGuiArtifact } from './gui-artifact-image-menu';
 import type { GuiArtifact, GuiEvent } from '../shared/codex-gui';
 import { app, ipcMain, dialog, BrowserWindow } from 'electron';
 import { homedir } from 'node:os';
@@ -26,6 +26,11 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
   const panels = new GuiPanelState(async (id, snapshot) => { await saveConversation(id, snapshot); await archiveConversation(snapshot); }, clearWidgetDocuments);
   const { artifacts, artifactVersions, sessions, snapshots, attachments } = panels;
   const owners = new Set<number>();
+  const withPanelArtifacts = (key: string, view: Record<string, unknown>) => ({
+    ...view,
+    artifacts: [...(artifacts.get(key)?.values() || [])],
+    artifactHistory: Object.fromEntries(artifactVersions.get(key) || []),
+  });
   ipcMain.handle('codex-gui', async (event, id: string, action: string, value: unknown) => {
     if (event.senderFrame !== event.sender.mainFrame) throw Error('Main frame required');
     if (typeof id !== 'string' || id.length > 200) throw Error('Invalid panel');
@@ -33,6 +38,17 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (!owners.has(event.sender.id)) {
       const ownerId = event.sender.id;
       owners.add(ownerId);
+      installArtifactImageMenu(event.sender, url => {
+        for (const [panelKey, versions] of artifactVersions) {
+          if (!panelKey.startsWith(`${ownerId}:`)) continue;
+          for (const artifacts of versions.values()) for (const artifact of artifacts) if (artifact.kind === 'image' && artifact.dataUrl === url) return artifact;
+        }
+        // Older saved conversations may not contain revision history.
+        for (const [panelKey, owned] of artifacts) {
+          if (!panelKey.startsWith(`${ownerId}:`)) continue;
+          for (const artifact of owned.values()) if (artifact.kind === 'image' && artifact.dataUrl === url) return artifact;
+        }
+      });
       const cleanup = () => { void panels.closeOwner(ownerId); };
       event.sender.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) cleanup(); });
       event.sender.once('destroyed', () => { cleanup(); owners.delete(ownerId); });
@@ -47,7 +63,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       snapshots.set(key, saved);
       const view = saved.view || {};
       if (Array.isArray(view.messages)) view.messages = view.messages.map((message: { progress?: { status: string }; delivery?: string }) => ({ ...message, ...(message.progress?.status === 'running' ? { progress: { ...message.progress, status: 'paused' } } : {}), ...(message.delivery === 'sending' ? { delivery: 'unconfirmed' } : {}) }));
-      const prepare = (artifact: GuiArtifact) => { if (artifact.kind === 'html') artifact.previewUrl = widgetDocument(key, artifact.html); return artifact; };
+      const prepare = (artifact: GuiArtifact) => { if (artifact.kind === 'html') delete artifact.previewUrl; return artifact; };
       if (Array.isArray(view.artifacts)) {
         view.artifacts = (view.artifacts as GuiArtifact[]).map(prepare);
         artifacts.set(key, new Map((view.artifacts as GuiArtifact[]).map(a => [a.id, a])));
@@ -70,8 +86,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       if (!session?.listConversations) return saved;
       try {
         const native = await session.listConversations();
-        const savedThreads = new Set<string>();
-        for (const row of saved) { const value = await readArchivedConversation(String(row.id), snapshot); if (value.threadId) savedThreads.add('codex:' + value.threadId); }
+        const savedThreads = new Set(saved.filter(row => typeof row.threadId === 'string').map(row => 'codex:' + row.threadId));
         return [...saved, ...native.filter(row => !savedThreads.has(row.id))].sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt));
       } catch { return saved; }
     }
@@ -86,30 +101,41 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         if (!session?.readConversation || snapshot.agent !== 'codex') throw Error('Native history is unavailable for this harness');
         next = { ...next, ...await session.readConversation(params.conversationId.slice(6)) };
       } else if (params.conversationId) next = await readArchivedConversation(params.conversationId, snapshot);
-      await panels.close(key, params.view);
+      await panels.close(key, params.view ? withPanelArtifacts(key, params.view) : undefined);
       await saveConversation(id, next);
       return;
     }
     if (action === 'persist') {
       const snapshot = snapshots.get(key);
       if (!snapshot) throw Error('Conversation has not connected yet');
-      snapshot.view = value as Record<string, unknown>;
+      snapshot.view = withPanelArtifacts(key, value as Record<string, unknown>);
       await saveConversation(id, snapshot);
       return;
     }
-    if (action === 'close') return panels.close(key, value && typeof value === 'object' ? value as Record<string, unknown> : undefined);
-    if (action === 'connect') {
-      const params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean };
+    if (action === 'close') {
+      if (!snapshots.has(key)) return;
+      return panels.close(key, value && typeof value === 'object' ? withPanelArtifacts(key, value as Record<string, unknown>) : undefined);
+    }
+    if (action === 'connect' || action === 'reconnect') {
+      let params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean; view?: Record<string, unknown> };
+      if (action === 'reconnect') {
+        const saved = snapshots.get(key);
+        if (!saved) throw Error('Reload the conversation before reconnecting');
+        if (sessions.get(key)?.session.running) throw Error('Stop the current turn before reconnecting');
+        if (params.view) saved.view = withPanelArtifacts(key, params.view);
+        panels.disconnect(key);
+        params = { ...params, cwd: saved.cwd, configDir: saved.configDir, agent: normalizeGuiAgent(saved.agent) };
+      }
       if (sessions.has(key)) throw Error('Panel already connected');
       const agent = normalizeGuiAgent(params.agent);
       const cached = snapshots.get(key);
       if (cached && !matchesGuiBinding(cached, { ...params, agent })) panels.forget(key);
+      if (!snapshots.has(key)) snapshots.set(key, { cwd: params.cwd, configDir: params.configDir, agent });
       const session = createGuiSession(agent, payload => {
         if (panels.closing.has(key) || sessions.get(key)?.session !== session) return;
         if (payload.method === 'aya/session' && typeof payload.params.threadId === 'string') { const snapshot = snapshots.get(key); if (snapshot) snapshot.threadId = payload.params.threadId; }
         if (payload.method === 'aya/artifact') {
           const artifact = payload.params.artifact as GuiArtifact;
-          if (artifact.kind === 'html') artifact.previewUrl = widgetDocument(key, artifact.html);
           let owned = artifacts.get(key); if (!owned) { owned = new Map(); artifacts.set(key, owned); }
           owned.set(artifact.id, artifact);
           let versions = artifactVersions.get(key); if (!versions) { versions = new Map(); artifactVersions.set(key, versions); } versions.set(artifact.id, [...(versions.get(artifact.id) || []).slice(-9), artifact]);
@@ -119,7 +145,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       sessions.set(key, { session, cwd: params.cwd, agent });
       try {
         const saved = snapshots.get(key);
-        const result = await session.connect(params.cwd, '', params.configDir?.replace(/^~(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, params.unsafeMode === true);
+        const result = await session.connect(params.cwd, '', params.configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.type !== 'settings' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, params.unsafeMode === true);
         session.restoreArtifacts([...(artifacts.get(key)?.values() || [])]);
         if (Array.isArray(saved?.view?.messages)) session.restoreProgress(saved.view.messages.filter((m: { progress?: unknown }) => !!m.progress).map((m: { progress: import('../shared/gui-progress').GuiProgress }) => m.progress));
         const snapshot = { ...saved, cwd: params.cwd, configDir: params.configDir, agent, threadId: result.threadId };
@@ -127,18 +153,23 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         await saveConversation(id, snapshot);
         return result;
       }
-      catch (error) { try { session.close(); } finally { panels.forget(key); } throw error; }
+      catch (error) { panels.disconnect(key); throw error; }
     }
     const entry = sessions.get(key);
-    if (!entry) throw Error('Panel is disconnected');
     const requestedArtifact = () => {
       const request = typeof value === 'string' ? { id: value } : value as { id: string; revision?: number };
       if (typeof request?.revision === 'number') return artifactVersions.get(key)?.get(request.id)?.find(a => a.revision === request.revision);
       return artifacts.get(key)?.get(request?.id);
     };
+    if (action === 'artifact-preview') {
+      const artifact = requestedArtifact();
+      if (artifact?.kind !== 'html') throw Error('This artifact has no widget preview');
+      return widgetDocument(key, artifact.html);
+    }
     if (action === 'open-artifact' || action === 'open-artifact-browser') {
       const artifact = requestedArtifact();
       if (!artifact || (artifact.kind !== 'html' && artifact.kind !== 'image')) throw Error('This artifact has no browser preview');
+      if (action === 'open-artifact' && artifact.kind === 'html') artifact.previewUrl = widgetDocument(key, artifact.html);
       if (action === 'open-artifact') { openArtifactWindow(artifact, event.sender, id, createWindow); return; }
       const escape = (text: string) => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
       const content = artifact.kind === 'html' ? artifact.html : `<img alt="${escape(artifact.title)}" src="${escape(artifact.dataUrl)}" style="max-width:100%;height:auto">`;
@@ -151,15 +182,9 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'save-artifact') {
       const artifact = requestedArtifact();
       if (!artifact) throw Error('Artifact is no longer available');
-      if (artifact.kind !== 'html' && artifact.kind !== 'image') throw Error('Only widgets and graphics can be saved');
-      const extension = artifact.kind === 'html' ? 'html' : artifact.dataUrl.startsWith('data:image/svg+xml') ? 'svg' : artifact.dataUrl.startsWith('data:image/jpeg') ? 'jpg' : artifact.dataUrl.startsWith('data:image/webp') ? 'webp' : 'png';
-      const owner = BrowserWindow.fromWebContents(event.sender);
-      if (!owner) throw Error('Window is closed');
-      const result = await dialog.showSaveDialog(owner, { defaultPath: `${artifact.title.replace(/[^a-z0-9_-]/gi, '-').slice(0, 80)}.${extension}`, filters: [{ name: 'Artifact', extensions: [extension] }] });
-      if (result.canceled || !result.filePath) return false;
-      await writeFile(result.filePath, artifact.kind === 'html' ? artifact.html : Buffer.from(artifact.dataUrl.split(',')[1], 'base64'));
-      return true;
+      return saveGuiArtifact(artifact, event.sender);
     }
+    if (!entry) throw Error('Panel is disconnected');
     if (action === 'models') return entry.session.models();
     if (action === 'steer') return entry.session.steer(String(value));
     if (action === 'pick-attachments') {
@@ -184,7 +209,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'respond') { const p = value as { id: string | number; value: Parameters<CodexGuiSession['respond']>[1] }; return entry.session.respond(p.id, p.value); }
     throw Error('Unknown GUI action');
     };
-    return ['load', 'connect', 'persist', 'close', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
+    return ['load', 'connect', 'reconnect', 'persist', 'close', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
   });
   app.on('before-quit', () => { for (const { session } of sessions.values()) session.close(); });
 }

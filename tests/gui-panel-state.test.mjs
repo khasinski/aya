@@ -42,9 +42,13 @@ test('serialized lifecycle waits for the old close before connecting a new accou
   release(); await closing; await connect;
   assert.equal(connected, true);
 });
-test('save failure still releases memory and owner cleanup covers disconnected panels', async () => {
+test('save failure preserves the view for retry; destroyed-owner cleanup releases disconnected panels', async () => {
   const { state } = fixture(async () => { throw Error('Disk full'); });
   await assert.rejects(state.close('1:panel'), /Disk full/);
+  assert.equal(state.snapshots.size, 1); assert.equal(state.attachments.size, 1);
+  assert.equal(state.sessions.size, 0);
+  assert.equal(state.closing.has('1:panel'), false);
+  await state.closeOwner(1);
   assert.equal(state.snapshots.size, 0); assert.equal(state.attachments.size, 0);
   state.snapshots.set('2:failed-connect', structuredClone(snapshot));
   state.attachments.set('2:failed-connect', new Map());
@@ -53,4 +57,16 @@ test('save failure still releases memory and owner cleanup covers disconnected p
   assert.equal(state.snapshots.has('2:failed-connect'), false);
   assert.equal(state.attachments.has('2:failed-connect'), false);
   assert.equal(state.snapshots.has('3:other-owner'), true);
+});
+
+test('disconnect retires the old agent while preserving drafts, owned artifacts and attachments', () => {
+  const { state, session, documents } = fixture(async () => {});
+  state.disconnect('1:panel');
+  assert.equal(session.closed, true);
+  assert.equal(state.sessions.size, 0);
+  assert.equal(state.snapshots.get('1:panel').threadId, 'thread-a');
+  assert.equal(state.artifacts.size, 1);
+  assert.equal(state.artifactVersions.size, 1);
+  assert.equal(state.attachments.size, 1);
+  assert.deepEqual(documents, []);
 });

@@ -76,17 +76,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
           },
         },
       });
+      if (process.argv.includes('--late-init')) setTimeout(() => write({ type: 'system', subtype: 'init', session_id: 'claude-late-thread', model: 'fake-claude-opus' }), 50);
       return;
     }
     if (subtype === 'set_model') {
+      if (req.model === 'unavailable') { write({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Model unavailable' } }); return; }
       currentModel = req.model || currentModel;
-      write({
-        type: 'control_response',
-        response: { subtype: 'success', request_id: message.request_id, response: {} },
-      });
-      return;
-    }
-    if (subtype === 'compact') {
       write({
         type: 'control_response',
         response: { subtype: 'success', request_id: message.request_id, response: {} },
@@ -99,7 +94,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         response: {
           subtype: 'success',
           request_id: message.request_id,
-          response: { answer: 'A separate side answer from Claude' },
+          response: { response: 'A separate side answer from Claude' },
         },
       });
       return;
@@ -111,8 +106,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       });
       write({
         type: 'result',
-        subtype: 'interrupted',
-        is_error: false,
+        subtype: 'error_during_execution',
+        terminal_reason: 'aborted_streaming',
+        is_error: true,
         result: '',
       });
       busy = false;
@@ -124,6 +120,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (message.type === 'user') {
     const content = Array.isArray(message.message?.content) ? message.message.content : [];
     const prompt = content.find((c) => c.type === 'text')?.text || '';
+    if (prompt.startsWith('/compact')) { complete('Context compacted'); return; }
     if (message.steer) {
       write({ method: 'fixture/steer', params: { prompt } });
       return;

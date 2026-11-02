@@ -1,3 +1,4 @@
+import { GuiJsonLines } from './gui-json-lines';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat, readFile, mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
@@ -84,7 +85,6 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
   protected busy = false;
   get running() { return this.busy; }
   protected closing = false;
-  protected buffer = '';
   protected stderr = '';
   cwd = '';
 
@@ -309,6 +309,7 @@ const PI_GUI_EXTENSION_SOURCE = `export default function ayaPiGuiExtension(pi) {
   }
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "bash" || event.toolName === "powershell") {
+      if (process.env.AYA_PI_SKIP_PERMISSIONS === "1") return;
       const cmd = (event.input && event.input.command) ? String(event.input.command) : event.toolName;
       const ok = await ctx.ui.confirm("Approval required", cmd);
       if (!ok) return { block: true, reason: "Declined by user in Aya GUI" };
@@ -338,6 +339,7 @@ export class PiGuiSession extends BaseManagedGuiSession {
   private turnId: string | null = null;
   private currentItemId = '';
   private currentAssistantText = '';
+  private interruptRequested = false;
   private modelProviders = new Map<string, string>();
 
   constructor(
@@ -380,11 +382,12 @@ export class PiGuiSession extends BaseManagedGuiSession {
     this.pending.clear();
     this.requests.clear();
     this.busy = false;
+    this.interruptRequested = false;
     this.turnId = null;
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
   }
 
-  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string) {
+  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
     if (this.child) throw Error('Start a new window for a separate session');
     this.cwd = await realpath(cwd);
     if (!(await stat(this.cwd)).isDirectory()) throw Error('Workspace must be a directory');
@@ -396,7 +399,17 @@ export class PiGuiSession extends BaseManagedGuiSession {
       extPath,
       ...(resumeThreadId ? ['--session', resumeThreadId] : []),
     ];
-    const env = this.cleanEnv(configDir ? { PI_CODING_AGENT_DIR: configDir } : {});
+    const env = this.cleanEnv({
+      ...(configDir ? { PI_CODING_AGENT_DIR: configDir } : {}),
+      AYA_PI_SKIP_PERMISSIONS: unsafeMode ? '1' : '0',
+    });
+    if (!this.customArgs) {
+      const { stdout } = await execFileAsync(this.executable, ['--version'], { cwd: this.cwd, env, timeout: 10000 });
+      const version = stdout.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
+      if (!version || (Number(version[1]) === 0 && (Number(version[2]) < 80 || (Number(version[2]) === 80 && Number(version[3]) < 4)))) {
+        throw Error('Pi GUI requires Pi 0.80.4 or newer with agent_settled RPC events. Update Pi before reconnecting.');
+      }
+    }
     this.child = spawn(this.executable, args, {
       cwd: this.cwd,
       env,
@@ -408,24 +421,15 @@ export class PiGuiSession extends BaseManagedGuiSession {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
     this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (data) => {
-      this.buffer += String(data);
-      if (this.buffer.length > 16 * 1024 * 1024) {
-        this.failSession('Pi protocol frame exceeded 16 MB');
+    const frames = new GuiJsonLines();
+    this.child.stdout.on('data', data => {
+      try {
+        frames.push(String(data), message => {
+          void this.receive(message).catch(error => { this.failSession(String(error)); this.close(); });
+        });
+      } catch (error) {
+        this.failSession(`Pi: ${error instanceof Error ? error.message : String(error)}`);
         this.close();
-        return;
-      }
-      let at: number;
-      while ((at = this.buffer.indexOf('\n')) >= 0) {
-        const line = this.buffer.slice(0, at).replace(/\r$/, '');
-        this.buffer = this.buffer.slice(at + 1);
-        if (!line.trim()) continue;
-        try {
-          void this.receive(JSON.parse(line)).catch((error) => this.failSession(String(error)));
-        } catch {
-          this.failSession('Malformed JSON from Pi');
-          this.close();
-        }
       }
     });
     this.child.once('error', (error) => this.failSession(`Cannot start Pi: ${error.message}`));
@@ -492,17 +496,9 @@ export class PiGuiSession extends BaseManagedGuiSession {
     if (name === 'compact') {
       return this.rpc('compact', argument.trim() ? { customInstructions: argument.trim() } : {});
     }
-    if (name === 'btw') {
-      if (this.busy) {
-        throw Error('Side questions currently require a completed turn. Wait for Pi or stop it first.');
-      }
-      if (!argument.trim()) throw Error('Usage: /btw your side question');
-      const res = await this.rpc('side_question', { question: argument });
-      const data = object(res.data);
-      return { text: text(data.text) || text(res.text) || 'Pi returned a side answer.' };
-    }
+    if (name === 'btw') throw Error('Pi does not support side questions through its RPC interface. Send a regular message instead.');
     throw Error(
-      `Unsupported command /${name}. Use /goal, /btw or /compact. Other CLI commands remain available in Terminal mode.`,
+      `Unsupported command /${name}. Use /help to see the commands available in GUI mode.`,
     );
   }
 
@@ -524,33 +520,34 @@ export class PiGuiSession extends BaseManagedGuiSession {
       throw Error('Prompt must contain 1–100000 characters');
     }
     this.busy = true;
+    this.interruptRequested = false;
     this.turnId = `turn-${++this.nextId}`;
     this.currentItemId = `msg-${this.nextId}`;
     this.currentAssistantText = '';
     try {
       if (options.model) {
         const provider = this.modelProviders.get(options.model) || 'default';
-        await this.rpc('set_model', { provider, modelId: options.model }).catch(() => {});
+        await this.rpc('set_model', { provider, modelId: options.model });
       }
       if (options.effort) {
-        await this.rpc('set_thinking_level', { level: options.effort }).catch(() => {});
+        await this.rpc('set_thinking_level', { level: options.effort });
       }
       const images = await Promise.all(
         (options.images || []).map(async (imgPath) => {
-          try {
-            const encoded = await encodeImageAttachment(imgPath);
-            return { type: 'image', data: encoded.data, mimeType: encoded.mimeType, path: imgPath };
-          } catch {
-            return { type: 'image', data: '', mimeType: 'image/png', path: imgPath };
-          }
+          const encoded = await encodeImageAttachment(imgPath);
+          return { type: 'image', data: encoded.data, mimeType: encoded.mimeType, path: imgPath };
         }),
       );
-      await this.rpc('prompt', {
+      const response = await this.rpc('prompt', {
         message: prompt,
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
         ...(images.length ? { images } : {}),
       });
+      if (object(response.data).disposition === 'handled' && this.busy) {
+        const id = this.turnId; this.busy = false; this.turnId = null;
+        this.emit({ method: 'turn/completed', params: { turn: { id, status: 'completed' } } });
+      }
     } catch (error) {
       this.busy = false;
       this.turnId = null;
@@ -560,7 +557,8 @@ export class PiGuiSession extends BaseManagedGuiSession {
 
   async interrupt() {
     if (this.busy) {
-      await this.rpc('abort').catch(() => {});
+      this.interruptRequested = true;
+      try { await this.rpc('abort'); } catch (error) { this.interruptRequested = false; throw error; }
     }
   }
 
@@ -753,10 +751,9 @@ export class PiGuiSession extends BaseManagedGuiSession {
       return;
     }
 
-    if (type === 'agent_settled' || type === 'agent_end') {
-      if (type === 'agent_end' && message.WaitForSettled) return;
-      if (!this.busy && type === 'agent_end') return;
-      const aborted = message.aborted === true;
+    if (type === 'agent_settled') {
+      const aborted = message.aborted === true || this.interruptRequested;
+      this.interruptRequested = false;
       this.pauseRunningProgressOnTurnEnd(false);
       const finishedTurnId = this.turnId || 'turn';
       this.busy = false;
@@ -872,24 +869,15 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
     this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (data) => {
-      this.buffer += String(data);
-      if (this.buffer.length > 16 * 1024 * 1024) {
-        this.failSession('Claude protocol frame exceeded 16 MB');
+    const frames = new GuiJsonLines();
+    this.child.stdout.on('data', data => {
+      try {
+        frames.push(String(data), message => {
+          void this.receive(message).catch(error => { this.failSession(String(error)); this.close(); });
+        });
+      } catch (error) {
+        this.failSession(`Claude: ${error instanceof Error ? error.message : String(error)}`);
         this.close();
-        return;
-      }
-      let at: number;
-      while ((at = this.buffer.indexOf('\n')) >= 0) {
-        const line = this.buffer.slice(0, at).replace(/\r$/, '');
-        this.buffer = this.buffer.slice(at + 1);
-        if (!line.trim()) continue;
-        try {
-          void this.receive(JSON.parse(line)).catch((error) => this.failSession(String(error)));
-        } catch {
-          this.failSession('Malformed JSON from Claude');
-          this.close();
-        }
       }
     });
     this.child.once('error', (error) => this.failSession(`Cannot start Claude: ${error.message}`));
@@ -942,7 +930,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     if (!this.threadId) throw Error('Connect to Claude first');
     if (name === 'goal') return this.handleGoalCommand(argument);
     if (name === 'compact') {
-      return this.controlRequest('compact', { instructions: argument.trim() });
+      await this.send(`/compact ${argument}`.trim());
+      return {};
     }
     if (name === 'btw') {
       if (this.busy) {
@@ -952,7 +941,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       const res = await this.controlRequest('side_question', { question: argument });
       const inner = object(res.response);
       return {
-        text: text(inner.answer) || text(inner.text) || 'Claude returned a side answer.',
+        text: text(inner.response) || text(inner.answer) || text(inner.text) || '',
       };
     }
     throw Error(
@@ -990,20 +979,16 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     this.currentAssistantText = '';
     try {
       if (options.model) {
-        await this.controlRequest('set_model', { model: options.model }).catch(() => {});
+        await this.controlRequest('set_model', { model: options.model });
       }
       const content: Record<string, unknown>[] = [{ type: 'text', text: prompt }];
       for (const imgPath of options.images || []) {
-        try {
-          const encoded = await encodeImageAttachment(imgPath);
-          content.push({
-            type: 'image',
-            path: imgPath,
-            source: { type: 'base64', media_type: encoded.mimeType, data: encoded.data },
-          });
-        } catch {
-          content.push({ type: 'image', path: imgPath });
-        }
+        const encoded = await encodeImageAttachment(imgPath);
+        content.push({
+          type: 'image',
+          path: imgPath,
+          source: { type: 'base64', media_type: encoded.mimeType, data: encoded.data },
+        });
       }
       this.emit({ method: 'turn/started', params: { turn: { id: this.turnId } } });
       this.write({
@@ -1023,7 +1008,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
   async interrupt() {
     if (this.busy) {
-      await this.controlRequest('interrupt').catch(() => {});
+      await this.controlRequest('interrupt');
     }
   }
 
@@ -1199,6 +1184,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
     if (type === 'system' && text(message.subtype) === 'init') {
       if (text(message.session_id)) this.threadId = text(message.session_id);
+      this.emit({ method: 'aya/session', params: { threadId: this.threadId, ...(text(message.model) ? { model: text(message.model) } : {}) } });
       return;
     }
 
@@ -1265,7 +1251,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
           params: { item: { id: itemId, type: 'agentMessage', text: finalText } },
         });
       }
-      const isInterrupted = text(message.subtype) === 'interrupted';
+      const isInterrupted = text(message.subtype) === 'interrupted' || text(message.terminal_reason) === 'aborted_streaming';
       const isError = message.is_error === true && !isInterrupted;
       this.pauseRunningProgressOnTurnEnd(isError);
       const finishedTurnId = this.turnId || 'turn';
@@ -1299,11 +1285,6 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
-  private sideQuestionWaiter: {
-    resolve: (value: { text: string }) => void;
-    reject: (error: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  } | null = null;
   private nextId = 0;
   private turnId: string | null = null;
   private currentItemId = '';
@@ -1312,8 +1293,6 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
   private currentModel = '';
   private currentEffort = '';
   private executedStepTools = new Set<number>();
-  private lastToolStep: { stepIndex: number; toolName: string; params: Record<string, unknown> } | null =
-    null;
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -1333,11 +1312,6 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
       clearTimeout(this.initWaiter.timer);
       this.initWaiter.reject(Error(message));
       this.initWaiter = null;
-    }
-    if (this.sideQuestionWaiter) {
-      clearTimeout(this.sideQuestionWaiter.timer);
-      this.sideQuestionWaiter.reject(Error(message));
-      this.sideQuestionWaiter = null;
     }
     this.requests.clear();
     this.busy = false;
@@ -1373,24 +1347,15 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
     this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (data) => {
-      this.buffer += String(data);
-      if (this.buffer.length > 16 * 1024 * 1024) {
-        this.failSession('Antigravity protocol frame exceeded 16 MB');
+    const frames = new GuiJsonLines();
+    this.child.stdout.on('data', data => {
+      try {
+        frames.push(String(data), message => {
+          void this.receive(message).catch(error => { this.failSession(String(error)); this.close(); });
+        });
+      } catch (error) {
+        this.failSession(`Antigravity: ${error instanceof Error ? error.message : String(error)}`);
         this.close();
-        return;
-      }
-      let at: number;
-      while ((at = this.buffer.indexOf('\n')) >= 0) {
-        const line = this.buffer.slice(0, at).replace(/\r$/, '');
-        this.buffer = this.buffer.slice(at + 1);
-        if (!line.trim()) continue;
-        try {
-          void this.receive(JSON.parse(line)).catch((error) => this.failSession(String(error)));
-        } catch {
-          this.failSession('Malformed JSON from Antigravity');
-          this.close();
-        }
       }
     });
     this.child.once('error', (error) =>
@@ -1488,56 +1453,17 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     if (!this.threadId) throw Error('Connect to Antigravity first');
     if (name === 'goal') return this.handleGoalCommand(argument);
     if (name === 'compact') {
-      this.write({
-        event: 'user',
-        message: { role: 'user', content: `/compact ${argument}`.trim() },
-      });
+      await this.send(`/compact ${argument}`.trim());
       return {};
     }
-    if (name === 'btw') {
-      if (this.busy) {
-        throw Error(
-          'Side questions currently require a completed turn. Wait for Antigravity or stop it first.',
-        );
-      }
-      if (!argument.trim()) throw Error('Usage: /btw your side question');
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.sideQuestionWaiter = null;
-          reject(Error('Side question timed out'));
-        }, 30000);
-        timer.unref();
-        this.sideQuestionWaiter = { resolve, reject, timer };
-        try {
-          this.write({
-            event: 'side_question',
-            question: argument,
-            message: { role: 'user', content: `/btw ${argument}` },
-          });
-        } catch (error) {
-          clearTimeout(timer);
-          this.sideQuestionWaiter = null;
-          reject(error instanceof Error ? error : Error(String(error)));
-        }
-      });
-    }
+    if (name === 'btw') throw Error('Antigravity does not support side questions through its headless protocol. Send a regular message instead.');
     throw Error(
-      `Unsupported command /${name}. Use /goal, /btw or /compact. Other CLI commands remain available in Terminal mode.`,
+      `Unsupported command /${name}. Use /help to see the commands available in GUI mode.`,
     );
   }
 
-  async steer(prompt: string) {
-    if (!this.busy || !this.turnId) throw Error('There is no active turn to steer');
-    if (!prompt.trim() || prompt.length > 100000) {
-      throw Error('Message must contain 1–100000 characters');
-    }
-    this.write({
-      event: 'user',
-      steer: true,
-      expectedTurnId: this.turnId,
-      message: { role: 'user', content: prompt },
-    });
-    return { turnId: this.turnId };
+  async steer(_prompt: string): Promise<Record<string, unknown>> {
+    throw Error('Antigravity does not support steering through its headless protocol. Queue a message for the next turn instead.');
   }
 
   async send(
@@ -1554,7 +1480,6 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     this.currentItemId = `msg-${this.nextId}`;
     this.currentAssistantText = '';
     this.executedStepTools.clear();
-    this.lastToolStep = null;
     if (options.model) this.currentModel = options.model;
     if (options.effort) this.currentEffort = options.effort;
     try {
@@ -1578,11 +1503,9 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
 
   async interrupt() {
     if (this.busy) {
-      try {
-        this.write({ event: 'interrupt' });
-      } catch {
-        /* ignore if closed */
-      }
+      const pid = this.child?.pid;
+      if (!pid) throw Error('Antigravity is disconnected');
+      process.kill(-pid, 'SIGINT');
     }
   }
 
@@ -1602,16 +1525,6 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
         const waiter = this.initWaiter;
         this.initWaiter = null;
         waiter.resolve({ threadId: this.threadId, model: initModel });
-      }
-      return;
-    }
-
-    if (evtName === 'side_answer') {
-      if (this.sideQuestionWaiter) {
-        clearTimeout(this.sideQuestionWaiter.timer);
-        const waiter = this.sideQuestionWaiter;
-        this.sideQuestionWaiter = null;
-        waiter.resolve({ text: text(message.text) || 'Antigravity returned a side answer.' });
       }
       return;
     }
@@ -1638,7 +1551,6 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
         const toolInfo = object(step.tool_info);
         const toolName = text(step.tool_name) || text(toolInfo.name);
         const params = object(toolInfo.parameters);
-        this.lastToolStep = { stepIndex, toolName, params };
 
         const normalized = toolName.replace(/^mcp__aya__/, '').replace(/^mcp_aya_/, '');
         if (
@@ -1718,34 +1630,8 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     if (evtName === 'result') {
       const res = object(message.result);
       const denied = Array.isArray(res.denied_actions) ? res.denied_actions : [];
-      if (denied.length > 0) {
-        const reqId = `agy-approve-${++this.nextId}`;
-        const commandText =
-          text(this.lastToolStep?.params?.CommandLine) ||
-          text(object(denied[0]).display_name) ||
-          'Run command';
-        this.requests.set(reqId, {
-          method: 'item/commandExecution/requestApproval',
-          params: { command: commandText, reason: 'Antigravity requires permission' },
-          resolve: (val) => {
-            try {
-              this.write({
-                event: 'approval_response',
-                decision: val.decision,
-                command: commandText,
-              });
-            } catch {
-              /* ignore */
-            }
-          },
-        });
-        this.emit({
-          method: 'item/commandExecution/requestApproval',
-          params: { command: commandText, reason: 'Antigravity requires permission' },
-          id: reqId,
-        });
-        return;
-      }
+      const deniedText = denied.map(action => text(object(action).display_name) || text(object(action).action)).filter(Boolean).join(', ');
+      const permissionError = denied.length ? `Antigravity denied ${deniedText || 'a tool action'}. Its headless protocol cannot prompt for permission. Configure an allow rule in Antigravity, or enable skip permissions in this preset and reconnect.` : '';
 
       const finalText = text(res.response) || this.currentAssistantText;
       if (finalText) {
@@ -1757,7 +1643,7 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
         });
       }
       const isInterrupted = text(res.finished_reason) === 'interrupted' || text(res.status) === 'INTERRUPTED';
-      const isError = text(res.status) === 'ERROR' && !isInterrupted;
+      const isError = (text(res.status) === 'ERROR' || denied.length > 0) && !isInterrupted;
       this.pauseRunningProgressOnTurnEnd(isError);
       const finishedTurnId = this.turnId || 'turn';
       this.busy = false;
@@ -1769,7 +1655,7 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
           turn: {
             id: finishedTurnId,
             status: isInterrupted ? 'interrupted' : isError ? 'failed' : 'completed',
-            ...(isError && text(res.error) ? { error: { message: text(res.error) } } : {}),
+            ...(isError && (permissionError || text(res.error)) ? { error: { message: permissionError || text(res.error) } } : {}),
           },
         },
       });

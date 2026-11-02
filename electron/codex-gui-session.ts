@@ -1,3 +1,4 @@
+import { GuiJsonLines } from './gui-json-lines';
 import { PROGRESS_TOOL, progressUpdate } from './gui-progress';
 import type { GuiProgress } from '../shared/gui-progress';
 // Development PoC: Codex owns the agent loop and policies; Aya owns presentation.
@@ -16,6 +17,7 @@ export class CodexGuiSession {
   private requests = new Map<string | number, { method: string; params: Record<string, unknown> }>();
   private nextId = 0;
   private turnId: string | null = null;
+  private startingTurn: Promise<Record<string, unknown>> | null = null;
   private threadId = '';
   private busy = false;
   get running() { return this.busy; }
@@ -23,7 +25,6 @@ export class CodexGuiSession {
   private artifactIds = new Set<string>();
   private artifactRevisions = new Map<string, number>();
   private progresses = new Map<string, GuiProgress>();
-  private buffer = '';
   private stderr = '';
   cwd = '';
   constructor(private readonly emit: (event: GuiEvent) => void, private readonly executable = 'codex', private readonly args = ['app-server', '--listen', 'stdio://']) {}
@@ -52,15 +53,15 @@ export class CodexGuiSession {
     this.child.stdin.on('error', () => {});
     this.child.stderr.on('data', data => { this.stderr = (this.stderr + String(data)).slice(-4000); });
     this.child.stdout.setEncoding('utf8');
+    const frames = new GuiJsonLines();
     this.child.stdout.on('data', data => {
-      this.buffer += String(data);
-      if (this.buffer.length > 16 * 1024 * 1024) { this.fail('Codex protocol frame exceeded 16 MB'); this.close(); return; }
-      let at: number;
-      while ((at = this.buffer.indexOf('\n')) >= 0) {
-        const line = this.buffer.slice(0, at); this.buffer = this.buffer.slice(at + 1);
-        if (!line.trim()) continue;
-        try { void this.receive(JSON.parse(line)).catch(error => this.fail(String(error))); }
-        catch { this.fail('Malformed JSON from Codex'); this.close(); }
+      try {
+        frames.push(String(data), message => {
+          void this.receive(message).catch(error => { this.fail(String(error)); this.close(); });
+        });
+      } catch (error) {
+        this.fail(`Codex: ${error instanceof Error ? error.message : String(error)}`);
+        this.close();
       }
     });
     this.child.once('error', error => this.fail(`Cannot start Codex: ${error.message}`));
@@ -84,15 +85,31 @@ export class CodexGuiSession {
     return (Array.isArray(result.data) ? result.data : []).map(object).filter(row => row.cwd === this.cwd && typeof row.id === 'string').map(row => ({ id: 'codex:' + text(row.id), title: text(row.name) || text(row.preview) || 'Untitled conversation', updatedAt: Number(row.updatedAt) * 1000, current: row.id === this.threadId }));
   }
   async readConversation(id: string) {
-    const result = await this.rpc('thread/read', { threadId: id, includeTurns: true });
+    const result = await this.rpc('thread/read', { threadId: id, includeTurns: false });
     const thread = object(result.thread);
     if (thread.cwd !== this.cwd || thread.id !== id) throw Error('Conversation does not belong to this workspace');
     const messages: { id: string; type: string; text: string }[] = [];
-    for (const turn of Array.isArray(thread.turns) ? thread.turns : []) for (const raw of Array.isArray(object(turn).items) ? object(turn).items as unknown[] : []) {
-      const item = object(raw);
-      if (item.type === 'agentMessage') messages.push({ id: text(item.id), type: 'assistant', text: text(item.text) });
-      if (item.type === 'userMessage') messages.push({ id: text(item.id), type: 'user', text: (Array.isArray(item.content) ? item.content : []).map(object).filter(part => part.type === 'text').map(part => text(part.text)).join('\n') });
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    // Summaries omit bulky tool output. Read newest turns first and retain only
+    // the same 500-message window the GUI displays, without hydrating the full rollout.
+    for (let page = 0; page < 50 && messages.length < 500; page++) {
+      const result = await this.rpc('thread/turns/list', { threadId: id, limit: 10, sortDirection: 'desc', itemsView: 'summary', ...(cursor ? { cursor } : {}) });
+      for (const turn of Array.isArray(result.data) ? result.data : []) {
+        const items = object(turn).items;
+        for (const raw of (Array.isArray(items) ? [...items].reverse() : [])) {
+          const item = object(raw);
+          if (item.type === 'agentMessage') messages.push({ id: text(item.id), type: 'assistant', text: text(item.text) });
+          if (item.type === 'userMessage') messages.push({ id: text(item.id), type: 'user', text: (Array.isArray(item.content) ? item.content : []).map(object).filter(part => part.type === 'text').map(part => text(part.text)).join('\n') });
+          if (messages.length >= 500) break;
+        }
+        if (messages.length >= 500) break;
+      }
+      cursor = text(result.nextCursor) || undefined;
+      if (!cursor || seen.has(cursor)) break;
+      seen.add(cursor);
     }
+    messages.reverse();
     return { threadId: id, view: { messages: messages.slice(-500), importNotice: 'Resumed from Codex history. This conversation keeps its original tool configuration. Start a new conversation for the latest Aya widget and progress tools.' } };
   }
   restoreProgress(progresses: GuiProgress[]) { for (const progress of progresses) this.progresses.set(progress.id, progress); }
@@ -111,20 +128,34 @@ export class CodexGuiSession {
     }
     if (name === 'compact') return this.rpc('thread/compact/start', { threadId: this.threadId });
     if (name === 'btw') {
-      if (this.busy) throw Error('Side questions currently require a completed turn. Wait for Codex or stop it first.');
       if (!argument.trim()) throw Error('Usage: /btw your side question');
-      const result = await this.rpc('thread/read', { threadId: this.threadId, includeTurns: true });
-      const turns = object(result.thread).turns;
-      const last = Array.isArray(turns) ? object(turns.at(-1)) : {};
-      if (!text(last.id)) throw Error('Send a message before asking a side question.');
-      return this.rpc('thread/sample', { threadId: this.threadId, expectedTurnId: text(last.id), prompt: argument });
+      // turn/completed can arrive before the sampling source becomes idle.
+      // Automatic goal turns can also start between listing the source and sampling it.
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        if (!this.child || this.closing) throw Error('Codex is disconnected');
+        if (!this.busy) {
+          const result = await this.rpc('thread/turns/list', { threadId: this.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
+          const last = Array.isArray(result.data) ? object(result.data[0]) : {};
+          if (!text(last.id)) throw Error('Send a message before asking a side question.');
+          if (!this.busy) {
+            try { return await this.rpc('thread/sample', { threadId: this.threadId, expectedTurnId: text(last.id), prompt: argument }); }
+            catch (error) {
+              if (!/sample source must be idle/i.test(error instanceof Error ? error.message : String(error))) throw error;
+            }
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      throw Error('Codex is still working and could not answer the side question yet. Stop the current turn or pause the goal, then try /btw again.');
     }
     throw Error(`Unsupported command /${name}. Use /goal, /btw or /compact. Other CLI commands remain available in Terminal mode.`);
   }
   async models() { return this.rpc('model/list', { limit: 100 }); }
   async steer(prompt: string) {
-    if (!this.busy || !this.turnId) throw Error('There is no active turn to steer');
     if (!prompt.trim() || prompt.length > 100000) throw Error('Message must contain 1–100000 characters');
+    if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
+    if (!this.busy || !this.turnId) throw Error('There is no active turn to steer');
     return this.rpc('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input: [{ type: 'text', text: prompt, text_elements: [] }] });
   }
   async send(prompt: string, options: { model?: string; effort?: string; images?: string[] } = {}) {
@@ -132,12 +163,16 @@ export class CodexGuiSession {
     if (this.busy) throw Error('Codex is working; stop the current turn first');
     if (!prompt.trim() || prompt.length > 100000) throw Error('Prompt must contain 1–100000 characters');
     this.busy = true;
+    const starting = this.rpc('turn/start', { threadId: this.threadId, ...(options.model ? { model: options.model } : {}), ...(options.effort ? { effort: options.effort } : {}), input: [{ type: 'text', text: prompt, text_elements: [] }, ...(options.images || []).map(file => ({ type: 'localImage', path: file }))] });
+    this.startingTurn = starting;
     try {
-      const result = await this.rpc('turn/start', { threadId: this.threadId, ...(options.model ? { model: options.model } : {}), ...(options.effort ? { effort: options.effort } : {}), input: [{ type: 'text', text: prompt, text_elements: [] }, ...(options.images || []).map(file => ({ type: 'localImage', path: file }))] });
-      if (this.busy) this.turnId = text(object(result.turn).id) || this.turnId;
+      const result = await starting;
+      if (this.busy && !this.turnId) this.turnId = text(object(result.turn).id) || this.turnId;
     } catch (error) { this.busy = false; throw error; }
+    finally { if (this.startingTurn === starting) this.startingTurn = null; }
   }
   async interrupt() {
+    if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
     if (this.turnId) await this.rpc('turn/interrupt', { threadId: this.threadId, turnId: this.turnId });
   }
   async respond(id: string | number, value: { decision?: GuiApprovalDecision; answers?: Record<string, string> }) {
@@ -216,8 +251,9 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
       this.emit({ method: 'aya/notice', params: { message: `Unsupported Codex request: ${method}` } });
       return;
     }
-    if (method === 'turn/started') this.turnId = text(object(params.turn).id);
+    if (method === 'turn/started') { this.turnId = text(object(params.turn).id); this.busy = true; }
     if (method === 'turn/completed') {
+      if (this.turnId && text(object(params.turn).id) && object(params.turn).id !== this.turnId) return;
       for (const [id, previous] of this.progresses) if (previous.status === 'running') {
         const progress: GuiProgress = { ...previous, status: object(params.turn).status === 'failed' ? 'failed' : 'paused', detail: previous.detail || 'Turn ended before this task was marked complete' };
         this.progresses.set(id, progress); this.emit({ method: 'aya/progress', params: { progress } });

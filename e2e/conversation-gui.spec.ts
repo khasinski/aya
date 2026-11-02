@@ -1,7 +1,123 @@
 import { test, expect, launchApp, closeAndWait } from './fixtures';
 import { seedEnv } from './helpers/seed';
-import { mkdirSync, copyFileSync, chmodSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, copyFileSync, chmodSync, rmSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+test('artifact picker searches without marking results seen and unread counts survive reload', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow(), gui = window.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    for (let i = 0; i < 2; i++) {
+      await prompt.fill('widgets'); await prompt.press('Enter');
+      await expect(gui.getByRole('status', { name: 'Turn status' })).toHaveText('Turn complete');
+      await expect(gui.getByRole('button', { name: `Artifacts ${i + 1}`, exact: true })).toBeVisible();
+    }
+    await gui.getByRole('button', { name: 'Artifacts 2', exact: true }).click();
+    await expect(gui.getByRole('button', { name: 'Artifacts 1', exact: true })).toBeVisible();
+    await gui.getByRole('combobox', { name: 'Selected artifact' }).click();
+    await expect(gui.getByRole('listbox', { name: 'Artifacts' }).getByRole('option')).toHaveCount(2);
+    await expect(gui.locator('[role=option].aya-artifact-unread')).toHaveCount(1);
+    await gui.getByRole('searchbox', { name: 'Search artifacts' }).fill('Ready');
+    await expect(gui.getByRole('listbox', { name: 'Artifacts' }).getByRole('option')).toHaveCount(2);
+    await window.screenshot({ path: 'test-results/artifact-picker.png' });
+    await expect(gui.getByRole('button', { name: 'Artifacts 1', exact: true })).toBeVisible();
+    await gui.locator('[role=option].aya-artifact-unread').click();
+    await expect(gui.getByRole('button', { name: 'Artifacts', exact: true })).toBeVisible();
+    await gui.getByRole('button', { name: 'Artifacts', exact: true }).click();
+    await prompt.fill('update-widget-closed'); await prompt.press('Enter');
+    await expect(gui.getByRole('button', { name: 'Artifacts 1', exact: true })).toBeVisible();
+    await expect.poll(() => {
+      try { return readdirSync(join(seed.ayaHome, 'conversations')).filter(file => file.endsWith('.json')).some(file => readFileSync(join(seed.ayaHome, 'conversations', file), 'utf8').includes('Capacity planner')); } catch { return false; }
+    }).toBe(true);
+    await window.reload();
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(gui.getByRole('button', { name: 'Artifacts 1', exact: true })).toBeVisible();
+    await gui.getByRole('button', { name: 'Artifacts 1', exact: true }).click();
+    // Opening the panel displays its selected updated artifact and clears only that unseen revision.
+    await expect(gui.getByRole('button', { name: 'Artifacts', exact: true })).toBeVisible();
+    await expect.poll(() => {
+      try { return readdirSync(join(seed.ayaHome, 'conversations')).filter(file => file.endsWith('.json')).some(file => {
+        const view = JSON.parse(readFileSync(join(seed.ayaHome, 'conversations', file), 'utf8')).view;
+        return view?.drawer === true && view.artifacts?.length === 2 && view.artifacts.every((a: { id: string; revision?: number }) => (view.seenArtifactRevisions?.[a.id] || 0) >= (a.revision || 1));
+      }); } catch { return false; }
+    }).toBe(true);
+    await window.reload();
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(gui.getByRole('button', { name: 'Artifacts', exact: true })).toBeVisible();
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
+test('large widget libraries persist outside the snapshot and old previews reload after cache eviction', async () => {
+  test.setTimeout(120000);
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow(), gui = window.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await prompt.fill('many-widgets'); await prompt.press('Enter');
+    await expect(gui.getByRole('button', { name: 'Artifacts 20', exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Saved locally', { timeout: 60000 });
+    await gui.getByRole('button', { name: 'Artifacts 20', exact: true }).click();
+    for (let i = 0; i < 20; i++) {
+      if (i) await gui.getByRole('button', { name: 'Next artifact', exact: true }).click();
+      await expect(gui.frameLocator(`iframe[title="Bulk widget ${i}"]`).getByRole('heading', { name: `Widget ${i}`, exact: true })).toBeVisible();
+    }
+    await gui.getByRole('combobox', { name: 'Selected artifact' }).click();
+    await gui.getByRole('searchbox', { name: 'Search artifacts' }).fill('Bulk widget 0');
+    await gui.getByRole('listbox', { name: 'Artifacts' }).getByRole('option', { name: 'Bulk widget 0', exact: true }).click();
+    await expect(gui.frameLocator('iframe[title="Bulk widget 0"]').getByRole('heading', { name: 'Widget 0', exact: true })).toBeVisible();
+    await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Saved locally', { timeout: 60000 });
+    await window.reload();
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(gui.frameLocator('iframe[title="Bulk widget 0"]').getByRole('heading', { name: 'Widget 0', exact: true })).toBeVisible();
+    await expect(gui.getByRole('status', { name: 'Artifact position' })).toHaveText('1 of 20');
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
+test('failed autosave stays visible after dismissing other errors and can be retried', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  let blockedFile: string | undefined, backupFile: string | undefined;
+  try {
+    const window = await app.firstWindow(), gui = window.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Saved locally');
+    const snapshots = join(seed.ayaHome, 'conversations');
+    blockedFile = join(snapshots, readdirSync(snapshots).find(file => file.endsWith('.json'))!);
+    backupFile = blockedFile + '.backup';
+    renameSync(blockedFile, backupFile); mkdirSync(blockedFile);
+    await prompt.fill('/unknown'); await prompt.press('Enter');
+    await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Not saved');
+    await expect(gui.locator('.aya-gui-save-state')).toContainText(/EISDIR|ENOTEMPTY|directory/);
+    await gui.getByRole('button', { name: 'Dismiss error', exact: true }).click();
+    await expect(gui.getByRole('alert')).toHaveCount(0);
+    await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Not saved');
+    rmSync(blockedFile, { recursive: true, force: true }); renameSync(backupFile, blockedFile);
+    await gui.getByRole('button', { name: 'Retry save', exact: true }).click();
+    await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Saved locally');
+    await expect(gui.locator('.aya-gui-save-state')).not.toContainText(/EISDIR|ENOTEMPTY|directory/);
+    await window.reload();
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(prompt).toHaveValue('/unknown');
+  } finally {
+    if (backupFile && blockedFile && existsSync(backupFile)) { rmSync(blockedFile, { recursive: true, force: true }); renameSync(backupFile, blockedFile); }
+    await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true });
+  }
+});
+
 test('experimental GUI lives inside Aya with closed artifacts, approvals and explicit commands', async () => {
   const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
   const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
@@ -33,12 +149,12 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await gui.locator('header').getByRole('button', { name: /Artifacts/ }).click();
     await prompt.fill('open-widget'); await prompt.press('Enter');
     await expect(gui.getByRole('complementary', { name: 'Artifacts' })).toBeVisible();
-    await expect(gui.getByRole('combobox', { name: 'Selected artifact' })).toHaveValue(await gui.getByRole('combobox').locator('option').filter({ hasText: 'Opened by Codex' }).getAttribute('value') as string);
+    await expect(gui.getByRole('combobox', { name: 'Selected artifact' })).toContainText('Opened by Codex');
     await gui.locator('header').getByRole('button', { name: /Artifacts/ }).click();
     await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
     await prompt.fill('reopen'); await prompt.press('Enter');
     await expect(gui.getByRole('complementary', { name: 'Artifacts' })).toContainText('Opened by Codex');
-    await expect(gui.getByRole('button', { name: 'Artifacts 2' })).toBeVisible();
+    await expect(gui.getByRole('button', { name: 'Artifacts', exact: true })).toBeVisible();
     await gui.locator('header').getByRole('button', { name: /Artifacts/ }).click();
     await prompt.fill('/goal Ship the feature'); await prompt.press('Enter');
     await expect(gui.locator('.aya-gui-goal')).toContainText('Ship the feature');
@@ -50,6 +166,12 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await gui.getByRole('button', { name: 'Resume goal', exact: true }).click();
     await expect(gui.getByRole('status', { name: 'Goal status' })).toHaveText('Active');
     await expect(gui.getByRole('article', { name: 'Goal resumed', exact: true })).toHaveCount(1);
+    await prompt.fill('block-goal'); await prompt.press('Enter');
+    await expect(gui.getByRole('status', { name: 'Goal status' })).toHaveText('Blocked');
+    await expect(gui.getByLabel('Goal block reason')).toContainText('staging API key is missing');
+    await expect(gui.getByRole('article', { name: 'Goal blocked', exact: true })).toContainText('staging API key is missing');
+    await gui.getByRole('button', { name: 'Resume goal', exact: true }).click();
+    await expect(gui.getByLabel('Goal block reason')).toHaveCount(0);
     await prompt.fill('complete-goal'); await prompt.press('Enter');
     await expect(gui.getByRole('status', { name: 'Goal status' })).toHaveText('Complete');
     await expect(gui.getByRole('article', { name: 'Goal completed', exact: true })).toHaveCount(1);
@@ -61,20 +183,37 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await gui.getByRole('button', { name: 'Close side question' }).click();
     await prompt.fill('/unknown'); await prompt.press('Enter');
     await expect(gui.getByRole('alert')).toContainText('Unknown GUI command');
+    await expect(gui.getByRole('alert')).not.toContainText('Error invoking remote method');
+    await gui.getByRole('button', { name: 'Dismiss error', exact: true }).click();
+    await expect(gui.getByRole('alert')).toHaveCount(0);
+    await expect(prompt).toBeFocused();
+    await expect(prompt).toHaveValue('/unknown');
     await prompt.fill('completed-tools-wait'); await prompt.press('Enter');
     const activitySummary = gui.getByLabel('Tool activity', { exact: true });
     await expect(activitySummary).toHaveText('2 actions · 2 completedDetails');
     await expect(turnStatus).toHaveText('Codex is working…');
+    await prompt.fill('/btw Explain the context'); await prompt.press('Enter');
+    await expect(prompt).toHaveValue('');
+    await expect(gui.locator('.aya-gui-side')).toContainText('Waiting for the current turn to finish');
+    await expect(gui.locator('.aya-gui-side')).toContainText('Explain the context');
+    await expect(turnStatus).toHaveText('Codex is working…');
     await gui.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(turnStatus).toHaveText('Interrupted');
+    await expect(gui.locator('.aya-gui-side')).toContainText('A separate side answer');
+    await gui.getByRole('button', { name: 'Close side question' }).click();
     await expect(activitySummary).toContainText('2 completed');
     await prompt.fill('mixed-tools-wait'); await prompt.press('Enter');
     await expect(activitySummary).toContainText('3 actions · 1 running · 1 completed · 1 failed');
+    await prompt.fill('/btw This question will be cancelled'); await prompt.press('Enter');
+    await expect(gui.locator('.aya-gui-side')).toContainText('Waiting for the current turn');
+    await prompt.press('Escape');
+    await expect(gui.locator('.aya-gui-side')).toHaveCount(0);
     await activitySummary.click();
     await expect(gui.locator('.aya-gui-activity')).toContainText('npm test');
     await expect(gui.locator('.aya-gui-activity > details > summary').first()).toHaveCSS('font-family', /mono/i);
     await gui.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(activitySummary).toContainText('3 actions · 1 completed · 1 failed · 1 interrupted');
+    await expect(gui.locator('.aya-gui-side')).toHaveCount(0);
     await prompt.fill('approval-options'); await prompt.press('Enter');
     const approval = gui.locator('.aya-gui-request');
     await expect(approval.getByRole('button', { name: 'Allow for this session', exact: true })).toBeVisible();
@@ -144,27 +283,58 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await gui.getByRole('button', { name: 'Fit', exact: true }).click();
     await expect(gui.locator('.aya-graphic-tools')).toContainText('100%');
     await expect.poll(() => {
-      try { return readdirSync(join(seed.ayaHome, 'conversations')).some(file => readFileSync(join(seed.ayaHome, 'conversations', file), 'utf8').includes('Aya mark')); } catch { return false; }
+      try { return readdirSync(join(seed.ayaHome, 'conversations')).filter(file => file.endsWith('.json')).some(file => readFileSync(join(seed.ayaHome, 'conversations', file), 'utf8').includes('Aya mark')); } catch { return false; }
     }).toBe(true);
     await window.reload();
     await expect(window.locator('.aya-conversation header').getByRole('status')).toHaveText('Ready');
     await expect(window.locator('.aya-conversation').getByRole('alert')).toHaveCount(0);
     await expect(gui.getByRole('img', { name: 'Aya mark' })).toBeVisible();
+    // Intercept native menu presentation and clipboard writes so headless tests
+    // exercise the real callbacks without changing the user's clipboard.
+    const savedImage = join(seed.root, 'context-saved.svg');
+    await app.evaluate(({ Menu, BrowserWindow, dialog }, file) => {
+      const state = globalThis as unknown as { imageMenu: { label?: string; click?: () => void }[]; imageCopies: number[][]; restoreImageMenu: () => void };
+      const originalMenu = Menu.buildFromTemplate, originalSave = dialog.showSaveDialog;
+      const contents = BrowserWindow.getAllWindows()[0].webContents, originalCopy = contents.copyImageAt;
+      state.imageCopies = [];
+      contents.copyImageAt = (x, y) => { state.imageCopies.push([x, y]); };
+      Menu.buildFromTemplate = items => { state.imageMenu = items as typeof state.imageMenu; return { popup() {} } as Electron.Menu; };
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath: file })) as typeof dialog.showSaveDialog;
+      state.restoreImageMenu = () => { Menu.buildFromTemplate = originalMenu; dialog.showSaveDialog = originalSave; contents.copyImageAt = originalCopy; };
+    }, savedImage);
+    await gui.getByRole('img', { name: 'Aya mark' }).click({ button: 'right' });
+    await expect.poll(() => app.evaluate(() => (globalThis as unknown as { imageMenu?: { label?: string }[] }).imageMenu?.map(item => item.label))).toEqual(['Copy image', 'Save image…']);
+    await app.evaluate(() => (globalThis as unknown as { imageMenu: { click: () => void }[] }).imageMenu[0].click());
+    expect(await app.evaluate(() => (globalThis as unknown as { imageCopies: number[][] }).imageCopies.length)).toBe(1);
+    await app.evaluate(() => (globalThis as unknown as { imageMenu: { click: () => void }[] }).imageMenu[1].click());
+    await expect.poll(() => { try { return readFileSync(savedImage, 'utf8'); } catch { return ''; } }).toBe(readFileSync(join(seed.projectDir, 'graphic.svg'), 'utf8'));
+    await app.evaluate(() => (globalThis as unknown as { restoreImageMenu: () => void }).restoreImageMenu());
     await gui.getByRole('button', { name: 'Previous artifact' }).click();
     await expect(gui.getByRole('combobox', { name: 'Selected artifact' })).toContainText('Capacity planner');
     await expect(gui.frameLocator('iframe[title="Capacity planner"]').getByRole('heading', { name: 'Updated capacity' })).toBeVisible();
     await gui.getByRole('button', { name: 'Next artifact' }).click();
     await expect(gui.getByRole('img', { name: 'Aya mark' })).toBeVisible();
+    await gui.getByRole('combobox', { name: 'Selected artifact' }).click();
     const search = gui.getByRole('searchbox', { name: 'Search artifacts' });
+    await expect(search).toBeFocused();
     await search.fill('four-person');
-    await expect(gui.getByRole('combobox', { name: 'Selected artifact' }).locator('option')).toHaveCount(1);
-    await expect(gui.getByRole('combobox', { name: 'Selected artifact' })).toContainText('Capacity planner');
+    await expect(gui.getByRole('listbox', { name: 'Artifacts' }).getByRole('option')).toHaveCount(1);
+    await expect(gui.getByRole('listbox', { name: 'Artifacts' }).getByRole('option')).toContainText('Capacity planner');
+    await expect(gui.getByRole('combobox', { name: 'Selected artifact' })).toContainText('Aya mark');
     await search.fill('nothing-matches-this');
     await expect(gui.getByText('No matching artifacts')).toBeVisible();
-    await gui.getByRole('button', { name: 'Clear search', exact: true }).click();
+    await gui.getByRole('button', { name: 'Clear artifact search', exact: true }).click();
     await expect(search).toHaveValue('');
+    await search.fill('four-person'); await search.press('Enter');
+    await expect(gui.getByRole('combobox', { name: 'Selected artifact' })).toContainText('Capacity planner');
+    await expect(search).toHaveCount(0);
     await gui.getByRole('combobox', { name: 'Model for next turn' }).selectOption('fake-pro');
     await gui.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('high');
+    await expect(gui.getByRole('article', { name: 'Model changed', exact: true })).toContainText('Fake Pro');
+    await expect(gui.getByRole('article', { name: 'Reasoning effort changed', exact: true })).toContainText('Default → high');
+    await prompt.fill('/model fake-pro'); await prompt.press('Enter');
+    await expect(gui.getByRole('article', { name: 'Model changed', exact: true })).toHaveCount(1);
+    await expect(gui.getByRole('combobox', { name: 'Reasoning effort' })).toHaveValue('high');
     await prompt.fill('wait'); await prompt.press('Enter');
     await expect(turnStatus).toHaveText('Codex is working…');
     await prompt.fill('Focus on the interaction details');
@@ -188,15 +358,44 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await expect(gui.locator('.aya-task-progress--compact')).toHaveCount(0);
     await prompt.fill('progress-wait'); await prompt.press('Enter');
     await expect(gui.locator('.aya-task-progress--compact').getByRole('progressbar')).toHaveAttribute('aria-valuenow', '4');
-    await expect.poll(() => { try { return readdirSync(join(seed.ayaHome, 'conversations')).some(file => readFileSync(join(seed.ayaHome, 'conversations', file), 'utf8').includes('Decompiled four functions')); } catch { return false; } }).toBe(true);
+    await expect.poll(() => { try { return readdirSync(join(seed.ayaHome, 'conversations')).filter(file => file.endsWith('.json')).some(file => readFileSync(join(seed.ayaHome, 'conversations', file), 'utf8').includes('Decompiled four functions')); } catch { return false; } }).toBe(true);
     await window.reload();
     await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
     const resumedProgress = gui.locator('.aya-gui-messages').getByRole('progressbar', { name: 'Decompiling functions' }).last();
     await expect(resumedProgress).toHaveAttribute('aria-valuenow', '4');
     await expect(resumedProgress).toHaveAttribute('aria-valuetext', '4 of 10 · Paused');
+    await expect(gui.getByRole('article', { name: 'Model changed', exact: true })).toHaveCount(1);
+    await expect(gui.getByRole('article', { name: 'Reasoning effort changed', exact: true })).toHaveCount(1);
+    await prompt.fill('/model fake-codex'); await prompt.press('Enter');
+    await expect(gui.getByRole('article', { name: 'Model changed', exact: true })).toHaveCount(2);
+    await expect(gui.getByRole('article', { name: 'Model changed', exact: true }).last()).toContainText('Reasoning effort: high → Default');
     await expect(gui.locator('.aya-task-progress--compact')).toHaveCount(0);
 
     await window.screenshot({ path: 'test-results/conversation-gui.png' });
+    await prompt.fill('/goal Start an automatic turn'); await prompt.press('Enter');
+    await expect(turnStatus).toHaveText('Codex is working…');
+    await prompt.fill('Focus on the automatically started turn');
+    await gui.getByRole('button', { name: 'Steer ↗', exact: true }).click();
+    await expect(prompt).toHaveValue('');
+    await expect(gui.locator('.aya-gui-messages')).toContainText('↳ Focus on the automatically started turn');
+    await gui.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(turnStatus).toHaveText('Interrupted');
+    await prompt.fill('disconnect-approval'); await prompt.press('Enter');
+    await expect(gui.locator('.aya-gui-request')).toHaveCount(1);
+    await prompt.fill('Queue kept across reconnect'); await prompt.press('Enter');
+    await expect(gui.getByRole('textbox', { name: 'Queued message 1' })).toHaveValue('Queue kept across reconnect');
+    await prompt.fill('Draft kept across reconnect');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Disconnected');
+    await expect(gui.locator('.aya-gui-request')).toHaveCount(0);
+    await gui.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(prompt).toHaveValue('Draft kept across reconnect');
+    await expect(gui.getByRole('textbox', { name: 'Queued message 1' })).toHaveValue('Queue kept across reconnect');
+    if (!await gui.getByRole('complementary', { name: 'Artifacts' }).isVisible()) await gui.getByRole('button', { name: /^Artifacts/ }).click();
+    await gui.getByRole('combobox', { name: 'Selected artifact' }).click();
+    await gui.getByRole('searchbox', { name: 'Search artifacts' }).fill('Aya mark');
+    await gui.getByRole('listbox', { name: 'Artifacts' }).getByRole('option').click();
+    await expect(gui.getByRole('img', { name: 'Aya mark' })).toBeVisible();
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 
@@ -275,8 +474,14 @@ for (const agentSpec of [
 
       await prompt.fill('approval');
       await prompt.press('Enter');
-      await expect(gui.getByText('Approval required')).toBeVisible();
-      await gui.getByRole('button', { name: 'Decline', exact: true }).click();
+      if (agentSpec.agent === 'antigravity') {
+        await expect(turnStatus).toHaveText('Turn failed');
+        await expect(gui.getByRole('alert')).toContainText('headless protocol cannot prompt');
+        await expect(gui.getByText('Approval required')).toHaveCount(0);
+      } else {
+        await expect(gui.getByText('Approval required')).toBeVisible();
+        await gui.getByRole('button', { name: 'Decline', exact: true }).click();
+      }
       await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
 
       await prompt.fill('/goal Deliver multi-agent GUI');
@@ -284,9 +489,16 @@ for (const agentSpec of [
       await expect(gui.locator('.aya-gui-goal')).toContainText('Deliver multi-agent GUI');
       await expect(gui.getByRole('status', { name: 'Goal status' })).toHaveText('Active');
 
+      await prompt.fill('/');
+      await expect(gui.locator('.aya-gui-commands').getByRole('button', { name: '/btw', exact: true })).toHaveCount(agentSpec.agent === 'claude' ? 1 : 0);
+      await prompt.fill('/help'); await prompt.press('Enter');
+      if (agentSpec.agent === 'claude') await expect(gui.locator('.aya-gui-side')).toContainText('/btw');
+      else await expect(gui.locator('.aya-gui-side')).not.toContainText('/btw');
+      await gui.getByRole('button', { name: 'Close side question' }).click();
       await prompt.fill('/btw Quick check');
       await prompt.press('Enter');
-      await expect(gui.locator('.aya-gui-side')).toContainText(agentSpec.sideAnswer);
+      if (agentSpec.agent === 'pi' || agentSpec.agent === 'antigravity') await expect(gui.getByRole('alert')).toContainText(`${agentSpec.label} does not support side questions`);
+      else await expect(gui.locator('.aya-gui-side')).toContainText(agentSpec.sideAnswer);
     } finally {
       await closeAndWait(app);
       rmSync(seed.root, { recursive: true, force: true });

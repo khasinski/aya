@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const readline = require('node:readline');
+if (process.argv.includes('--version')) { process.stdout.write('1.4.0\n'); process.exit(0); }
 
 let busy = false;
 let lastArtifactId = '';
@@ -20,6 +21,7 @@ const complete = (text) => {
     type: 'message_end',
     message: { role: 'assistant', content: [{ type: 'text', text }] },
   });
+  write({ type: 'agent_end' });
   write({ type: 'agent_settled', aborted: false });
   busy = false;
 };
@@ -32,7 +34,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (type === 'get_state') {
     write({
       method: 'fixture/config',
-      params: { args: process.argv.slice(2), cwd: message.cwd },
+      params: { args: process.argv.slice(2), cwd: message.cwd, skipPermissions: process.env.AYA_PI_SKIP_PERMISSIONS },
     });
     write({
       id: message.id,
@@ -77,6 +79,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
 
   if (type === 'set_model') {
+    if (message.modelId === 'unavailable') { write({ id: message.id, type: 'response', command: type, success: false, error: 'Model unavailable' }); return; }
     currentModel = message.modelId || currentModel;
     write({ id: message.id, type: 'response', command: 'set_model', success: true, data: {} });
     return;
@@ -105,25 +108,16 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   }
 
-  if (type === 'side_question') {
-    write({
-      id: message.id,
-      type: 'response',
-      command: 'side_question',
-      success: true,
-      data: { text: 'A separate side answer from Pi' },
-    });
-    return;
-  }
-
   if (type === 'abort') {
     write({ id: message.id, type: 'response', command: 'abort', success: true, data: {} });
+    write({ type: 'agent_end' });
     write({ type: 'agent_settled', aborted: true });
     busy = false;
     return;
   }
 
   if (type === 'prompt') {
+    if (message.message === 'handled-prompt') { write({ id: message.id, type: 'response', command: 'prompt', success: true, data: { disposition: 'handled' } }); return; }
     busy = true;
     const prompt = message.message || '';
     write({

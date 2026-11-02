@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { installArtifactImageMenu } from './gui-artifact-image-menu';
 import * as path from 'node:path';
 import type { GuiArtifact } from '../shared/codex-gui';
 import { isWidgetPreviewUrl } from './gui-artifact-documents';
@@ -16,6 +17,7 @@ export function openArtifactWindow(artifact: GuiArtifact, owner: Electron.WebCon
   }
   const win = createWindow({ width: 1100, height: 800, acceptFirstMouse: true, minWidth: 480, minHeight: 360, title: artifact.title, show: process.env.AYA_E2E_HEADLESS !== '1', backgroundColor: '#10151e', webPreferences: { preload: path.join(__dirname, 'artifact-preview-preload.bundle.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
   previews.set(win.webContents.id, { owner, panel });
+  if (artifact.kind === 'image') installArtifactImageMenu(win.webContents, url => url === artifact.dataUrl ? artifact : undefined);
   const contentsId = win.webContents.id;
   win.once('closed', () => previews.delete(contentsId));
   owner.once('destroyed', () => { if (!win.isDestroyed()) win.close(); });
