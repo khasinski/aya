@@ -41,6 +41,7 @@ for (const [label, act, want] of ROWS) {
     const first = await boot();
     first.__resetAgentStatusForTests?.();
     await act(first);
+    await first.flushAgentStatuses();
     const second = await boot();
     // Read back from disk, a question is marked as asked before the restart (the window says so).
     const marked = Object.fromEntries(Object.entries(want).map(([pane, q]) => [pane, { ...q, restart: "restored" }]));
@@ -56,6 +57,7 @@ test("restart | a damaged file reads as nothing outstanding", async () => {
   const s = await boot();
   assert.deepEqual(s.outstandingWaiting(), {});
   s.recordAgentStatus("lead", "waiting", 1, "a");
+  await s.flushAgentStatuses();
   assert.deepEqual(JSON.parse(readFileSync(join(home, "agent-waiting.json"), "utf8")), { lead: { text: "a", since: 1, by: "agent" } });
 });
 
@@ -64,6 +66,7 @@ test("restart | nothing waiting leaves no file lying about", async () => {
   s.__resetAgentStatusForTests?.();
   s.recordAgentStatus("lead", "waiting", 1, "a");
   s.recordAgentStatus("lead", "clear", 2);
+  await s.flushAgentStatuses();
   assert.equal(existsSync(join(home, "agent-waiting.json")), false);
 });
 

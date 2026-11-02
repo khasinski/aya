@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
@@ -6,6 +6,7 @@ import type { GuiProgress } from '../../shared/gui-progress';
 import type { GuiArtifact, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
 import type { Preset, TerminalState } from '../types';
 import './conversation.css';
+import { ConversationMarkdown } from './ConversationMarkdown';
 import { ArtifactPanel } from './ArtifactPanel';
 import { ipcMessage } from './use-async-action';
 import { guiCommands, guiCapabilities } from '../../shared/gui-commands.cjs';
@@ -19,10 +20,10 @@ interface Activity { id: string; label: string; status: string; output: string }
 interface GoalDetails { objective: string; status: string; reason?: string }
 interface Message { progress?: GuiProgress; id: string; type: string; text: string; delivery?: 'sending' | 'sent' | 'failed' | 'unconfirmed'; title?: string; goal?: GoalDetails | null }
 type ConversationProps = { terminal: TerminalState; preset: Preset; paneStyle?: CSSProperties; hidden?: boolean };
-export function ConversationView(props: ConversationProps) {
+export const ConversationView = memo(function ConversationView(props: ConversationProps) {
   const [generation, setGeneration] = useState(0);
   return <ConversationSession key={`${props.terminal.id}:${generation}`} {...props} onSwitch={() => setGeneration(n => n + 1)} />;
-}
+});
 function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSwitch }: ConversationProps & { onSwitch: () => void }) {
   const api = window.ayaGui;
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
@@ -53,6 +54,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
   const scrollContent = useRef<HTMLDivElement>(null);
   const dispatching = useRef(false);
   const pendingSnapshot = useRef<Record<string, unknown> | null>(null);
+  const lastSnapshotSave = useRef(Date.now());
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const artifactButton = useRef<HTMLButtonElement>(null);
@@ -84,7 +86,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
   const [switching, setSwitching] = useState(false);
   const openHistory = async (query = '') => {
     setHistoryQuery(query); setHistory([]); setHistoryLoading(true);
-    try { setHistory(await invoke('history') as NonNullable<typeof history>); } finally { setHistoryLoading(false); }
+    try { setHistory(await invoke('history', pendingSnapshot.current) as NonNullable<typeof history>); } finally { setHistoryLoading(false); }
   };
   const switchConversation = async (conversationId?: string) => {
     if (busy || requests.length || dispatching.current) throw Error('Stop the current turn and resolve approvals before switching conversations');
@@ -122,6 +124,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     if (!api || !pendingSnapshot.current) return;
     const revision = snapshotRevision.current, attempt = ++saveAttempt.current;
     setSaveStatus('saving');
+    lastSnapshotSave.current = Date.now();
     try {
       await api.invoke(terminal.id, 'persist', pendingSnapshot.current);
       if (viewMounted.current && attempt === saveAttempt.current && revision === snapshotRevision.current) { setSaveStatus('saved'); setSaveError(''); }
@@ -144,6 +147,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     } catch (e) { fail(e); }
     finally { setConnecting(false); }
   };
+  const loadConversationImage = useCallback((path: string) => api ? api.invoke(terminal.id, 'image', path) : Promise.reject(Error('Desktop app required')), [api, terminal.id]);
   const loadArtifactPreview = useCallback((id: string, revision?: number) => api ? api.invoke(terminal.id, 'artifact-preview', { id, revision }) : Promise.reject(Error('Desktop app required')), [api, terminal.id]);
   const availableCommands = guiCommands(guiAgent);
   const capabilities = guiCapabilities(guiAgent);
@@ -227,8 +231,9 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     pendingSnapshot.current = { importNotice, messages, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan };
     snapshotRevision.current++;
     setSaveStatus(old => old === 'error' ? old : 'saving');
-    if (persistTimer.current) return;
-    persistTimer.current = setTimeout(() => { persistTimer.current = null; void persistLatest(); }, 250);
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    const delay = busy ? Math.min(1500, Math.max(0, 5000 - (Date.now() - lastSnapshotSave.current))) : 250;
+    persistTimer.current = setTimeout(() => { persistTimer.current = null; void persistLatest(); }, delay);
   }, [restored, api, terminal.id, persistLatest, importNotice, messages, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan]);
   useEffect(() => {
     const flush = () => { if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; if (pendingSnapshot.current && api) void api.invoke(terminal.id, 'close', pendingSnapshot.current).catch(() => {}); };
@@ -242,7 +247,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       setShowJump(false);
     }
   }, []);
-  useLayoutEffect(() => { if (!hidden) scrollToLatest(); });
+  useLayoutEffect(() => { if (!hidden) scrollToLatest(); }, [hidden, messages, activities, side, requests, plan, scrollToLatest]);
   useEffect(() => {
     const observer = new ResizeObserver(scrollToLatest);
     if (scrollViewport.current) observer.observe(scrollViewport.current);
@@ -377,7 +382,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     {goalDetails?.status === 'blocked' && <div className="aya-gui-goal-reason" aria-label="Goal block reason"><strong>Why blocked</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{goalDetails.reason || 'The agent did not provide a reason. Ask it what is blocking this goal.'}</ReactMarkdown></div>}
     <div className="aya-gui-body"><main><div className="aya-gui-scroll-area"><div ref={scrollViewport} className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
-      {messages.map(m => m.type === 'progress' && m.progress ? m.progress.status === 'running' ? null : <TaskProgress key={m.id} progress={m.progress} /> : (m.type === 'goal' || m.type === 'settings') ? <article className={`aya-gui-goal-message${m.type === 'settings' ? ' aya-gui-settings-message' : ''}`} key={m.id} aria-label={m.title}><span aria-hidden="true">{m.type === 'settings' ? '⚙' : '◎'}</span><div><strong>{m.title}</strong><p>{m.text}</p>{m.goal?.status === 'blocked' && <p className="aya-gui-goal-history-reason">{m.goal.reason || 'The agent did not provide a reason. Ask it what is blocking this goal.'}</p>}</div></article> : <article key={m.id} className={m.type}><small>{m.type === 'user' ? `YOU${m.delivery === 'sending' ? ' · Sending…' : m.delivery === 'failed' ? ' · Not sent' : m.delivery === 'unconfirmed' ? ' · Delivery unconfirmed' : ''}` : agentBadge}</small><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: ({ src, alt }) => <WorkspaceImage path={String(src || '')} alt={alt || 'Image'} load={path => invoke('image', path)} />, a: ({ children }) => <span>{children}</span> }}>{m.text}</ReactMarkdown></article>)}
+      {messages.map(m => m.type === 'progress' && m.progress ? m.progress.status === 'running' ? null : <TaskProgress key={m.id} progress={m.progress} /> : (m.type === 'goal' || m.type === 'settings') ? <article className={`aya-gui-goal-message${m.type === 'settings' ? ' aya-gui-settings-message' : ''}`} key={m.id} aria-label={m.title}><span aria-hidden="true">{m.type === 'settings' ? '⚙' : '◎'}</span><div><strong>{m.title}</strong><p>{m.text}</p>{m.goal?.status === 'blocked' && <p className="aya-gui-goal-history-reason">{m.goal.reason || 'The agent did not provide a reason. Ask it what is blocking this goal.'}</p>}</div></article> : <article key={m.id} className={m.type}><small>{m.type === 'user' ? `YOU${m.delivery === 'sending' ? ' · Sending…' : m.delivery === 'failed' ? ' · Not sent' : m.delivery === 'unconfirmed' ? ' · Delivery unconfirmed' : ''}` : agentBadge}</small><ConversationMarkdown text={m.text} loadImage={loadConversationImage} /></article>)}
       {requests.map(request => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
       {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</details>}
       {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
@@ -412,12 +417,6 @@ function TaskProgress({ progress, compact = false }: { progress: GuiProgress; co
     <div className="aya-task-progress-track" role="progressbar" aria-label={progress.label} aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.current} aria-valuetext={`${progress.current} of ${progress.total} · ${label}`}><span style={{ width: `${percent}%` }} /></div>
     {progress.detail && <p>{progress.detail}</p>}
   </div>;
-}
-function WorkspaceImage({ path, alt, load }: { path: string; alt: string; load: (path: string) => Promise<unknown> }) {
-  const [src, setSrc] = useState(''); const [error, setError] = useState(''); const [attempt, setAttempt] = useState(0);
-  useEffect(() => { let active = true; setError(''); void load(path).then(value => { if (active) setSrc(String(value)); }, e => { if (active) setError(String(e)); }); return () => { active = false; }; /* stable path identifies image */ // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, attempt]);
-  return src ? <img src={src} alt={alt} /> : <span role={error ? 'alert' : 'status'}>{error ? `Cannot display ${path}: ${error}` : 'Loading image…'}{error && <button onClick={() => setAttempt(attempt + 1)}>Retry</button>}</span>;
 }
 function GuiRequest({ request, agentLabel, codex, respond }: { request: GuiEvent; agentLabel: string; codex: boolean; respond: (value: unknown) => Promise<unknown> }) {
   const decisions: GuiApprovalDecision[] = codex && Array.isArray(request.params.availableDecisions)

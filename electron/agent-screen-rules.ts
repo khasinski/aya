@@ -60,9 +60,12 @@ export function screenRuleExcerpt(text: string): string {
 export function matchingScreenRule(rows: readonly string[], agent: AgentKind | undefined, kind: RuleKind): ScreenRuleMatch | null {
   const state = builtinScreenRules.get();
   if (!state.available) return null;
+  const regions = new Map<ScreenRegion, string>();
   for (const rule of allRules(agent)) {
     if (rule.kind !== kind) continue;
-    const match = rule.pattern.exec(regionText(rows, rule.region));
+    let region = regions.get(rule.region);
+    if (region === undefined) { region = regionText(rows, rule.region); regions.set(rule.region, region); }
+    const match = rule.pattern.exec(region);
     if (match) return { id: rule.id, kind, source: rule.source, version: state.rules.version, digest: state.rules.digest, region: rule.region, excerpt: screenRuleExcerpt(match[0]) };
   }
   return null;

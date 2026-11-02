@@ -24,7 +24,7 @@
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p electron && vite build -c vite.preload.config.mts --logLevel warn && node scripts/build-macos-window-hack.cjs && npm run build:pty-owner",
+    "build:electron": "node scripts/clean-electron-output.cjs && tsc -p electron && vite build -c vite.preload.config.mts --logLevel warn && node scripts/build-macos-window-hack.cjs && npm run build:pty-owner",
     "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --import ./tests/helpers/preload-guard.mjs --test \"tests/**/*.test.mjs\"",
@@ -115,6 +115,8 @@
       "bin/**",
       "dist/**",
       "dist-electron/**",
+      "!dist-electron/**/*.d.ts",
+      "!dist-electron/**/*.tsbuildinfo",
       "shared/*.cjs",
       "package.json"
     ],

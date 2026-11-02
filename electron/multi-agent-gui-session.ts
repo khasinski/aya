@@ -1505,7 +1505,8 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     if (this.busy) {
       const pid = this.child?.pid;
       if (!pid) throw Error('Antigravity is disconnected');
-      process.kill(-pid, 'SIGINT');
+      try { process.kill(-pid, 'SIGINT'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
     }
   }
 

@@ -1,3 +1,4 @@
+import { isSplitNode as commonIsSplitNode } from "../shared/split-node.cjs";
 // Main-process view of the pane layout tree.
 //
 // The renderer owns the layout ALGEBRA (src/split-tree.ts: splitting, resizing,
@@ -30,21 +31,7 @@ export const MAX_SPLIT_LEAVES = MAX_SPLIT_ROWS * MAX_SPLIT_COLS;
 // A fully-degenerate tree of MAX_SPLIT_LEAVES leaves is one level per extra leaf.
 export const MAX_SPLIT_DEPTH = MAX_SPLIT_LEAVES - 1;
 
-export function isSplitNode(value: unknown, depth = 0): value is SplitNode {
-  if (depth > MAX_SPLIT_DEPTH) return false;
-  if (typeof value !== "object" || value === null) return false;
-  const n = value as Record<string, unknown>;
-  if (typeof n.id !== "string" || !n.id) return false;
-  if (n.kind === "leaf") {
-    return n.terminalId === null || typeof n.terminalId === "string";
-  }
-  if (n.kind !== "split") return false;
-  if (n.direction !== "row" && n.direction !== "column") return false;
-  if (typeof n.ratio !== "number" || !Number.isFinite(n.ratio) || n.ratio <= 0 || n.ratio >= 1) {
-    return false;
-  }
-  return isSplitNode(n.first, depth + 1) && isSplitNode(n.second, depth + 1);
-}
+export function isSplitNode(value: unknown, depth = 0): value is SplitNode { return commonIsSplitNode(value, depth); }
 
 export function splitTreeLeafCount(node: SplitNode): number {
   return node.kind === "leaf"

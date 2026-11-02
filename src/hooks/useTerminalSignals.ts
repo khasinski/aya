@@ -4,6 +4,7 @@ import {
   useState,
   type MutableRefObject,
 } from "react";
+import { pollVisible } from "../poll-visible";
 import type { ProjectConfig, TerminalState } from "../types";
 
 const ACTIVITY_TICK_INTERVAL_MS = 800;
@@ -16,10 +17,10 @@ const EMPTY_ACTIVE_IDS: ReadonlySet<string> = new Set<string>();
 export function useDockBadge(
   terminals: Record<string, TerminalState>,
 ): void {
+  const waitingCount = Object.values(terminals).filter((t) => t.bell).length;
   useEffect(() => {
-    const waitingCount = Object.values(terminals).filter((t) => t.bell).length;
     void window.aya.setDockBadge(waitingCount > 0 ? String(waitingCount) : "");
-  }, [terminals]);
+  }, [waitingCount]);
 }
 
 interface NotificationOptions {
@@ -82,6 +83,7 @@ export function useRecentTerminalActivity(): RecentActivity {
       const ids: string[] = [];
       for (const [tid, ts] of Object.entries(lastActivityRef.current)) {
         if (now - ts < ACTIVITY_WINDOW_MS) ids.push(tid);
+        else delete lastActivityRef.current[tid];
       }
       ids.sort();
       const key = ids.join("\n");
@@ -89,8 +91,7 @@ export function useRecentTerminalActivity(): RecentActivity {
       keyRef.current = key;
       setRecentlyActiveIds(ids.length === 0 ? EMPTY_ACTIVE_IDS : new Set(ids));
     };
-    const id = setInterval(recompute, ACTIVITY_TICK_INTERVAL_MS);
-    return () => clearInterval(id);
+    return pollVisible(recompute, ACTIVITY_TICK_INTERVAL_MS);
   }, []);
 
   return { lastActivityRef, recentlyActiveIds };

@@ -75,3 +75,12 @@ test('cached partial files keep their missing-accounting warning on subsequent s
     assert.deepEqual(cached.rows, first.rows);
   } finally { await rm(home, { recursive: true, force: true }); }
 });
+
+
+test('large individual usage logs retain recent events within a bound and report truncation', async () => {
+  const { UsageLogParser } = await import('../dist-electron/usage-history.js');
+  const parser = new UsageLogParser('claude', 3);
+  for (let index = 0; index < 5; index++) parser.line(JSON.stringify({ type: 'assistant', timestamp: '2026-11-02T10:00:00Z', message: { id: `event-${index}`, model: 'test', usage: { input_tokens: 1, output_tokens: 1 } } }));
+  assert.deepEqual([...parser.events.keys()], ['event-2', 'event-3', 'event-4']);
+  assert.equal(parser.truncated, true);
+});

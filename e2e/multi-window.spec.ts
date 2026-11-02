@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, expectHeadlessUiEvents } from "./fixtures";
 
 // Multi-window (P1+P2): tearing a project tab out into a new window via the
 // tab context menu. The moved project must appear in the second window with
@@ -10,7 +10,9 @@ test.use({ seedOptions: { split: false } });
 test("Move to New Window tears the project out; terminals survive", async ({
   window,
   app,
+  seeded,
 }) => {
+  expectHeadlessUiEvents(seeded, [{ kind: "window.focus", detail: "Aya" }]);
   // Seeded: one project "e2e" with one shell tab in window 1.
   const tab = window.locator(".aya-tab");
   await expect(tab).toHaveCount(1);
@@ -44,7 +46,9 @@ test("Move to New Window tears the project out; terminals survive", async ({
 test("round-trip: detach, reattach, no phantom window target remains", async ({
   window,
   app,
+  seeded,
 }) => {
+  expectHeadlessUiEvents(seeded, [{ kind: "window.focus", detail: "Aya" }]);
   // Detach the (only) project into a new window; the source window closes.
   await window.locator(".aya-tab").first().click({ button: "right" });
   const win2Promise = app.waitForEvent("window");

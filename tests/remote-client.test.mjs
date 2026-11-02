@@ -77,6 +77,7 @@ function mkFakeSsh() {
     sshPath,
     // ssh -- <target> <command>: the "--" ends ssh's options, so a target can never read as one.
     `#!/bin/sh
+while [ "$1" = "-o" ]; do shift 2; done
 [ "$1" = "--" ] && shift
 shift
 exec sh -c "$1"

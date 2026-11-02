@@ -351,6 +351,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         splitLayout: undefined,
         ...(splitTree ? { splitTree } : { splitTree: undefined }),
       };
+      projectsRef.current = projectsRef.current.map(p => p.slug === slug ? updated : p);
       setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       return window.aya.updateProject(updated);
@@ -377,6 +378,7 @@ export function useProjectSessionPersistence(options: ProjectSessionPersistenceO
   // so it needs its own persist trigger - the others (launch, rename, close) may
   // never fire again before the app quits, and an unsaved one means the next
   // restore may fall back to "latest session".
+  const savedSessionSignatures = useRef(new Map<string, string>());
   const sessionIdSignature = Object.values(terminals)
     .filter((t) => t.sessionId || t.sharedDir)
     .map((t) => `${t.id}:${t.sessionId}:${t.sharedDir}`)
@@ -390,7 +392,13 @@ export function useProjectSessionPersistence(options: ProjectSessionPersistenceO
         .filter((t) => t.sessionId || t.sharedDir)
         .map((t) => t.projectSlug),
     );
-    for (const slug of slugs) persistProject(slug, terminalsRef.current);
+    for (const slug of savedSessionSignatures.current.keys()) if (!slugs.has(slug)) savedSessionSignatures.current.delete(slug);
+    for (const slug of slugs) {
+      const signature = Object.values(terminalsRef.current).filter(t => t.projectSlug === slug).map(t => `${t.id}:${t.sessionId || ''}:${t.sharedDir === true}`).sort().join('\n');
+      if (savedSessionSignatures.current.get(slug) === signature) continue;
+      savedSessionSignatures.current.set(slug, signature);
+      persistProject(slug, terminalsRef.current);
+    }
   }, [sessionIdSignature, didBootstrap, persistProject]);
 
 }

@@ -33,9 +33,8 @@ test("writes the target file with the given contents", async () => {
     await writeFileAtomic(target, '{"hello":"world"}');
     const contents = await readFile(target, "utf8");
     assert.equal(contents, '{"hello":"world"}');
-    // A successful write must record the hash so the config watcher can tell
-    // this save apart from an edit made outside the app (see config-echo.ts).
-    assert.equal(isEcho(target, '{"hello":"world"}'), true);
+    // Unwatched files must not accumulate fingerprints in the configuration cache.
+    assert.equal(isEcho(target, '{"hello":"world"}'), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

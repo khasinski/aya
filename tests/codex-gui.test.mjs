@@ -447,6 +447,7 @@ for (const unsafeMode of [undefined, false, true]) {
       const events = [], session = new AntigravityGuiSession(e => events.push(e), process.execPath, [agyFixture]);
       t.after(() => session.close());
       await session.connect(process.cwd(), '', undefined, resumeThreadId, unsafeMode);
+      await wait(() => events.some(e => e.method === 'fixture/config'));
       const config = events.find(e => e.method === 'fixture/config').params;
       assert.equal(config.args.includes('--dangerously-skip-permissions'), unsafeMode === true);
     });

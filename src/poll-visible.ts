@@ -8,16 +8,17 @@ export const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
 // Returns a cleanup that stops the interval and removes the listener.
 export function pollVisible(refresh: () => void, intervalMs: number): () => void {
   refresh();
-  const id = window.setInterval(() => {
-    if (typeof document === "undefined" || !document.hidden) refresh();
-  }, intervalMs);
-  const onVisible = () => {
-    if (typeof document === "undefined" || !document.hidden) refresh();
-  };
   const doc = typeof document !== "undefined" ? document : undefined;
+  let timer: number | null = null;
+  const updateTimer = () => {
+    if (doc?.hidden) { if (timer !== null) window.clearInterval(timer); timer = null; }
+    else if (timer === null) timer = window.setInterval(refresh, intervalMs);
+  };
+  const onVisible = () => { updateTimer(); if (!doc?.hidden) refresh(); };
+  updateTimer();
   doc?.addEventListener?.("visibilitychange", onVisible);
   return () => {
-    window.clearInterval(id);
+    if (timer !== null) window.clearInterval(timer);
     doc?.removeEventListener?.("visibilitychange", onVisible);
   };
 }

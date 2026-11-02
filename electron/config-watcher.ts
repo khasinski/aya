@@ -13,7 +13,6 @@
 import { mkdirSync, watch, type FSWatcher } from "node:fs";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type { BrowserWindow } from "electron";
 import { forgetWrite, isEcho, recordWrite } from "./config-echo";
 import {
   isProjectConfigFilename,
@@ -37,7 +36,17 @@ type ObservedContent = string | typeof MISSING;
 /** Start watching AYA_HOME (and AYA_HOME/projects) and send "config:changed"
  *  to the renderer when a file is edited from outside the app. Returns a
  *  function that stops the watchers and clears any pending timers. */
-export function startConfigWatcher(win: BrowserWindow): () => void {
+interface ConfigWindow { isDestroyed(): boolean; webContents: { send(channel: string, value: { slice: ConfigSlice }): void } }
+const subscribers = new Set<ConfigWindow>();
+let stopShared: (() => void) | undefined;
+export function startConfigWatcher(win: ConfigWindow): () => void {
+  subscribers.add(win);
+  stopShared ??= watchConfig(slice => {
+    for (const window of subscribers) if (!window.isDestroyed()) window.webContents.send("config:changed", { slice });
+  });
+  return () => { subscribers.delete(win); if (!subscribers.size) { stopShared?.(); stopShared = undefined; } };
+}
+function watchConfig(send: (slice: ConfigSlice) => void): () => void {
   // Keyed by debounce identity: the slice name for top-level files, the
   // individual filename for project configs (so edits to two different
   // projects don't swallow each other's reload).
@@ -47,10 +56,10 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
   let pollTimer: NodeJS.Timeout | null = null;
   // The first poll only learns what is on disk; a file first seen by a later one is new, made after the start.
   let baselined = false;
+  let stopped = false;
+  let polling = false;
+  const signatures = new Map<string, string>();
 
-  const send = (slice: ConfigSlice) => {
-    if (!win.isDestroyed()) win.webContents.send("config:changed", { slice });
-  };
 
   // A reported delete: the renderer drops the project, so bytes restored later must reload it, even the app's own.
   const sendDeleted = (slice: ConfigSlice, filePath: string) => {
@@ -73,7 +82,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
       if (emitWhenMissing) sendDeleted(slice, filePath);
       return;
     }
-    if (isEcho(filePath, content)) return;
+    if (stopped || isEcho(filePath, content)) return;
     // Keep track what values the renderer was last given to distinguish in-app and manual edits.
     recordWrite(filePath, content);
     observed.set(filePath, content);
@@ -121,7 +130,12 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
     filePath: string,
     emitWhenMissing: boolean,
   ) => {
+    let signature = 'missing';
+    try { const st = await fs.stat(filePath); signature = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`; } catch { /* absent */ }
+    if (signatures.get(filePath) === signature) return;
+    signatures.set(filePath, signature);
     const content = await readObserved(filePath);
+    if (stopped) return;
     const known = observed.has(filePath);
     const before = observed.get(filePath);
     observed.set(filePath, content);
@@ -131,7 +145,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
       if (emitWhenMissing) sendDeleted(slice, filePath);
       return;
     }
-    if (isEcho(filePath, content)) return;
+    if (stopped || isEcho(filePath, content)) return;
     recordWrite(filePath, content);
     send(slice);
   };
@@ -175,7 +189,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
     const tick = () => {
       pollTimer = setTimeout(tick, WATCH_POLL_MS);
       pollTimer.unref();
-      void pollOnce();
+      if (!polling) { polling = true; void pollOnce().finally(() => { polling = false; }); }
     };
     void pollOnce().then(() => {
       baselined = true;
@@ -200,6 +214,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
   }
 
   return () => {
+    stopped = true;
     for (const w of watchers) w.close();
     for (const timer of timers.values()) clearTimeout(timer);
     if (pollTimer) clearTimeout(pollTimer);

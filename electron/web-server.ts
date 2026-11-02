@@ -31,7 +31,7 @@ import * as path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { listProjectState, saveProjectState } from "./config";
 import { validateProjectCollectionState } from "./validation";
-import { isLoopbackHost, verifyWebPassword, type WebConfig } from "./web-config";
+import { isLoopbackHost, verifyWebPasswordAsync, type WebConfig } from "./web-config";
 import {
   hasCapturedIpcHandler,
   invokeCapturedIpcHandler,
@@ -342,6 +342,7 @@ export async function startWebServer(
   options: WebServerOptions,
 ): Promise<WebServerHandle> {
   const sessions = new Map<string, Session>();
+  let pendingPasswordChecks = 0;
   const loginFailures = new Map<string, { count: number; resetAt: number }>();
   const clients = new Set<WebSocket>();
   const webSenderIds = new WeakMap<WebSocket, number>();
@@ -410,8 +411,14 @@ export async function startWebServer(
         : {};
     const user = typeof creds.user === "string" ? creds.user : "";
     const password = typeof creds.password === "string" ? creds.password : "";
-    const config = options.getConfig();
-    const ok = user === config.user && verifyWebPassword(config, password);
+    const config = { ...options.getConfig() };
+    if (pendingPasswordChecks >= 4) { sendJson(res, 429, { error: "too_many_attempts" }); return; }
+    let ok = false;
+    pendingPasswordChecks++;
+    try { ok = user === config.user && await verifyWebPasswordAsync(config, password); }
+    finally { pendingPasswordChecks--; }
+    const current = options.getConfig();
+    ok &&= current.user === config.user && current.passwordHash === config.passwordHash && current.passwordSalt === config.passwordSalt;
     if (!ok) {
       recordFailure(address);
       sendJson(res, 401, { error: "invalid_credentials" });

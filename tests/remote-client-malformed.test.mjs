@@ -22,6 +22,7 @@ writeExecutable(
   join(root, "ssh"),
   [
     "#!/bin/sh",
+    'while [ "$1" = "-o" ]; do shift 2; done',
     `echo run >> '${ran}'`,
     'if [ -n "$FAKE_SSH_ANSWER" ]; then',
     '  id=$(printf "%s" "$3" | grep -oE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" | head -1)',

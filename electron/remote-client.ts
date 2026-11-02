@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type {
@@ -14,7 +14,7 @@ import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
 import { REMOTE_MAX_FRAME_BYTES, REMOTE_PROTOCOL_VERSION, REMOTE_TERMINAL_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 import { shellQuote } from "./pane-command";
 import { socketPathLimit } from "./socket-path";
-import { isSshTarget, requireSshTarget, sshArgs } from "./ssh";
+import { isSshTarget, requireSshTarget, sshArgs, runSsh } from "./ssh";
 
 export interface RemoteTimeouts {
   bridgeMs: number;
@@ -505,15 +505,12 @@ function runRemoteRequest(
     // command error that still carried a valid snapshot - e.g. an old remote
     // Aya rejecting "project already exists" (see createRemoteProjectOnHost).
     let allProjects: ProjectConfig[] = [];
-    execFile(
-      "ssh",
-      ["--", target, remoteCommand],
-      {
-        encoding: "utf8",
-        timeout: timeouts.sshKillMs,
-        maxBuffer: REMOTE_BRIDGE_MAX_BUFFER_BYTES,
-      },
-      (err, stdout, stderr) => {
+    void runSsh(target, [remoteCommand], { deadlineMs: timeouts.sshKillMs, maxOutputBytes: REMOTE_BRIDGE_MAX_BUFFER_BYTES, failOnOutputLimit: true }).then(result => {
+      const { stdout, stderr } = result;
+      if (result.spawnError?.includes("maxBuffer")) { reject(new Error(result.spawnError)); return; }
+      const err = result.timedOut ? Object.assign(new Error('SSH timed out'), { killed: true })
+        : result.spawnError ? new Error(result.spawnError)
+        : result.code !== 0 ? Object.assign(new Error('SSH failed'), { code: result.code }) : null;
         // The remote side's output is untrusted: whatever in it throws (a host that is not a host, a null line, a
         // snapshot without its fields) rejects this request. Uncaught here, it was an exception in the main process
         // and a request that never settled.
@@ -610,7 +607,7 @@ function runRemoteRequest(
             );
             return;
           }
-          if (err?.killed) {
+          if (result.timedOut) {
             reject(
               new Error(`ssh ${target} did not finish within ${seconds(timeouts.sshKillMs)}.`),
             );
@@ -635,8 +632,7 @@ function runRemoteRequest(
         } catch (bad) {
           reject(bad instanceof Error ? bad : new Error(String(bad)));
         }
-      },
-    );
+    }).catch(reject);
   });
 }
 

@@ -119,7 +119,8 @@ async function world(opts = {}) {
   };
   const start = (task) => w.runner.start("game", "ux-review", task);
   const live = () => teamLiveness(store, ["tester", "implementer"], w.deps.holdReason, { cadence: opts.cadence === false ? null : 1, lead: true }, w.now);
-  const events = () => {
+  const events = async () => {
+    await debug.flushDebugLogs();
     const file = join(store.dir, "debug.jsonl");
     return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
   };
@@ -241,7 +242,7 @@ const SCENARIOS = [
 for (const [name, opts, run, expected] of SCENARIOS) {
   debugTest(`debug on | ${name}: ${expected.map(([e]) => e).join(", ")}`, opts, async (x) => {
     await run(x);
-    const events = x.events();
+    const events = (await x.events());
     for (const [event, fields] of expected) assert.ok(has(events, event, fields), `${event} ${JSON.stringify(fields, (_k, v) => (v instanceof RegExp ? String(v) : v))} in:\n${events.map((e) => JSON.stringify(e)).join("\n")}`);
     for (const e of events) assert.match(e.time, /^\d{4}-\d\d-\d\dT/);
   });
@@ -250,7 +251,7 @@ for (const [name, opts, run, expected] of SCENARIOS) {
 debugTest("debug on | liveness is written when it changes, not at every look", { cadence: false }, async (x) => {
   await x.start();
   for (let i = 0; i < 3; i++) await x.live();
-  assert.equal(x.events().filter((e) => e.event === "liveness").length, 1);
+  assert.equal((await x.events()).filter((e) => e.event === "liveness").length, 1);
 });
 
 test("debug on | a socket answer to aya team: command, caller, result or refusal", async () => {
@@ -262,7 +263,7 @@ test("debug on | a socket answer to aya team: command, caller, result or refusal
     assert.equal((await rpc(sock, { type: "team-whoami", caller: { terminalId: "pane-t" } })).ok, true);
     assert.equal((await rpc(sock, { type: "team-send", role: "nobody", text: "hi", caller: { terminalId: "pane-t" } })).ok, false);
     await rpc(sock, { type: "team-start", team: "ux-review", projectSlug: "game", caller: {} });
-    const events = x.events();
+    const events = (await x.events());
     assert.ok(has(events, "socket", { command: "team-start", caller: null, ok: false }), JSON.stringify(events));
     assert.ok(has(events, "socket", { command: "team-whoami", caller: "pane-t", role: "tester", ok: true }), JSON.stringify(events));
     assert.ok(has(events, "socket", { command: "team-send", caller: "pane-t", to: "nobody", ok: false, error: /does not send to nobody/ }), JSON.stringify(events));
@@ -279,7 +280,7 @@ debugTest("debug on | a pane's launch verdict settles: unknown -> reached, once"
   await panes.called({ terminalId: "pane-i", pid: 200 });
   await panes.called({ terminalId: "pane-i", pid: 200 });
   await logged;
-  const launches = x.events().filter((e) => e.event === "launch");
+  const launches = (await x.events()).filter((e) => e.event === "launch");
   assert.deepEqual(launches.map(({ pane, role, verdict }) => ({ pane, role, verdict })), [{ pane: "pane-i", role: "implementer", verdict: "reached" }]);
 });
 
@@ -287,7 +288,7 @@ debugTest("debug on | a message's text is cut to 80 characters; no env or tokens
   await x.start();
   const long = `secret-start ${"x".repeat(200)}`;
   await handleTeamRequest({ type: "team-send", role: "implementer", text: long }, "pane-t", x.w.deps);
-  const owed = x.events().find((e) => e.event === "owed" && e.change === "added");
+  const owed = (await x.events()).find((e) => e.event === "owed" && e.change === "added");
   assert.equal(debug.MESSAGE_CHARS, 80);
   assert.equal(owed.text, `${long.slice(0, debug.MESSAGE_CHARS)}...`);
   assert.ok(!readFileSync(join(x.store.dir, "debug.jsonl"), "utf8").includes("x".repeat(debug.MESSAGE_CHARS + 1)));
@@ -324,7 +325,7 @@ worldTest("debug on and off without a restart: aya debug on|off is read on its c
   debug.debugLog(x.store, "probe", { n: 2 });
   await setDebug(true);
   debug.debugLog(x.store, "probe", { n: 3 });
-  assert.deepEqual(x.events().filter((e) => e.event === "probe").map((e) => e.n), [1, 3]);
+  assert.deepEqual((await x.events()).filter((e) => e.event === "probe").map((e) => e.n), [1, 3]);
 });
 
 worldTest("debug off takes effect before another synchronous log after the atomic switch", async (x) => {
@@ -335,7 +336,7 @@ worldTest("debug off takes effect before another synchronous log after the atomi
   writeFileSync(temporary, '{"on":false}\n');
   renameSync(temporary, file);
   debug.debugLog(x.store, "probe", { n: 2 });
-  assert.deepEqual(x.events().filter((e) => e.event === "probe").map((e) => e.n), [1]);
+  assert.deepEqual((await x.events()).filter((e) => e.event === "probe").map((e) => e.n), [1]);
 });
 
 worldTest("debug on stats an unchanged switch without rereading its contents and off performs no probes", async () => {
@@ -457,15 +458,16 @@ debugTest("debug on | debug.jsonl rotates past 5 MB: the older half is debug.1.j
   const file = join(x.store.dir, "debug.jsonl");
   writeFileSync(file, `${"y".repeat(debug.DEBUG_LOG_MAX_BYTES - 10)}\n`);
   debug.debugLog(x.store, "probe", { n: 1 });
+  await debug.flushDebugLogs();
   assert.equal(statSync(join(x.store.dir, "debug.1.jsonl")).size, debug.DEBUG_LOG_MAX_BYTES - 9);
-  assert.deepEqual(x.events().map((e) => e.n), [1]);
+  assert.deepEqual((await x.events()).map((e) => e.n), [1]);
 });
 
 debugTest("debug on | Aya's own strings (a hold reason) are cut at 300 characters, not at a message's 80", async (x) => {
   assert.equal(debug.OTHER_CHARS, 300);
   const reason = "r".repeat(debug.OTHER_CHARS + 50);
   debug.debugLog(x.store, "probe", { reason, text: reason });
-  const [probe] = x.events().filter((e) => e.event === "probe");
+  const [probe] = (await x.events()).filter((e) => e.event === "probe");
   assert.equal(probe.reason, `${reason.slice(0, debug.OTHER_CHARS)}...`);
   assert.equal(probe.text, `${reason.slice(0, debug.MESSAGE_CHARS)}...`);
 });
@@ -481,7 +483,7 @@ test("debug on | a socket answer from a pane that names its team is logged once"
   const x = await world();
   try {
     await debugAnswer(x.w.deps, { type: "team-start", team: "ux-review", cwd: x.t.project.directory }, { terminalId: "pane-t" }, Promise.resolve({ output: "started" }));
-    assert.equal(x.events().filter((e) => e.event === "socket").length, 1);
+    assert.equal((await x.events()).filter((e) => e.event === "socket").length, 1);
   } finally {
     x.cleanup();
   }
@@ -492,7 +494,7 @@ test("debug on | a state is written when it changes for its pane: another pane's
   const x = await world();
   try {
     for (const pane of ["pane-t", "pane-i", "pane-t"]) debug.debugLog(x.store, "launch", { pane, verdict: "unknown" });
-    assert.deepEqual(x.events().filter((e) => e.event === "launch").map((e) => e.pane), ["pane-t", "pane-i"]);
+    assert.deepEqual((await x.events()).filter((e) => e.event === "launch").map((e) => e.pane), ["pane-t", "pane-i"]);
   } finally {
     x.cleanup();
   }
@@ -504,7 +506,7 @@ test("debug on | one line longer than the cap goes into an empty debug.jsonl, no
   try {
     const many = Array.from({ length: Math.ceil(debug.DEBUG_LOG_MAX_BYTES / 300) + 1 }, () => "z".repeat(300));
     debug.debugLog(x.store, "probe", { many });
-    assert.equal(x.events().filter((e) => e.event === "probe").length, 1);
+    assert.equal((await x.events()).filter((e) => e.event === "probe").length, 1);
   } finally {
     x.cleanup();
   }

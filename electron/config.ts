@@ -175,12 +175,17 @@ export function normalizeProjectState(
   };
 }
 
+let projectStateCache: { signature: string; value: ProjectCollectionState } | null = null;
 export async function listProjectState(): Promise<ProjectCollectionState> {
   try {
+    const info = await fs.stat(PROJECTS_STATE_FILE);
+    const signature = `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    if (projectStateCache?.signature === signature) return structuredClone(projectStateCache.value);
     const raw = await fs.readFile(PROJECTS_STATE_FILE, "utf-8");
     const parsed = normalizeProjectState(JSON.parse(raw));
-    if (parsed) return parsed;
+    if (parsed) { projectStateCache = { signature, value: parsed }; return structuredClone(parsed); }
   } catch {
+    projectStateCache = null;
     // Missing or malformed new state falls back to legacy files.
   }
 
@@ -202,6 +207,7 @@ export async function listProjectState(): Promise<ProjectCollectionState> {
 export async function saveProjectState(
   state: ProjectCollectionState,
 ): Promise<void> {
+  projectStateCache = null;
   // Persist through the SAME normalizer the loader uses, so read and write can
   // never diverge: every field the schema knows about is round-tripped, and no
   // future field can be silently dropped by a hand-maintained pick list (that
@@ -222,6 +228,7 @@ export async function saveProjectState(
   );
 }
 
+const projectListCache = new Map<string, { signature: string; project: ProjectConfig }>();
 export async function listProjects(): Promise<ProjectConfig[]> {
   let entries: string[];
   try {
@@ -231,11 +238,18 @@ export async function listProjects(): Promise<ProjectConfig[]> {
     throw err;
   }
   const out: ProjectConfig[] = [];
+  const paths = new Set(entries.map(file => path.join(PROJECTS_DIR, file)));
+  for (const key of projectListCache.keys()) if (!paths.has(key)) projectListCache.delete(key);
   for (const file of entries.sort()) {
     if (!file.endsWith(".json")) continue;
     const slug = file.slice(0, -5);
     try {
-      const raw = await fs.readFile(path.join(PROJECTS_DIR, file), "utf-8");
+      const filePath = path.join(PROJECTS_DIR, file);
+      const stat = await fs.stat(filePath);
+      const signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+      const cached = projectListCache.get(filePath);
+      if (cached?.signature === signature) { out.push(structuredClone(cached.project)); continue; }
+      const raw = await fs.readFile(filePath, "utf-8");
       const data = JSON.parse(raw);
       if (typeof data.name !== "string" || typeof data.directory !== "string") {
         continue;
@@ -263,6 +277,8 @@ export async function listProjects(): Promise<ProjectConfig[]> {
         ...(splitTree ? { splitTree } : splitLayout ? { splitLayout } : {}),
         ...(remote ? { remote } : {}),
       });
+      projectListCache.set(filePath, { signature, project: structuredClone(out[out.length - 1]) });
+      if (projectListCache.size > 512) projectListCache.delete(projectListCache.keys().next().value!);
     } catch {
       // Skip invalid JSON; don't crash the app.
     }

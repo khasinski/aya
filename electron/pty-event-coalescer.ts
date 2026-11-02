@@ -53,7 +53,7 @@ export function createPtyDataCoalescer(
   maxPendingChars: number = COALESCE_MAX_PENDING_CHARS,
 ): PtyDataCoalescer {
   // Insertion order preserves cross-stream arrival order on flush.
-  const pending = new Map<string, DataEvent>();
+  const pending = new Map<string, { event: DataEvent; bytes: number }>();
   let flushScheduled = false;
 
   const flush = (): void => {
@@ -64,7 +64,7 @@ export function createPtyDataCoalescer(
     // re-merge the events being emitted.
     const events = [...pending.values()];
     pending.clear();
-    for (const event of events) send(event);
+    for (const { event } of events) send(event);
   };
 
   return {
@@ -78,16 +78,17 @@ export function createPtyDataCoalescer(
       // startup. Preserve that order and never merge across display resets.
       if (event.reset !== undefined) {flush();send({...event});return;}
       const key = JSON.stringify([event.ptyId, !!event.replay, event.reset, event.replayToken, event.remoteDeliveryId]);
-      const queued = pending.get(key);
-      if (queued && (queued.streamOffset === undefined || event.streamOffset === undefined || queued.streamOffset + Buffer.byteLength(queued.chunk, "utf8") === event.streamOffset)) {
+      const entry = pending.get(key), queued = entry?.event;
+      if (queued && (queued.streamOffset === undefined || event.streamOffset === undefined || queued.streamOffset + entry!.bytes === event.streamOffset)) {
         queued.chunk += event.chunk;
+        entry!.bytes += Buffer.byteLength(event.chunk, "utf8");
         if (queued.chunk.length >= maxPendingChars) flush();
         return;
       }
       if (queued) flush();
       // Clone: the queued event mutates (chunk grows) and the caller's event
       // object must stay untouched.
-      pending.set(key, { ...event });
+      pending.set(key, { event: { ...event }, bytes: Buffer.byteLength(event.chunk, "utf8") });
       if (!flushScheduled) {
         flushScheduled = true;
         schedule(flush);
@@ -106,6 +107,7 @@ export function coalesceAdjacentData(events: PtyEvent[]): PtyEvent[] {
   if (events.length < 2) return events;
   const out: PtyEvent[] = [];
   let tail: DataEvent | null = null;
+  let tailBytes = 0;
   for (const event of events) {
     if (
       event.type === "data" &&
@@ -115,13 +117,15 @@ export function coalesceAdjacentData(events: PtyEvent[]): PtyEvent[] {
       tail.reset === event.reset &&
       tail.replayToken === event.replayToken &&
       tail.remoteDeliveryId === event.remoteDeliveryId &&
-      (tail.streamOffset === undefined || event.streamOffset === undefined || tail.streamOffset + Buffer.byteLength(tail.chunk, "utf8") === event.streamOffset)
+      (tail.streamOffset === undefined || event.streamOffset === undefined || tail.streamOffset + tailBytes === event.streamOffset)
     ) {
       tail.chunk += event.chunk;
+      tailBytes += Buffer.byteLength(event.chunk, "utf8");
       continue;
     }
     if (event.type === "data") {
       tail = { ...event };
+      tailBytes = Buffer.byteLength(event.chunk, "utf8");
       out.push(tail);
     } else {
       tail = null;

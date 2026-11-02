@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { terminalKillRefusal } from "../terminal-kill-refusal";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { clearedTerminalStatus } from "../pty-event-reducer";
-import { forgetSpawn, wasSpawned } from "../spawnSession";
+import { forgetSpawn, releaseSpawn, wasSpawned } from "../spawnSession";
 import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
 import { defaultTabName, findProject, remoteTerminalCommand } from "../project-helpers";
 import { projectBaseCwd, tabFromTerminal } from "../worktree";
@@ -228,7 +228,7 @@ export function useTerminalActions({
     void window.aya.teamReleasePane(t.projectSlug, id).catch(() => {});
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
     // mistaken for a re-mount if the id were ever reused).
-    forgetSpawn(id);
+    releaseSpawn(id);
     // Drop the restart-trigger counter too - entries are tiny, but a
     // long-lived session cycling many tabs would otherwise retain one per
     // closed id forever (#94).

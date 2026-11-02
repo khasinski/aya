@@ -25,19 +25,20 @@ import {
   type NewProjectModalState,
   type PendingRepoImport,
 } from "./project-helpers";
+import { TeamsModal, SearchModal, SettingsModal, UsageDashboard } from "./components/LazyModals";
 import { PaneGrid } from "./components/PaneGrid";
 import { AttentionCenter } from "./components/AttentionCenter";
-import { TeamsModal } from "./components/TeamsModal";
+
 import { StatusRail } from "./components/StatusRail";
 import { EmptyState, LoadingState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
 import { NewProjectModal } from "./components/NewProjectModal";
 import { ProjectPresetImportModal } from "./components/ProjectPresetImportModal";
-import { SearchModal } from "./components/SearchModal";
-import { SettingsModal } from "./components/SettingsModal";
+
+
 import { ProjectsLeftLayout } from "./components/ProjectsLeftLayout";
 import { Sidebar } from "./components/Sidebar";
-import { UsageDashboard } from "./components/UsageDashboard";
+
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 import { WebWaitingBanners } from "./components/WebWaitingBanners";
@@ -734,7 +735,7 @@ export function App() {
   const activeProject = activeProjectId
     ? findProject(projects, activeProjectId)
     : null;
-  const reviewTargets = useMemo<ReviewTarget[]>(() => {
+  const reviewTargetsNext = useMemo<ReviewTarget[]>(() => {
     if (!activeProject || activeProject.remote) return [];
     return activeProject.tabs.flatMap((tab) => {
       const terminal = terminals[tab.id];
@@ -742,14 +743,16 @@ export function App() {
       return [{ id: terminal.id, projectSlug: activeProject.slug, name: terminal.name }];
     });
   }, [activeProject, terminals]);
+  const reviewTargets = useStable(reviewTargetsNext, samePollPayload);
   const activePresets =
     activeProject?.remote && activeProjectId
       ? (remotePresetsByProject[activeProjectId] ?? presets)
       : presets;
-  const resumePanes = useMemo(
+  const resumePanesNext = useMemo(
     () => resumePanesForProjects(projects, terminals, presets, remotePresetsByProject),
     [terminals, projects, presets, remotePresetsByProject],
   );
+  const resumePanes = useStable(resumePanesNext, samePollPayload);
   // Once two panes of an agent have shared a folder, neither may ever "continue
   // the latest" there again, even after the other is closed.
   useEffect(() => {
@@ -1083,6 +1086,20 @@ export function App() {
     onToggle: () => setShowSearch((s) => !s),
   });
 
+  const openUsage = useCallback(() => setShowUsage(true), []);
+  const openTeams = useCallback(() => setShowTeams(true), []);
+  const refreshGitStatus = useCallback(async (directory: string) => {
+    const info = await window.aya.getGitInfo(directory);
+    setGit(current => mergeGitInfo(current, directory, info));
+  }, [setGit]);
+  const handleSpawnFailure = useCallback((id: string) => setTerminals(prev => {
+    const terminal = prev[id];
+    return terminal ? { ...prev, [id]: { ...terminal, status: "idle", stopped: true, exitCode: null, bell: false } } : prev;
+  }), []);
+  const startWorktrees = useCallback<NonNullable<React.ComponentProps<typeof Sidebar>['onStartWorktrees']>>((projectId, preset, checkouts, prompt) => {
+    for (const checkout of checkouts) launchTerminal(preset, checkout.path, undefined, prompt, projectId);
+  }, [launchTerminal]);
+  const statusRailNode = useMemo(() => <StatusRail projects={projects} terminals={terminals} collapsed={statusRailCollapsed} onCollapsedChange={setStatusRailCollapsed} onSelectTerminal={focusTerminalFromNotification} />, [projects, terminals, statusRailCollapsed, setStatusRailCollapsed, focusTerminalFromNotification]);
   return (
     <div
       className={[
@@ -1144,11 +1161,7 @@ export function App() {
             openSettings={openSettings}
             closeProject={closeProject}
             restartTerminal={restartTerminal}
-            onSpawnFailure={(id) => setTerminals((prev) => {
-              const terminal = prev[id];
-              if (!terminal) return prev;
-              return { ...prev, [id]: { ...terminal, status: "idle", stopped: true, exitCode: null, bell: false } };
-            })}
+            onSpawnFailure={handleSpawnFailure}
             restartTriggers={restartTriggers}
             macOptionKeyMode={macOptionKeyMode}
             anyOverlayOpen={anyOverlayOpen}
@@ -1187,11 +1200,7 @@ export function App() {
             projectRemote={Boolean(activeProject?.remote)}
             projectRemoteHost={activeProject?.remote?.label}
             onCreateWorktrees={createWorktreesForProject}
-            onStartWorktrees={(projectId, preset, checkouts, prompt) => {
-              for (const checkout of checkouts) {
-                launchTerminal(preset, checkout.path, undefined, prompt, projectId);
-              }
-            }}
+            onStartWorktrees={startWorktrees}
             onRemoveWorktree={removeWorktreeForProject}
             onResize={setSidebarWidth}
             onReorder={reorderActiveProjectTerminals}
@@ -1202,15 +1211,7 @@ export function App() {
             onSplitRight={splitTerminalRight}
             onSplitBelow={splitTerminalBelow}
             onRemoveFromSplit={removeTerminalFromSplit}
-            statusRail={
-              <StatusRail
-                projects={projects}
-                terminals={terminals}
-                collapsed={statusRailCollapsed}
-                onCollapsedChange={setStatusRailCollapsed}
-                onSelectTerminal={focusTerminalFromNotification}
-              />
-            }
+            statusRail={statusRailNode}
           />
         );
         const body =
@@ -1326,7 +1327,7 @@ export function App() {
       })()}
       {showUsage && <UsageDashboard onClose={() => setShowUsage(false)} accounts={usageAccounts} codex={codexUsageAccounts} antigravity={antigravityUsageAccounts} grok={grokUsage} />}
       <StatusBar
-        onOpenUsage={() => setShowUsage(true)}
+        onOpenUsage={openUsage}
         project={activeProject}
         reviewTargets={reviewTargets}
         git={activeGit}
@@ -1340,17 +1341,14 @@ export function App() {
         showGitHubLink={showGitHubLink}
         terminal={activeTerminal}
         attentionCount={attentionCount}
-        onGitStatusRefresh={async (directory) => {
-          const info = await window.aya.getGitInfo(directory);
-          setGit((current) => mergeGitInfo(current, directory, info));
-        }}
+        onGitStatusRefresh={refreshGitStatus}
         snippetsOpen={snippetsOpenForActiveTerminal}
         snippetsDisabled={!activeTerminal}
         terminalSoundsEnabled={terminalSoundsEnabled}
         onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
         onToggleSnippets={toggleSnippetsDrawer}
         onOpenAttentionCenter={openAttentionCenter}
-        onOpenTeams={() => setShowTeams(true)}
+        onOpenTeams={openTeams}
         onOpenSettings={openSettings}
         onOpenMachineTerminal={activeProject ? openMachineTerminal : undefined}
         onOpenProjectDirectory={openProjectDirectory}

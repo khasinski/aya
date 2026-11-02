@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { memo, type RefObject } from "react";
 import { guiSupportedAgent } from "../agentPreset";
 import { emptyProjectPaneTitle, paneStyleFromRect } from "../pane-grid";
 import { findProject, terminalSpawn } from "../project-helpers";
@@ -61,7 +61,7 @@ interface Props {
   projectTerminals: TerminalState[];
 }
 
-export function PaneGrid({
+export const PaneGrid = memo(function PaneGrid({
   isSplit,
   paneRects,
   terminals,
@@ -276,4 +276,4 @@ export function PaneGrid({
       )}
     </div>
   );
-}
+});

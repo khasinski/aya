@@ -1,3 +1,4 @@
+import { pollVisible } from "../poll-visible";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   LOCAL_SUMMARY_BUFFER_LINES,
@@ -62,6 +63,12 @@ export function useLocalSummaries({ terminalsRef, projectsRef }: LocalSummariesO
     >
   >({});
   const summaryTimersRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const live = new Set(Object.keys(terminalsRef.current));
+    for (const id of Object.keys(summaryTimersRef.current)) if (!live.has(id)) { window.clearTimeout(summaryTimersRef.current[id]); delete summaryTimersRef.current[id]; }
+    for (const key of Object.keys(summaryMetaRef.current)) if (key.startsWith('terminal:') && !live.has(key.slice(9))) delete summaryMetaRef.current[key];
+  });
+  useEffect(() => { const timers = summaryTimersRef.current; return () => { Object.values(timers).forEach(window.clearTimeout); }; }, []);
 
   const runAutomaticSummary = useCallback(
     async (
@@ -107,6 +114,7 @@ export function useLocalSummaries({ terminalsRef, projectsRef }: LocalSummariesO
           lines: recent,
           intelligence,
         });
+        if (summaryMetaRef.current[key]?.hash !== hash) return;
         if (!result.available) {
           const message = localSummaryUnavailableMessage(
             result.error,
@@ -417,6 +425,7 @@ export function useLocalSummaryEffects(
     };
 
     const refresh = () => {
+      if (document.hidden) return;
       const terminalList = Object.values(terminalsRef.current);
       const outputEntries = Object.values(terminalOutputRef.current);
       setAutoSummaryStatus((prev) => ({
@@ -458,11 +467,12 @@ export function useLocalSummaryEffects(
       refresh,
       summaryNudge === 0 ? 0 : LOCAL_SUMMARY_DEBOUNCE_MS,
     );
-    const id = window.setInterval(refresh, LOCAL_SUMMARY_REFRESH_MS);
+    let firstPoll = true;
+    const stopPolling = pollVisible(() => { if (firstPoll) { firstPoll = false; return; } refresh(); }, LOCAL_SUMMARY_REFRESH_MS);
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
-      window.clearInterval(id);
+      stopPolling();
     };
   }, [ayaIntelligence, localSummariesEnabled, summaryNudge, terminalsRef, projectsRef, terminalOutputRef, summaryMetaRef, setTerminalSummaries, setProjectSummaries, setAutoSummaryStatus]);
 

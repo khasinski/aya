@@ -2,6 +2,7 @@
 // rounds. The questions (waiting) are also kept on disk, so a restart does not lose them.
 
 import * as fs from "node:fs";
+import { writeFileAtomic } from "./atomic-write";
 import * as path from "node:path";
 import { HOOK_VIA } from "./constants";
 import { AYA_HOME } from "./paths";
@@ -50,21 +51,24 @@ function statuses(): Map<string, Latest> {
   return latest;
 }
 
+let pendingWrites: Promise<void> | null = null;
+let persistenceEpoch = 0;
+export function flushAgentStatuses(): Promise<void> { return pendingWrites ?? Promise.resolve(); }
+export function agentStatusesPending(): boolean { return pendingWrites !== null; }
 function persistWaiting(): void {
   const waiting = Object.fromEntries(
     [...statuses()].flatMap(([id, s]) =>
       s.level === "waiting" ? [[id, { text: s.text, since: s.at, by: ASKED_BY, ...(s.session ? { session: s.session } : {}), ...(s.restored === "unconfirmed" ? { unconfirmed: true } : {}) }]] : [],
     ),
   );
-  try {
-    if (Object.keys(waiting).length === 0) fs.rmSync(waitingFile(), { force: true });
-    else {
-      fs.mkdirSync(path.dirname(waitingFile()), { recursive: true });
-      fs.writeFileSync(waitingFile(), JSON.stringify(waiting));
-    }
-  } catch (err) {
-    console.warn("[aya] agent questions not saved:", err instanceof Error ? err.message : err);
-  }
+  const file = waitingFile(), epoch = persistenceEpoch;
+  const task = (pendingWrites ?? Promise.resolve()).then(async () => {
+    if (epoch !== persistenceEpoch) return;
+    if (!Object.keys(waiting).length) await fs.promises.rm(file, { force: true });
+    else await writeFileAtomic(file, JSON.stringify(waiting), 0o600);
+  }).catch(error => console.warn("[aya] agent questions not saved:", error instanceof Error ? error.message : error));
+  pendingWrites = task;
+  void task.finally(() => { if (pendingWrites === task) pendingWrites = null; });
 }
 
 /** Records a status; returns what the windows are told, or null for nothing. Aya's own hooks (`via` hook) report turns:
@@ -143,6 +147,7 @@ export function __reloadAgentStatusForTests(): void {
 
 /** Tests only: forget this life's statuses and the file. */
 export function __resetAgentStatusForTests(): void {
+  persistenceEpoch++;
   latest = new Map();
   pushListener = null;
   fs.rmSync(waitingFile(), { force: true });

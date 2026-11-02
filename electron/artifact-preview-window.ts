@@ -19,8 +19,9 @@ export function openArtifactWindow(artifact: GuiArtifact, owner: Electron.WebCon
   previews.set(win.webContents.id, { owner, panel });
   if (artifact.kind === 'image') installArtifactImageMenu(win.webContents, url => url === artifact.dataUrl ? artifact : undefined);
   const contentsId = win.webContents.id;
-  win.once('closed', () => previews.delete(contentsId));
-  owner.once('destroyed', () => { if (!win.isDestroyed()) win.close(); });
+  const closePreview = () => { if (!win.isDestroyed()) win.close(); };
+  win.once('closed', () => { previews.delete(contentsId); owner.removeListener('destroyed', closePreview); });
+  owner.once('destroyed', closePreview);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.webContents.on('will-frame-navigate', event => { if (event.isMainFrame || !isWidgetPreviewUrl(event.url, owner.id)) event.preventDefault(); });

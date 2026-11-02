@@ -8,6 +8,8 @@
 // which is exactly what we want to pick up.
 
 import { createHash } from "node:crypto";
+import * as path from "node:path";
+import { AYA_HOME, PROJECTS_DIR, PRESETS_FILE, SNIPPETS_FILE, THEMES_FILE } from "./paths";
 
 const lastWrittenHash = new Map<string, string>();
 
@@ -26,6 +28,7 @@ export function hashConfig(content: string): string {
  *  the same content come back we know it was our own save, not an edit. */
 export function recordWrite(filePath: string, content: string): void {
   lastWrittenHash.set(filePath, hashConfig(content));
+  if (lastWrittenHash.size > 2048) lastWrittenHash.delete(lastWrittenHash.keys().next().value!);
 }
 
 /** Forget what we last wrote to `filePath`: once its delete is reported, the same bytes coming back (a `git checkout`
@@ -39,4 +42,10 @@ export function forgetWrite(filePath: string): void {
  *  content is different because someone edited it outside the app. */
 export function isEcho(filePath: string, content: string): boolean {
   return lastWrittenHash.get(filePath) === hashConfig(content);
+}
+
+/** Large conversation assets, logs and unrelated atomic writes are not watched configuration. */
+export function recordConfigWrite(filePath: string, content: string): void {
+  const directory = path.dirname(filePath), name = path.basename(filePath);
+  if (([PRESETS_FILE, SNIPPETS_FILE, THEMES_FILE].includes(filePath) && directory === AYA_HOME) || (directory === PROJECTS_DIR && name.endsWith(".json") && !name.startsWith("."))) recordWrite(filePath, content);
 }

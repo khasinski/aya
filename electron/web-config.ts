@@ -162,6 +162,17 @@ export function verifyWebPassword(
   }
 }
 
+/** Login requests must not run the CPU-heavy KDF on Electron's event loop. */
+export async function verifyWebPasswordAsync(config: Pick<WebConfig, "passwordHash" | "passwordSalt">, password: string): Promise<boolean> {
+  const { passwordHash, passwordSalt } = config;
+  if (!passwordHash || !passwordSalt) return false;
+  try {
+    const actual = await new Promise<Buffer>((resolve, reject) => crypto.scrypt(password, Buffer.from(passwordSalt, 'hex'), SCRYPT_KEYLEN, (error, key) => error ? reject(error) : resolve(key)));
+    const expected = Buffer.from(passwordHash, 'hex');
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  } catch { return false; }
+}
+
 export function normalizeWebPort(value: unknown): number {
   return typeof value === "number" &&
     Number.isInteger(value) &&

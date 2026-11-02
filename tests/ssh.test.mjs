@@ -118,3 +118,11 @@ test("runSsh at the deadline kills ssh's whole process group, a ProxyCommand-lik
   while (!gone() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
   assert.ok(gone(), "the child died with the group");
 });
+
+
+test('the shared process runner preserves UTF-8 split across pipe chunks', async () => {
+  const { runProcess } = await import('../dist-electron/ssh.js');
+  const result = await runProcess(process.execPath, ['-e', "const b=Buffer.from('Zażółć');process.stdout.write(b.subarray(0,3));setTimeout(()=>process.stdout.write(b.subarray(3)),30)"], { deadlineMs: 2000, failOnOutputLimit: true });
+  assert.equal(result.stdout, 'Zażółć');
+  assert.equal(result.code, 0);
+});

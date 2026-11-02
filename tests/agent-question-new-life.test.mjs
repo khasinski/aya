@@ -53,7 +53,7 @@ async function world(sessionWhenAsked) {
     check: () => w.jobs.at(-1)(),
     "lead asks the user": () => status.recordAgentStatus("pane-l", "waiting", w.now, QUESTION, undefined, lead.sessionId),
     // Aya quits and starts again: the main process reads the questions from disk, the runner restores the team.
-    restart: () => (status.__reloadAgentStatusForTests(), make(), w.runner.restore()),
+    restart: async () => { await status.flushAgentStatuses(); status.__reloadAgentStatusForTests(); make(); await w.runner.restore(); },
   };
   const run = async (sessionAfter, ...steps) => {
     for (const step of steps) {

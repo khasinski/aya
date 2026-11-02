@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { recordAgentStatus } from "./agent-status";
+import { flushAgentStatuses, recordAgentStatus } from "./agent-status";
 import { STATUS_TABLE_SHARE_MS, daemonIdentity, foreignPaneIdentity, paneAbove, processTable, unprovenIdentity } from "./caller-proof";
 import { capabilitiesDocument } from "./capabilities";
 import {
@@ -724,6 +724,7 @@ async function handleRequest(
     const session = request.terminalId && request.level === "waiting" && !request.on ? await paneSession(request.terminalId, options) : undefined;
     const told = request.terminalId ? recordAgentStatus(request.terminalId, request.level, Date.now(), request.text, caller.via, session, request.on) : request;
     if (!told) return;
+    await flushAgentStatuses();
     const update: ControlStatusUpdate = {
       terminalId: request.terminalId,
       projectSlug: request.projectSlug,

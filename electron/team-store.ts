@@ -1,11 +1,12 @@
+import { readBufferAtMost } from "./bounded-file-read";
 // A team's per-machine state, kept out of the repo: pane ids exist on this
 // machine only, and messages may hold secrets.
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { atomicTempPath, writeFileAtomic } from "./atomic-write";
+import { writeFileAtomic } from "./atomic-write";
 import { oneAtATime } from "./keyed-queue";
-import { debugLog, MESSAGE_CHARS } from "./team-debug";
+import { debugLog, flushDebugLogs, MESSAGE_CHARS } from "./team-debug";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
 import { ID_RE, TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
 import { FRESH_PROGRESS, parseProgress, type TeamProgress } from "./team-progress";
@@ -41,9 +42,7 @@ const CRASHED_MID_TYPING: DeliveryNote = { kind: "withheld", reason: "Aya went d
 
 /** Rewrites a JSONL file with `lines` through a temp file, owner-only from the first byte: messages may hold secrets. */
 async function replaceJsonl(file: string, lines: string[]): Promise<void> {
-  const tmp = atomicTempPath(file);
-  await fs.writeFile(tmp, lines.map((l) => `${l}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
-  await fs.rename(tmp, file);
+  await writeFileAtomic(file, lines.map(l => `${l}\n`).join(""), OWNER_ONLY_FILE_MODE);
 }
 
 /** What a trim keeps within TEAM_LOG_TRIM_BYTES: messages still owed to their role first (a quiet role's must not be
@@ -386,8 +385,8 @@ export class TeamStore {
         // One byte early: a window starting on a line cuts at the "\n" before it, not through that line.
         const start = Math.max(0, size - TEAM_LOG_READ_BYTES - 1);
         const buffer = Buffer.alloc(size - start);
-        await handle.read(buffer, 0, buffer.length, start);
-        text = buffer.toString("utf-8");
+        const { bytesRead } = await readBufferAtMost(handle.read.bind(handle), buffer, buffer.length, start);
+        text = buffer.subarray(0, bytesRead).toString("utf-8");
         if (start > 0) text = text.slice(text.indexOf("\n") + 1);
       } finally {
         await handle.close();
@@ -447,6 +446,7 @@ export class TeamStore {
   /** The refused sends refused.jsonl keeps, oldest first; a torn line is skipped. */
   /** Turns typed messages started, from the debug log; null when there is none (debug off). */
   async turns(): Promise<{ role: string; time: string }[] | null> {
+    await flushDebugLogs();
     const parts = (await Promise.all([DEBUG_LOG_OLD_FILE, DEBUG_LOG_FILE].map((f) => readText(this.file(f))))).filter((t): t is string => t !== null);
     return debugTurns(parts.length ? parts.join("\n") : null);
   }

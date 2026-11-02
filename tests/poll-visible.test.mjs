@@ -99,7 +99,7 @@ test("an initially hidden document still gets the initial refresh", (t) => {
   assert.equal(calls, 2);
 });
 
-test("becoming visible refreshes immediately without resetting the interval", (t) => {
+test("becoming visible refreshes immediately and restarts a suspended interval", (t) => {
   const { setHidden, poll } = pollingEnvironment(t);
   let calls = 0;
   poll(() => { calls += 1; }, 1000);
@@ -107,7 +107,7 @@ test("becoming visible refreshes immediately without resetting the interval", (t
   t.mock.timers.tick(2500);
   setHidden(false);
   assert.equal(calls, 2);
-  t.mock.timers.tick(499);
+  t.mock.timers.tick(999);
   assert.equal(calls, 2);
   t.mock.timers.tick(1);
   assert.equal(calls, 3);

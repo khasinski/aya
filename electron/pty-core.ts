@@ -479,6 +479,7 @@ export function getBufferedOutputSince(ptyId: string, offset: number): {chunk: s
   if (!buffer || !Number.isSafeInteger(offset) || offset < buffer.end-buffer.total || offset > buffer.end) {
     return {chunk:getBufferedOutput(ptyId),reset:true};
   }
+  if (offset === buffer.end) return {chunk:"",reset:false};
   return {chunk:buffer.chunks.join("").slice(offset-(buffer.end-buffer.total)),reset:false};
 }
 function replayOutput(req: SpawnRequest, sink: PtyEventSink): void {
@@ -714,8 +715,19 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
   }
   const cwd = path.resolve(req.cwd.replace(/^~/, os.homedir()));
 
+  // Mark this id in-flight across the async preflight + spawn so a concurrent
+  // call bails at the guard above. (The bail itself lives before the attachOnly
+  // branch; here we only claim the marker, synchronously before the first await
+  // so no racing call can interleave before it is set.)
+  const [flight, settleFlight] = newFlight();
+  spawning.set(req.ptyId, flight);
+  const cancelled = (): boolean => {
+    if (flight.cancelled) ptyLog.append("spawn-cancelled", { ptyId: req.ptyId });
+    return flight.cancelled;
+  };
   try {
-    const stat = fs.statSync(cwd);
+  try {
+    const stat = await fs.promises.stat(cwd);
     if (!stat.isDirectory()) {
       reportSpawnFailure(
         sink,
@@ -745,17 +757,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     return;
   }
 
-  // Mark this id in-flight across the async preflight + spawn so a concurrent
-  // call bails at the guard above. (The bail itself lives before the attachOnly
-  // branch; here we only claim the marker, synchronously before the first await
-  // so no racing call can interleave before it is set.)
-  const [flight, settleFlight] = newFlight();
-  spawning.set(req.ptyId, flight);
-  const cancelled = (): boolean => {
-    if (flight.cancelled) ptyLog.append("spawn-cancelled", { ptyId: req.ptyId });
-    return flight.cancelled;
-  };
-  try {
+    if (cancelled() || shuttingDown) return;
     const prepared = await services.prepare(req, cwd, flight.abort.signal);
     if (cancelled() || shuttingDown) return;
     if ("failure" in prepared) {

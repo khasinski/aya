@@ -16,6 +16,7 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
   const [releasing, setReleasing] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const lastAsked = useRef(0);
+  const configured = useRef(true);
 
   const refresh = useCallback(async () => {
     // A slow probe that answers after a newer refresh (say, after a Remove) must not bring back the old list.
@@ -23,6 +24,7 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
     try {
       const { machines } = await window.aya.machinesStatus();
       if (asked !== lastAsked.current) return;
+      configured.current = machines.length > 0;
       setMachines(machines);
       setError(null);
     } catch (err) {
@@ -36,7 +38,7 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
       if (document.visibilityState === "visible") void refresh();
     };
     tick();
-    const timer = window.setInterval(tick, POLL_MS);
+    const timer = window.setInterval(() => { if (configured.current) tick(); }, POLL_MS);
     document.addEventListener("visibilitychange", tick);
     window.addEventListener(MACHINES_CHANGED_EVENT, tick);
     window.addEventListener("focus", tick);

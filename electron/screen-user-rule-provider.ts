@@ -40,6 +40,9 @@ export class UserRuleProvider {
   private state:UserRuleProviderState=Object.freeze({epoch:0,available:false,manifest:null,reason:"user rules have not been loaded"});
   private runtime:Runtime;
   private disposed=false;
+  private directoryPresent=true;
+  private scanInFlight=false;
+  private scanSignature:string|null=null;
   private started=false;
   private observedKey:string|null=null;
   private desiredKey:string|null=null;
@@ -155,8 +158,27 @@ export class UserRuleProvider {
     this.publish(true,manifest);this.lastDiagnostic=null;this.quarantinedDigest=null;
   }
   scan():void{
-    if(this.disposed||!this.started)return;this.attachWatches();const candidate=this.read();
-    if(candidate.key!==this.observedKey)this.begin(candidate);
+    if(this.disposed||!this.started)return;
+    if(this.options.read){this.attachWatches();const candidate=this.read();if(candidate.key!==this.observedKey)this.begin(candidate);return;}
+    if(this.scanInFlight)return;this.scanInFlight=true;
+    void this.fileSignature().then(signature=>{
+      if(this.disposed)return;
+      this.attachWatches();
+      if(signature===this.scanSignature)return;
+      this.scanSignature=signature;
+      const candidate=this.read();if(candidate.key!==this.observedKey)this.begin(candidate);
+    }).finally(()=>{this.scanInFlight=false;});
+  }
+  private async fileSignature():Promise<string>{
+    try{
+      const directory=await fs.promises.lstat(this.directory);
+      this.directoryPresent=directory.isDirectory();
+      const signature=(s:fs.Stats)=>[s.dev,s.ino,s.size,s.mtimeMs,s.ctimeMs,s.mode,s.uid,s.nlink];
+      if(!directory.isDirectory())return JSON.stringify(signature(directory));
+      const names=(await fs.promises.readdir(this.directory)).filter(name=>name.endsWith('.json')).sort();
+      const entries=await Promise.all(names.map(async name=>[name,signature(await fs.promises.lstat(path.join(this.directory,name)))]));
+      return JSON.stringify([signature(directory),entries]);
+    }catch(error){this.directoryPresent=false;return String((error as NodeJS.ErrnoException).code);}
   }
   private attachWatches():void{
     const watch=this.options.watch??fs.watch;
@@ -174,7 +196,7 @@ export class UserRuleProvider {
       }catch{return null;}
     };
     if(!this.parentWatch)this.parentWatch=install(path.dirname(this.directory),true);
-    if(!this.directoryWatch)this.directoryWatch=install(this.directory,false);
+    if(!this.directoryWatch&&(this.options.watch||this.directoryPresent))this.directoryWatch=install(this.directory,false);
   }
   async evaluate(request:UserRuleRequest):Promise<UserRuleResult>{
     const state=this.state,digest=state.manifest?.digest??null;

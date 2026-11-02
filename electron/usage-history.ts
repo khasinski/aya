@@ -1,6 +1,6 @@
 // Read token accounting only. Prompts, tool output and credentials never leave
 // the scanner; cached files are rescanned only when size/mtime changes.
-import { createReadStream } from 'node:fs';
+import { createReadStream, type Stats } from 'node:fs';
 import { readdir, realpath, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -18,6 +18,7 @@ const text = (value: unknown) => typeof value === 'string' ? value : '';
 const MAX_BYTES = 512 * 1024 * 1024;
 const MAX_LINE = 1024 * 1024;
 const MAX_FILES = 6000;
+export const MAX_USAGE_EVENTS = 200000;
 const cache = new Map<string, { mtime: number; size: number; partial: boolean; events: Event[] }>();
 let inFlight: Promise<UsageHistory> | null = null;
 let previous: { key: string; at: number; value: UsageHistory } | null = null;
@@ -25,7 +26,12 @@ export class UsageLogParser {
   private model = 'Unknown model';
   private previous: Record<string, unknown> | null = null;
   readonly events = new Map<string, Event>();
-  constructor(private provider: Provider) {}
+  truncated = false;
+  constructor(private provider: Provider, private maxEvents = MAX_USAGE_EVENTS) {}
+  private remember(id: string, event: Event): void {
+    this.events.set(id, event);
+    if (this.events.size > this.maxEvents) { this.events.delete(this.events.keys().next().value!); this.truncated = true; }
+  }
   line(line: string) {
     if (!/token_count|"usage"|turn_context/.test(line)) return;
     let record: Record<string, unknown>; try { record = obj(JSON.parse(line)); } catch { return; }
@@ -34,7 +40,7 @@ export class UsageLogParser {
     if (this.provider === 'grok') {
       const row = extractGrokUsageRow(line); if (!row) return;
       const id = createHash('sha256').update(line).digest('hex');
-      this.events.set(id, { id, timestamp: row.tsMs, model: row.models.join(', ') || 'Grok', input: Math.max(0, row.inputTokens - row.cachedReadTokens - (row.totalTokens <= row.inputTokens + row.outputTokens ? row.cacheCreationTokens : 0)), output: row.outputTokens, cacheRead: row.cachedReadTokens, cacheWrite: row.cacheCreationTokens, reasoning: row.reasoningTokens }); return;
+      this.remember(id, { id, timestamp: row.tsMs, model: row.models.join(', ') || 'Grok', input: Math.max(0, row.inputTokens - row.cachedReadTokens - (row.totalTokens <= row.inputTokens + row.outputTokens ? row.cacheCreationTokens : 0)), output: row.outputTokens, cacheRead: row.cachedReadTokens, cacheWrite: row.cacheCreationTokens, reasoning: row.reasoningTokens }); return;
     }
     const timestamp = Date.parse(text(record.timestamp)); if (!Number.isFinite(timestamp)) return;
     if (this.provider === 'codex') {
@@ -51,7 +57,7 @@ export class UsageLogParser {
       // Forked rollouts may carry the same historical events. A stable event
       // identity prevents counting the copied prefix twice.
       const id = createHash('sha256').update(JSON.stringify([record.timestamp, this.model, total])).digest('hex');
-      this.events.set(id, { id, timestamp, model: this.model, input: Math.max(0, delta.input_tokens - delta.cached_input_tokens), output: delta.output_tokens, cacheRead: Math.min(delta.input_tokens, delta.cached_input_tokens), cacheWrite: 0, reasoning: delta.reasoning_output_tokens }); return;
+      this.remember(id, { id, timestamp, model: this.model, input: Math.max(0, delta.input_tokens - delta.cached_input_tokens), output: delta.output_tokens, cacheRead: Math.min(delta.input_tokens, delta.cached_input_tokens), cacheWrite: 0, reasoning: delta.reasoning_output_tokens }); return;
     }
     const message = obj(record.message), usage = obj(message.usage);
     if (record.type !== 'assistant' || !Object.keys(usage).length) return;
@@ -59,7 +65,7 @@ export class UsageLogParser {
     const next: Event = { id, timestamp, model: text(message.model).slice(0, 200) || this.model, input: num(usage.input_tokens), output: num(usage.output_tokens), cacheRead: num(usage.cache_read_input_tokens), cacheWrite: num(usage.cache_creation_input_tokens), reasoning: 0 };
     const prior = this.events.get(id);
     if (prior) for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const) next[key] = Math.max(prior[key], next[key]);
-    this.events.set(id, next);
+    this.remember(id, next);
   }
 }
 async function filesUnder(root: string, files: string[], depth = 0): Promise<void> {
@@ -90,7 +96,9 @@ export async function scanUsageHistory(sources: Source[], days: number, now = Da
       }
     } catch { result.partial = true; result.warnings.push(`Some ${source.label} history could not be listed.`); }
     if (files.length >= MAX_FILES) result.partial = true;
-    const candidates = (await Promise.all(files.map(async file => { try { return { file, info: await stat(file) }; } catch { return null; } }))).filter((value): value is NonNullable<typeof value> => !!value && value.info.mtimeMs >= since).sort((a, b) => b.info.mtimeMs - a.info.mtimeMs);
+    const inspected: ({ file: string; info: Stats } | null)[] = [];
+    for (let offset = 0; offset < files.length; offset += 32) inspected.push(...await Promise.all(files.slice(offset, offset + 32).map(async file => { try { return { file, info: await stat(file) }; } catch { return null; } })));
+    const candidates = inspected.filter((value): value is NonNullable<typeof value> => !!value && value.info.mtimeMs >= since).sort((a, b) => b.info.mtimeMs - a.info.mtimeMs);
     seen.clear();
     for (const { file, info } of candidates) {
       if (result.files >= MAX_FILES || bytes >= MAX_BYTES || eventCount >= 200000) { result.partial = true; break; }
@@ -119,8 +127,12 @@ export async function scanUsageHistory(sources: Source[], days: number, now = Da
           }
           if (buffer && !dropping && complete) parser.line(buffer);
         } catch { result.partial = true; complete = false; } finally { stream.destroy(); }
-        events = { mtime: info.mtimeMs, size: info.size, partial, events: [...parser.events.values()] };
-        if (complete) { cache.set(file, events); if (cache.size > 2000) cache.delete(cache.keys().next().value!); }
+        events = { mtime: info.mtimeMs, size: info.size, partial: partial || parser.truncated, events: [...parser.events.values()] };
+        if (complete) {
+          cache.delete(file); cache.set(file, events);
+          let retained = 0; for (const entry of cache.values()) retained += entry.events.length;
+          while (cache.size > 256 || retained > 200000) { const key = cache.keys().next().value!; retained -= cache.get(key)!.events.length; cache.delete(key); }
+        }
       }
       result.partial ||= events.partial;
       eventCount += events.events.length;

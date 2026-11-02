@@ -7,7 +7,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { recordWrite } from "./config-echo";
+import { recordConfigWrite } from "./config-echo";
 
 import { atomicTempPath } from "./atomic-temp";
 export { atomicTempPath, TMP_SUFFIX } from "./atomic-temp";
@@ -30,7 +30,7 @@ export async function writeFileAtomic(
     await fs.rename(tmpPath, filePath);
     // Remember what we just wrote so the config watcher can tell our own
     // saves apart from edits made outside the app (see config-echo.ts).
-    recordWrite(filePath, data);
+    recordConfigWrite(filePath, data);
   } catch (err) {
     // Best effort: clean up the tmp file if the rename never happened.
     try {

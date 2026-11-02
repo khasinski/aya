@@ -80,6 +80,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'history') {
       const snapshot = snapshots.get(key);
       if (!snapshot) throw Error('Panel is disconnected');
+      if (value && typeof value === 'object') snapshot.view = withPanelArtifacts(key, value as Record<string, unknown>);
       await archiveConversation(snapshot);
       const saved = await listConversations(snapshot);
       const session = sessions.get(key)?.session;

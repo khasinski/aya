@@ -10,6 +10,7 @@ import {
   saveProjectState,
   updateProject,
 } from "../config";
+import { projectStateTransaction } from "../project-state-queue";
 import { PROJECTS_STATE_DELAY_MS } from "../paths";
 import { readRepoProjectConfig } from "../project-local";
 import type { ProjectCollectionState } from "../types";
@@ -38,9 +39,11 @@ export function registerProjectsIpc(deps: ProjectsIpcDeps): void {
   ipcMain.handle("projects:save-state", async (e, state: unknown) => {
     const valid = validateProjectCollectionState(state);
     const win = senderWindow(e);
-    if (!win) return saveProjectState(valid);
-    const disk = await listProjectState().catch(() => null);
-    return saveProjectState(deps.mergeSave(valid, win.id, disk));
+    if (!win) return projectStateTransaction(() => saveProjectState(valid));
+    return projectStateTransaction(async () => {
+      const disk = await listProjectState().catch(() => null);
+      return saveProjectState(deps.mergeSave(valid, win.id, disk));
+    });
   });
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
     createProject(

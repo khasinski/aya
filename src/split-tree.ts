@@ -1,3 +1,4 @@
+import { isSplitNode as commonIsSplitNode } from "../shared/split-node.cjs";
 // Pane layout as a binary space partition tree.
 //
 // This replaces a flat rows x cols grid, where splitting inserted a whole track
@@ -418,21 +419,7 @@ function balancedChain(
 }
 
 /** Shape check for data coming off disk or across IPC. */
-export function isSplitNode(value: unknown, depth = 0): value is SplitNode {
-  if (depth > MAX_SPLIT_DEPTH) return false;
-  if (typeof value !== "object" || value === null) return false;
-  const n = value as Record<string, unknown>;
-  if (typeof n.id !== "string" || !n.id) return false;
-  if (n.kind === "leaf") {
-    return n.terminalId === null || typeof n.terminalId === "string";
-  }
-  if (n.kind !== "split") return false;
-  if (n.direction !== "row" && n.direction !== "column") return false;
-  if (typeof n.ratio !== "number" || !Number.isFinite(n.ratio) || n.ratio <= 0 || n.ratio >= 1) {
-    return false;
-  }
-  return isSplitNode(n.first, depth + 1) && isSplitNode(n.second, depth + 1);
-}
+export function isSplitNode(value: unknown, depth = 0): value is SplitNode { return commonIsSplitNode(value, depth); }
 
 /** A project's pane layout, migrating the pre-tree grid format on the fly.
  *  Migration lives here (not in the main process) so the conversion has exactly

@@ -7,6 +7,7 @@
  *  Given an output chunk and the current state, return the updated state. The
  *  last transition in the chunk wins (a chunk may toggle it more than once). */
 export function focusReportingState(chunk: string, current: boolean): boolean {
+  if (!chunk.includes("\x1b[?1004")) return current;
   let state = current;
   // DECSET 1004 = focus reporting; trailing h enables, l disables (see above).
   const re = /\x1b\[\?1004(h|l)/g;

@@ -1,5 +1,6 @@
 // The non-interactive ssh commands `aya machines` runs (docs/machines.md), and the same runner for its local probe.
 
+import { StringDecoder } from "node:string_decoder";
 import { spawn } from "node:child_process";
 
 /** A `Host` alias as ~/.ssh/config spells one. */
@@ -53,6 +54,7 @@ export interface SshRunOptions {
   input?: string | Buffer;
   deadlineMs: number;
   maxOutputBytes?: number;
+  failOnOutputLimit?: boolean;
   /** Child-only environment; discovery disables the shell used by SSH Match exec. */
   env?: NodeJS.ProcessEnv;
 }
@@ -70,6 +72,7 @@ export function runProcess(command: string, args: string[], options: SshRunOptio
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
+    const stdoutDecoder = new StringDecoder("utf8"), stderrDecoder = new StringDecoder("utf8");
     let timedOut = false;
     let settled = false;
     const settle = (r: Omit<SshRun, "stdout" | "stderr" | "timedOut">) => {
@@ -98,15 +101,25 @@ export function runProcess(command: string, args: string[], options: SshRunOptio
       child.stderr?.destroy();
       settle({ code: null, spawnError: null });
     }, options.deadlineMs);
+    let stdoutBytes = 0, stderrBytes = 0;
+    const overflow = (stream: string) => {
+      try { if (child.pid) process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+      child.stdout?.destroy(); child.stderr?.destroy();
+      settle({ code: null, spawnError: `${stream} maxBuffer length exceeded` });
+    };
     child.stdout?.on("data", (chunk: Buffer) => {
-      if (stdout.length < cap) stdout += chunk.toString("utf8");
+      stdoutBytes += chunk.length;
+      if (options.failOnOutputLimit && stdoutBytes > cap) { overflow('stdout'); return; }
+      if (stdout.length < cap) stdout += stdoutDecoder.write(chunk);
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      if (stderr.length < cap) stderr += chunk.toString("utf8");
+      stderrBytes += chunk.length;
+      if (options.failOnOutputLimit && stderrBytes > cap) { overflow('stderr'); return; }
+      if (stderr.length < cap) stderr += stderrDecoder.write(chunk);
     });
     child.stdin?.on("error", () => {});
     child.on("error", (err) => settle({ code: null, spawnError: err.message }));
-    child.on("close", (code) => settle({ code, spawnError: null }));
+    child.on("close", (code) => { if (!settled) { stdout += stdoutDecoder.end(); stderr += stderrDecoder.end(); } settle({ code, spawnError: null }); });
     child.stdin?.end(options.input ?? "");
   });
 }

@@ -4,15 +4,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { parseVtSnapshot, validateVtSnapshot } from "./vt-checkpoint-schema";
 import fs from 'node:fs';
+import baseline from "./vt-binding-baseline";
 import { createHash } from 'node:crypto';
 import { Terminal } from '@xterm/headless';
-const ENGINE = createHash('sha256').update(fs.readFileSync(require.resolve('@xterm/headless'))).digest('hex');
+
 const SUPPORTED_ENGINE = '17a90b650cf6b77cce2b98c4063884d43545e4ce177a54b76ccfc906f1aacaed';
+const ENGINE = SUPPORTED_ENGINE;
 const MAX_SNAPSHOT = 64 * 1024 * 1024;
 const palettes = new WeakMap();
 const ownedUnicodeProviders = new WeakMap();
 const ownedHandlers = new WeakMap();
 const registrations = new WeakMap();
+const verifiedRegistrations = new WeakMap();
 function trackPalette(term: any, saved: any = {}) {
     const registrationState = { epoch: 0 };
     registrations.set(term, registrationState);
@@ -52,9 +55,14 @@ function handlerShape(term: any) {
     const shapes = [p._csiHandlers, p._escHandlers, p._oscParser._handlers, p._dcsParser._handlers].map(handlers => Object.entries(handlers).map(([key, entries]) => [key, (entries as any[]).length] as const).sort(([a], [b]) => a.localeCompare(b)));
     return JSON.stringify([shapes, Object.keys(c.unicodeService._providers).sort()]);
 }
-const probe: any = new Terminal({ allowProposedApi: true }), HANDLERS = handlerShape(probe);
-const DEFAULT_OPTIONS = copy(probe._core.optionsService.rawOptions);
-probe.dispose();
+const HANDLERS = baseline.handlers, DEFAULT_OPTIONS = baseline.options;
+let engineVerified = false;
+function initializeBinding(): void {
+    if (engineVerified) return;
+    const actual = createHash('sha256').update(fs.readFileSync(require.resolve('@xterm/headless'))).digest('hex');
+    if (actual !== SUPPORTED_ENGINE) throw Error('Unsupported VT engine implementation');
+    engineVerified = true;
+}
 export function ground(term: any) { const h = term._core._inputHandler; return h._parser.currentState === 0 && !h._parseStack.paused; }
 function attrs(value: any) { return { fg: value.fg, bg: value.bg, extended: pick(value.extended, ['_ext', '_urlId']) }; }
 function restoreAttrs(target: any, value: any) { target.fg = value.fg; target.bg = value.bg; Object.assign(target.extended, value.extended); }
@@ -64,11 +72,15 @@ export function bufferState(buffer: any) {
             return { length: line.length, isWrapped: line.isWrapped, data: raw(line._data.subarray(0, line.length * 3)), combined: copy(line._combined), extended: Object.fromEntries(Object.entries(line._extendedAttrs).filter(([, v]) => v).map(([k, v]) => [k, pick(v, ['_ext', '_urlId'])])) };
         }) };
 }
-export function assertOwnership(term: any, drained = true) {
+export function assertOwnership(term: any, drained = true, hotPath = false) {
+    initializeBinding();
     if (ENGINE !== SUPPORTED_ENGINE)
         throw Error('Unsupported VT engine implementation');
-    if (handlerShape(term) !== HANDLERS)
-        throw Error('Custom parser/Unicode handlers are not eligible');
+    const epoch = registrations.get(term)?.epoch;
+    if (!hotPath || epoch === undefined || verifiedRegistrations.get(term) !== epoch) {
+        if (handlerShape(term) !== HANDLERS) throw Error('Custom parser/Unicode handlers are not eligible');
+        verifiedRegistrations.set(term, epoch);
+    }
     const known = ownedUnicodeProviders.get(term);
     if (!known || Object.entries(term._core.unicodeService._providers).some(([key, provider]) => known.get(key) !== provider))
         throw Error('Custom Unicode provider replacement is not eligible');
@@ -148,6 +160,7 @@ function restoreBuffer(buffer: any, snapshot: any, extendedPrototype: any) {
     restoreAttrs(buffer.savedCurAttrData, snapshot.saved);
 }
 export function restore(bytes: Buffer) {
+    initializeBinding();
     if (ENGINE !== SUPPORTED_ENGINE)
         throw Error('Unsupported VT engine implementation');
     if (bytes.length > MAX_SNAPSHOT)
@@ -210,8 +223,8 @@ export function restore(bytes: Buffer) {
     return { term, metadata: dto.metadata };
 }
 export { ENGINE };
-export function validateCapturedSnapshot(bytes: Buffer): void { parseVtSnapshot(bytes, ENGINE, DEFAULT_OPTIONS); }
-export function validateRendererCommonState(value: unknown): void { validateVtSnapshot(value, SUPPORTED_ENGINE, DEFAULT_OPTIONS, "renderer"); }
+export function validateCapturedSnapshot(bytes: Buffer): void { initializeBinding(); parseVtSnapshot(bytes, ENGINE, DEFAULT_OPTIONS); }
+export function validateRendererCommonState(value: unknown): void { initializeBinding(); validateVtSnapshot(value, SUPPORTED_ENGINE, DEFAULT_OPTIONS, "renderer"); }
 export function createOwnedTerminal(options: ConstructorParameters<typeof Terminal>[0]): Terminal {
     const term = new Terminal(options);
     trackPalette(term);

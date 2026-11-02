@@ -3,7 +3,7 @@
 
 import type { ControlCaller, ControlRequest } from "./control-protocol";
 import { callerProject } from "./team-author";
-import { debugLog, debugOn } from "./team-debug";
+import { debugLog, debugOn, flushDebugLogs } from "./team-debug";
 import { paneTeamRole } from "./team-files";
 import { openTeamStore } from "./team-store";
 import type { ProjectConfig } from "./types";
@@ -16,7 +16,7 @@ export async function debugPane(deps: DebugDeps, paneId: string, event: string, 
   try {
     const project = (await deps.listProjects()).find((p) => p.tabs.some((t) => t.id === paneId));
     const plays = project ? await paneTeamRole(deps.teamHome, project, paneId) : null;
-    if (plays) debugLog(plays.store, event, { pane: paneId, role: plays.role, ...fields });
+    if (plays) { debugLog(plays.store, event, { pane: paneId, role: plays.role, ...fields }); await flushDebugLogs(); }
   } catch {
     // A removed team or a full disk: debugging must never stop the team.
   }
@@ -35,7 +35,7 @@ export async function debugAnswer<T>(
     try {
       const named = "team" in request ? request.team : undefined;
       const project = "cwd" in request ? await callerProject(await deps.listProjects(), caller.terminalId, request) : null;
-      if (named && project) return debugLog(openTeamStore(deps.teamHome, project.slug, named), "socket", { ...fields, ...outcome });
+      if (named && project) { debugLog(openTeamStore(deps.teamHome, project.slug, named), "socket", { ...fields, ...outcome }); await flushDebugLogs(); return; }
       if (caller.terminalId) await debugPane(deps, caller.terminalId, "socket", { ...fields, ...outcome });
     } catch {
       // as above

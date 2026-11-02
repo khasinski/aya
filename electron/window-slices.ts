@@ -8,6 +8,7 @@
 // slice before the merged union is written back. Pure (no Electron imports)
 // so the slice semantics are unit-testable.
 
+import { projectStateTransaction } from "./project-state-queue";
 import type { ProjectCollectionState } from "./types";
 
 export class WindowProjectSlices {
@@ -156,19 +157,21 @@ export function createWindowProjectState(deps: WindowProjectStateDeps) {
 
   /** A window died: its projects fall out of `open` into recent; their PTYs keep running in the detached host. */
   async function releaseWindowSlices(windowId: number): Promise<void> {
-    const released = windowSlices.release(windowId);
-    if (released.length === 0 || deps.quitting()) return;
-    try {
-      const disk = await deps.listProjectState();
-      const openUnion = windowSlices.openUnion();
-      const recent = [
-        ...released.filter((s) => !openUnion.includes(s)),
-        ...disk.recent.filter((s) => !released.includes(s)),
-      ];
-      await deps.saveProjectState({ ...disk, open: openUnion, recent });
-    } catch {
-      // best effort - a failed trim only means the projects reopen on restart
-    }
+    return projectStateTransaction(async () => {
+      const released = windowSlices.release(windowId);
+      if (released.length === 0 || deps.quitting()) return;
+      try {
+        const disk = await deps.listProjectState();
+        const openUnion = windowSlices.openUnion();
+        const recent = [
+          ...released.filter((s) => !openUnion.includes(s)),
+          ...disk.recent.filter((s) => !released.includes(s)),
+        ];
+        await deps.saveProjectState({ ...disk, open: openUnion, recent });
+      } catch {
+        // best effort - a failed trim only means the projects reopen on restart
+      }
+    });
   }
 
   return {

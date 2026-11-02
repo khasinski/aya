@@ -1,0 +1,27 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+const directory = await fs.mkdtemp(path.join(tmpdir(), 'aya-config-cache-'));
+process.env.AYA_HOME = directory;
+const config = await import('../dist-electron/config.js');
+test.after(() => fs.rm(directory, { recursive: true, force: true }));
+test('project and collection caches avoid rereads, isolate returned objects and notice external replacements', async t => {
+  const project = await config.createProject('cache', directory);
+  const state = { version: 1, order: [project.slug], open: [project.slug], recent: [] };
+  await config.saveProjectState(state);
+  await config.listProjects();
+  const read = t.mock.method(fs, 'readFile');
+  const first = await config.listProjects();
+  const loadedState = await config.listProjectState();
+  assert.equal(read.mock.callCount(), 0);
+  first[0].name = 'mutated'; loadedState.open.length = 0;
+  assert.equal((await config.listProjects())[0].name, 'cache');
+  assert.deepEqual((await config.listProjectState()).open, [project.slug]);
+  const projectFile = path.join(directory, 'projects', project.slug + '.json');
+  await fs.writeFile(projectFile + '.new', JSON.stringify({ ...project, name: 'external' }));
+  await fs.rename(projectFile + '.new', projectFile);
+  assert.equal((await config.listProjects())[0].name, 'external');
+  assert.ok(read.mock.callCount() > 0);
+});

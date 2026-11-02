@@ -42,6 +42,7 @@ export function createPtyLog(
   // consequence is rotating slightly early or late, which is fine.
   let size = -1;
   let secured = false;
+  let directoryReady = false;
   return {
     append(event, fields) {
       try {
@@ -85,7 +86,7 @@ export function createPtyLog(
           secured = false;
           size = 0;
         }
-        fs.mkdirSync(path.dirname(file), { recursive: true });
+        if (!directoryReady) { fs.mkdirSync(path.dirname(file), { recursive: true }); directoryReady = true; }
         fs.appendFileSync(file, line, { mode: 0o600 });
         if (!secured) {
           fs.chmodSync(file, 0o600);

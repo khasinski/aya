@@ -12,10 +12,8 @@ export function openVtPane(...args: Parameters<typeof openMirror>): void {
   const pane = panes.get(args[0])!;
   pane.onSnapshot = () => scan(pane);
 }
-function scan(pane: VtPane): void {
-  if (!builtinScreenRules.get().available) return;
-  const snapshot = snapshotOf(pane);
-  const rows = snapshot.rows;
+function scan(pane: VtPane, rows = snapshotOf(pane).rows): boolean | null {
+  if (!builtinScreenRules.get().available) return null;
   // A numbered choice is a question for the user as much as an approval dialog (paneHold holds messages for it too).
   const screen = evaluateScreen(rows, pane.agent);
   const composer = composerState(pane.terminal);
@@ -26,13 +24,14 @@ function scan(pane: VtPane): void {
     pane.composerSeen = true;
   }
   // No opinion (an empty screen): say nothing rather than assert a state change.
-  if (verdict === null) return;
+  if (verdict === null) return null;
   const waiting = verdict === "waiting";
   const dialog = waiting && screenOffersAccountSetting(rows, pane.agent) ? HOLD_ACCOUNT_SETTING : undefined;
-  if (waiting === pane.lastWaiting && dialog === pane.lastDialog) return;
+  if (waiting === pane.lastWaiting && dialog === pane.lastDialog) return waiting;
   pane.lastWaiting = waiting;
   pane.lastDialog = dialog;
   pane.onChange(waiting, dialog);
+  return waiting;
 }
 
 /** Blank rows are kept: each rule region filters them. */
@@ -258,8 +257,7 @@ export function snapshotStatus(snapshot: VtSnapshot): { waiting: boolean | null;
   if(snapshot.recoveryUnknown || !builtinScreenRules.get().available)return {waiting:null,composerSeen:false};
   let waiting: boolean | null = null, dialog: string | undefined;
   const pane = paneFromSnapshot(snapshot, (w, d) => { waiting = w; dialog = d; });
-  scan(pane);
-  // scan emits only edges; an evaluated active screen with no dialog is an explicit false too.
-  if (waiting === null && evaluateScreen(snapshot.rows, snapshot.agent) !== null) waiting = false;
+  const evaluated = scan(pane, snapshot.rows);
+  if (waiting === null) waiting = evaluated;
   return { waiting, dialog, composerSeen: pane.composerSeen };
 }

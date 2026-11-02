@@ -20,6 +20,8 @@ export class CodexGuiSession {
   private startingTurn: Promise<Record<string, unknown>> | null = null;
   private threadId = '';
   private busy = false;
+  private samplingEpoch = 0;
+  private samplingWaiters = new Set<() => void>();
   get running() { return this.busy; }
   private closing = false;
   private artifactIds = new Set<string>();
@@ -40,6 +42,7 @@ export class CodexGuiSession {
   private fail(message: string) {
     for (const entry of this.pending.values()) { clearTimeout(entry.timer); entry.reject(Error(message)); }
     this.pending.clear(); this.requests.clear(); this.busy = false; this.turnId = null;
+    for (const wake of this.samplingWaiters) wake();
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
   }
   async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
@@ -132,20 +135,32 @@ export class CodexGuiSession {
       // turn/completed can arrive before the sampling source becomes idle.
       // Automatic goal turns can also start between listing the source and sampling it.
       const deadline = Date.now() + 30000;
+      let sourceTurnId = "", sourceEpoch = -1, retryDelay = 200;
       while (Date.now() < deadline) {
         if (!this.child || this.closing) throw Error('Codex is disconnected');
         if (!this.busy) {
-          const result = await this.rpc('thread/turns/list', { threadId: this.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
-          const last = Array.isArray(result.data) ? object(result.data[0]) : {};
-          if (!text(last.id)) throw Error('Send a message before asking a side question.');
-          if (!this.busy) {
-            try { return await this.rpc('thread/sample', { threadId: this.threadId, expectedTurnId: text(last.id), prompt: argument }); }
+          if (sourceEpoch !== this.samplingEpoch) {
+            const queriedEpoch = this.samplingEpoch;
+            const result = await this.rpc('thread/turns/list', { threadId: this.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
+            const last = Array.isArray(result.data) ? object(result.data[0]) : {};
+            sourceTurnId = text(last.id); sourceEpoch = queriedEpoch;
+            if (!sourceTurnId) throw Error('Send a message before asking a side question.');
+          }
+          if (!this.busy && sourceEpoch === this.samplingEpoch) {
+            try { return await this.rpc('thread/sample', { threadId: this.threadId, expectedTurnId: sourceTurnId, prompt: argument }); }
             catch (error) {
               if (!/sample source must be idle/i.test(error instanceof Error ? error.message : String(error))) throw error;
             }
           }
         }
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // A real running turn wakes us through notifications. Sampling readiness
+        // itself has no event, so only that narrow race uses bounded backoff.
+        await new Promise<void>(resolve => {
+          const wake = () => { clearTimeout(timer); this.samplingWaiters.delete(wake); resolve(); };
+          const timer = setTimeout(wake, this.busy ? Math.max(0, deadline - Date.now()) : retryDelay);
+          this.samplingWaiters.add(wake);
+        });
+        retryDelay = Math.min(1000, retryDelay * 2);
       }
       throw Error('Codex is still working and could not answer the side question yet. Stop the current turn or pause the goal, then try /btw again.');
     }
@@ -251,8 +266,9 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
       this.emit({ method: 'aya/notice', params: { message: `Unsupported Codex request: ${method}` } });
       return;
     }
-    if (method === 'turn/started') { this.turnId = text(object(params.turn).id); this.busy = true; }
-    if (method === 'turn/completed') {
+    if (method === 'turn/started') { this.samplingEpoch++; this.turnId = text(object(params.turn).id); this.busy = true; }
+    if (method === 'turn/completed') { this.samplingEpoch++;
+      for (const wake of this.samplingWaiters) wake();
       if (this.turnId && text(object(params.turn).id) && object(params.turn).id !== this.turnId) return;
       for (const [id, previous] of this.progresses) if (previous.status === 'running') {
         const progress: GuiProgress = { ...previous, status: object(params.turn).status === 'failed' ? 'failed' : 'paused', detail: previous.detail || 'Turn ended before this task was marked complete' };

@@ -39,7 +39,12 @@ function rendererCsp(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), rendererCsp()],
+  plugins: [react(), rendererCsp(), {
+    name: "aya-woff2-only", enforce: "pre",
+    transform(code, id) {
+      if (id.includes("@fontsource/") && id.endsWith(".css")) return code.replace(/,\s*url\([^)]*\.woff\)\s*format\(['"]woff['"]\)/g, "");
+    },
+  }],
   define: { __AYA_XTERM_ENGINE__: JSON.stringify(browserVtEngine) },
   resolve: { alias: [{ find: /^@xterm\/xterm$/, replacement: browserVtArtifact }] },
   base: "./",
@@ -65,6 +70,7 @@ export default defineConfig({
         chunkFileNames: "assets/[name]-[hash].js",
         codeSplitting: {
           groups: [
+            { name: "syntax-highlight", test: /node_modules[\\/]highlight\.js[\\/]/, priority: 50 },
             {
               name: "xterm-addons",
               test: /node_modules[\\/]@xterm[\\/]addon-/,

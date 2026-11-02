@@ -305,6 +305,7 @@ export class PtyHostClient {
     this.beginCrashRecovery();return await this.crashTask??false;
   }
   private readonly preparations = new Map<number, AbortController>();
+  private readonly knownSessionIds = new Map<string, string>();
   private readonly sessionWatches = new Map<string, () => void>();
   private readonly screenStates = new Map<string, { generation: string; waiting: boolean; dialog?: string }>();
   private userRuleStatusObserver:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}|null>)|null=null;
@@ -330,6 +331,7 @@ export class PtyHostClient {
 
   attachWebContents(webContents: WebContents | PtyEventSink): void {
     this.sinks.add(webContents);
+    if (!webContents.isDestroyed()) for (const [ptyId, sessionId] of this.knownSessionIds) webContents.send("pty:event", { type: "osc-session", ptyId, sessionId });
     if(!webContents.isDestroyed()&&this.ownerContinuityUnavailable&&!this.crashBlocked)for(const ptyId of this.live)webContents.send("pty:event",{type:"recovery-unavailable",ptyId,reason:this.continuityNotice});
     if(!webContents.isDestroyed())for(const [ptyId,reason] of this.authRefusedPanes)webContents.send("pty:event",this.principalBusyPanes.has(ptyId)?{type:"host-connection",ptyId,reason,connected:false}:{type:"disconnected",ptyId,reason});
     if(!webContents.isDestroyed()&&this.userRuleStatusObserver)for(const [ptyId,snapshot] of this.latestRuleSnapshots){
@@ -440,7 +442,7 @@ export class PtyHostClient {
       this.sendToSinks([{type:"disconnected",ptyId:req.ptyId,reason:this.recoveryReason??"The terminal host is recovering. The process was kept; input is disabled.",recoveryBlocked:this.ownsOwnerKey&&!!this.crashSupervisor,retryable:this.recoveryRetryable}]);
       throw Error("The terminal host is disconnected or recovering. This request was not sent.");
     }
-    if(!req.attachIfReused&&!req.attachOnly){this.recoveredStates.delete(req.ptyId);this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);this.observedPaneExits.delete(req.ptyId);this.uncertainInput.delete(req.ptyId);}
+    if(!req.attachIfReused&&!req.attachOnly){this.knownSessionIds.delete(req.ptyId);this.recoveredStates.delete(req.ptyId);this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);this.observedPaneExits.delete(req.ptyId);this.uncertainInput.delete(req.ptyId);}
     if(this.endedBootPanes.has(req.ptyId)&&(req.attachIfReused||req.attachOnly)&&!req.replayAfter){
       const exitCode=this.endedBootPanes.get(req.ptyId)!;
       this.authRefusedPanes.delete(req.ptyId);this.principalBusyPanes.delete(req.ptyId);
@@ -524,6 +526,10 @@ export class PtyHostClient {
     this.sessionWatches.get(ptyId)?.();
     this.sessionWatches.delete(ptyId);
     this.screenStates.delete(ptyId);
+    this.knownSessionIds.delete(ptyId);this.recoveryLaunches.delete(ptyId);this.latestRuleSnapshots.delete(ptyId);
+    this.ruleStatusStates.delete(ptyId);this.observedPaneExits.delete(ptyId);this.uncertainInput.delete(ptyId);this.recoveryScreens.delete(ptyId);
+    const ruleTimer=this.ruleStatusTimers.get(ptyId);if(ruleTimer)clearTimeout(ruleTimer);
+    this.ruleStatusTimers.delete(ptyId);this.ruleStatusPending.delete(ptyId);
   }
 
   /** Whether this client holds a connection to a host now (a question that never starts one). */
@@ -1561,15 +1567,18 @@ export class PtyHostClient {
         this.lostOwned.delete(message.req.ptyId);
         this.sessionWatches.get(message.req.ptyId)?.();
         this.sessionWatches.set(message.req.ptyId,
-          watchAgentSession(message.req, message.cwd, message.pid, message.spawnedAt, (sessionId) =>
-            this.sendToSinks([{ type: "osc-session", ptyId: message.req.ptyId, sessionId }])));
+          watchAgentSession(message.req, message.cwd, message.pid, message.spawnedAt, (sessionId) => {
+            if (this.knownSessionIds.get(message.req.ptyId) === sessionId) return;
+            this.knownSessionIds.set(message.req.ptyId, sessionId);
+            this.sendToSinks([{ type: "osc-session", ptyId: message.req.ptyId, sessionId }]);
+          }));
         continue;
       }
       if ("type" in message && message.type === "snapshot") {
         flushEvents();
         const snapshot = asVtSnapshot(message.snapshot);
         if (snapshot) {
-          this.notifyPaneWaiters(message.ptyId, explainPaneSnapshot(snapshot));
+          if (this.paneWaiters.get(message.ptyId)?.size) this.notifyPaneWaiters(message.ptyId, explainPaneSnapshot(snapshot));
           this.acceptSnapshot(message.ptyId, snapshot, message.replay === true);
         }
         continue;
@@ -1601,6 +1610,7 @@ export class PtyHostClient {
         if (message.event.type === "disconnected") this.lostOwned.add(message.event.ptyId);
         if (PANE_ENDED_EVENTS.has(message.event.type)) {
           this.live.delete(message.event.ptyId);
+          this.knownSessionIds.delete(message.event.ptyId);
           this.sessionWatches.get(message.event.ptyId)?.();
           this.sessionWatches.delete(message.event.ptyId);
           this.screenStates.delete(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);

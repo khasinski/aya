@@ -1,6 +1,7 @@
 // Which conversation a codex or grok pane is in, read from the CLI's own store: neither reports it
 // over OSC 9001, and `resume --last` would give every pane of a folder the newest conversation.
 
+import { readSessionDatabase } from "./agent-session-reader";
 import { execFile } from "node:child_process";
 import { promises as fs, realpath } from "node:fs";
 import * as path from "node:path";
@@ -30,7 +31,11 @@ export function pollSession(
 ): () => void {
   let stopped = false;
   let lastError = "";
+
+  let reading = false;
   const timer = setInterval(async () => {
+    if (reading || stopped) return;
+    reading = true;
     let sessionId: string | null = null;
     try {
       sessionId = await read();
@@ -39,6 +44,7 @@ export function pollSession(
       if (!stopped && error.message !== lastError) onError(error);
       lastError = error.message;
     }
+    reading = false;
     if (!stopped && sessionId) report(sessionId);
   }, intervalMs);
   timer.unref();
@@ -49,9 +55,15 @@ export function pollSession(
 }
 
 /** `pid` and its descendants: codex runs as a native child of its node launcher. */
+let processSnapshot: Promise<{ stdout: string }> | null = null;
 export async function processFamily(pid: number): Promise<number[]> {
   try {
-    const { stdout } = await execFileAsync("ps", ["-A", "-o", "pid=,ppid="], { windowsHide: true });
+    if (!processSnapshot) {
+      const reading = execFileAsync("ps", ["-A", "-o", "pid=,ppid="], { windowsHide: true });
+      processSnapshot = reading;
+      void reading.finally(() => { if (processSnapshot === reading) processSnapshot = null; }).catch(() => {});
+    }
+    const { stdout } = await processSnapshot;
     const procs = stdout.split("\n").map((line) => line.trim().split(/\s+/).map(Number));
     return [pid, ...collectDescendants(pid, procs.filter((p) => p.length === 2 && p.every(Number.isInteger)).map(([child, ppid]) => ({ pid: child, ppid })))];
   } catch {
@@ -73,7 +85,12 @@ export const LOG_CLOCK_SLACK_MS = LOG_CLOCK_SLACK_S * 1000;
 
 /** The thread of `cwd` one of `pids` logged to since `sinceMs` (state_N.sqlite cwd + logs_N.sqlite pid, codex-cli
  *  0.158.0); the time bound keeps a dead process's reused pid out. Null until a first message creates the thread. */
-export async function readCodexSessionId(
+export function readCodexSessionId(home: string, cwd: string, pids: number[], sinceMs: number): Promise<string | null> {
+  if (!pids.length) return Promise.resolve(null);
+  return readSessionDatabase([home, cwd, pids, sinceMs]);
+}
+
+export async function readCodexSessionIdLocally(
   home: string,
   cwd: string,
   pids: number[],

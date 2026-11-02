@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type Dispatch,
   type RefObject,
   type SetStateAction,
@@ -61,6 +62,11 @@ export function useSplitLayout({
   setTerminals,
   setCloseFocusHold,
 }: SplitLayoutOptions) {
+  const pendingResizes = useRef(new Map<string, { timer: ReturnType<typeof setTimeout> }>());
+  useEffect(() => { const pending = pendingResizes.current; return () => {
+    for (const [slug, { timer }] of pending) { clearTimeout(timer); const project = projectsRef.current.find(p => p.slug === slug); if (project) void window.aya.updateProject(project).catch(console.error); }
+    pending.clear();
+  }; }, [projectsRef]);
   /** The single write funnel for a project's pane layout. `updater` gets a
    *  tree already reconciled against the project's live tabs and the id of the
    *  focused pane, and returns the next tree (optionally moving focus). */
@@ -72,6 +78,7 @@ export function useSplitLayout({
         activeLeafId: string,
         project: ProjectConfig,
       ) => { tree: SplitNode; activeLeafId?: string },
+      deferSave = false,
     ) => {
       const project = projectsRef.current.find((p) => p.slug === slug);
       if (!project) return;
@@ -96,10 +103,16 @@ export function useSplitLayout({
         splitLayout: undefined,
         ...(splitTree ? { splitTree } : { splitTree: undefined }),
       };
-      setSingleViewByProject((prev) => ({ ...prev, [slug]: null }));
+      projectsRef.current = projectsRef.current.map(p => p.slug === slug ? updated : p);
+      setSingleViewByProject((prev) => prev[slug] === null ? prev : ({ ...prev, [slug]: null }));
       setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
-      void window.aya.updateProject(updated);
+      const pending = pendingResizes.current.get(slug);
+      if (pending) { clearTimeout(pending.timer); pendingResizes.current.delete(slug); }
+      if (deferSave) {
+        const timer = setTimeout(() => { pendingResizes.current.delete(slug); const latest = projectsRef.current.find(p => p.slug === slug); if (latest) void window.aya.updateProject(latest).catch(console.error); }, 250);
+        pendingResizes.current.set(slug, { timer });
+      } else void window.aya.updateProject(updated);
       // The requested pane may have been collapsed away by normalization, so
       // resolve against the tree that actually survived.
       const nextActive = resolveActiveLeafId(
@@ -107,11 +120,11 @@ export function useSplitLayout({
         result.activeLeafId ?? currentActive,
         fallbackId,
       );
-      setActiveLeafByProject((prev) => ({ ...prev, [slug]: nextActive }));
+      setActiveLeafByProject((prev) => prev[slug] === nextActive ? prev : ({ ...prev, [slug]: nextActive }));
       const activeTerminalId = leaves(normalized).find((l) => l.id === nextActive)
         ?.terminalId;
       if (activeTerminalId) {
-        setActiveTabByProject((prev) => ({ ...prev, [slug]: activeTerminalId }));
+        setActiveTabByProject((prev) => prev[slug] === activeTerminalId ? prev : ({ ...prev, [slug]: activeTerminalId }));
       }
     },
     [
@@ -207,7 +220,7 @@ export function useSplitLayout({
       // Before the split guard: a click on the pane is the pick that ends a hold in any layout.
       setCloseFocusHold(null);
       if (!splitEnabledRef.current) return;
-      setSingleViewByProject((prev) => ({ ...prev, [slug]: null }));
+      setSingleViewByProject((prev) => prev[slug] === null ? prev : ({ ...prev, [slug]: null }));
       updateProjectSplitTree(slug, (tree) => ({ tree, activeLeafId: leafId }));
     },
     [updateProjectSplitTree, setCloseFocusHold, setSingleViewByProject, splitEnabledRef],
@@ -218,7 +231,7 @@ export function useSplitLayout({
       updateProjectSplitTree(slug, (tree, activeLeafId) => ({
         tree: resizeSplitNode(tree, splitId, ratio),
         activeLeafId,
-      }));
+      }), true);
     },
     [updateProjectSplitTree],
   );

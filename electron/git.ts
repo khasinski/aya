@@ -2,10 +2,10 @@
 // already require a working POSIX env (claude / codex need it too). If git
 // isn't installed or the dir isn't a repo, return nulls.
 
-import { exec, execFile, spawn } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -454,36 +454,33 @@ export async function headCommit(directory: string): Promise<string | null> {
   }
 }
 
-// Untracked files whose size and mtime join the fingerprint; a repo with more has its first ones counted.
-const UNTRACKED_FINGERPRINT_LIMIT = 5000;
-
-/** A fingerprint of the working tree: `git status --porcelain` (untracked files too), the size and mtime of each
- *  untracked file (an edit inside one changes neither list nor diff), and the diff of tracked files against HEAD,
- *  hashed as it streams. null when any cannot be read (outside a repo, no commit yet). */
+// Metadata fingerprint for round liveness: bounded bytes, no binary diff stream.
+const TREE_FINGERPRINT_LIMIT = 5000;
 export async function workingTreeState(directory: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("git", [NO_LOCKS, "status", "--porcelain=v1", "-z"], { cwd: directory, ...DIFF_OPTS });
-    const hash = createHash("sha1").update(stdout).update("\0");
-    const { stdout: untracked } = await execFileAsync("git", [NO_LOCKS, "ls-files", "--others", "--exclude-standard", "-z"], { cwd: directory, ...DIFF_OPTS });
-    for (const file of untracked.split("\0").filter(Boolean).slice(0, UNTRACKED_FINGERPRINT_LIMIT)) {
-      const info = await stat(path.join(directory, file)).catch(() => null);
-      hash.update(`${file}\0${info ? `${info.size}:${info.mtimeMs}` : "-"}\0`);
+    const [{ stdout }, { stdout: head }] = await Promise.all([
+      execFileAsync("git", [NO_LOCKS, "status", "--porcelain=v2", "-z", "-uall"], { cwd: directory, ...DIFF_OPTS }),
+      execFileAsync("git", [NO_LOCKS, "rev-parse", "HEAD"], { cwd: directory, ...OPTS }),
+    ]);
+    const hash = createHash("sha256").update(head).update(stdout);
+    const records = stdout.split("\0"), paths: string[] = [];
+    for (let i = 0; i < records.length; i++) {
+      const row = records[i];
+      if (row.startsWith('? ')) paths.push(row.slice(2));
+      else if (row.startsWith('1 ')) paths.push(row.split(' ').slice(8).join(' '));
+      else if (row.startsWith('2 ')) { paths.push(row.split(' ').slice(9).join(' ')); if (records[i + 1]) paths.push(records[++i]); }
+      else if (row.startsWith('u ')) paths.push(row.split(' ').slice(10).join(' '));
     }
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("git", [NO_LOCKS, "diff", "HEAD", "--no-ext-diff", "--no-color", "--binary"], { cwd: directory, env: GIT_ENV, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
-      const timer = setTimeout(() => child.kill(), GIT_DIFF_TIMEOUT_MS);
-      child.stdout.on("data", (chunk: Buffer) => hash.update(chunk));
-      child.on("error", reject);
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        if (code === 0) resolve();
-        else reject(new Error(`git diff exited ${code}`));
-      });
-    });
-    return hash.digest("hex");
-  } catch {
-    return null;
-  }
+    if (paths.length > TREE_FINGERPRINT_LIMIT) return null;
+    for (let offset = 0; offset < paths.length; offset += 32) {
+      const files = await Promise.all(paths.slice(offset, offset + 32).map(async file => {
+        const info = await lstat(path.join(directory, file)).catch(() => null);
+        return `${file}\0${info ? `${info.dev}:${info.ino}:${info.mode}:${info.size}:${info.mtimeMs}:${info.ctimeMs}` : '-'}\0`;
+      }));
+      for (const file of files) hash.update(file);
+    }
+    return hash.digest('hex');
+  } catch { return null; }
 }
 
 export interface GitChangedFile {

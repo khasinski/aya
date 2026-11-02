@@ -26,6 +26,9 @@ let debugSwitchStat: { mtimeMs: number; ino: number; size: number } | null = nul
 type DebugSwitchWatcher = { path: string; read: () => void; watcher: fs.FSWatcher | null };
 const debugSwitchWatchers: DebugSwitchWatcher[] = [];
 let activeDebugSwitchWatcher: DebugSwitchWatcher | null = null;
+const pendingWrites = new Map<string, Promise<void>>();
+export function debugLogsPending(): boolean { return pendingWrites.size > 0; }
+export async function flushDebugLogs(): Promise<void> { await Promise.all([...pendingWrites.values()]); }
 const sizes = new Map<string, number>();
 const states = new Map<string, string>();
 
@@ -138,26 +141,20 @@ export function debugLog(team: { dir: string }, event: string, fields: Record<st
     const state = JSON.stringify(fields, trimmed);
     if (states.get(key) === state) return;
     states.set(key, state);
+    if (states.size > 2048) states.delete(states.keys().next().value!);
   }
   const line = `${JSON.stringify({ time: new Date().toISOString(), event, ...fields }, trimmed)}\n`;
   const file = path.join(team.dir, DEBUG_LOG_FILE);
-  try {
-    let size = sizes.get(file) ?? fileSize(file);
+  const task = (pendingWrites.get(file) ?? Promise.resolve()).then(async () => {
+    let size = sizes.get(file);
+    if (size === undefined) size = await fs.promises.stat(file).then(stat => stat.size).catch(() => 0);
     if (size > 0 && size + Buffer.byteLength(line) > DEBUG_LOG_MAX_BYTES) {
-      fs.renameSync(file, path.join(team.dir, DEBUG_LOG_OLD_FILE));
-      size = 0;
+      await fs.promises.rename(file, path.join(team.dir, DEBUG_LOG_OLD_FILE)); size = 0;
     }
-    fs.appendFileSync(file, line, { mode: OWNER_ONLY_FILE_MODE });
+    await fs.promises.appendFile(file, line, { mode: OWNER_ONLY_FILE_MODE });
     sizes.set(file, size + Buffer.byteLength(line));
-  } catch {
-    // A removed team or a full disk: debugging must never stop the team.
-  }
-}
-
-function fileSize(file: string): number {
-  try {
-    return fs.statSync(file).size;
-  } catch {
-    return 0;
-  }
+    if (sizes.size > 512) sizes.delete(sizes.keys().next().value!);
+  }).catch(() => { /* Debugging must never stop a team. */ });
+  pendingWrites.set(file, task);
+  void task.finally(() => { if (pendingWrites.get(file) === task) pendingWrites.delete(file); });
 }

@@ -1,3 +1,4 @@
+import { releaseSpawn } from "../spawnSession";
 import {
   useCallback,
   type Dispatch,
@@ -167,6 +168,7 @@ export function useProjectActions({
       window.alert(terminalKillRefusal("close", projectsRef.current.find(p => p.slug === slug)?.name ?? slug, refused.join("\n"), "project"));
       return;
     }
+    for (const terminal of owned) releaseSpawn(terminal.id);
     setTerminals((prev) => {
       const next = { ...prev };
       for (const t of owned) delete next[t.id];
@@ -195,7 +197,10 @@ export function useProjectActions({
     });
     setGit((prev) => {
       const next = { ...prev };
-      delete next[slug];
+      const project = projectsRef.current.find(p => p.slug === slug);
+      const directories = new Set([project?.directory, ...owned.map(t => t.cwd)]);
+      const retained = projectsRef.current.filter(p => p.slug !== slug);
+      for (const directory of directories) if (directory && !retained.some(p => p.directory === directory || p.tabs.some(t => t.cwd === directory))) delete next[directory];
       return next;
     });
     setProjectFallbacks((prev) => {
@@ -227,6 +232,7 @@ export function useProjectActions({
     const owned = Object.values(terminalsRef.current).filter(
       (t) => t.projectSlug === slug,
     );
+    for (const terminal of owned) releaseSpawn(terminal.id);
     setTerminals((prev) => {
       const next = { ...prev };
       for (const t of owned) delete next[t.id];
@@ -254,7 +260,10 @@ export function useProjectActions({
     });
     setGit((prev) => {
       const next = { ...prev };
-      delete next[slug];
+      const project = projectsRef.current.find(p => p.slug === slug);
+      const directories = new Set([project?.directory, ...owned.map(t => t.cwd)]);
+      const retained = projectsRef.current.filter(p => p.slug !== slug);
+      for (const directory of directories) if (directory && !retained.some(p => p.directory === directory || p.tabs.some(t => t.cwd === directory))) delete next[directory];
       return next;
     });
     setProjectFallbacks((prev) => {

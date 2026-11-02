@@ -6,7 +6,7 @@ import { promises as fs } from "node:fs";
 import * as fsSync from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { TMP_SUFFIX, writeFileAtomic } from "./atomic-write";
+import { atomicTempPath, writeFileAtomic } from "./atomic-write";
 import { AYA_HOME } from "./paths";
 
 /** Marker written right before quitAndInstall and cleared once reconciled. */
@@ -131,12 +131,15 @@ export function markPendingUpdateSync(targetVersion: string): void {
     } catch {
       // no usable prior marker; this is attempt one
     }
-    const tmp = `${PENDING_UPDATE_FILE}${TMP_SUFFIX}`;
+    const tmp = atomicTempPath(PENDING_UPDATE_FILE);
+    try {
     fsSync.writeFileSync(
       tmp,
       JSON.stringify(nextAttempt(targetVersion, prior)) + "\n",
+      { flag: "wx", mode: 0o600 },
     );
     fsSync.renameSync(tmp, PENDING_UPDATE_FILE);
+    } catch (error) { try { fsSync.unlinkSync(tmp); } catch {} throw error; }
   } catch {
     // best-effort; a quit-path install just stays undiagnosable
   }

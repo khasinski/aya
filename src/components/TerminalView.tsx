@@ -387,6 +387,9 @@ function TerminalViewComponent({
   // Guards the construction->loadAddon window so a synchronously-delivered
   // context loss can't re-enter attachWebgl mid-attach.
   const attachingWebglRef = useRef(false);
+  const webglRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webglAttemptsRef = useRef(0);
+  useEffect(() => () => { if (webglRetryRef.current) clearTimeout(webglRetryRef.current); }, []);
   const spawnedRef = useRef(false);
   // True while a full-screen/rich TUI (claude, codex, vim…) is running, detected
   // via focus-reporting mode (DECSET 1004). Gates the Shift+Enter soft newline.
@@ -401,6 +404,12 @@ function TerminalViewComponent({
   const macOptionKeyModeRef = useRef(macOptionKeyMode);
   macOptionKeyModeRef.current = macOptionKeyMode;
   const [findQuery, setFindQuery] = useState("");
+  const debugInputRef = useRef(false);
+  useEffect(() => {
+    const refresh = () => { try { debugInputRef.current = localStorage.getItem(DEBUG_TERMINAL_INPUT_STORAGE_KEY) === '1'; } catch { debugInputRef.current = false; } };
+    refresh(); window.addEventListener('storage', refresh); window.addEventListener('focus', refresh);
+    return () => { window.removeEventListener('storage', refresh); window.removeEventListener('focus', refresh); };
+  }, []);
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
   // Ref mirror so the per-chunk PTY handler can check-and-clear without
@@ -580,14 +589,18 @@ function TerminalViewComponent({
    * We never synthesize keyboard input like ^L either, since several harnesses
    * (grok) use ^L for their own features.
    */
+  const reassertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (reassertTimerRef.current) clearTimeout(reassertTimerRef.current); }, []);
   const forcePtyReassert = useCallback(() => {
+    if (reassertTimerRef.current) return;
     const t = xtermRef.current;
     if (!t || t.cols <= 0 || t.rows <= 0 || handoverInputPausedRef.current) return;
     const c = t.cols;
     const r = t.rows;
     if (richInputRef.current) {
       void window.aya.ptyResize(terminal.id, c, r + 1).catch(()=>{});
-      setTimeout(() => {
+      reassertTimerRef.current = setTimeout(() => {
+        reassertTimerRef.current = null;
         const tt = xtermRef.current;
         if (tt && tt.cols === c && tt.rows === r) {
           void window.aya.ptyResize(terminal.id, c, r).catch(()=>{});
@@ -691,9 +704,13 @@ function TerminalViewComponent({
           // degrades to the DOM renderer until remount). If the GPU is still
           // under pressure the attach throws -> caught -> DOM fallback stays
           // and the next resume retries via healWebgl.
-          if (document.visibilityState === "visible") {
-            const t = xtermRef.current;
-            if (t) attachWebgl(t);
+          if (document.visibilityState === "visible" && !webglRetryRef.current && webglAttemptsRef.current < 3) {
+            const delay = 50 * 2 ** webglAttemptsRef.current++;
+            webglRetryRef.current = setTimeout(() => {
+              webglRetryRef.current = null;
+              const t = xtermRef.current;
+              if (t && document.visibilityState === 'visible') attachWebgl(t);
+            }, delay);
           }
         });
         term.loadAddon(webgl);
@@ -777,6 +794,7 @@ function TerminalViewComponent({
   // webglcontextlost event, dispose the dead addon, and attach a fresh one
   // (which also repaints).
   const healWebgl = useCallback(() => {
+    webglAttemptsRef.current = 0;
     const term = xtermRef.current;
     if (!term || !shouldUseWebgl) return;
     if (webglRef.current) {
@@ -1129,7 +1147,7 @@ function TerminalViewComponent({
       if (disconnectedRef.current) return;
       if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
-      if (localStorage.getItem(DEBUG_TERMINAL_INPUT_STORAGE_KEY) === "1") {
+      if (debugInputRef.current) {
         console.debug(
           `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
         );
@@ -1138,6 +1156,8 @@ function TerminalViewComponent({
     });
 
     const onResizeDisposable = term.onResize(({ cols, rows }) => {
+      if (reassertTimerRef.current) clearTimeout(reassertTimerRef.current);
+      reassertTimerRef.current = null;
       if(!handoverInputPausedRef.current)void window.aya.ptyResize(terminal.id, cols, rows).catch(()=>{});
     });
 
@@ -1344,6 +1364,7 @@ function TerminalViewComponent({
   useEffect(() => {
     if (!wantsFocus) return;
     let expectedActiveElement = document.activeElement;
+    let reasserted = false;
     const focusNow = () => {
       if (!terminalFocusRetryStillOwned(expectedActiveElement, document.activeElement)) return;
       try {
@@ -1358,7 +1379,7 @@ function TerminalViewComponent({
           // panes may have been the "front" one; the newly focused rich TUI
           // often needs a fresh SIGWINCH (or size delta) to repaint its focused
           // static layout.
-          forcePtyReassert();
+          if (!reasserted) { reasserted = true; forcePtyReassert(); }
         }
       } catch {
         /* ignore - xterm may be mid-dispose */

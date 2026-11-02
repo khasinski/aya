@@ -536,8 +536,8 @@ body {
 .aya-terminal-remote-disconnected-notice button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @keyframes aya-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 60%, transparent); }
-  50% { opacity: 0.5; box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 0%, transparent); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .aya-sidebar-name {

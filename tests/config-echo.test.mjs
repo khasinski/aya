@@ -49,7 +49,7 @@ test("hashConfig is stable and content-sensitive", () => {
 // prove that what Aya writes to disk matches what the watcher reads back. These
 // go through a real write-then-read on disk (writeFileAtomic -> read).
 
-test("a real writeFileAtomic round-trip reads back as an echo", async () => {
+test("atomic writes outside the watched configuration are not retained as echoes", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "aya-echo-"));
   try {
     const target = path.join(dir, "snippets.json");
@@ -60,7 +60,7 @@ test("a real writeFileAtomic round-trip reads back as an echo", async () => {
         2,
       ) + "\n";
     await writeFileAtomic(target, data); // records the hash internally
-    assert.equal(isEcho(target, await readFile(target, "utf8")), true);
+    assert.equal(isEcho(target, await readFile(target, "utf8")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

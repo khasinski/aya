@@ -44,7 +44,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   };
   const redelivery = setInterval(
     () => {
-      void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err));
+      if (teamRunner.hasRunningTeams) void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err));
       tellRelaunched();
     },
     // E2E only: a spec that waits on a held message should not wait a production period.

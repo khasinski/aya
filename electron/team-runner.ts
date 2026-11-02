@@ -62,6 +62,7 @@ export function resumeRefusal(pausedBy: string | null, by: string): string | nul
 const withSections = (text: string, ...sections: (string | null)[]): string => [text, ...sections.filter((s) => s)].join(" ");
 
 export class TeamRunner {
+  get hasRunningTeams(): boolean { return this.cancels.size > 0; }
   private cancels = new Map<string, () => void>();
   // Bumped by every cancel: a tick armed before it does nothing.
   private generations = new Map<string, number>();

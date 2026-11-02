@@ -29,7 +29,7 @@ export class VtCheckpointTerminal {
   }
 
   private owned(): boolean {
-    try { assertOwnership(this.terminal, false); return true; } catch { return false; }
+    try { assertOwnership(this.terminal, false, true); return true; } catch { return false; }
   }
   private append(operation: VtOperation, ownedBefore: boolean, epoch: number): void {
     this.tainted ||= !ownedBefore || !this.owned() || epoch !== ownershipEpoch(this.terminal);
@@ -38,7 +38,7 @@ export class VtCheckpointTerminal {
     else if (!this.overflow) this.tail.push(operation);
     // A parse callback can run before xterm updates its pending-data counter.
     // Compact after the whole current parse batch, never once per queued call.
-    queueMicrotask(() => this.compact());
+    if (this.tailBytes >= 64 * 1024 || this.overflow || this.tainted) queueMicrotask(() => this.compact());
   }
   private compact(): void {
     if (this.disposed || this.pending || !ground(this.terminal)) return;

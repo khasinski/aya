@@ -4,7 +4,7 @@
 import type { App, IpcMain } from "electron";
 import type { networkInterfaces } from "node:os";
 import type { PtyHostClient } from "../pty-host-client";
-import type { WebServerStatus } from "../types";
+import type { ConfigSlice, WebServerStatus } from "../types";
 import type { WebServerHandle, WebServerOptions } from "../web-server";
 import {
   generateWebPassword,
@@ -17,6 +17,7 @@ import {
 } from "../web-config";
 
 export interface AyaWebDeps {
+  watchConfig?: (notify: (slice: ConfigSlice) => void) => () => void;
   app: Pick<App, "getVersion">;
   ptyHost: Pick<PtyHostClient, "attachWebContents" | "detachWebContents">;
   isDev: boolean;
@@ -31,6 +32,7 @@ export function createAyaWeb(deps: AyaWebDeps) {
   // --- Aya Web (experimental): browser access over HTTP + WebSocket ---
   let webConfig: WebConfig | null = null;
   let webServer: WebServerHandle | null = null;
+  let stopConfigWatcher: (() => void) | undefined;
   // Last start failure (e.g. port already in use) - surfaced in Settings.
   let webServerError: string | null = null;
   // Every load, change and (re)start of Aya Web runs one after another. Settings exists in each window and in Aya
@@ -54,6 +56,7 @@ export function createAyaWeb(deps: AyaWebDeps) {
   /** (Re)apply the current web config: stop the running server, then start a
    *  fresh one when enabled. Start failures are recorded, never thrown. */
   async function applyWebServerState(): Promise<void> {
+    stopConfigWatcher?.(); stopConfigWatcher = undefined;
     if (webServer) {
       deps.ptyHost.detachWebContents(webPtySink);
       const closing = webServer;
@@ -71,6 +74,7 @@ export function createAyaWeb(deps: AyaWebDeps) {
         getConfig: () => webConfig ?? config,
       });
       deps.ptyHost.attachWebContents(webPtySink);
+      stopConfigWatcher = deps.watchConfig?.(slice => webServer?.broadcast("config:changed", { slice }));
     } catch (err) {
       webServerError = err instanceof Error ? err.message : String(err);
     }

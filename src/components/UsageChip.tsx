@@ -1,3 +1,4 @@
+import { pollVisible } from "../poll-visible";
 import { RECENT_MENU_WIDTH_PX } from "../ui-constants";
 import { useEffect, useRef, useState } from "react";
 import type { GrokUsage, UsageAccount, UsageData, UsageWindow } from "../types";
@@ -13,8 +14,7 @@ const STALE_TICK_MS = 60_000;
 function useMinuteTick(): void {
   const [, setTick] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setTick((n) => n + 1), STALE_TICK_MS);
-    return () => window.clearInterval(id);
+    return pollVisible(() => setTick(n => n + 1), STALE_TICK_MS);
   }, []);
 }
 

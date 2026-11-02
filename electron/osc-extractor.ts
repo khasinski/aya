@@ -78,6 +78,7 @@ function lastFullIntroducerStart(rest: string): number {
  *  that started in an earlier chunk but hadn't seen its terminator yet. Pure
  *  and side-effect free; callers own the per-ptyId carry state. */
 export function extractAyaOsc(chunk: string, carry: string): OscExtractResult {
+  if (!carry && !chunk.includes("\x1b]") && !chunk.endsWith("\x1b")) return { cleaned: chunk, carry: "", events: [] };
   const combined = carry + chunk;
   const events: AyaOscEvent[] = [];
   let cleaned = "";

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import hljs from "highlight.js/lib/common";
+import type { HLJSApi } from "highlight.js";
 import type {
   GitChangedFile,
   GitHubLink,
@@ -1251,8 +1251,8 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function highlightCodeHtml(code: string, language: string): string {
-  if (!hljs.getLanguage(language)) return escapeHtml(code);
+function highlightCodeHtml(code: string, language: string, hljs?: HLJSApi): string {
+  if (!hljs?.getLanguage(language)) return escapeHtml(code);
   try {
     return hljs.highlight(code, { language, ignoreIllegals: true }).value;
   } catch {
@@ -1333,6 +1333,12 @@ function DiffPanel({
   onSend: (target: ReviewTarget, ids: string[]) => void;
 }) {
   const lines = useMemo(() => annotateDiff(diff), [diff]);
+  const [highlighter, setHighlighter] = useState<HLJSApi>();
+  useEffect(() => { let cancelled = false; void import('highlight.js/lib/common').then(module => { if (!cancelled) setHighlighter(module.default); }).catch(() => {}); return () => { cancelled = true; }; }, []);
+  const highlightedLines = useMemo(() => lines.map(line => {
+    const prefix = ["add", "del", "ctx"].includes(line.kind) ? line.text.slice(0, 1) : "";
+    return highlightCodeHtml(prefix ? line.text.slice(1) : line.text, line.language, highlighter);
+  }), [lines, highlighter]);
   const rawLines = useMemo(() => diff.split("\n"), [diff]);
   const indexedDiff = useMemo(() => indexDiffRows(rawLines), [rawLines]);
   // Which row is being commented on, and the draft note.
@@ -1404,9 +1410,8 @@ function DiffPanel({
         <div className="aya-diff-view">
           {lines.map((line, index) => {
             const prefix = ["add", "del", "ctx"].includes(line.kind) ? line.text.slice(0, 1) : "";
-            const code = prefix ? line.text.slice(1) : line.text;
             const highlighted = markHtmlOccurrences(
-              highlightCodeHtml(code, line.language),
+              highlightedLines[index],
               query,
             );
             const commentable = prefix !== "";

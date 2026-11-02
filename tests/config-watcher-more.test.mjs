@@ -187,6 +187,24 @@ test("a window that is already closed is sent nothing", async (t) => {
   assert.deepEqual(received, [], "nothing is sent to a destroyed window");
 });
 
+test('one external edit reaches both windows; closing one does not stop the other watcher', async t => {
+ const events=[[],[]];
+ const windows=events.map(list=>({isDestroyed:()=>false,webContents:{send:(channel,value)=>list.push({channel,...value})}}));
+ const stops=windows.map(startConfigWatcher);t.after(()=>stops.forEach(stop=>stop()));
+ await fs.writeFile(join(projectsDir,'multi-window.json'),freshProject());
+ await waitFor(()=>events.every(list=>list.some(e=>e.slice==='projects')),5000);
+ stops[0]();events[1].length=0;
+ await fs.writeFile(join(projectsDir,'multi-window.json'),freshProject());
+ await waitFor(()=>events[1].some(e=>e.slice==='projects'),5000);
+});
+
+test('idle configuration polling does not reread unchanged file contents', async t => {
+  const { settle } = await startWatched(t);
+  const reads = t.mock.method(fs, 'readFile');
+  await settle(3);
+  assert.equal(reads.mock.callCount(), 0);
+});
+
 // Last: it replaces AYA_HOME with a plain file.
 test("when AYA_HOME is not a folder the watcher starts nothing and its stop still works", (t) => {
   rmSync(home, { recursive: true, force: true });

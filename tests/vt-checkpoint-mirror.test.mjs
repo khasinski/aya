@@ -101,3 +101,18 @@ test('tail cap includes JSON array and comma framing for many tiny operations',a
   await write(a,'0m');assert.deepEqual((await a.checkpoint({})).tail,[]);
  }finally{a.dispose();}
 });
+
+
+test('small PTY chunks retain a bounded journal instead of capturing the scrollback each time', async t => {
+ const binding=require('../dist-electron/vt-checkpoint-binding.js');
+ const pane=new VtCheckpointTerminal({cols:80,rows:24,scrollback:1000,allowProposedApi:true});
+ t.after(()=>pane.dispose());
+ const captures=t.mock.method(binding,'capture');
+ for(let i=0;i<500;i++) await write(pane,'hello world\r\n');
+ assert.equal(captures.mock.callCount(),0,'no buffer snapshots on the small-chunk hot path');
+ await write(pane,'\x1b[38;2;');
+ const restored=await VtCheckpointTerminal.import(await pane.checkpoint({}));
+ t.after(()=>restored.dispose());
+ await write(pane,'1;2;3mcontinued'); await write(restored,'1;2;3mcontinued');
+ assert.deepEqual(JSON.parse(capture(restored.terminal)),JSON.parse(capture(pane.terminal)));
+});

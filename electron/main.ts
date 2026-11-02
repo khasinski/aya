@@ -1,3 +1,4 @@
+import { debugLogsPending, flushDebugLogs } from "./team-debug";
 import { registerWidgetScheme } from './gui-artifact-documents';
 import { registerCodexGuiIpc } from "./codex-gui-ipc";
 import {findAuthTransferTicket} from "./pty-host-auth-ticket";
@@ -36,7 +37,7 @@ import { bundledAyaCliPath } from "./cli-path";
 import { isShellCommand, withCliFirst } from "./pane-command";
 import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
 import { startConfigWatcher } from "./config-watcher";
-import { noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
+import { agentStatusesPending, flushAgentStatuses, noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
 import { deliverTeamMessage, paneOutputMarks, sendPaneTextThroughControl, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
 import { confirmOpen, dispatchOpenProject, findDirInArgv, logOpenFailure } from "./open-delivery";
 import { createAyaWindows } from "./windows";
@@ -177,6 +178,28 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 import {PlannedUpdate} from "./pty-planned-update";
 import {HandoverDisplays} from "./pty-handover-display";
 import {InstalledBuild,installedBuildFile} from "./installed-build";
+
+configureAppIdentity();
+
+// Before the single-instance lock: a home whose sockets cannot bind would
+// otherwise run on as an app nothing can reach.
+const socketProblems = homeSocketProblems(AYA_HOME);
+if (socketProblems.fatal) {
+  console.error(`Aya: ${socketProblems.fatal}`);
+  if (!IS_E2E_HEADLESS) dialog.showErrorBox("Aya cannot start", socketProblems.fatal);
+  app.exit(1);
+}
+if (socketProblems.remote) console.error(`Aya: ${socketProblems.remote}`);
+
+// Only one Aya instance per config dir. A second launch (e.g. `open -a Aya
+// /path/to/project` or the `aya` CLI shim) sends its argv to the first
+// instance via the `second-instance` event, which the renderer turns into
+// a project switch / open.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
 const installedBuild = new InstalledBuild(installedBuildFile(PTY_HOST_SCRIPT));
@@ -428,27 +451,6 @@ function configureAppIdentity(): void {
   });
 }
 
-configureAppIdentity();
-
-// Before the single-instance lock: a home whose sockets cannot bind would
-// otherwise run on as an app nothing can reach.
-const socketProblems = homeSocketProblems(AYA_HOME);
-if (socketProblems.fatal) {
-  console.error(`Aya: ${socketProblems.fatal}`);
-  if (!IS_E2E_HEADLESS) dialog.showErrorBox("Aya cannot start", socketProblems.fatal);
-  app.exit(1);
-}
-if (socketProblems.remote) console.error(`Aya: ${socketProblems.remote}`);
-
-// Only one Aya instance per config dir. A second launch (e.g. `open -a Aya
-// /path/to/project` or the `aya` CLI shim) sends its argv to the first
-// instance via the `second-instance` event, which the renderer turns into
-// a project switch / open.
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-  process.exit(0);
-}
-
 // DevTools probes a few CDP domains that Electron doesn't implement
 // (notably `Autofill.enable` / `Autofill.setAddresses`) and logs the
 // "method not found" responses to stderr. There's no public API to disable
@@ -522,6 +524,7 @@ let ordinaryQuitAnnounced = false;
 let ordinaryQuitAnnouncementPending = false;
 
 const ayaWeb = createAyaWeb({
+  watchConfig: notify => startConfigWatcher({ isDestroyed: () => false, webContents: { send: (_channel, value) => notify(value.slice) } }),
   app,
   ptyHost,
   isDev: IS_DEV,
@@ -1256,6 +1259,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  if (agentStatusesPending() || debugLogsPending()) { event.preventDefault(); void Promise.all([flushAgentStatuses(), flushDebugLogs()]).finally(() => app.quit()); return; }
   if (!teamsStopped && teamsAtQuit) {
     teamsStopped = true;
     const typing = teamsAtQuit.stopAll();

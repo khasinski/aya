@@ -19,6 +19,7 @@ export function shouldPreserveTerminalScrollback(presetId: string): boolean {
 }
 
 export function stripScrollbackErase(chunk: string): string {
+  if (!chunk.includes("3J")) return chunk;
   return chunk.replace(/\x1b\[(?:3|\?3)J/g, "");
 }
 
@@ -28,6 +29,7 @@ export function stripScrollbackErase(chunk: string): string {
  * xterm's DOM renderer; normalizing the SGR sequence also covers WebGL.
  */
 export function normalizeTerminalLinkUnderline(chunk: string): string {
+  if (!chunk.includes("4:5")) return chunk;
   return chunk.replace(/\x1b\[([0-9:;]*)m/g, (sequence, parameters: string) => {
     if (!parameters.split(";").includes("4:5")) return sequence;
     return `\x1b[${parameters

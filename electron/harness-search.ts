@@ -257,6 +257,7 @@ async function claudeSessionFiles(
 // A rollout's first line (session_meta, carrying the session cwd) never
 // changes after the file is created, so this cache never invalidates.
 const codexCwdCache = new Map<string, string | null>();
+const codexDiscoveryCache = new Map<string, { until: number; files: { file: string; mtimeMs: number; size: number }[] }>();
 
 /** Read the session cwd from a rollout's first line without reading the file. */
 async function codexSessionCwd(file: string): Promise<string | null> {
@@ -269,7 +270,8 @@ async function codexSessionCwd(file: string): Promise<string | null> {
     const buf = Buffer.alloc(META_PROBE_BYTES);
     const { bytesRead } = await handle.read(buf, 0, META_PROBE_BYTES, 0);
     const chunk = buf.toString("utf-8", 0, bytesRead);
-    const firstLine = chunk.slice(0, chunk.indexOf("\n"));
+    const newline = chunk.indexOf("\n");
+    const firstLine = newline >= 0 ? chunk.slice(0, newline) : chunk;
     const obj = JSON.parse(firstLine) as {
       type?: unknown;
       payload?: { cwd?: unknown };
@@ -282,7 +284,7 @@ async function codexSessionCwd(file: string): Promise<string | null> {
   } finally {
     await handle?.close().catch(() => {});
   }
-  codexCwdCache.set(file, cwd);
+  if (cwd !== null) codexCwdCache.set(file, cwd);
   while (codexCwdCache.size > CODEX_CWD_CACHE_MAX_FILES) {
     const oldest = codexCwdCache.keys().next().value;
     if (oldest === undefined) break;
@@ -300,7 +302,9 @@ async function codexSessionFiles(
   const home = codexHomeFor({ configDir, command }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
   if (!home) return { sessions: [], partial: false };
   const root = path.join(home, CODEX_SESSIONS_SUBDIR);
-  const all: { file: string; mtimeMs: number; size: number }[] = [];
+  const cachedDiscovery = codexDiscoveryCache.get(root);
+  const cachedFiles = cachedDiscovery && cachedDiscovery.until > Date.now() ? cachedDiscovery.files : null;
+  const all: { file: string; mtimeMs: number; size: number }[] = cachedFiles ? [...cachedFiles] : [];
   let partial = false;
   async function walk(dir: string): Promise<void> {
     if (shouldStop()) {
@@ -343,8 +347,12 @@ async function codexSessionFiles(
       await directory.close().catch(() => {});
     }
   }
-  await walk(root);
+  if (!cachedFiles) await walk(root);
   if (shouldStop()) partial = true;
+  if (!cachedFiles && !partial && all.length <= 10000) {
+    codexDiscoveryCache.delete(root); codexDiscoveryCache.set(root, { until: Date.now() + 1000, files: [...all] });
+    if (codexDiscoveryCache.size > 8) codexDiscoveryCache.delete(codexDiscoveryCache.keys().next().value!);
+  }
   all.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
   // Rollouts are project-agnostic on disk; keep the newest ones whose
@@ -387,6 +395,7 @@ export function resetHarnessSearchCaches(): void {
   parseCache.clear();
   parseCacheBytes = 0;
   codexCwdCache.clear();
+  codexDiscoveryCache.clear();
 }
 
 function cacheTranscript(file: string, parsed: ParsedTranscript): void {

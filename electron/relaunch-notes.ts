@@ -93,10 +93,18 @@ interface Note {
   quiet?: true;
 }
 
+const noteCache = new Map<string, { signature: string; notes: Record<string, Note> }>();
 async function readNotes(file: string): Promise<Record<string, Note>> {
   try {
+    const info = await fs.stat(file);
+    const signature = `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    const cached = noteCache.get(file);
+    if (cached?.signature === signature) return structuredClone(cached.notes);
     const raw = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, Note>;
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const notes = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    noteCache.set(file, { signature, notes });
+    if (noteCache.size > 32) noteCache.delete(noteCache.keys().next().value!);
+    return structuredClone(notes);
   } catch {
     return {};
   }
@@ -110,6 +118,7 @@ function changeNotes(file: string, change: (notes: Record<string, Note>) => void
     const notes = await readNotes(file);
     change(notes);
     await writeFileAtomic(file, JSON.stringify(notes));
+    noteCache.delete(file);
   });
 }
 
