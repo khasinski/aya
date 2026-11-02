@@ -63,6 +63,23 @@ export function isUsageData(x: unknown): x is UsageData {
   );
 }
 
+/** Claude Code writes `{ pct: null, resetsAt: null }` for a window it has no
+ *  figure for yet. Such a window is absent, not malformed: drop it so the other
+ *  window still shows. Anything else is left for isUsageData to judge. */
+function withoutUnsetWindows(x: unknown): unknown {
+  if (typeof x !== "object" || x === null || Array.isArray(x)) return x;
+  const r = x as Record<string, unknown>;
+  const unset = (w: unknown) =>
+    typeof w === "object" && w !== null && !Array.isArray(w) &&
+    (w as Record<string, unknown>).pct === null &&
+    ((w as Record<string, unknown>).resetsAt ?? null) === null;
+  if (!unset(r.fiveHour) && !unset(r.sevenDay)) return x;
+  const out = { ...r };
+  if (unset(out.fiveHour)) delete out.fiveHour;
+  if (unset(out.sevenDay)) delete out.sevenDay;
+  return out;
+}
+
 export function isUsageAccount(x: unknown): x is UsageAccount {
   if (typeof x !== "object" || x === null) return false;
   const r = x as Record<string, unknown>;
@@ -115,6 +132,7 @@ export function parseUsage(raw: string): UsageData | null {
   } catch {
     return null;
   }
+  parsed = withoutUnsetWindows(parsed);
   return isUsageData(parsed) ? parsed : null;
 }
 
@@ -129,13 +147,18 @@ export function parseUsageAccounts(raw: string): UsageAccount[] {
   } catch {
     return [];
   }
-  if (isUsageData(parsed)) return [usageAccountFromData(parsed)];
+  const single = withoutUnsetWindows(parsed);
+  if (isUsageData(single)) return [usageAccountFromData(single)];
   if (typeof parsed !== "object" || parsed === null) return [];
   const accounts = (parsed as Record<string, unknown>).accounts;
   if (!Array.isArray(accounts)) return [];
   const seen = new Set<string>();
   const out: UsageAccount[] = [];
-  for (const a of accounts) {
+  for (const entry of accounts) {
+    const a =
+      typeof entry === "object" && entry !== null && !Array.isArray(entry)
+        ? { ...(entry as Record<string, unknown>), usage: withoutUnsetWindows((entry as Record<string, unknown>).usage) }
+        : entry;
     if (!isUsageAccount(a) || seen.has(a.id)) continue;
     seen.add(a.id);
     out.push(a);
