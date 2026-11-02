@@ -77,7 +77,10 @@ export function createPtyDataCoalescer(
       // A replay fence may arrive after live output collected during successor
       // startup. Preserve that order and never merge across display resets.
       if (event.reset !== undefined) {flush();send({...event});return;}
-      const key = JSON.stringify([event.ptyId, !!event.replay, event.reset, event.replayToken, event.remoteDeliveryId]);
+      const key =
+        !event.replay && event.replayToken === undefined && event.remoteDeliveryId === undefined
+          ? event.ptyId
+          : JSON.stringify([event.ptyId, !!event.replay, event.reset, event.replayToken, event.remoteDeliveryId]);
       const entry = pending.get(key), queued = entry?.event;
       if (queued && (queued.streamOffset === undefined || event.streamOffset === undefined || queued.streamOffset + entry!.bytes === event.streamOffset)) {
         queued.chunk += event.chunk;

@@ -197,7 +197,7 @@ export function registerPromptAttachmentIpc(deps: PromptAttachmentIpcDeps): void
       const gesture = consume(event, token, "paste");
       if (deps.clipboard.readText()) throw new Error("The clipboard contains text. Copy the image again, then paste it into the terminal.");
       const image = deps.clipboard.readImage();
-      if (image.isEmpty()) throw new Error("There is no image in the clipboard to add to the prompt.");
+      if (image.isEmpty()) return { status: "not-image" };
       const bytes = image.toPNG();
       if (bytes.byteLength > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("The clipboard image is too large to add to the prompt (25 MB limit).");
       return await addAttachmentsToPane(deps, gesture.terminalId, [{ name: "clipboard.png", mimeType: "image/png", bytes }]);

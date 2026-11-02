@@ -110,6 +110,16 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     else if (prompt === 'approval') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval' } });
     else if (prompt === 'wait') return;
     else if (prompt === 'question') write({ id: 'question', method: 'item/tool/requestUserInput', params: { questions: [{ id: 'choice', question: 'Which option?', options: [{ label: 'A', description: 'First' }] }] } });
+    else if (prompt === 'async-question') {
+      const qTitle = 'Allow non-zero instruction distance?';
+      const opts = ['Readable C, allow non-zero distance', 'Keep distance 0'];
+      const text = [qTitle, ...opts.map(o => `- ${o}`)].join('\n');
+      event('item/started', { item: { id: 'call_async_1', type: 'agentMessage', text, delivery: 'async', questions: [{ title: qTitle, options: opts }] } });
+      event('item/completed', { item: { id: 'call_async_1', type: 'agentMessage', text, delivery: 'async', questions: [{ title: qTitle, options: opts }] } });
+      event('turn/completed', { turn: { id: 'turn', status: 'completed' } });
+      busy = false;
+    }
+    else if (prompt.startsWith('Keep distance 0') || prompt.startsWith('Readable C')) complete(`Answered: ${prompt}`);
     else write({ id: 'present', method: 'item/tool/call', params: { threadId: 'test-thread', turnId: 'turn', tool: 'aya_present', arguments: { open: prompt === 'open-widget', kind: 'table', title: prompt === 'open-widget' ? 'Opened by Codex' : 'A real tool result', columns: ['Name', 'State'], rows: [['Aya', 'Ready']] } } });
   } else if (message.method === 'turn/interrupt') {
     event('fixture/interrupt', p); write({ id: message.id, result: {} }); event('turn/completed', { turn: { id: activeTurn, status: 'interrupted' } }); busy = false;

@@ -10,7 +10,7 @@ export { closeAllVtPanes, closeVtPane, resizeVtPane, vtPaneAltScreen, vtPaneWait
 export function openVtPane(...args: Parameters<typeof openMirror>): void {
   openMirror(...args);
   const pane = panes.get(args[0])!;
-  pane.onSnapshot = () => scan(pane);
+  pane.onSnapshot = (snapshot) => scan(pane, snapshot.rows);
 }
 function scan(pane: VtPane, rows = snapshotOf(pane).rows): boolean | null {
   if (!builtinScreenRules.get().available) return null;
@@ -181,10 +181,9 @@ export async function paneHold(ptyId: string, pasted?: string): Promise<string |
   await applied(pane);
   return holdPane(pane, pasted);
 }
-function holdPane(pane: VtPane, pasted?: string): string | null {
+function holdPane(pane: VtPane, pasted?: string, screen: readonly string[] = screenRows(pane.terminal)): string | null {
   if (pane.shell) return HOLD_SHELL;
   if (!builtinScreenRules.get().available) return HOLD_RULES_UNAVAILABLE;
-  const screen = screenRows(pane.terminal);
   const rows = pasted ? withoutPasted(screen, pasted) : screen;
   const composer = composerState(pane.terminal);
   const dialog = evaluateScreen(rows, pane.agent) === "waiting" ? (asksToRunAya(rows) ? HOLD_APPROVE_AYA : HOLD_APPROVAL) : composer === "numbered-choice" ? HOLD_CHOICE : null;
@@ -238,9 +237,22 @@ export function __testScanVtPane(ptyId: string): void {
 /** Evaluate the same cell view the in-process mirror exposes, without parsing output a second time. */
 function paneFromSnapshot(snapshot: VtSnapshot, onChange: VtPane["onChange"] = () => {}): VtPane {
   const lines = snapshot.rows.map((text, y) => {
-    const cells = new Map(snapshot.cells[y].map(([x, chars, dim, inverse]) =>
-      [x, { getChars: () => chars, isDim: () => dim, isInverse: () => inverse }]));
-    return { length: snapshot.cols, translateToString: () => text, getCell: (x: number) => cells.get(x) };
+    let cells: Map<number, { getChars: () => string; isDim: () => number; isInverse: () => number }> | undefined;
+    return {
+      length: snapshot.cols,
+      translateToString: () => text,
+      getCell: (x: number) => {
+        if (!cells) {
+          cells = new Map(
+            snapshot.cells[y].map(([cx, chars, dim, inverse]) => [
+              cx,
+              { getChars: () => chars, isDim: () => dim, isInverse: () => inverse },
+            ]),
+          );
+        }
+        return cells.get(x);
+      },
+    };
   });
   return { terminal: { buffer: { active: { length: lines.length, getLine: (y: number) => lines[y] } } } as unknown as Terminal,
     agent: snapshot.agent, shell: snapshot.shell, composerSeen: snapshot.composerSeen,
@@ -250,7 +262,7 @@ function paneFromSnapshot(snapshot: VtSnapshot, onChange: VtPane["onChange"] = (
 export function snapshotHold(snapshot: VtSnapshot, pasted?: string): { hold: string | null; composerSeen: boolean } {
   if(snapshot.recoveryUnknown)return {hold:snapshot.shell?HOLD_SHELL:HOLD_RECOVERY_UNKNOWN,composerSeen:false};
   const pane = paneFromSnapshot(snapshot);
-  return { hold: holdPane(pane, pasted), composerSeen: pane.composerSeen };
+  return { hold: holdPane(pane, pasted, snapshot.rows), composerSeen: pane.composerSeen };
 }
 export function snapshotBusy(snapshot: VtSnapshot): boolean { if(snapshot.recoveryUnknown)return false;return screenIsBusy(snapshot.rows, snapshot.agent); }
 export function snapshotStatus(snapshot: VtSnapshot): { waiting: boolean | null; dialog?: string; composerSeen: boolean } {

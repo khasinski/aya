@@ -41,8 +41,19 @@ export function RecentProjectsMenu({
     const onPointerDown = (e: PointerEvent) => {
       if (!recentRef.current?.contains(e.target as Node)) setShowRecent(false);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowRecent(false);
+      }
+    };
     window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
   }, [showRecent]);
 
   useEffect(() => {

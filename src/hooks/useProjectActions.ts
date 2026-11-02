@@ -197,10 +197,24 @@ export function useProjectActions({
     });
     setGit((prev) => {
       const next = { ...prev };
+      delete next[slug];
       const project = projectsRef.current.find(p => p.slug === slug);
-      const directories = new Set([project?.directory, ...owned.map(t => t.cwd)]);
+      const directories = new Set([
+        project?.directory,
+        ...(project?.tabs.map(t => t.cwd) ?? []),
+        ...owned.map(t => t.cwd),
+      ]);
       const retained = projectsRef.current.filter(p => p.slug !== slug);
-      for (const directory of directories) if (directory && !retained.some(p => p.directory === directory || p.tabs.some(t => t.cwd === directory))) delete next[directory];
+      for (const directory of directories) {
+        if (
+          directory &&
+          !retained.some(
+            p => p.directory === directory || p.tabs.some(t => t.cwd === directory),
+          )
+        ) {
+          delete next[directory];
+        }
+      }
       return next;
     });
     setProjectFallbacks((prev) => {
@@ -260,10 +274,24 @@ export function useProjectActions({
     });
     setGit((prev) => {
       const next = { ...prev };
+      delete next[slug];
       const project = projectsRef.current.find(p => p.slug === slug);
-      const directories = new Set([project?.directory, ...owned.map(t => t.cwd)]);
+      const directories = new Set([
+        project?.directory,
+        ...(project?.tabs.map(t => t.cwd) ?? []),
+        ...owned.map(t => t.cwd),
+      ]);
       const retained = projectsRef.current.filter(p => p.slug !== slug);
-      for (const directory of directories) if (directory && !retained.some(p => p.directory === directory || p.tabs.some(t => t.cwd === directory))) delete next[directory];
+      for (const directory of directories) {
+        if (
+          directory &&
+          !retained.some(
+            p => p.directory === directory || p.tabs.some(t => t.cwd === directory),
+          )
+        ) {
+          delete next[directory];
+        }
+      }
       return next;
     });
     setProjectFallbacks((prev) => {

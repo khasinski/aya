@@ -1,5 +1,113 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { HLJSApi } from "highlight.js";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import c from "highlight.js/lib/languages/c";
+import cpp from "highlight.js/lib/languages/cpp";
+import csharp from "highlight.js/lib/languages/csharp";
+import css from "highlight.js/lib/languages/css";
+import diffLang from "highlight.js/lib/languages/diff";
+import dockerfile from "highlight.js/lib/languages/dockerfile";
+import go from "highlight.js/lib/languages/go";
+import ini from "highlight.js/lib/languages/ini";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import kotlin from "highlight.js/lib/languages/kotlin";
+import less from "highlight.js/lib/languages/less";
+import lua from "highlight.js/lib/languages/lua";
+import makefile from "highlight.js/lib/languages/makefile";
+import markdown from "highlight.js/lib/languages/markdown";
+import perl from "highlight.js/lib/languages/perl";
+import php from "highlight.js/lib/languages/php";
+import plaintext from "highlight.js/lib/languages/plaintext";
+import python from "highlight.js/lib/languages/python";
+import ruby from "highlight.js/lib/languages/ruby";
+import rust from "highlight.js/lib/languages/rust";
+import scss from "highlight.js/lib/languages/scss";
+import sql from "highlight.js/lib/languages/sql";
+import swift from "highlight.js/lib/languages/swift";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
+
+const EXT_TO_LANGUAGE: Record<string, string> = {
+  bash: "bash",
+  c: "c",
+  cc: "cpp",
+  cjs: "javascript",
+  cpp: "cpp",
+  cs: "csharp",
+  css: "css",
+  diff: "diff",
+  dockerfile: "dockerfile",
+  go: "go",
+  h: "cpp",
+  hpp: "cpp",
+  htm: "xml",
+  html: "xml",
+  java: "java",
+  js: "javascript",
+  json: "json",
+  jsx: "javascript",
+  kt: "kotlin",
+  kts: "kotlin",
+  less: "less",
+  lua: "lua",
+  md: "markdown",
+  mjs: "javascript",
+  patch: "diff",
+  php: "php",
+  pl: "perl",
+  plist: "xml",
+  pm: "perl",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  sass: "scss",
+  scss: "scss",
+  sh: "bash",
+  sql: "sql",
+  svg: "xml",
+  swift: "swift",
+  toml: "ini",
+  ts: "typescript",
+  tsx: "typescript",
+  txt: "plaintext",
+  xml: "xml",
+  yaml: "yaml",
+  yml: "yaml",
+  zsh: "bash",
+};
+
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("c", c);
+hljs.registerLanguage("cpp", cpp);
+hljs.registerLanguage("csharp", csharp);
+hljs.registerLanguage("css", css);
+hljs.registerLanguage("diff", diffLang);
+hljs.registerLanguage("dockerfile", dockerfile);
+hljs.registerLanguage("go", go);
+hljs.registerLanguage("ini", ini);
+hljs.registerLanguage("java", java);
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("kotlin", kotlin);
+hljs.registerLanguage("less", less);
+hljs.registerLanguage("lua", lua);
+hljs.registerLanguage("makefile", makefile);
+hljs.registerLanguage("markdown", markdown);
+hljs.registerLanguage("perl", perl);
+hljs.registerLanguage("php", php);
+hljs.registerLanguage("plaintext", plaintext);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("ruby", ruby);
+hljs.registerLanguage("rust", rust);
+hljs.registerLanguage("scss", scss);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("swift", swift);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("yaml", yaml);
 import type {
   GitChangedFile,
   GitHubLink,
@@ -252,16 +360,30 @@ function StatusBarImpl({
   }, [diffCommentsProject]);
 
   useEffect(() => {
-    if (!showDirtyFiles) return;
+    if (!showDirtyFiles && !showDiff) return;
     const onPointerDown = (event: PointerEvent) => {
       if (!dirtyRef.current?.contains(event.target as Node)) {
         setShowDirtyFiles(false);
+        setShowDiff(false);
         cancelPublishStatusRequest();
       }
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if ((event.target as HTMLElement | null)?.closest?.(".aya-diff-comment--editor")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setShowDirtyFiles(false);
+      setShowDiff(false);
+      cancelPublishStatusRequest();
+    };
     window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [showDirtyFiles, cancelPublishStatusRequest]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [showDirtyFiles, showDiff, cancelPublishStatusRequest]);
 
   useEffect(() => {
     if (!showCheckouts) return;
@@ -270,8 +392,18 @@ function StatusBarImpl({
         setShowCheckouts(false);
       }
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setShowCheckouts(false);
+    };
     window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
   }, [showCheckouts]);
 
   // A picker that vanished (worktree removed, project switched) must not leave
@@ -1178,56 +1310,9 @@ interface DiffLine {
 function languageForPath(filePath: string): string {
   const lower = filePath.toLowerCase();
   const ext = lower.split(".").pop() ?? "";
-  const byExtension: Record<string, string> = {
-    bash: "bash",
-    c: "c",
-    cc: "cpp",
-    cjs: "javascript",
-    cpp: "cpp",
-    cs: "csharp",
-    css: "css",
-    diff: "diff",
-    dockerfile: "dockerfile",
-    go: "go",
-    h: "cpp",
-    hpp: "cpp",
-    htm: "xml",
-    html: "xml",
-    java: "java",
-    js: "javascript",
-    json: "json",
-    jsx: "javascript",
-    kt: "kotlin",
-    kts: "kotlin",
-    lua: "lua",
-    md: "markdown",
-    mjs: "javascript",
-    patch: "diff",
-    php: "php",
-    pl: "perl",
-    plist: "xml",
-    pm: "perl",
-    py: "python",
-    rb: "ruby",
-    rs: "rust",
-    sass: "scss",
-    scss: "scss",
-    sh: "bash",
-    sql: "sql",
-    svg: "xml",
-    swift: "swift",
-    toml: "ini",
-    ts: "typescript",
-    tsx: "typescript",
-    txt: "plaintext",
-    xml: "xml",
-    yaml: "yaml",
-    yml: "yaml",
-    zsh: "bash",
-  };
   if (lower.endsWith("dockerfile") || lower.endsWith(".dockerfile")) return "dockerfile";
   if (lower.endsWith("makefile")) return "makefile";
-  return byExtension[ext] ?? "plaintext";
+  return EXT_TO_LANGUAGE[ext] ?? "plaintext";
 }
 
 function annotateDiff(diff: string): DiffLine[] {
@@ -1251,8 +1336,8 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function highlightCodeHtml(code: string, language: string, hljs?: HLJSApi): string {
-  if (!hljs?.getLanguage(language)) return escapeHtml(code);
+function highlightCodeHtml(code: string, language: string): string {
+  if (!hljs.getLanguage(language)) return escapeHtml(code);
   try {
     return hljs.highlight(code, { language, ignoreIllegals: true }).value;
   } catch {
@@ -1271,7 +1356,7 @@ function markHtmlOccurrences(html: string, query: string): string {
     const escapedQuery = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     out += textBuffer.replace(
       new RegExp(escapedQuery, "gi"),
-      (match) => `<mark>${match}</mark>`,
+      (match) => `<mark class="aya-diff-search-hit">${match}</mark>`,
     );
     textBuffer = "";
   };
@@ -1333,12 +1418,10 @@ function DiffPanel({
   onSend: (target: ReviewTarget, ids: string[]) => void;
 }) {
   const lines = useMemo(() => annotateDiff(diff), [diff]);
-  const [highlighter, setHighlighter] = useState<HLJSApi>();
-  useEffect(() => { let cancelled = false; void import('highlight.js/lib/common').then(module => { if (!cancelled) setHighlighter(module.default); }).catch(() => {}); return () => { cancelled = true; }; }, []);
-  const highlightedLines = useMemo(() => lines.map(line => {
+  const highlightedLines = useMemo(() => lines.map((line) => {
     const prefix = ["add", "del", "ctx"].includes(line.kind) ? line.text.slice(0, 1) : "";
-    return highlightCodeHtml(prefix ? line.text.slice(1) : line.text, line.language, highlighter);
-  }), [lines, highlighter]);
+    return highlightCodeHtml(prefix ? line.text.slice(1) : line.text, line.language);
+  }), [lines]);
   const rawLines = useMemo(() => diff.split("\n"), [diff]);
   const indexedDiff = useMemo(() => indexDiffRows(rawLines), [rawLines]);
   // Which row is being commented on, and the draft note.
@@ -1383,6 +1466,8 @@ function DiffPanel({
     [diff, scrollToPath],
   );
   const targetRef = useRef<HTMLDivElement | null>(null);
+  const diffViewRef = useRef<HTMLDivElement | null>(null);
+  const activeHitIndexRef = useRef(0);
   useEffect(() => {
     if (loading || targetIndex < 0) return;
     targetRef.current?.scrollIntoView({ block: "start" });
@@ -1390,6 +1475,12 @@ function DiffPanel({
     // onScrolled clears the target, so this fires once per file selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetIndex, loading]);
+  useEffect(() => {
+    activeHitIndexRef.current = 0;
+    if (loading || !query.trim()) return;
+    const marks = diffViewRef.current?.querySelectorAll<HTMLElement>("mark.aya-diff-search-hit");
+    marks?.[0]?.scrollIntoView?.({ block: "center" });
+  }, [query, diff, loading]);
   return (
     <div className="aya-diff-panel">
       <div className="aya-diff-search">
@@ -1397,6 +1488,16 @@ function DiffPanel({
         <input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              const marks = diffViewRef.current?.querySelectorAll<HTMLElement>("mark.aya-diff-search-hit");
+              if (!marks || marks.length === 0) return;
+              const delta = event.shiftKey ? -1 : 1;
+              activeHitIndexRef.current = (activeHitIndexRef.current + delta + marks.length) % marks.length;
+              marks[activeHitIndexRef.current]?.scrollIntoView?.({ block: "center" });
+            }
+          }}
           placeholder="Search diff"
           spellCheck={false}
         />
@@ -1407,7 +1508,7 @@ function DiffPanel({
       ) : !diff ? (
         <div className="aya-statusbar-popover-empty">No diff available.</div>
       ) : (
-        <div className="aya-diff-view">
+        <div className="aya-diff-view" ref={diffViewRef}>
           {lines.map((line, index) => {
             const prefix = ["add", "del", "ctx"].includes(line.kind) ? line.text.slice(0, 1) : "";
             const highlighted = markHtmlOccurrences(
@@ -1461,7 +1562,7 @@ function DiffPanel({
                     {editingCommentId === comment.id && (
                       <div className="aya-diff-comment aya-diff-comment--editor">
                         <textarea autoFocus rows={2} value={draft} aria-label="Edit comment" onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
-                          if (event.key === "Escape") { event.preventDefault(); cancelEdit(); }
+                          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); }
                           else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); saveDraft(); }
                         }} />
                         <div className="aya-diff-comment-actions">
@@ -1484,6 +1585,7 @@ function DiffPanel({
                       onKeyDown={(event) => {
                         if (event.key === "Escape") {
                           event.preventDefault();
+                          event.stopPropagation();
                           cancelEdit();
                         } else if (event.key === "Enter" && !event.shiftKey) {
                           event.preventDefault();
@@ -1533,7 +1635,7 @@ function DiffPanel({
               {editingCommentId === comment.id && (
                 <div className="aya-diff-comment aya-diff-comment--editor">
                   <textarea autoFocus rows={2} value={draft} aria-label="Edit comment" onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => {
-                    if (event.key === "Escape") { event.preventDefault(); cancelEdit(); }
+                    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelEdit(); }
                     else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); saveDraft(); }
                   }} />
                   <div className="aya-diff-comment-actions">

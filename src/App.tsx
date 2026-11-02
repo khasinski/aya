@@ -77,7 +77,13 @@ import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { uuid } from "./uuid";
 import type { ReviewTarget } from "./diff-review";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
-import { findLeafByTerminal, normalizeTreeForTabs, projectSplitTree } from "./split-tree";
+import {
+  findLeafByTerminal,
+  leafCount,
+  leaves,
+  normalizeTreeForTabs,
+  projectSplitTree,
+} from "./split-tree";
 import { useAppPreferences, useAppPreferenceActions } from "./hooks/useAppPreferences";
 import { useProjectTimeline, usePtyTimelineEvents } from "./hooks/useProjectTimeline";
 import { waitingPanesOf } from "./team-view";
@@ -391,6 +397,10 @@ export function App() {
   // rather than the one just closed.
   const activeTabByProjectRef = useRef(activeTabByProject);
   activeTabByProjectRef.current = activeTabByProject;
+  const activeLeafByProjectRef = useRef(activeLeafByProject);
+  activeLeafByProjectRef.current = activeLeafByProject;
+  const singleViewByProjectRef = useRef(singleViewByProject);
+  singleViewByProjectRef.current = singleViewByProject;
   // Split panes are unsupported in the experimental "projects-left" layout. The
   // ref lets the split callbacks below (defined before the render-time gating)
   // bail out, so keyboard shortcuts and pane clicks can't create or reshape a
@@ -562,6 +572,7 @@ export function App() {
     assignTerminalToSplitCell,
     collapseToSingleTerminal,
     removeTerminalFromSplit,
+    unsplitLeaf,
     setActiveSplitCell,
     resizeSplit,
     focusSplitPane,
@@ -635,12 +646,16 @@ export function App() {
       const holding = findLeafByTerminal(tree, id);
       if (existing && holding) {
         // Already on screen: just move focus to its pane.
-        setSingleViewByProject((prev) => ({ ...prev, [project.slug]: null }));
+        setSingleViewByProject((prev) =>
+          prev[project.slug] === null ? prev : { ...prev, [project.slug]: null },
+        );
         updateProjectSplitTree(project.slug, (current) => ({
           tree: current,
           activeLeafId: findLeafByTerminal(current, id)?.id,
         }));
-        setActiveTabByProject((prev) => ({ ...prev, [project.slug]: id }));
+        setActiveTabByProject((prev) =>
+          prev[project.slug] === id ? prev : { ...prev, [project.slug]: id },
+        );
         return;
       }
       collapseToSingleTerminal(terminal);
@@ -969,6 +984,7 @@ export function App() {
   focusTerminalRef.current = focusTerminal;
 
   const [showUsage, setShowUsage] = useState(false);
+  const [worktreeDialogOpen, setWorktreeDialogOpen] = useState(false);
   useEffect(() => {
     const open = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'u' && !(event.target instanceof Element && event.target.closest('.xterm,input,textarea,[contenteditable="true"]'))) { event.preventDefault(); setShowUsage(value => !value); }
@@ -995,8 +1011,13 @@ export function App() {
     showSearch ||
     showAttentionCenter ||
     showTeams ||
+    worktreeDialogOpen ||
     !!pendingRepoImport;
   const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
+  const dismissNoHarnessHint = useCallback(() => {
+    localStorage.setItem(NO_HARNESS_HINT_DISMISSED_STORAGE_KEY, "1");
+    setHideNoHarnessHint(true);
+  }, []);
   const closeTabQueue = useRef(Promise.resolve());
   useEffect(() => {
     if (closeFocusHold && closeFocusHold.slug !== activeProjectId) setCloseFocusHold(null);
@@ -1010,42 +1031,88 @@ export function App() {
   openProjectRef.current = openProject;
 
   useAppShortcuts({
-    newShell: openShellTab,
+    newShell: () => {
+      if (!anyOverlayOpen) openShellTab();
+    },
     closeCurrentTab: () => {
+      if (anyOverlayOpen) {
+        if (showSearch) setShowSearch(false);
+        else if (showAttentionCenter) setShowAttentionCenter(false);
+        else if (showTeams) {
+          setShowTeams(false);
+          if (activeProject) onTeamsWindowClosed(activeProject.slug);
+        } else if (showUsage) setShowUsage(false);
+        else if (showSettings) closeSettings();
+        return;
+      }
       // Through the refs, not render state: a burst of closes must each act on
       // the tab that is active by then, not on a snapshot from the last render.
       closeTabQueue.current = closeTabQueue.current.then(async () => {
         const slug = activeProjectIdRef.current;
-        const id = slug ? activeTabByProjectRef.current[slug] : null;
+        if (!slug) return;
+        if (splitEnabledRef.current && !singleViewByProjectRef.current[slug]) {
+          const project = projectsRef.current.find((p) => p.slug === slug);
+          const existing = project ? projectSplitTree(project) : null;
+          if (existing && project) {
+            const tree = normalizeTreeForTabs(
+              existing,
+              new Set(project.tabs.map((tab) => tab.id)),
+              activeTabByProjectRef.current[slug] ?? project.tabs[0]?.id ?? null,
+              uuid(),
+            );
+            if (leafCount(tree) > 1) {
+              const currentLeafId = activeLeafByProjectRef.current[slug];
+              const leaf = currentLeafId ? (leaves(tree).find((l) => l.id === currentLeafId) ?? null) : null;
+              if (leaf && leaf.terminalId === null) {
+                unsplitLeaf(slug, leaf.id);
+                return;
+              }
+            }
+          }
+        }
+        const id = activeTabByProjectRef.current[slug];
         if (id) await closeTerminal(id);
       }).catch(error => console.warn("close terminal failed", error));
     },
     search: () => {
       if (!chromeBlocked) setShowSearch(true);
     },
-    openSettings: () => openSettings(),
+    openSettings: () => {
+      if (!chromeBlocked) openSettings();
+    },
     // Navigation is a pick even when it lands on the held pane (one tab left, edge of a split).
     prevTab: () => {
+      if (anyOverlayOpen) return;
       setCloseFocusHold(null);
       cycleActiveProjectTab(-1);
     },
     nextTab: () => {
+      if (anyOverlayOpen) return;
       setCloseFocusHold(null);
       cycleActiveProjectTab(1);
     },
     selectProject: (oneBasedIndex) => {
+      if (anyOverlayOpen) return;
       const target = projects[oneBasedIndex - 1];
       if (target) setActiveProjectId(target.slug);
     },
     findInPane: () => {
+      if (anyOverlayOpen) return;
       if (activeTabId) setFindInPaneFor(activeTabId);
     },
     focusPane: (direction) => {
+      if (anyOverlayOpen) return;
       setCloseFocusHold(null);
       focusSplitPane(direction);
     },
-    splitPaneRight: () => splitActivePane("right"),
-    splitPaneBelow: () => splitActivePane("below"),
+    splitPaneRight: () => {
+      if (anyOverlayOpen) return;
+      splitActivePane("right");
+    },
+    splitPaneBelow: () => {
+      if (anyOverlayOpen) return;
+      splitActivePane("below");
+    },
   });
 
   useEffect(() => {
@@ -1126,10 +1193,7 @@ export function App() {
             }
             onOpenProject={showNewProjectModal}
             onOpenSettings={openSettings}
-            onDismissNoHarnessHint={() => {
-              localStorage.setItem(NO_HARNESS_HINT_DISMISSED_STORAGE_KEY, "1");
-              setHideNoHarnessHint(true);
-            }}
+            onDismissNoHarnessHint={dismissNoHarnessHint}
           />
         );
         const panesNode = (
@@ -1140,6 +1204,7 @@ export function App() {
             activeLeafId={activeLeafId}
             activeProjectId={activeProjectId}
             setActiveSplitCell={setActiveSplitCell}
+            unsplitLeaf={unsplitLeaf}
             assignableProjectTerminals={assignableProjectTerminals}
             activePresets={activePresets}
             assignTerminalToSplitCell={assignTerminalToSplitCell}
@@ -1211,6 +1276,7 @@ export function App() {
             onSplitRight={splitTerminalRight}
             onSplitBelow={splitTerminalBelow}
             onRemoveFromSplit={removeTerminalFromSplit}
+            onWorktreeDialogOpenChange={setWorktreeDialogOpen}
             statusRail={statusRailNode}
           />
         );

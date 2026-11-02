@@ -71,5 +71,10 @@ export function forgetSpawn(id: string): void {
   mountDecided.add(id);
 }
 
+/** Clear only the mount-decided marker for a closed terminal. */
+export function clearMountDecision(id: string): void {
+  mountDecided.delete(id);
+}
+
 /** A closed tab cannot mount again in this renderer; release every marker. */
 export function releaseSpawn(id: string): void { spawned.delete(id); noSession.delete(id); mountDecided.delete(id); }

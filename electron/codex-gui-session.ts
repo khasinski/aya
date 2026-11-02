@@ -91,7 +91,7 @@ export class CodexGuiSession {
     const result = await this.rpc('thread/read', { threadId: id, includeTurns: false });
     const thread = object(result.thread);
     if (thread.cwd !== this.cwd || thread.id !== id) throw Error('Conversation does not belong to this workspace');
-    const messages: { id: string; type: string; text: string }[] = [];
+    const messages: { id: string; type: string; text: string; questions?: unknown[] }[] = [];
     let cursor: string | undefined;
     const seen = new Set<string>();
     // Summaries omit bulky tool output. Read newest turns first and retain only
@@ -102,7 +102,7 @@ export class CodexGuiSession {
         const items = object(turn).items;
         for (const raw of (Array.isArray(items) ? [...items].reverse() : [])) {
           const item = object(raw);
-          if (item.type === 'agentMessage') messages.push({ id: text(item.id), type: 'assistant', text: text(item.text) });
+          if (item.type === 'agentMessage') messages.push({ id: text(item.id), type: 'assistant', text: text(item.text), ...(Array.isArray(item.questions) && item.questions.length ? { questions: item.questions } : {}) });
           if (item.type === 'userMessage') messages.push({ id: text(item.id), type: 'user', text: (Array.isArray(item.content) ? item.content : []).map(object).filter(part => part.type === 'text').map(part => text(part.text)).join('\n') });
           if (messages.length >= 500) break;
         }
@@ -196,7 +196,7 @@ export class CodexGuiSession {
     let result: unknown;
     if (request.method === 'item/tool/requestUserInput') {
       const questions = Array.isArray(request.params.questions) ? request.params.questions : [];
-      result = { answers: Object.fromEntries(questions.map(q => { const question = object(q), key = text(question.id); return [key, { answers: [text(value.answers?.[key])] }]; })) };
+      result = { answers: Object.fromEntries(questions.map((q, idx) => { const question = object(q), key = text(question.id) || (questions.length === 1 ? 'choice' : `q_${idx}`); return [key, { answers: [text(value.answers?.[key])] }]; })) };
     } else if (request.method === 'item/permissions/requestApproval') {
       if (!['accept', 'acceptForSession', 'decline'].includes(String(value.decision))) throw Error('Invalid permission decision');
       result = { permissions: value.decision === 'accept' || value.decision === 'acceptForSession' ? request.params.permissions : {}, scope: value.decision === 'acceptForSession' ? 'session' : 'turn' };

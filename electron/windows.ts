@@ -382,19 +382,23 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
         return;
       }
       // Don't trigger our shortcuts if extra modifiers we don't bind are held -
-      // e.g. Cmd+Shift+T should NOT fire our Cmd+T action.
-      if (input.shift || input.alt) return;
+      // e.g. Cmd+Shift+T should NOT fire our Cmd+T action. Non-US keyboard
+      // layouts often require Option/Shift to produce "[" or "]", so check
+      // literal bracket keys first and also fall back to physical BracketLeft /
+      // BracketRight when no Shift/Alt modifier is held.
       const key = input.key.toLowerCase();
-      if (key === "r") {
+      let action: string | null = null;
+      if (key === "[") action = "prev-tab";
+      else if (key === "]") action = "next-tab";
+      else if (input.shift || input.alt) return;
+      else if (key === "r") {
         event.preventDefault();
         return;
-      }
-      let action: string | null = null;
-      if (key === "t") action = "new-shell";
+      } else if (key === "t") action = "new-shell";
       else if (key === "w") action = "close-tab";
       else if (key === ",") action = "open-settings";
-      else if (key === "[") action = "prev-tab";
-      else if (key === "]") action = "next-tab";
+      else if (input.code === "BracketLeft") action = "prev-tab";
+      else if (input.code === "BracketRight") action = "next-tab";
       else if (key === "f") action = "find-in-pane";
       else if (key === "k") action = "search";
       else if (key.length === 1 && key >= "1" && key <= String(MAX_KEYBOARD_PROJECTS)) {

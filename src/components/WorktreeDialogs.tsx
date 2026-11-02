@@ -1,8 +1,14 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Preset, Worktree } from "../types";
 
 const MAX_VISIBLE_WORKTREES = 6;
 const DEFAULT_WORKTREES_PER_PROMPT = 2;
+
+function clampWorktreeCount(raw: string): number {
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(MAX_VISIBLE_WORKTREES, parsed));
+}
 
 interface CreateProps {
   projectId: string;
@@ -15,13 +21,31 @@ interface CreateProps {
 
 export function WorktreeCreateDialog({ projectId, projectDir, presets, onCancel, onCreate, onStart }: CreateProps) {
   const [slug, setSlug] = useState("");
-  const [count, setCount] = useState(DEFAULT_WORKTREES_PER_PROMPT);
+  const [countInput, setCountInput] = useState(String(DEFAULT_WORKTREES_PER_PROMPT));
   const [base, setBase] = useState("");
   const [presetId, setPresetId] = useState(presets[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [finished, setFinished] = useState<{ created: { path: string; branch: string }[]; errors: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const baseInputRef = useRef<HTMLInputElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+
+  useEffect(() => {
+    baseInputRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busyRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        onCancelRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,6 +63,8 @@ export function WorktreeCreateDialog({ projectId, projectDir, presets, onCancel,
     if (busy) return;
     const preset = presets.find((item) => item.id === presetId);
     if (!preset || !slug.trim() || !base.trim()) return;
+    const count = clampWorktreeCount(countInput);
+    setCountInput(String(count));
     setBusy(true);
     setError(null);
     try {
@@ -65,13 +91,21 @@ export function WorktreeCreateDialog({ projectId, projectDir, presets, onCancel,
         <h2 id="worktree-create-title">Start in worktrees</h2>
         <p>Start up to 6 copies of this task in separate worktrees.</p>
         <label>Starting branch or ref
-          <input autoFocus value={base} onChange={(e) => setBase(e.target.value)} aria-label="Starting branch or ref" />
+          <input ref={baseInputRef} autoFocus value={base} onChange={(e) => setBase(e.target.value)} aria-label="Starting branch or ref" />
         </label>
         <label>Worktree name
           <input value={slug} onChange={(e) => setSlug(e.target.value)} aria-label="Worktree name" />
         </label>
         <label>Number of worktrees (1–6)
-          <input type="number" min={1} max={MAX_VISIBLE_WORKTREES} value={count} onChange={(e) => setCount(Math.max(1, Math.min(MAX_VISIBLE_WORKTREES, Number(e.target.value) || 1)))} aria-label="Number of worktrees" />
+          <input
+            type="number"
+            min={1}
+            max={MAX_VISIBLE_WORKTREES}
+            value={countInput}
+            onChange={(e) => setCountInput(e.target.value)}
+            onBlur={() => setCountInput(String(clampWorktreeCount(countInput)))}
+            aria-label="Number of worktrees"
+          />
         </label>
         <label>Agent
           <select value={presetId} onChange={(e) => setPresetId(e.target.value)} aria-label="Agent preset">
@@ -107,6 +141,25 @@ export function WorktreeRemoveDialog({ projectDir, base, worktree, onCancel, onR
   const [deleteBranch, setDeleteBranch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busyRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        onCancelRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void window.aya.worktreeBranchRemovalInfo({ directory: projectDir, path: worktree.path, base }).then((result) => {
@@ -127,7 +180,7 @@ export function WorktreeRemoveDialog({ projectDir, base, worktree, onCancel, onR
   };
   return (
     <div className="aya-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
-      <div className="aya-modal aya-worktree-dialog" role="dialog" aria-modal="true" aria-labelledby="worktree-remove-title">
+      <div ref={dialogRef} tabIndex={-1} className="aya-modal aya-worktree-dialog" role="dialog" aria-modal="true" aria-labelledby="worktree-remove-title">
         <h2 id="worktree-remove-title">Remove worktree?</h2>
         <p>Remove the checkout at <code>{worktree.path}</code>.</p>
         {info?.branch && <label className="aya-worktree-delete-branch"><input type="checkbox" checked={deleteBranch && info.canDelete} disabled={!info.canDelete || busy} onChange={(e) => setDeleteBranch(e.target.checked)} /> Also delete branch <code>{info.branch}</code></label>}

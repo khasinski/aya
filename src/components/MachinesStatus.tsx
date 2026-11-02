@@ -14,9 +14,9 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [releasing, setReleasing] = useState<string | null>(null);
+  const [hasMachines, setHasMachines] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const lastAsked = useRef(0);
-  const configured = useRef(true);
 
   const refresh = useCallback(async () => {
     // A slow probe that answers after a newer refresh (say, after a Remove) must not bring back the old list.
@@ -24,7 +24,7 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
     try {
       const { machines } = await window.aya.machinesStatus();
       if (asked !== lastAsked.current) return;
-      configured.current = machines.length > 0;
+      setHasMachines(machines.length > 0);
       setMachines(machines);
       setError(null);
     } catch (err) {
@@ -33,22 +33,32 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
   }, []);
 
   useEffect(() => {
-    // Only while Aya is on screen: a hidden window needs no ssh every half minute.
+    const onMachinesChanged = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    onMachinesChanged();
+    window.addEventListener(MACHINES_CHANGED_EVENT, onMachinesChanged);
+    return () => {
+      window.removeEventListener(MACHINES_CHANGED_EVENT, onMachinesChanged);
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!hasMachines) return;
+    // Only while Aya is on screen and at least one machine is configured:
+    // a setup with 0 machines or a hidden window needs no background polling.
     const tick = () => {
       if (document.visibilityState === "visible") void refresh();
     };
-    tick();
-    const timer = window.setInterval(() => { if (configured.current) tick(); }, POLL_MS);
+    const timer = window.setInterval(tick, POLL_MS);
     document.addEventListener("visibilitychange", tick);
-    window.addEventListener(MACHINES_CHANGED_EVENT, tick);
     window.addEventListener("focus", tick);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", tick);
-      window.removeEventListener(MACHINES_CHANGED_EVENT, tick);
       window.removeEventListener("focus", tick);
     };
-  }, [refresh]);
+  }, [hasMachines, refresh]);
 
   useEffect(() => {
     if (!open) return;

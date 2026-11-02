@@ -1,6 +1,6 @@
 import { debugLogsPending, flushDebugLogs } from "./team-debug";
 import { registerWidgetScheme } from './gui-artifact-documents';
-import { registerCodexGuiIpc } from "./codex-gui-ipc";
+import { busyGuiSessionCount, isGuiSessionBusy, registerCodexGuiIpc } from "./codex-gui-ipc";
 import {findAuthTransferTicket} from "./pty-host-auth-ticket";
 import { builtinScreenRules } from "./screen-rule-provider";
 import type { ScreenRuleSet } from "./screen-rule-data";
@@ -268,7 +268,7 @@ const teamDeps: TeamControlDeps = {
     deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, teamHold, cancelled, turnProbe, entered, pasting,
       (id, data, context, wasCancelled) => userRuleInput.write("team", id, data, context, wasCancelled)),
   holdReason: withLaunchHolds(startingHold, async (terminalId) => launchHoldOf(await ptyHost.launch(terminalId))),
-  busy: (terminalId) => userRulePanes.paneBusy(terminalId),
+  busy: async (terminalId) => isGuiSessionBusy(terminalId) || await userRulePanes.paneBusy(terminalId),
   roleNoteReport: (project, team, assignments, state) => roleNoteReport(project, team, assignments, paneBriefDeps, state),
   launchNote,
   screen: paneScreen,
@@ -300,7 +300,7 @@ const relaunchDeps: RelaunchDeps = {
     const launch = await ptyHost.launch(terminalId);
     return typeof launch === "object" && launch !== null ? launch.command : null;
   },
-  busy: (terminalId) => userRulePanes.paneBusy(terminalId),
+  busy: async (terminalId) => isGuiSessionBusy(terminalId) || await userRulePanes.paneBusy(terminalId),
   foreground: async (terminalId) => {
     const pid = await ptyHost.getPid(terminalId);
     return typeof pid === "number" ? foregroundCommand(pid) : null;
@@ -520,6 +520,8 @@ let appQuitting = false;
 const TEAM_QUIT_SETTLE_MS = 2_000;
 let teamsAtQuit: TeamRunner | null = null;
 let teamsStopped = false;
+let quitConfirmed = false;
+let quitConfirmPending = false;
 let ordinaryQuitAnnounced = false;
 let ordinaryQuitAnnouncementPending = false;
 
@@ -1259,6 +1261,26 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  const busyCount = busyGuiSessionCount();
+  if (!IS_E2E_PTY_SHUTDOWN && !quitConfirmed && busyCount > 0) {
+    event.preventDefault();
+    if (!quitConfirmPending) {
+      quitConfirmPending = true;
+      const detail = busyCount === 1
+        ? "1 conversation turn is still running. Quitting Aya will interrupt it."
+        : `${busyCount} conversation turns are still running. Quitting Aya will interrupt them.`;
+      void askRestart("Quit", detail)
+        .catch(() => false)
+        .then((confirmed) => {
+          quitConfirmPending = false;
+          if (confirmed) {
+            quitConfirmed = true;
+            app.quit();
+          }
+        });
+    }
+    return;
+  }
   if (agentStatusesPending() || debugLogsPending()) { event.preventDefault(); void Promise.all([flushAgentStatuses(), flushDebugLogs()]).finally(() => app.quit()); return; }
   if (!teamsStopped && teamsAtQuit) {
     teamsStopped = true;

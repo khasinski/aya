@@ -324,6 +324,7 @@ export async function createProject(
     tabs: [],
   };
   await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  projectListCache.delete(filePath);
   return project;
 }
 
@@ -384,6 +385,7 @@ export async function createRemoteProject(req: {
     },
   };
   await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  projectListCache.delete(filePath);
   return project;
 }
 
@@ -416,7 +418,9 @@ export function updateProjectFromLatest(
 
 async function writeProjectFile(project: ProjectConfig): Promise<void> {
   await ensureDir();
-  await writeFileAtomic(path.join(PROJECTS_DIR, `${project.slug}.json`), JSON.stringify(toDisk(project), null, 2) + "\n");
+  const filePath = path.join(PROJECTS_DIR, `${project.slug}.json`);
+  await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  projectListCache.delete(filePath);
 }
 
 function toDisk(project: ProjectConfig): unknown {

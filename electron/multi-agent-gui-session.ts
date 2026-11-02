@@ -276,6 +276,40 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
   abstract interrupt(): Promise<void>;
 }
 
+const ASK_USER_QUESTION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['questions'],
+  properties: {
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['question'],
+        properties: {
+          id: { type: 'string' },
+          header: { type: 'string' },
+          question: { type: 'string' },
+          multiSelect: { type: 'boolean' },
+          options: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['label'],
+              properties: {
+                label: { type: 'string' },
+                description: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 const PI_GUI_EXTENSION_SOURCE = `export default function ayaPiGuiExtension(pi) {
   const developerNote = ${JSON.stringify(buildGuiDeveloperInstructions('Pi'))};
   pi.on("before_agent_start", async (event) => {
@@ -286,7 +320,8 @@ const PI_GUI_EXTENSION_SOURCE = `export default function ayaPiGuiExtension(pi) {
   for (const spec of [
     ${JSON.stringify({ name: PRESENT_TOOL.name, label: 'Aya Present', description: PRESENT_TOOL.description, parameters: PRESENT_TOOL.inputSchema })},
     ${JSON.stringify({ name: OPEN_ARTIFACT_TOOL.name, label: 'Aya Open Artifact', description: OPEN_ARTIFACT_TOOL.description, parameters: OPEN_ARTIFACT_TOOL.inputSchema })},
-    ${JSON.stringify({ name: PROGRESS_TOOL.name, label: 'Aya Progress', description: PROGRESS_TOOL.description, parameters: PROGRESS_TOOL.inputSchema })}
+    ${JSON.stringify({ name: PROGRESS_TOOL.name, label: 'Aya Progress', description: PROGRESS_TOOL.description, parameters: PROGRESS_TOOL.inputSchema })},
+    ${JSON.stringify({ name: 'ask_user_question', label: 'Ask User Question', description: 'Ask the user one or more clarifying questions with optional choices in Aya GUI.', parameters: ASK_USER_QUESTION_SCHEMA })}
   ]) {
     pi.registerTool({
       name: spec.name,
@@ -301,7 +336,7 @@ const PI_GUI_EXTENSION_SOURCE = `export default function ayaPiGuiExtension(pi) {
           throw new Error(parsed.text || "Aya tool failed");
         }
         return {
-          content: [{ type: "text", text: (parsed && parsed.text) || "OK" }],
+          content: [{ type: "text", text: (parsed && parsed.text) || raw || "OK" }],
           details: {}
         };
       }
@@ -593,13 +628,23 @@ export class PiGuiSession extends BaseManagedGuiSession {
           parsedArgs = object(message.params);
         }
         if (toolName === 'ask_user_question') {
-          const questions = Array.isArray(parsedArgs.questions) ? parsedArgs.questions : [];
+          const rawQuestions = Array.isArray(parsedArgs.questions) ? parsedArgs.questions : [];
+          const questions = rawQuestions.map((q, idx) => {
+            const qObj = object(q);
+            return {
+              ...qObj,
+              id: text(qObj.id) || (rawQuestions.length === 1 ? 'choice' : `q_${idx}`),
+              question: text(qObj.question) || text(qObj.title) || 'Question',
+              multiSelect: Boolean(qObj.multiSelect ?? qObj.is_multi_select),
+              options: Array.isArray(qObj.options) ? qObj.options : [],
+            };
+          });
           this.requests.set(id, {
             method: 'item/tool/requestUserInput',
             params: { questions },
             resolve: (val) => {
               const firstKey = text(object(questions[0]).id) || 'choice';
-              const answer = text(val.answers?.[firstKey]);
+              const answer = questions.length <= 1 ? text(val.answers?.[firstKey]) : '';
               this.write({
                 type: 'extension_ui_response',
                 id,
@@ -786,6 +831,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private currentItemId = '';
   private currentAssistantText = '';
   private cachedModels: Record<string, unknown>[] = [];
+  private handledQuestionToolIds = new Set<string>();
+  private pendingAssistantQuestions: unknown[] | null = null;
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -977,6 +1024,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     this.turnId = `turn-${++this.nextId}`;
     this.currentItemId = `msg-${this.nextId}`;
     this.currentAssistantText = '';
+    this.handledQuestionToolIds.clear();
+    this.pendingAssistantQuestions = null;
     try {
       if (options.model) {
         await this.controlRequest('set_model', { model: options.model });
@@ -1111,12 +1160,16 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
           return;
         }
         if (toolName === 'AskUserQuestion') {
+          this.handledQuestionToolIds.add(toolUseId);
           const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
           const questions = rawQuestions.map((q, idx) => {
             const qObj = object(q);
             return {
-              id: text(qObj.id) || text(qObj.header) || `q${idx}`,
-              question: text(qObj.question) || 'Question',
+              ...qObj,
+              id: text(qObj.id) || (rawQuestions.length === 1 ? 'choice' : text(qObj.header) || `q_${idx}`),
+              header: text(qObj.header),
+              question: text(qObj.question) || text(qObj.title) || 'Question',
+              multiSelect: Boolean(qObj.multiSelect ?? qObj.is_multi_select),
               options: Array.isArray(qObj.options) ? qObj.options : [],
             };
           });
@@ -1124,6 +1177,19 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
             method: 'item/tool/requestUserInput',
             params: { questions },
             resolve: (val) => {
+              const rawAnswers = val.answers || {};
+              const resolvedAnswers: Record<string, string> = { ...rawAnswers };
+              for (const q of questions) {
+                const ans =
+                  text(rawAnswers[q.id]) ||
+                  text(rawAnswers[q.question]) ||
+                  (q.header ? text(rawAnswers[q.header]) : '');
+                if (ans) {
+                  resolvedAnswers[q.id] = ans;
+                  resolvedAnswers[q.question] = ans;
+                  if (q.header) resolvedAnswers[q.header] = ans;
+                }
+              }
               this.write({
                 type: 'control_response',
                 response: {
@@ -1131,7 +1197,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
                   request_id: reqId,
                   response: {
                     behavior: 'allow',
-                    updatedInput: { ...input, answers: val.answers || {} },
+                    updatedInput: { ...input, answers: resolvedAnswers },
                     toolUseID: toolUseId,
                   },
                 },
@@ -1226,6 +1292,16 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     if (type === 'assistant') {
       const msg = object(message.message);
       if (Array.isArray(msg.content)) {
+        for (const rawBlock of msg.content) {
+          const b = object(rawBlock);
+          if (text(b.type) === 'tool_use' && text(b.name) === 'AskUserQuestion') {
+            const toolId = text(b.id);
+            if (!toolId || !this.handledQuestionToolIds.has(toolId)) {
+              const qs = Array.isArray(object(b.input).questions) ? (object(b.input).questions as unknown[]) : [];
+              if (qs.length > 0) this.pendingAssistantQuestions = qs;
+            }
+          }
+        }
         const fullText = msg.content
           .filter((b) => text(object(b).type) === 'text')
           .map((b) => text(object(b).text))
@@ -1243,12 +1319,23 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
     if (type === 'result') {
       const finalText = text(message.result) || this.currentAssistantText;
-      if (finalText) {
+      const pendingQuestions = this.pendingAssistantQuestions;
+      this.pendingAssistantQuestions = null;
+      if (finalText || (pendingQuestions && pendingQuestions.length > 0)) {
         const itemId = this.currentItemId || 'answer';
-        this.checkGoalCompletionInText(finalText);
+        if (finalText) this.checkGoalCompletionInText(finalText);
         this.emit({
           method: 'item/completed',
-          params: { item: { id: itemId, type: 'agentMessage', text: finalText } },
+          params: {
+            item: {
+              id: itemId,
+              type: 'agentMessage',
+              text: finalText,
+              ...(pendingQuestions && pendingQuestions.length > 0
+                ? { questions: pendingQuestions, delivery: 'async' }
+                : {}),
+            },
+          },
         });
       }
       const isInterrupted = text(message.subtype) === 'interrupted' || text(message.terminal_reason) === 'aborted_streaming';
@@ -1293,6 +1380,7 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
   private currentModel = '';
   private currentEffort = '';
   private executedStepTools = new Set<number>();
+  private pendingAssistantQuestions: unknown[] | null = null;
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -1480,6 +1568,7 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     this.currentItemId = `msg-${this.nextId}`;
     this.currentAssistantText = '';
     this.executedStepTools.clear();
+    this.pendingAssistantQuestions = null;
     if (options.model) this.currentModel = options.model;
     if (options.effort) this.currentEffort = options.effort;
     try {
@@ -1505,8 +1594,15 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
     if (this.busy) {
       const pid = this.child?.pid;
       if (!pid) throw Error('Antigravity is disconnected');
-      try { process.kill(-pid, 'SIGINT'); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      try {
+        process.kill(-pid, 'SIGINT');
+      } catch {
+        try {
+          this.child?.kill('SIGINT');
+        } catch {
+          // Process already exited.
+        }
+      }
     }
   }
 
@@ -1576,11 +1672,23 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
 
         if (toolName === 'ask_question' && state === 'ACTIVE') {
           const reqId = `agy-q-${stepIndex}`;
-          const questions = Array.isArray(params.questions) ? params.questions : [];
+          const rawQuestions = Array.isArray(params.questions) ? params.questions : [];
+          const questions = rawQuestions.map((q, idx) => {
+            const qObj = object(q);
+            return {
+              ...qObj,
+              id: text(qObj.id) || (rawQuestions.length === 1 ? 'choice' : `q_${idx}`),
+              question: text(qObj.question) || text(qObj.title) || 'Question',
+              multiSelect: Boolean(qObj.is_multi_select ?? qObj.multiSelect),
+              options: Array.isArray(qObj.options) ? qObj.options : [],
+            };
+          });
+          this.pendingAssistantQuestions = questions;
           this.requests.set(reqId, {
             method: 'item/tool/requestUserInput',
             params: { questions },
             resolve: (val) => {
+              this.pendingAssistantQuestions = null;
               const firstKey = text(object(questions[0]).id) || 'choice';
               const answer = text(val.answers?.[firstKey]);
               try {
@@ -1635,12 +1743,23 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
       const permissionError = denied.length ? `Antigravity denied ${deniedText || 'a tool action'}. Its headless protocol cannot prompt for permission. Configure an allow rule in Antigravity, or enable skip permissions in this preset and reconnect.` : '';
 
       const finalText = text(res.response) || this.currentAssistantText;
-      if (finalText) {
+      const pendingQuestions = this.pendingAssistantQuestions;
+      this.pendingAssistantQuestions = null;
+      if (finalText || (pendingQuestions && pendingQuestions.length > 0)) {
         const itemId = this.currentItemId || 'answer';
-        this.checkGoalCompletionInText(finalText);
+        if (finalText) this.checkGoalCompletionInText(finalText);
         this.emit({
           method: 'item/completed',
-          params: { item: { id: itemId, type: 'agentMessage', text: finalText } },
+          params: {
+            item: {
+              id: itemId,
+              type: 'agentMessage',
+              text: finalText,
+              ...(pendingQuestions && pendingQuestions.length > 0
+                ? { questions: pendingQuestions, delivery: 'async' }
+                : {}),
+            },
+          },
         });
       }
       const isInterrupted = text(res.finished_reason) === 'interrupted' || text(res.status) === 'INTERRUPTED';

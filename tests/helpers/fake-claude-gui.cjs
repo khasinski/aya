@@ -199,6 +199,25 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
           },
         },
       });
+    } else if (prompt === 'question-no-id') {
+      write({
+        type: 'control_request',
+        request_id: 'question-no-id',
+        request: {
+          subtype: 'can_use_tool',
+          tool_name: 'AskUserQuestion',
+          tool_use_id: 'tool-q-2',
+          input: {
+            questions: [
+              {
+                header: 'Approach',
+                question: 'Which approach should we take?',
+                options: [{ label: 'Fast', description: 'Quick path' }, { label: 'Thorough', description: 'Complete path' }],
+              },
+            ],
+          },
+        },
+      });
     } else {
       callMcpTool('present', 'aya_present', {
         open: prompt === 'open-widget',
@@ -245,6 +264,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 
     if (reqId === 'question') {
       const ans = inner.updatedInput?.answers?.choice || '';
+      complete(ans);
+      return;
+    }
+
+    if (reqId === 'question-no-id') {
+      const ans = inner.updatedInput?.answers?.['Which approach should we take?'] || '';
       complete(ans);
       return;
     }

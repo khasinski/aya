@@ -478,6 +478,20 @@ test('Codex permission grants can last for the session', async t => {
 });
 
 
+test('Claude AskUserQuestion without explicit id populates answers keyed by question text and header', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  await session.send('question-no-id');
+  await wait(() => events.some(e => e.method === 'item/tool/requestUserInput'));
+  const questionEvt = events.find(e => e.method === 'item/tool/requestUserInput');
+  assert.equal(questionEvt.params.questions[0].id, 'choice');
+  assert.equal(questionEvt.params.questions[0].header, 'Approach');
+  await session.respond(questionEvt.id, { answers: { choice: 'Thorough — keep all tests' } });
+  await wait(() => events.some(e => e.method === 'turn/completed'));
+  assert.equal(events.find(e => e.method === 'item/completed' && e.params.item.type === 'agentMessage').params.item.text, 'Thorough — keep all tests');
+});
+
 test('Codex side questions retry the sampling idle race without sending ordinary turns', async t => {
   const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
   t.after(() => session.close()); await session.connect(process.cwd(), '');

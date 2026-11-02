@@ -223,18 +223,101 @@ Mimo że projekt posiada katalog `shared/` widoczny z obu konfiguracji TypeScrip
 
 ---
 
+## 6. Kompleksowy Audyt „UX Fuckupów” i Frustracji Power-Usera
+
+> [!IMPORTANT]
+> Poniższe błędy UX to sytuacje, w których Aya zachowuje się wbrew intuicji, niszczy pracę użytkownika jednym kliknięciem lub skrótem klawiszowym (`Cmd+W`), kradnie focus, po cichu gubi dane lub wyświetla fałszywe komunikaty błędów.
+
+### 6.1 Skróty Klawiszowe, Focus i Pułapki Destrukcyjnych Akcji (Krytyczne UX P0)
+1. **Globalne `before-input-event` przechwytuje `Cmd+W`, `Cmd+T`, `Cmd+[`/`]`, `Cmd+1..9` oraz `Cmd+D` nawet wewnątrz otwartych modali i edytorów tekstu**:
+   - **Lokalizacja**: [windows.ts](file:///Users/hasik/Projects/aya/electron/windows.ts#L363-L406), [App.tsx](file:///Users/hasik/Projects/aya/src/App.tsx#L1012-L1049)
+   - **UX Fuckup**: W `useAppShortcuts` tylko `Cmd+K` sprawdza `if (!chromeBlocked)`. Naciśnięcie `Cmd+W` podczas przeglądania `SettingsModal`, `UsageDashboard` czy `TeamsModal` **po cichu zabija aktywny terminal pod spodem**, zamiast zamknąć modal! Z kolei `Cmd+[` i `Cmd+]` przechwytują standardowe wcięcia tekstu / nawigację w `<textarea>` (`ConversationView`, `TeamEditor`, `SettingsModal`) i przełączają zakładki terminala w tle, a przez `if (input.shift || input.alt) return;` w `windows.ts:369` nie działają w ogóle na klawiaturach nie-US (gdzie `[` i `]` wymagają `Option`/`Alt`).
+2. **`Cmd+W` na pustym panelu splitu (`Empty pane`) lub na panelu GUI zabija INNY terminal obok!**:
+   - **Lokalizacja**: [App.tsx](file:///Users/hasik/Projects/aya/src/App.tsx#L1017-L1021), [PaneGrid.tsx](file:///Users/hasik/Projects/aya/src/components/PaneGrid.tsx#L115-L161), [PaneGrid.tsx](file:///Users/hasik/Projects/aya/src/components/PaneGrid.tsx#L253-L259)
+   - **UX Fuckup**:
+     - Po podziale ekranu (`Cmd+D`) powstaje pusty panel (`Empty pane / No hidden terminals`), który nie ma ani przycisków uruchomienia nowego terminala, ani przycisku `×`. Gdy użytkownik odruchowo naciśnie `Cmd+W`, chcąc zamknąć ten pusty podział, `closeCurrentTab` sprawdza `activeTabByProject[slug]` i **zabija działający terminal w pierwszym panelu**!
+     - Analogicznie `ConversationView` w `PaneGrid.tsx:253-259` nie dostaje `onActivatePane` ani `isActivePane`: kliknięcie w panel GUI w widoku split nie zmienia aktywnego liścia splitu, więc `Cmd+W` zabija sąsiedni terminal zamiast zamknąć panel GUI.
+3. **Kliknięcie niepodzielonego terminala na pasku bocznym (lub `Cmd+Shift+[`/`]`) niszczy cały układ Split View**:
+   - **Lokalizacja**: [App.tsx](file:///Users/hasik/Projects/aya/src/App.tsx#L621-L648), [App.tsx](file:///Users/hasik/Projects/aya/src/App.tsx#L715-L733), [useSplitLayout.ts](file:///Users/hasik/Projects/aya/src/hooks/useSplitLayout.ts#L402-L405)
+   - **UX Fuckup**: Gdy użytkownik ma otwarty układ 2–4 paneli obok siebie i kliknie inny terminal na pasku bocznym (lub przełączy zakładkę skrótem `Cmd+Shift+]`), `collapseToSingleTerminal` natychmiast zwija cały podział ekranu do jednego pełnoekranowego terminala, a na pasku bocznym nadal świecą się plakietki `1` i `2` sugerujące aktywny split.
+4. **Hover na zakładce projektu chowa ikonę pytania/błędu (`?`/`!`) i podstawia pod kursor przycisk `×` zamknięcia całego projektu**:
+   - **Lokalizacja**: [overrides.css](file:///Users/hasik/Projects/aya/src/styles/overrides.css#L1648), [TopBar.tsx](file:///Users/hasik/Projects/aya/src/components/TopBar.tsx#L337-L340), [TopBar.tsx](file:///Users/hasik/Projects/aya/src/components/TopBar.tsx#L403-L418), [useProjectActions.ts](file:///Users/hasik/Projects/aya/src/hooks/useProjectActions.ts#L156-L170)
+   - **UX Fuckup**: `.aya-tab-bell` i `.aya-tab-close` leżą dokładnie w tym samym miejscu po prawej stronie zakładki projektu (`.aya-tab:hover .aya-tab-bell { opacity: 0 }`). Gdy projekt w tle sygnalizuje pytanie (`?`), najechanie kursorem na prawą część zakładki ukrywa ikonę i podstawia pod palec przycisk `×`, który (podobnie jak klawisz `Delete` na sfokusowanej zakładce) **bez żadnego potwierdzenia zabija wszystkie otwarte terminale shellowe w tym projekcie**.
+
+### 6.2 Tryb Conversation GUI, Schowek i Drag & Drop
+1. **Wszystkie linki Markdown w `ConversationView` są wycinane do nieklikalnych `<span>`ów**:
+   - **Lokalizacja**: [ConversationMarkdown.tsx](file:///Users/hasik/Projects/aya/src/components/ConversationMarkdown.tsx#L9)
+   - **UX Fuckup**: `a: ({ children }) => <span>{children}</span>` całkowicie usuwa atrybut `href` ze wszystkich linków generowanych przez agenta (PR-y, dokumentacja, `localhost`). Nie da się ich ani kliknąć, ani skopiować adresu.
+2. **Naciśnięcie `Escape` w polu tekstowym `ConversationView` kradnie focus na przycisk `Artifacts`**:
+   - **Lokalizacja**: [ConversationView.tsx](file:///Users/hasik/Projects/aya/src/components/ConversationView.tsx#L417-L418)
+   - **UX Fuckup**: Nawet gdy panel artefaktów jest zamknięty (`drawer === false`), naciśnięcie `Escape` wywołuje `closeArtifacts()`, które wykonuje `artifactButton.current?.focus()`, wyrzucając kursor z pola wpisywania wiadomości na górny pasek narzędzi. Ponadto menu komend `/` nie obsługuje `Tab`/`ArrowUp`/`ArrowDown`, a naciśnięcie `Enter` po wpisaniu `/m` kończy się błędem `Unknown GUI command /m`.
+3. **Brak wklejania obrazków (`Cmd+V`) i przeciągania plików (Drag & Drop) w `ConversationView` + ryzyko nawigacji całego okna Electrona**:
+   - **Lokalizacja**: [ConversationView.tsx](file:///Users/hasik/Projects/aya/src/components/ConversationView.tsx#L462-L465), [prompt-attachment-gestures.ts](file:///Users/hasik/Projects/aya/electron/prompt-attachment-gestures.ts#L28-L31), [windows.ts](file:///Users/hasik/Projects/aya/electron/windows.ts)
+   - **UX Fuckup**: W `ConversationView` nie działa `Cmd+V` ze zrzutem ekranu ani upuszczenie pliku z Findera. Co gorsza, upuszczenie pliku poza terminalem (na pasek boczny, górny pasek lub `ConversationView`) nie wywołuje `event.preventDefault()`, a `BrowserWindow` nie ma blokady `will-navigate`, więc Chromium potrafi przeładować całe okno Aya na `file:///ścieżka/do/pliku`!
+4. **Fałszywy czerwony baner błędu po naciśnięciu `Cmd+V` z pustym schowkiem w terminalu**:
+   - **Lokalizacja**: [prompt-attachment-gestures.ts](file:///Users/hasik/Projects/aya/electron/prompt-attachment-gestures.ts#L50-L71), [prompt-attachments-ipc.ts](file:///Users/hasik/Projects/aya/electron/ipc/prompt-attachments-ipc.ts#L189-L191)
+   - **UX Fuckup**: Gdy schowek jest pusty (`getData("text/plain") === ""`), handler `paste` zakłada, że użytkownik wkleja obrazek, wyświetla `"Staging clipboard image..."`, a chwilę później rzuca wyjątek i pokazuje czerwony baner `"Failed to attach image: Clipboard does not contain an image"`. Z kolei przy wklejaniu pliku graficznego skopiowanego w Finderze (`clipboardData.files`), obecność nazwy pliku w `text/plain` sprawia, że handler wychodzi wcześniej i wkleja samą nazwę `"obrazek.png"` zamiast ścieżki do pliku!
+5. **Zamknięcie lub przeładowanie aplikacji (`Cmd+Q` / `Cmd+R`) zabija aktywne sesje GUI w połowie tury bez ostrzeżenia**:
+   - **Lokalizacja**: [codex-gui-ipc.ts](file:///Users/hasik/Projects/aya/electron/codex-gui-ipc.ts#L53-L54), [main.ts](file:///Users/hasik/Projects/aya/electron/main.ts#L292-L308)
+   - **UX Fuckup**: Sprawdzanie zajętych sesji (`busyCount`) uwzględnia wyłącznie `ptyHost`, całkowicie ignorując sesje GUI (`CodexGuiSession`, `ClaudeGuiSession`, `PiGuiSession`, `AntigravityGuiSession`).
+
+### 6.3 Modale, Popovery, Szuflady i Ustawienia (Chaos Spójności)
+1. **Brak obsługi `Escape` i wyciekanie klawiszy do terminala w połowie modali i popoverów**:
+   - **Lokalizacja**: [TeamsModal.tsx](file:///Users/hasik/Projects/aya/src/components/TeamsModal.tsx#L177), [AttentionCenter.tsx](file:///Users/hasik/Projects/aya/src/components/AttentionCenter.tsx#L60), [WorktreeDialogs.tsx](file:///Users/hasik/Projects/aya/src/components/WorktreeDialogs.tsx#L16-L140), [ProjectPresetImportModal.tsx](file:///Users/hasik/Projects/aya/src/components/ProjectPresetImportModal.tsx#L11), [SnippetBar.tsx](file:///Users/hasik/Projects/aya/src/components/SnippetBar.tsx#L30), [StatusBar.tsx](file:///Users/hasik/Projects/aya/src/components/StatusBar.tsx#L254-L275), [UsageChip.tsx](file:///Users/hasik/Projects/aya/src/components/UsageChip.tsx#L185), [RecentProjectsMenu.tsx](file:///Users/hasik/Projects/aya/src/components/RecentProjectsMenu.tsx#L53)
+   - **UX Fuckup**:
+     - `TeamsModal`, `AttentionCenter`, `WorktreeCreateDialog`, `WorktreeRemoveDialog`, `ProjectPresetImportModal`, `SnippetBar`, panel `Diff / Changed files`, lista `Worktrees` w `StatusBar` oraz popovery `UsageChip` **nie zamykają się po naciśnięciu `Escape`**.
+     - Co gorsza, `WorktreeCreateDialog` i `WorktreeRemoveDialog` nie są wpięte w `anyOverlayOpen` w `App.tsx`, a popovery `UsageChip` / `RecentProjectsMenu` zatrzymują focus w terminalu — naciśnięcie `Escape` (lub pisanie na klawiaturze przy otwartym `WorktreeRemoveDialog`) **wysyła klawisze prosto do działającego pod spodem terminala (przerywając pracę agenta Claude/Codex!)**.
+2. **Szuflada `SnippetBar` zasłania 62% terminala i NIE zamyka się po kliknięciu snippetu**:
+   - **Lokalizacja**: [TerminalView.tsx](file:///Users/hasik/Projects/aya/src/components/TerminalView.tsx#L1702-L1710), [SnippetBar.tsx](file:///Users/hasik/Projects/aya/src/components/SnippetBar.tsx#L30-L132)
+   - **UX Fuckup**: Po kliknięciu snippetu (szczególnie typu `hold`, przeznaczonego do edycji przed wysłaniem), tekst trafia do promptu na dole terminala, focus wraca do terminala, ale szuflada `SnippetBar` zostaje otwarta i całkowicie zasłania prompt, w którym użytkownik właśnie pisze!
+3. **Schizofreniczny model zapisu w `SettingsModal`: przycisk `Cancel` kłamie na 6 z 8 zakładek, a `Save` po cichu gubi dane lub błędy**:
+   - **Lokalizacja**: [SettingsModal.tsx](file:///Users/hasik/Projects/aya/src/components/SettingsModal.tsx#L223-L273), [useSettingsDrafts.ts](file:///Users/hasik/Projects/aya/src/components/settings/useSettingsDrafts.ts#L257-L363)
+   - **UX Fuckup**:
+     - Zakładki `General` i `Intelligence` zapisują zmiany natychmiast przy każdym kliknięciu/znaku, ale na dole wciąż widnieje przycisk `Cancel` (który nie cofa zmian!). Z kolei na zakładkach `Presets`, `Snippets` i `Themes` przypadkowe kliknięcie tła lub `Escape` bez ostrzeżenia kasuje niezapisane zmiany (`presetsDirty` / `snippetsDirty`).
+     - Jeśli błąd walidacji jest na zakładce `Presets`, a użytkownik kliknie `Save` będąc na zakładce `Snippets` lub `General`, nic się nie dzieje i żaden błąd nie jest widoczny (brak `setActiveTab("presets")`).
+     - W `collectSnippets()` (`linia 326`) każdy snippet z wpisaną nazwą, ale pustą treścią jest po cichu usuwany przy zapisie bez błędu walidacji.
+     - Efekt focusu w `SettingsModal.tsx:223-240` ma w zależnościach `[onClose, ...]` i przy każdym re-renderze rodzica wyrywa focus z aktualnie edytowanego pola tekstowego z powrotem na przycisk pierwszej zakładki `General`!
+4. **Pułapki w `MissingDirModal`, `NewProjectModal` i `SearchModal` (`Cmd+K`)**:
+   - **Lokalizacja**: [MissingDirModal.tsx](file:///Users/hasik/Projects/aya/src/components/MissingDirModal.tsx#L25), [NewProjectModal.tsx](file:///Users/hasik/Projects/aya/src/components/NewProjectModal.tsx#L298-L343), [SearchModal.tsx](file:///Users/hasik/Projects/aya/src/components/SearchModal.tsx#L383-L396)
+   - **UX Fuckup**:
+     - W `MissingDirModal` naciśnięcie `Escape` lub kliknięcie tła uruchamia `handleUseHomeForMissingDir`, **otwierając terminale brakującego projektu w katalogu domowym `~`** zamiast anulować lub pozwolić zamknąć projekt!
+     - W `NewProjectModal` klawisz `Tab` jest bezwarunkowo przechwytywany w polu ścieżki (blokując nawigację klawiaturą po modalu), brak przycisku powrotu z trybu `Remote` do `Local`, a naciśnięcie `Enter` przy literówce w ścieżce **bez pytania tworzy nowy katalog na dysku (`mkdir -p`)**!
+     - W `SearchModal` (`Cmd+K`) przez 100 ms debounce na `query` szybkie wpisanie nazwy i naciśnięcie `Enter` otwiera pierwszy element z **nieprzefiltrowanej** listy zamiast wpisanego projektu!
+
+### 6.4 Statusy, Powiadomienia, Wyszukiwanie (`Cmd+F`), Diff i Menu Kontekstowe
+1. **Zwykłe terminale Shell (`zsh`/`bash`) po pierwszym znaku na zawsze zostają w statusie `"running"` (Working)**:
+   - **Lokalizacja**: [useTerminalActions.ts](file:///Users/hasik/Projects/aya/src/hooks/useTerminalActions.ts#L94), [pty-event-reducer.ts](file:///Users/hasik/Projects/aya/src/pty-event-reducer.ts#L231-L243)
+   - **UX Fuckup**: Każdy terminal shellowy startuje jako `"running"` i po wypisaniu promptu już nigdy nie przechodzi w stan `"idle"`, przez co kropka aktywności świeci się bez przerwy.
+2. **Start aplikacji odgrywa dźwięki i wysyła powiadomienia systemowe dla starych pytań sprzed restartu + dźwięki grają dla widocznych paneli w Split View**:
+   - **Lokalizacja**: [App.tsx](file:///Users/hasik/Projects/aya/src/App.tsx#L476-L490), [App.tsx](file:///Users/hasik/Projects/aya/src/App.tsx#L807-L811), [pty-event-reducer.ts](file:///Users/hasik/Projects/aya/src/pty-event-reducer.ts#L98), [useTerminalSounds.ts](file:///Users/hasik/Projects/aya/src/hooks/useTerminalSounds.ts#L53-L76)
+   - **UX Fuckup**: Hydracja `agentWaiting()` po starcie przełącza `bell` z `false` na `true` (nawet dla `restart === "unconfirmed"`!), wywołując dźwięk i powiadomienia macOS dla starych sesji. Ponadto `useTerminalSounds` sprawdza tylko `activeTabId` zamiast `visibleTerminalIds`, więc drugi widoczny panel w split view dzwoni powiadomieniem, gdy użytkownik patrzy prosto na niego.
+3. **Wyszukiwarka w terminalu (`Cmd+F`) nie reaguje na powtórne `Cmd+F` i nie pokazuje `"No matches"` w trybie Terminal**:
+   - **Lokalizacja**: [TerminalView.tsx](file:///Users/hasik/Projects/aya/src/components/TerminalView.tsx#L1844), [TerminalView.tsx](file:///Users/hasik/Projects/aya/src/components/TerminalView.tsx#L1955-L1960), [App.tsx](file:///Users/hasik/Projects/aya/src/App.tsx#L1040-L1042)
+   - **UX Fuckup**: Gdy pasek `FindBar` jest już otwarty, ponowne naciśnięcie `Cmd+F` nie przywraca focusu do pola wyszukiwania (użytkownik pisze w terminalu zamiast w wyszukiwarce), a brak wyników w buforze terminala nie wyświetla żadnej informacji `"No matches"`.
+4. **Wyszukiwarka w `DiffPanel` nie przewija do znalezionych wyników, a poziomy scroll ucina zielone/czerwone tło linii**:
+   - **Lokalizacja**: [StatusBar.tsx](file:///Users/hasik/Projects/aya/src/components/StatusBar.tsx#L1374-L1404), [app.css](file:///Users/hasik/Projects/aya/src/styles/app.css#L1286-L1314)
+   - **UX Fuckup**: Wpisanie frazy w `"Search diff"` pokazuje liczbę trafień, ale nie przewija widoku do pierwszego `<mark>` i nie obsługuje `Enter`/`Shift+Enter`. Przy długich liniach brak `min-width: max-content` na `.aya-diff-view-line` sprawia, że kolorowe tło diffu urywa się po 860 px.
+5. **Menu kontekstowe (PPM) na pasku bocznym ucinają się poza dolną krawędzią okna, a przeciąganie splitu zawiesza się nad `<iframe>`**:
+   - **Lokalizacja**: [Sidebar.tsx](file:///Users/hasik/Projects/aya/src/components/Sidebar.tsx#L566-L573), [ProjectContextMenu.tsx](file:///Users/hasik/Projects/aya/src/components/ProjectContextMenu.tsx#L31-L36), [SplitResizeHandle.tsx](file:///Users/hasik/Projects/aya/src/components/SplitResizeHandle.tsx#L26-L50)
+   - **UX Fuckup**: Menu kontekstowe w `Sidebar` i `ProjectContextMenu` nie mają klamrowania do `window.innerHeight` (w przeciwieństwie do `TerminalView`), więc dla dolnych terminali opcja `"Close terminal"` wypada poza ekran. Z kolei brak `setPointerCapture` w `SplitResizeHandle` powoduje „przyklejenie” uchwytu do kursora po najechaniu na `<iframe>` w panelu artefaktów.
+6. **Synchroniczny `window.alert()` zamraża cały wątek renderera, a `initialPrompt` w worktree strzela na ślepo po `1200ms`**:
+   - **Lokalizacja**: [useProjectActions.ts](file:///Users/hasik/Projects/aya/src/hooks/useProjectActions.ts#L168), [useTerminalActions.ts](file:///Users/hasik/Projects/aya/src/hooks/useTerminalActions.ts#L225), [TerminalView.tsx](file:///Users/hasik/Projects/aya/src/components/TerminalView.tsx#L1239-L1244), [TerminalView.tsx](file:///Users/hasik/Projects/aya/src/components/TerminalView.tsx#L1505-L1509)
+   - **UX Fuckup**: Błędy wywołują natywny, blokujący `window.alert()`. W `TerminalView` pusty terminal po odtworzeniu pokazuje przez 2,5 sekundy spinner `"Restoring sessions..."` (czekając na `RESTORE_FALLBACK_MS`), a `initialPrompt` w nowych worktree wysyła tekst po sztywnych `1200ms` (zanim Claude/Codex zdąży wystartować), zamiast poczekać na gotowość composera.
+
+---
+
 ## Proponowany Plan Realizacji (3 Fale)
 
-1. **Fala 1 (P0 — Maksymalny przyrost wydajności i naprawa groźnych bugów)**:
-   - Leniwe `capture()` i fast-path `assertOwnership` w `vt-checkpoint` + eliminacja podwójnego `paneFromSnapshot` / `explainPaneSnapshot` w `pty-host-client` i `vt-state`.
-   - Naprawa 4× `forcePtyReassert` (`8× ptyResize`) przy przełączaniu zakładek w `TerminalView.tsx` + fast-pathy SGR/OSC.
-   - Singleton `config-watcher` oparty o `stat.mtimeMs`, cache w `listProjects()` oraz naprawa 1 Hz synchronicznego skanu w `screen-user-rule-provider.ts`.
-   - Debounce zapisu projektu przy przeciąganiu `SplitResizeHandle`, brakująca tablica zależności `useLayoutEffect` i memoizacja wiadomości w `ConversationView`, memoizacja + odchudzenie `highlight.js` w `StatusBar`.
-   - Naprawa pętli odczytu w `TeamStore.logTail()` / `usage-codex.ts`, dodanie `SSH_OPTIONS` w `runRemoteRequest`, `try/catch` + limit `stderr` w `multi-agent-gui-session.ts`.
-2. **Fala 2 (P1 — Re-rendery Reacta, czas startu, wycieki pamięci)**:
-   - Naprawa `React.memo` dla `Sidebar`, `StatusBar`, `ProjectsLeftLayout`, `PaneGrid` + `React.lazy` dla modali.
-   - Asynchroniczne `hydrateProcessPath()`, `scrypt`, `agent-status` i optymalizacja `workingTreeState` / `usage-history` / `harness-search`.
-   - Czyszczenie map w `PtyHostClient`, `git[directory]` w `useProjectActions`, `lastActivityRef`, `summaryTimersRef` i listenerów `artifact-preview-window`.
-3. **Fala 3 (P2 — Deduplikacja do `shared/`, oszczędzanie baterii w tle, hardening)**:
-   - Przeniesienie zduplikowanego kodu (`vt-checkpoint`, `split-tree`, `units`, `update-spawn`, `local-summary-errors`) do `shared/`.
-   - Przełączenie timerów tła (`useRecentTerminalActivity`, `useLocalSummaryEffects`, `useMinuteTick`) na `pollVisible` / tryb uśpienia w spoczynku + animacja `aya-pulse` na GPU.
+1. **Fala 1 (P0 — Maksymalny przyrost wydajności, groźne bugi i krytyczne pułapki UX)**:
+   - **Performance Core**: Leniwe `capture()` i fast-path `assertOwnership` w `vt-checkpoint` + eliminacja podwójnego `paneFromSnapshot` / `explainPaneSnapshot` w `pty-host-client` i `vt-state`; naprawa 4× `forcePtyReassert` (`8× ptyResize`) w `TerminalView.tsx`; singleton `config-watcher` oparty o `stat.mtimeMs`, cache w `listProjects()` i naprawa 1 Hz skanu w `screen-user-rule-provider.ts`; debounce zapisu przy przeciąganiu `SplitResizeHandle`, memoizacja wiadomości w `ConversationView`, odchudzenie i memoizacja `highlight.js` w `StatusBar`.
+   - **Krytyczny UX & Bugfix**:
+     - Blokada `Cmd+W` / `Cmd+T` / `Cmd+[`/`]` / `Cmd+1..9` gdy otwarty jest modal (`chromeBlocked`) oraz naprawa `Cmd+W` na pustym panelu splitu i w `ConversationView` (`onActivatePane` / `isActivePane`).
+     - Naprawa klikalnych linków Markdown w `ConversationMarkdown.tsx`, warstwowego `Escape` i autouzupełniania `/` w `ConversationView.tsx` oraz wklejania/upuszczania plików (+ blokada `will-navigate` na `BrowserWindow` i naprawa pustego `Cmd+V`).
+     - Rozdzielenie `.aya-tab-bell` od `.aya-tab-close` na zakładkach projektów + potwierdzenie przed zamknięciem projektu/terminala z aktywnym procesem.
+     - Naprawa pętli odczytu w `TeamStore.logTail()` / `usage-codex.ts`, `SSH_OPTIONS` w `runRemoteRequest` i limit `stderr` w `multi-agent-gui-session.ts`.
+2. **Fala 2 (P1 — Spójność Modali/Ustawień, Nawigacja, Re-rendery Reacta i Wycieki Pamięci)**:
+   - **UX Modali i Narzędzi**: Jednolita obsługa `Escape`, focus trap i `anyOverlayOpen` we wszystkich modalach i popoverach (`TeamsModal`, `AttentionCenter`, `WorktreeDialogs`, `StatusBar` Diff/Worktrees, `SnippetBar`, `UsageChip`, `RecentProjectsMenu`); automatyczne zamykanie `SnippetBar` po wybraniu snippetu; naprawa `SettingsModal` (spójny zapis/anulowanie, ostrzeżenie o niezapisanych zmianach, przełączanie na zakładkę z błędem, brak kradzieży focusu); naprawa `MissingDirModal`, `NewProjectModal` i wyścigu 100 ms w `SearchModal` (`Cmd+K`); nawigacja i sticky gutter w `DiffPanel` oraz re-focus i licznik trafień w `FindBar` (`Cmd+F`); klamrowanie menu kontekstowych do viewportu i `setPointerCapture` na uchwytach resize.
+   - **Performance & Leaks**: Naprawa `React.memo` dla `Sidebar`, `StatusBar`, `ProjectsLeftLayout`, `PaneGrid`; asynchroniczne `hydrateProcessPath()`, optymalizacja `workingTreeState` / `usage-history` / `harness-search`; czyszczenie map w `PtyHostClient` i `git[directory]`.
+3. **Fala 3 (P2 — Statusy, Powiadomienia, Deduplikacja do `shared/` i Battery Saving)**:
+   - **UX Statusów i Sesji**: Brak fałszywych powiadomień/dźwięków przy starcie aplikacji (`hydrate` / `unconfirmed`) oraz dla widocznych paneli w split view (`visibleTerminalIds`); poprawne przechodzenie zwykłych shelli w stan `"idle"`; natychmiastowe chowanie `"Restoring sessions..."` po `ptySpawn` i oparcie `initialPrompt` o gotowość composera; zastąpienie `window.alert` nieblokującymi powiadomieniami.
+   - **Higiena Architektury**: Deduplikacja ~800 linii kodu do `shared/`, uśpienie timerów tła w zminimalizowanym oknie i animacja `aya-pulse` na GPU.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 interface Props {
@@ -21,14 +21,22 @@ export function MissingDirModal({
 }: Props) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const creatingRef = useRef(creating);
+  creatingRef.current = creating;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !e.defaultPrevented && !creatingRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        onCloseRef.current();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   const handleCreate = async () => {
     setCreating(true);

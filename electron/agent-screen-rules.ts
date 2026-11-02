@@ -14,11 +14,13 @@ function allRules(agent: AgentKind | undefined): readonly DataScreenRule[] {
 export function rulesForAgent(agent: AgentKind | undefined): readonly ScreenRule[] {
   return allRules(agent).filter(r => r.kind === "prompt" || r.kind === "suppressor" || r.kind === "dialog");
 }
-export function regionText(rows: readonly string[], region: ScreenRegion): string {
-  const nonEmpty = rows.filter(row => row.trim());
+function regionTextFromNonEmpty(nonEmpty: readonly string[], region: ScreenRegion): string {
   if (region === "screen") return nonEmpty.join("\n");
   if (region === "lastLine") return nonEmpty[nonEmpty.length - 1] ?? "";
   return nonEmpty.slice(-TAIL_REGION_LINES).join("\n");
+}
+export function regionText(rows: readonly string[], region: ScreenRegion): string {
+  return regionTextFromNonEmpty(rows.filter(row => row.trim()), region);
 }
 export interface ScreenRuleMatch {
   id: string; kind: RuleKind; source: string; version: string; digest: string; region: ScreenRegion; excerpt: string;
@@ -57,24 +59,39 @@ export function screenRuleExcerpt(text: string): string {
   }
   return [...plain.replace(/[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}\u206a-\u206f]/gu, "").replace(/\s+/gu, " ").trim()].slice(0, 160).join("");
 }
-export function matchingScreenRule(rows: readonly string[], agent: AgentKind | undefined, kind: RuleKind): ScreenRuleMatch | null {
+function findMatchingScreenRule(
+  rows: readonly string[],
+  agent: AgentKind | undefined,
+  kind: RuleKind,
+  regions: Map<ScreenRegion, string> = new Map(),
+  nonEmpty?: readonly string[],
+): ScreenRuleMatch | null {
   const state = builtinScreenRules.get();
   if (!state.available) return null;
-  const regions = new Map<ScreenRegion, string>();
+  let filtered = nonEmpty;
   for (const rule of allRules(agent)) {
     if (rule.kind !== kind) continue;
     let region = regions.get(rule.region);
-    if (region === undefined) { region = regionText(rows, rule.region); regions.set(rule.region, region); }
+    if (region === undefined) {
+      filtered ??= rows.filter(row => row.trim());
+      region = regionTextFromNonEmpty(filtered, rule.region);
+      regions.set(rule.region, region);
+    }
     const match = rule.pattern.exec(region);
     if (match) return { id: rule.id, kind, source: rule.source, version: state.rules.version, digest: state.rules.digest, region: rule.region, excerpt: screenRuleExcerpt(match[0]) };
   }
   return null;
 }
+export function matchingScreenRule(rows: readonly string[], agent: AgentKind | undefined, kind: RuleKind): ScreenRuleMatch | null {
+  return findMatchingScreenRule(rows, agent, kind);
+}
 const VERDICT_ORDER = [["dialog", "waiting"], ["suppressor", "clear"], ["prompt", "waiting"]] as const;
 export function evaluateScreenEvidence(rows: readonly string[], agent: AgentKind | undefined): { verdict: "waiting" | "clear" | null; match: ScreenRuleMatch | null } {
   if (rows.length === 0 || !builtinScreenRules.get().available) return { verdict: null, match: null };
+  const nonEmpty = rows.filter(row => row.trim());
+  const regions = new Map<ScreenRegion, string>();
   for (const [kind, verdict] of VERDICT_ORDER) {
-    const match = matchingScreenRule(rows, agent, kind);
+    const match = findMatchingScreenRule(rows, agent, kind, regions, nonEmpty);
     if (match) return { verdict, match };
   }
   return { verdict: "clear", match: null };

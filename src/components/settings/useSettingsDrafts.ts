@@ -68,6 +68,7 @@ export function useSettingsDrafts({
   const editSnippets: typeof setSnippetDraft = (next) => {
     setSnippetDraft(next);
     setSnippetsDirty(true);
+    setSnippetsSaveError(null);
   };
 
   // When the config watcher reloads a file that was edited by hand while
@@ -317,25 +318,39 @@ export function useSettingsDrafts({
 
   // --- Save ---------------------------------------------------------------
 
-  /** Snippets are lenient: rows with no text are dropped silently (an empty
-   *  row is just an in-progress edit, not an error). IDs are de-duplicated. */
+  /** Completely blank rows are dropped; rows with text but no label backfill
+   *  the label from the text. IDs are de-duplicated. */
   const collectSnippets = (): Snippet[] => {
     const seen = new Set<string>();
     const out: Snippet[] = [];
     for (const row of snippetDraft) {
       const cleaned = snippetFromDraft(row);
       if (!cleaned.text.trim()) continue;
+      const name = cleaned.name.trim() || cleaned.text.trim();
       let id = cleaned.id;
       while (seen.has(id)) id = `${id}-2`;
       seen.add(id);
-      out.push({ ...cleaned, id });
+      out.push({ ...cleaned, name, id });
     }
     return out;
   };
 
   const handleSave = async () => {
     const cleaned = validatePresets();
-    if (!cleaned) return;
+    if (!cleaned) {
+      setActiveTab("presets");
+      return;
+    }
+    if (snippetsDirty) {
+      const emptyNamed = snippetDraft.find(
+        (row) => row.name.trim() && !row.text.trim(),
+      );
+      if (emptyNamed) {
+        setSnippetsSaveError(`Snippet "${emptyNamed.name.trim()}" has no text.`);
+        setActiveTab("snippets");
+        return;
+      }
+    }
     setSaving(true);
     try {
       // Only write the slices the user actually changed, so an untouched slice

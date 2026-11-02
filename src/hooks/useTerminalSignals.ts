@@ -18,7 +18,10 @@ export function useDockBadge(
   terminals: Record<string, TerminalState>,
 ): void {
   const waitingCount = Object.values(terminals).filter((t) => t.bell).length;
+  const lastSentRef = useRef<number | null>(null);
   useEffect(() => {
+    if (lastSentRef.current === waitingCount) return;
+    lastSentRef.current = waitingCount;
     void window.aya.setDockBadge(waitingCount > 0 ? String(waitingCount) : "");
   }, [waitingCount]);
 }
@@ -79,11 +82,15 @@ export function useRecentTerminalActivity(): RecentActivity {
 
   useEffect(() => {
     const recompute = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const activityMap = lastActivityRef.current;
+      const entries = Object.entries(activityMap);
+      if (entries.length === 0 && keyRef.current === "") return;
       const now = Date.now();
       const ids: string[] = [];
-      for (const [tid, ts] of Object.entries(lastActivityRef.current)) {
+      for (const [tid, ts] of entries) {
         if (now - ts < ACTIVITY_WINDOW_MS) ids.push(tid);
-        else delete lastActivityRef.current[tid];
+        else delete activityMap[tid];
       }
       ids.sort();
       const key = ids.join("\n");

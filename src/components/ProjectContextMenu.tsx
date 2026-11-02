@@ -28,12 +28,14 @@ export function ProjectContextMenu({
   onClose: () => void;
   onMoveToWindow: (target: "new" | number) => void;
 }) {
+  const clampedLeft = Math.max(8, Math.min(x, window.innerWidth - 200 - 8));
+  const clampedTop = Math.max(8, Math.min(y, window.innerHeight - 240 - 8));
   return (
     <div
       ref={menuRef}
       role="menu"
       className="aya-context-menu"
-      style={{ left: x, top: y }}
+      style={{ left: clampedLeft, top: clampedTop }}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={handleMenuNavigation}
     >

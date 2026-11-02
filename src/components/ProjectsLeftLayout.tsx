@@ -937,7 +937,10 @@ function ProjectsLeftLayoutImpl({
           ref={terminalMenuRef}
           role="menu"
           className="aya-context-menu"
-          style={{ left: menu.x, top: menu.y }}
+          style={{
+            left: Math.max(8, Math.min(menu.x, window.innerWidth - 200 - 8)),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - 240 - 8)),
+          }}
           onMouseDown={(e) => e.stopPropagation()}
           onKeyDown={handleMenuNavigation}
         >

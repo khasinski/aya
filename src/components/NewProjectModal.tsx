@@ -99,12 +99,16 @@ export function NewProjectModal({
     useState<DirectoryStatus>("unknown");
   const directoryRef = useRef<HTMLInputElement>(null);
   const directoryCheckRef = useRef(0);
+  const [directoryEdited, setDirectoryEdited] = useState(false);
+  const noMatchSourceRef = useRef<string | null>(null);
   const completionRef = useRef<{
     source: string;
     matches: string[];
     index: number;
     applied: string;
   } | null>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
 
   useEffect(() => {
     const input = directoryRef.current;
@@ -114,17 +118,23 @@ export function NewProjectModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
+        e.stopPropagation();
+        onCancelRef.current();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  }, []);
 
   const setDirectoryAndMaybeName = (next: string) => {
     setDirectory(next);
+    setDirectoryEdited(true);
     setError(null);
     setDirectoryStatus("unknown");
     completionRef.current = null;
+    noMatchSourceRef.current = null;
   };
 
   const setRemoteTarget = (next: string) => {
@@ -260,8 +270,10 @@ export function NewProjectModal({
     if (matches.length === 0) {
       setError("No matching directories.");
       completionRef.current = null;
+      noMatchSourceRef.current = current;
       return;
     }
+    noMatchSourceRef.current = null;
     const index = isCycling ? (previous.index + 1) % matches.length : 0;
     const applied = matches[index];
     completionRef.current = { source, matches, index, applied };
@@ -337,7 +349,13 @@ export function NewProjectModal({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     submit();
-                  } else if (e.key === "Tab") {
+                  } else if (
+                    e.key === "Tab" &&
+                    !e.shiftKey &&
+                    onCompletePath &&
+                    (directoryEdited || completionRef.current !== null) &&
+                    noMatchSourceRef.current !== (directory.trim() || "~/")
+                  ) {
                     e.preventDefault();
                     void completeDirectory();
                   }
@@ -422,6 +440,20 @@ export function NewProjectModal({
                   }
                 >
                   {remoteHealthLoading ? "Checking..." : "Check"}
+                </button>
+              )}
+              {!remoteConnected && (
+                <button
+                  className="aya-modal-btn"
+                  type="button"
+                  onClick={() => {
+                    setRemoteVisible(false);
+                    setRemoteHealth(null);
+                    setError(null);
+                  }}
+                  disabled={submitting || remoteLoading}
+                >
+                  Local directory
                 </button>
               )}
             </div>

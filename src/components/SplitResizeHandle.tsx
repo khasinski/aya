@@ -42,11 +42,17 @@ export function SplitResizeHandle({
         const up = () => {
           window.removeEventListener("mousemove", move);
           window.removeEventListener("mouseup", up);
+          window.removeEventListener("blur", up);
           document.body.style.cursor = "";
+          document.body.style.userSelect = "";
+          document.body.classList.remove("aya-split-dragging");
         };
         document.body.style.cursor = vertical ? "col-resize" : "row-resize";
+        document.body.style.userSelect = "none";
+        document.body.classList.add("aya-split-dragging");
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
+        window.addEventListener("blur", up);
       }}
     />
   );

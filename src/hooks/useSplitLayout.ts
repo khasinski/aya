@@ -19,6 +19,7 @@ import {
   normalizeTreeForTabs,
   paneAssignments,
   projectSplitTree,
+  removeLeaf,
   removeTerminal,
   renderedSplitTree,
   resizeSplit as resizeSplitNode,
@@ -212,6 +213,15 @@ export function useSplitLayout({
     [updateProjectSplitTree, terminalsRef],
   );
 
+  const unsplitLeaf = useCallback(
+    (slug: string, leafId: string) => {
+      updateProjectSplitTree(slug, (tree) => ({
+        tree: removeLeaf(tree, leafId),
+      }));
+    },
+    [updateProjectSplitTree],
+  );
+
   /** Focus a pane by id (mouse click on a pane, or filling an empty one).
    *  Keeping the active terminal in sync is what makes the sidebar highlight
    *  and the clear-on-focus effect follow a click, not just keyboard nav. */
@@ -261,7 +271,9 @@ export function useSplitLayout({
       );
       const target = focusDirection(tree, from, direction);
       if (!target) return; // at the edge — a no-op, never a wrap-around
-      setSingleViewByProject((prev) => ({ ...prev, [project.slug]: null }));
+      setSingleViewByProject((prev) =>
+        prev[project.slug] === null ? prev : { ...prev, [project.slug]: null },
+      );
       updateProjectSplitTree(project.slug, (current) => ({
         tree: current,
         activeLeafId: target,
@@ -328,6 +340,7 @@ export function useSplitLayout({
     assignTerminalToSplitCell,
     collapseToSingleTerminal,
     removeTerminalFromSplit,
+    unsplitLeaf,
     setActiveSplitCell,
     resizeSplit,
     focusSplitPane,

@@ -471,6 +471,7 @@ export function SearchModal({
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       onClose();
       return;
     }
@@ -482,7 +483,21 @@ export function SearchModal({
       setSelectedIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const chosen = results[selectedIndex];
+      const activeResults =
+        inputValue.trim() !== query.trim()
+          ? buildResults(
+              inputValue,
+              projects,
+              allProjects,
+              activeProject,
+              terminals,
+              events,
+              presets,
+              lastActivity,
+              contentHits,
+            )
+          : results;
+      const chosen = activeResults[selectedIndex] ?? activeResults[0];
       if (chosen) select(chosen);
     }
   };

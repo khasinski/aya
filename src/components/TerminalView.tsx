@@ -404,6 +404,7 @@ function TerminalViewComponent({
   const macOptionKeyModeRef = useRef(macOptionKeyMode);
   macOptionKeyModeRef.current = macOptionKeyMode;
   const [findQuery, setFindQuery] = useState("");
+  const [findNoMatch, setFindNoMatch] = useState(false);
   const debugInputRef = useRef(false);
   useEffect(() => {
     const refresh = () => { try { debugInputRef.current = localStorage.getItem(DEBUG_TERMINAL_INPUT_STORAGE_KEY) === '1'; } catch { debugInputRef.current = false; } };
@@ -608,6 +609,9 @@ function TerminalViewComponent({
       }, 0);
     } else {
       void window.aya.ptyResize(terminal.id, c, r).catch(()=>{});
+      reassertTimerRef.current = setTimeout(() => {
+        reassertTimerRef.current = null;
+      }, 0);
     }
   }, [terminal.id]);
 
@@ -690,15 +694,21 @@ function TerminalViewComponent({
         // guard still blocks its retry. Without this flag we would assign the
         // already-disposed addon to webglRef right after loadAddon returns.
         let disposedDuringAttach = false;
+        let inLoadAddon = true;
         webgl.onContextLoss(() => {
           disposedDuringAttach = true;
+          attachingWebglRef.current = false;
           try {
             webgl.dispose();
           } catch {
             /* ignore */
           }
           if (webglRef.current === webgl) webglRef.current = null;
-          recoverTerminalRender(false);
+          if (inLoadAddon) {
+            requestAnimationFrame(() => recoverTerminalRender(false));
+          } else {
+            recoverTerminalRender(false);
+          }
           // Come back on a FRESH context right away when we're visible (a lost
           // context is unusable forever - without this the terminal silently
           // degrades to the DOM renderer until remount). If the GPU is still
@@ -714,6 +724,7 @@ function TerminalViewComponent({
           }
         });
         term.loadAddon(webgl);
+        inLoadAddon = false;
         if (disposedDuringAttach) {
           // The loss fired mid-load and the handler already disposed the
           // addon - leave the ref null; the next resume/heal attaches fresh.
@@ -1146,7 +1157,7 @@ function TerminalViewComponent({
     const onDataDisposable = term.onData((data) => {
       if (disconnectedRef.current) return;
       if (replayingOutputRef.current > 0) return;
-      if (data.length > 0) setIsScrollbarHidden(true);
+      if (data.length > 0) setIsScrollbarHidden((prev) => (prev ? prev : true));
       if (debugInputRef.current) {
         console.debug(
           `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
@@ -1231,6 +1242,9 @@ function TerminalViewComponent({
         attachIfReused,
         ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
       });
+      if (!awaitingReplay && !attachOnly && !attachIfReused && replayingOutputRef.current === 0 && isRestoringRef.current) {
+        markRestoring(false);
+      }
       // Worktree batches start the same task in each new agent pane. The PTY
       // process is already spawned here; a short startup grace lets the
       // launcher hand control to its interactive agent before the prompt is
@@ -1364,8 +1378,7 @@ function TerminalViewComponent({
   useEffect(() => {
     if (!wantsFocus) return;
     let expectedActiveElement = document.activeElement;
-    let reasserted = false;
-    const focusNow = () => {
+    const focusNow = (shouldReassert: boolean) => {
       if (!terminalFocusRetryStillOwned(expectedActiveElement, document.activeElement)) return;
       try {
         const term = xtermRef.current;
@@ -1379,7 +1392,7 @@ function TerminalViewComponent({
           // panes may have been the "front" one; the newly focused rich TUI
           // often needs a fresh SIGWINCH (or size delta) to repaint its focused
           // static layout.
-          if (!reasserted) { reasserted = true; forcePtyReassert(); }
+          if (shouldReassert) forcePtyReassert();
         }
       } catch {
         /* ignore - xterm may be mid-dispose */
@@ -1387,9 +1400,9 @@ function TerminalViewComponent({
     };
     // Focus now, and retry across a couple of frames because xterm may still be
     // measuring right after a visibility/layout change.
-    focusNow();
-    const raf = requestAnimationFrame(focusNow);
-    const timer = setTimeout(focusNow, FOCUS_RETRY_DELAY_MS);
+    focusNow(true);
+    const raf = requestAnimationFrame(() => focusNow(false));
+    const timer = setTimeout(() => focusNow(false), FOCUS_RETRY_DELAY_MS);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(timer);
@@ -1456,6 +1469,7 @@ function TerminalViewComponent({
   // doesn't linger on the canvas while the user types in the PTY.
   useEffect(() => {
     if (findOpen) return;
+    setFindNoMatch(false);
     try {
       searchRef.current?.clearDecorations();
     } catch {
@@ -1705,7 +1719,7 @@ function TerminalViewComponent({
             ? ({ "--aya-term-bg": themeColors.background } as CSSProperties)
             : undefined
         }
-        onWheelCapture={() => setIsScrollbarHidden(false)}
+        onWheelCapture={() => setIsScrollbarHidden((prev) => (prev ? false : prev))}
         onContextMenu={openTerminalContextMenu}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes("Files")) event.preventDefault();
@@ -1828,12 +1842,17 @@ function TerminalViewComponent({
       {findOpen && (
         <FindBar
           value={findQuery}
+          noMatch={findNoMatch}
           onChange={(v, historyMode) => {
             setFindQuery(v);
             // In History mode the query drives the transcript search inside
             // FindBar; don't move the live terminal's match cursor around.
-            if (historyMode) return;
+            if (historyMode) {
+              setFindNoMatch(false);
+              return;
+            }
             if (!v) {
+              setFindNoMatch(false);
               try {
                 searchRef.current?.clearDecorations();
               } catch {
@@ -1842,12 +1861,13 @@ function TerminalViewComponent({
               return;
             }
             try {
-              searchRef.current?.findNext(v, {
+              const matched = searchRef.current?.findNext(v, {
                 regex: false,
                 wholeWord: false,
                 caseSensitive: false,
                 incremental: true,
               });
+              setFindNoMatch(matched === false && v.trim().length > 0);
             } catch {
               /* ignore */
             }
@@ -1858,6 +1878,7 @@ function TerminalViewComponent({
           configDir={preset.configDir}
           command={preset.command}
           onClearTerminalMatches={() => {
+            setFindNoMatch(false);
             try {
               searchRef.current?.clearDecorations();
             } catch {
@@ -1867,7 +1888,8 @@ function TerminalViewComponent({
           onNext={() => {
             if (findQuery) {
               try {
-                searchRef.current?.findNext(findQuery);
+                const matched = searchRef.current?.findNext(findQuery);
+                setFindNoMatch(matched === false && findQuery.trim().length > 0);
               } catch {
                 /* ignore */
               }
@@ -1876,7 +1898,8 @@ function TerminalViewComponent({
           onPrev={() => {
             if (findQuery) {
               try {
-                searchRef.current?.findPrevious(findQuery);
+                const matched = searchRef.current?.findPrevious(findQuery);
+                setFindNoMatch(matched === false && findQuery.trim().length > 0);
               } catch {
                 /* ignore */
               }
@@ -1912,6 +1935,8 @@ interface FindBarProps {
   initialHistoryResult?: HarnessSearchResult;
   /** A refusal can be supplied when restoring/rendering the bar. */
   initialHistoryError?: string;
+  /** True when live terminal search found zero matches for the current query. */
+  noMatch?: boolean;
 }
 
 // History (transcript) search: debounce keystrokes before the IPC round-trip
@@ -1940,6 +1965,7 @@ export function FindBar({
   onClearTerminalMatches,
   initialHistoryResult,
   initialHistoryError,
+  noMatch = false,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [historyMode, setHistoryMode] = useState(initialHistoryResult !== undefined);
@@ -1957,6 +1983,16 @@ export function FindBar({
     // the user replace the query directly.
     inputRef.current?.focus();
     inputRef.current?.select();
+    if (typeof window === "undefined") return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
   const historyActive = historyMode && historyAgent !== null;
@@ -2089,6 +2125,11 @@ export function FindBar({
           }
           spellCheck={false}
         />
+        {!historyActive && query.length > 0 && noMatch && (
+          <span className="aya-findbar-count" data-testid="findbar-no-matches">
+            No matches
+          </span>
+        )}
         {!historyActive && (
           <>
             <button

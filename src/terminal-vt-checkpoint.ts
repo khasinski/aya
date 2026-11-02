@@ -68,8 +68,15 @@ function handlerShape(term: any) {
     const shapes = [p._csiHandlers, p._escHandlers, p._oscParser._handlers, p._dcsParser._handlers].map(handlers => Object.entries(handlers).map(([key, entries]) => [key, (entries as any[]).length] as const).sort(([a], [b]) => a.localeCompare(b)));
     return JSON.stringify([shapes, Object.keys(c.unicodeService._providers).sort()]);
 }
-const probe: any = new XTerm({ allowProposedApi: true }), HANDLERS = handlerShape(probe);
-probe.dispose();
+let cachedHandlers: string | null = null;
+function expectedHandlers(): string {
+    if (cachedHandlers === null) {
+        const probe: any = new XTerm({ allowProposedApi: true });
+        cachedHandlers = handlerShape(probe);
+        probe.dispose();
+    }
+    return cachedHandlers;
+}
 function ground(term: any) { const h = term._core._inputHandler; return h._parser.currentState === 0 && !h._parseStack.paused; }
 function attrs(value: any) { return { fg: value.fg, bg: value.bg, extended: pick(value.extended, ['_ext', '_urlId']) }; }
 function restoreAttrs(target: any, value: any) { target.fg = value.fg; target.bg = value.bg; Object.assign(target.extended, value.extended); }
@@ -90,7 +97,7 @@ function bufferState(buffer: any, start = 0, cache?: Map<any, any>) {
 function assertOwnership(term: any, drained = true) {
     if (ACTUAL_BROWSER_ENGINE !== SUPPORTED_BROWSER_ENGINE)
         throw Error('Unsupported VT engine implementation');
-    if (handlerShape(term) !== HANDLERS)
+    if (handlerShape(term) !== expectedHandlers())
         throw Error('Custom parser/Unicode handlers are not eligible');
     const known = ownedUnicodeProviders.get(term);
     if (!known || Object.entries(term._core.unicodeService._providers).some(([key, provider]) => known.get(key) !== provider))

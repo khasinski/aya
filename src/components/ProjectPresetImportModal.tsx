@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { Preset, ProjectConfig } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
@@ -14,6 +15,20 @@ export function ProjectPresetImportModal({
   onImport,
   onIgnore,
 }: Props) {
+  const onIgnoreRef = useRef(onIgnore);
+  onIgnoreRef.current = onIgnore;
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
+        e.stopPropagation();
+        onIgnoreRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div
       className="aya-modal-backdrop"

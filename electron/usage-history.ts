@@ -33,7 +33,7 @@ export class UsageLogParser {
     if (this.events.size > this.maxEvents) { this.events.delete(this.events.keys().next().value!); this.truncated = true; }
   }
   line(line: string) {
-    if (!/token_count|"usage"|turn_context/.test(line)) return;
+    if (!line.includes('usage') && !line.includes('token_count') && !line.includes('turn_context') && !line.includes('cost')) return;
     let record: Record<string, unknown>; try { record = obj(JSON.parse(line)); } catch { return; }
     const payload = obj(record.payload);
     if (record.type === 'turn_context') { this.model = text(payload.model).slice(0, 200) || this.model; return; }

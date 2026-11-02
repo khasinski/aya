@@ -3,13 +3,14 @@ import { openArtifactWindow } from './artifact-preview-window';
 import { pathToFileURL } from 'node:url';
 import { writeFileAtomic } from './atomic-write';
 import { AYA_HOME } from './paths';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { loadConversation, saveConversation, archiveConversation, listConversations, readArchivedConversation } from './gui-conversation-store';
 import { clearWidgetDocuments, registerWidgetProtocol, widgetDocument } from './gui-artifact-documents';
 import { installArtifactImageMenu, saveGuiArtifact } from './gui-artifact-image-menu';
 import type { GuiArtifact, GuiEvent } from '../shared/codex-gui';
-import { app, ipcMain, dialog, BrowserWindow } from 'electron';
+import { app, ipcMain, dialog, BrowserWindow, clipboard } from 'electron';
 import { homedir } from 'node:os';
 import { CodexGuiSession, PiGuiSession, ClaudeGuiSession, AntigravityGuiSession, workspaceImage, type GuiAgentKind, type GuiSessionInstance } from './codex-gui-session';
 function normalizeGuiAgent(raw: unknown): GuiAgentKind {
@@ -21,10 +22,30 @@ function createGuiSession(agent: GuiAgentKind, emit: (event: GuiEvent) => void):
   if (agent === 'antigravity') return new AntigravityGuiSession(emit, process.env.AYA_E2E_RUN === '1' ? process.env.AYA_E2E_AGY_BIN || 'agy' : 'agy');
   return new CodexGuiSession(emit, process.env.AYA_E2E_RUN === '1' ? process.env.AYA_E2E_CODEX_BIN || 'codex' : 'codex');
 }
+let activeGuiSessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind }>();
+
+export function busyGuiSessionCount(): number {
+  let count = 0;
+  for (const entry of activeGuiSessions.values()) {
+    if (entry.session.running) count++;
+  }
+  return count;
+}
+
+export function isGuiSessionBusy(id: string): boolean {
+  for (const [key, entry] of activeGuiSessions) {
+    if (key.endsWith(`:${id}`) && entry.session.running) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>, createWindow: (options: Electron.BrowserWindowConstructorOptions) => Electron.BrowserWindow) {
   registerWidgetProtocol();
   const panels = new GuiPanelState(async (id, snapshot) => { await saveConversation(id, snapshot); await archiveConversation(snapshot); }, clearWidgetDocuments);
   const { artifacts, artifactVersions, sessions, snapshots, attachments } = panels;
+  activeGuiSessions = sessions;
   const owners = new Set<number>();
   const withPanelArtifacts = (key: string, view: Record<string, unknown>) => ({
     ...view,
@@ -202,6 +223,21 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       if (result.canceled) return [];
       let owned = attachments.get(key); if (!owned) { owned = new Map(); attachments.set(key, owned); }
       return result.filePaths.slice(0, 20).map(file => { const item = { id: randomUUID(), name: path.basename(file), path: file, image: /\.(png|jpe?g|webp)$/i.test(file) }; owned!.set(item.id, item); return item; });
+    }
+    if (action === 'paste-image') {
+      const img = clipboard.readImage();
+      if (img.isEmpty()) return null;
+      const png = img.toPNG();
+      if (!png.length) return null;
+      const fileId = randomUUID();
+      const dir = path.join(AYA_HOME, 'gui-attachments');
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      const file = path.join(dir, `${fileId}.png`);
+      await fs.writeFile(file, png, { mode: 0o600 });
+      let owned = attachments.get(key); if (!owned) { owned = new Map(); attachments.set(key, owned); }
+      const item = { id: fileId, name: `clipboard-${fileId.slice(0, 8)}.png`, path: file, image: true };
+      owned.set(item.id, item);
+      return item;
     }
     if (action === 'send') {
       if (typeof value === 'string') return entry.session.send(value);

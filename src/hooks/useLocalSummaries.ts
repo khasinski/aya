@@ -63,11 +63,6 @@ export function useLocalSummaries({ terminalsRef, projectsRef }: LocalSummariesO
     >
   >({});
   const summaryTimersRef = useRef<Record<string, number>>({});
-  useEffect(() => {
-    const live = new Set(Object.keys(terminalsRef.current));
-    for (const id of Object.keys(summaryTimersRef.current)) if (!live.has(id)) { window.clearTimeout(summaryTimersRef.current[id]); delete summaryTimersRef.current[id]; }
-    for (const key of Object.keys(summaryMetaRef.current)) if (key.startsWith('terminal:') && !live.has(key.slice(9))) delete summaryMetaRef.current[key];
-  });
   useEffect(() => { const timers = summaryTimersRef.current; return () => { Object.values(timers).forEach(window.clearTimeout); }; }, []);
 
   const runAutomaticSummary = useCallback(
@@ -244,6 +239,7 @@ export function useLocalSummaries({ terminalsRef, projectsRef }: LocalSummariesO
       projectsRef,
       terminalOutputRef,
       summaryMetaRef,
+      summaryTimersRef,
       terminalSummaries,
       setTerminalSummaries,
       projectSummaries,
@@ -267,6 +263,7 @@ export function useLocalSummaryEffects(
     projectsRef,
     terminalOutputRef,
     summaryMetaRef,
+    summaryTimersRef,
     terminalSummaries,
     setTerminalSummaries,
     projectSummaries,
@@ -282,6 +279,17 @@ export function useLocalSummaryEffects(
     for (const id of Object.keys(terminalOutputRef.current)) {
       if (!liveIds.has(id)) delete terminalOutputRef.current[id];
     }
+    for (const id of Object.keys(summaryTimersRef.current)) {
+      if (!liveIds.has(id)) {
+        window.clearTimeout(summaryTimersRef.current[id]);
+        delete summaryTimersRef.current[id];
+      }
+    }
+    for (const key of Object.keys(summaryMetaRef.current)) {
+      if (key.startsWith("terminal:") && !liveIds.has(key.slice(9))) {
+        delete summaryMetaRef.current[key];
+      }
+    }
     setTerminalSummaries((prev) => {
       const next = { ...prev };
       let changed = false;
@@ -293,7 +301,7 @@ export function useLocalSummaryEffects(
       }
       return changed ? next : prev;
     });
-  }, [terminals, terminalOutputRef, setTerminalSummaries]);
+  }, [terminals, terminalOutputRef, summaryTimersRef, summaryMetaRef, setTerminalSummaries]);
 
   useEffect(() => {
     try {
@@ -425,7 +433,7 @@ export function useLocalSummaryEffects(
     };
 
     const refresh = () => {
-      if (document.hidden) return;
+      if (typeof document !== "undefined" && (document.hidden || document.visibilityState === "hidden")) return;
       const terminalList = Object.values(terminalsRef.current);
       const outputEntries = Object.values(terminalOutputRef.current);
       setAutoSummaryStatus((prev) => ({

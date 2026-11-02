@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { terminalKillRefusal } from "../terminal-kill-refusal";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { clearedTerminalStatus } from "../pty-event-reducer";
-import { forgetSpawn, releaseSpawn, wasSpawned } from "../spawnSession";
+import { clearMountDecision, forgetSpawn, releaseSpawn, wasSpawned } from "../spawnSession";
 import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
 import { defaultTabName, findProject, remoteTerminalCommand } from "../project-helpers";
 import { projectBaseCwd, tabFromTerminal } from "../worktree";
@@ -229,6 +229,8 @@ export function useTerminalActions({
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
     // mistaken for a re-mount if the id were ever reused).
     releaseSpawn(id);
+    clearMountDecision(id);
+    delete lastActivityRef.current[id];
     // Drop the restart-trigger counter too - entries are tiny, but a
     // long-lived session cycling many tabs would otherwise retain one per
     // closed id forever (#94).
@@ -272,7 +274,7 @@ export function useTerminalActions({
         return next;
       });
     },
-    [appendProjectEvent, persistProject, terminalsRef, activeTabByProjectRef, activeProjectIdRef, setCloseFocusHold, setActiveTabByProject, setTerminals],
+    [appendProjectEvent, persistProject, terminalsRef, activeTabByProjectRef, activeProjectIdRef, setCloseFocusHold, setActiveTabByProject, setTerminals, lastActivityRef],
   );
 
   // Drop a terminal's agent status overlay once the user attends to it (#34,

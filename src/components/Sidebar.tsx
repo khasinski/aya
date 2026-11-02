@@ -61,6 +61,7 @@ interface Props {
   /** This project's teams, for role chips and the tab menu's Team role items. */
   teams?: TeamSummary[];
   onAssignTeamRole?: (team: string, role: string, paneId: string | null) => void;
+  onWorktreeDialogOpenChange?: (open: boolean) => void;
 }
 
 const NO_TEAMS: TeamSummary[] = [];
@@ -104,6 +105,7 @@ function SidebarImpl({
   statusRail,
   teams = NO_TEAMS,
   onAssignTeamRole,
+  onWorktreeDialogOpenChange,
 }: Props) {
   const roles = paneRoles(teams);
   // Right-click context menu state. Positioned at the cursor; closes on
@@ -198,6 +200,11 @@ function SidebarImpl({
     projectDir: string;
   } | null>(null);
   const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<Worktree | null>(null);
+  const worktreeDialogOpen = createWorktreeTarget !== null || removeWorktreeTarget !== null;
+  useEffect(() => {
+    onWorktreeDialogOpenChange?.(worktreeDialogOpen);
+    return () => onWorktreeDialogOpenChange?.(false);
+  }, [worktreeDialogOpen, onWorktreeDialogOpenChange]);
   useEffect(() => {
     setTargetCwd(projectDir ?? "");
   }, [projectDir]);
@@ -568,7 +575,10 @@ function SidebarImpl({
           ref={menuRef}
           role="menu"
           className="aya-context-menu"
-          style={{ left: menu.x, top: menu.y }}
+          style={{
+            left: Math.max(8, Math.min(menu.x, window.innerWidth - 200 - 8)),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - 280 - 8)),
+          }}
           onMouseDown={(e) => e.stopPropagation()}
           onKeyDown={handleMenuNavigation}
         >

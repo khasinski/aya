@@ -404,6 +404,7 @@ function TopBarImpl({
               {badge && (
                 <span
                   className={`aya-tab-bell aya-tab-bell--${badge.level}`}
+                  style={{ right: 26, opacity: 1 }}
                   title={`${badge.count} monitored session${badge.count > 1 ? "s" : ""}: ${badge.level}`}
                 />
               )}

@@ -173,6 +173,21 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
     setSavedTeamReturn(null);
   }, [editing, savedTeamReturn, teams, teamsGeneration, teamListState.slug, project.slug, project.tabs, terminals]);
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
+        e.stopPropagation();
+        onCloseRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div
       className="aya-modal-backdrop"

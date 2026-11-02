@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { Snippet } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 
@@ -34,6 +35,19 @@ export function SnippetBar({
   onSend,
   onOpenSettings,
 }: Props) {
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (typeof document !== "undefined" && document.querySelector(".aya-modal-backdrop")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [open, onClose]);
+
   return (
     <div
       data-testid="snippet-drawer"
@@ -44,6 +58,13 @@ export function SnippetBar({
       // the CSS visibility transition is still animating.
       inert={!open}
       aria-hidden={!open}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
     >
       <div className="aya-snippetbar-head">
         <MaterialIcon name="bolt" className="aya-snippetbar-head-icon" />

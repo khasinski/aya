@@ -1614,6 +1614,7 @@ export class PtyHostClient {
           this.sessionWatches.get(message.event.ptyId)?.();
           this.sessionWatches.delete(message.event.ptyId);
           this.screenStates.delete(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);
+          this.recoveryLaunches.delete(message.event.ptyId);if(!this.recoveredStates.has(message.event.ptyId))this.uncertainInput.delete(message.event.ptyId);
           this.latestRuleSnapshots.delete(message.event.ptyId);this.ruleStatusStates.delete(message.event.ptyId);
           const ruleTimer=this.ruleStatusTimers.get(message.event.ptyId);if(ruleTimer)clearTimeout(ruleTimer);this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);
           const exited = message.event.type === "exit";

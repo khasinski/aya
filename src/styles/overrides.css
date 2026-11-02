@@ -656,7 +656,7 @@
 }
 .aya-tab-bell {
   position: absolute;
-  right: 10px;
+  right: 26px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 2;
@@ -1645,7 +1645,6 @@
   cursor: pointer;
 }
 .aya-tab:hover .aya-tab-close { opacity: 1; }
-.aya-tab:hover .aya-tab-bell { opacity: 0; }
 .aya-tab-close:hover { background: var(--border-strong); color: var(--fg-primary); }
 
 /* Clip the tab so an over-long title can't spill past it, and fade the title's
@@ -1739,7 +1738,7 @@
   flex: 1 1 240px !important;
   min-width: 120px !important;
   max-width: 320px !important;
-  padding-right: 30px;
+  padding-right: 40px;
 }
 
 /* The tab strip scrolls horizontally, but unused strip space should still

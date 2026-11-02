@@ -105,7 +105,9 @@ export class UserRuleProvider {
   }
   /** Nonblocking startup: main need not delay window creation for a worker. */
   start():void{
-    if(this.started||this.disposed)return;this.started=true;this.attachWatches();
+    if(this.started||this.disposed)return;this.started=true;
+    if(!this.options.read){try{this.directoryPresent=fs.lstatSync(this.directory).isDirectory();}catch{this.directoryPresent=false;this.scanSignature="ENOENT";}}
+    this.attachWatches();
     const first=this.read();
     if(first.ok&&!first.manifest){
       // On first startup there is no old user layer to preserve through a

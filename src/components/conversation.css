@@ -98,6 +98,118 @@
 .aya-gui-request-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .aya-gui-request-actions button { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
 .aya-gui-request label > button { margin: 6px 8px 0 0; }
+.aya-gui-question-card {
+  border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--border));
+  background: color-mix(in oklab, var(--accent) 5%, var(--bg-secondary));
+  padding: 16px;
+  border-radius: 10px;
+  margin: 14px 0;
+}
+.aya-gui-question-card[data-answered="true"] {
+  border-color: var(--border);
+  background: var(--bg-secondary);
+}
+.aya-gui-question-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.aya-gui-question-card-header strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.aya-gui-question-card-header small {
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  letter-spacing: 0;
+}
+.aya-gui-question-item {
+  margin: 12px 0;
+}
+.aya-gui-question-header {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.aya-gui-question-title {
+  margin: 0 0 10px !important;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-primary);
+  line-height: 1.5;
+}
+.aya-gui-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.aya-gui-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-primary);
+}
+.aya-gui-question-option[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--bg));
+}
+.aya-gui-question-check {
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 1.4;
+  flex: none;
+}
+.aya-gui-question-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.aya-gui-question-option-body strong {
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.aya-gui-question-option-body small {
+  font-size: 12px !important;
+  color: var(--fg-secondary);
+  line-height: 1.4;
+  letter-spacing: 0 !important;
+}
+.aya-gui-question-input {
+  display: block;
+  width: 100% !important;
+  box-sizing: border-box;
+  font-size: 13px;
+  padding: 8px 10px;
+  background: var(--bg);
+}
+.aya-gui-question-answered {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  padding-top: 4px;
+}
+.aya-gui-question-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
 
 /* Artifact selection keeps search and unread indicators in one menu. */
 .aya-artifact-picker{position:relative;margin:12px 18px;z-index:3}
@@ -126,5 +238,7 @@
 .aya-gui-save-state>button{padding:3px 8px;font-size:11px}
 
 .aya-gui-goal-reason{padding:10px 20px;border-bottom:1px solid var(--border);max-height:180px;overflow:auto;flex-shrink:0;overflow-wrap:anywhere}.aya-gui-goal-reason>strong{color:var(--fg-secondary);font-size:11px}.aya-gui-goal-reason p{margin:5px 0;white-space:pre-wrap}
+.aya-conversation article a{color:var(--gui-accent);text-decoration:underline;cursor:pointer}
+.aya-split-dragging iframe{pointer-events:none!important}
 
 .aya-gui-activity-list{max-height:min(50dvh,420px);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}.aya-gui-activity-list:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}

@@ -647,3 +647,54 @@ test('GUI keeps consistent controls and follows streaming only while reading the
     await gui.locator('header').getByRole('button', { name: 'Artifacts' }).click();
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
+
+test('sync and async harness questions support option selection, custom notes and reload persistence', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow();
+    const gui = window.locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    const turnStatus = gui.getByRole('status', { name: 'Turn status' });
+
+    await prompt.fill('question'); await prompt.press('Enter');
+    const syncQuestion = gui.locator('.aya-gui-request.aya-gui-question-card');
+    await expect(syncQuestion).toContainText('Codex has a question');
+    await expect(syncQuestion).toContainText('Which option?');
+    await syncQuestion.getByRole('button', { name: /A/ }).click();
+    await expect(syncQuestion.getByRole('button', { name: /A/ })).toHaveAttribute('aria-pressed', 'true');
+    await syncQuestion.getByRole('textbox', { name: 'Which option?' }).fill('with custom note');
+    await syncQuestion.getByRole('button', { name: 'Send answer', exact: true }).click();
+    await expect(syncQuestion).toHaveCount(0);
+    await expect(turnStatus).toHaveText('Turn complete');
+    await expect(gui.locator('.aya-gui-messages')).toContainText('A — with custom note');
+
+    await prompt.fill('async-question'); await prompt.press('Enter');
+    await expect(turnStatus).toHaveText('Turn complete');
+    const asyncQuestion = gui.locator('article.assistant .aya-gui-question-card').last();
+    await expect(asyncQuestion).toContainText('Allow non-zero instruction distance?');
+    const firstOpt = asyncQuestion.getByRole('button', { name: 'Readable C, allow non-zero distance', exact: true });
+    const secondOpt = asyncQuestion.getByRole('button', { name: 'Keep distance 0', exact: true });
+    await expect(firstOpt).toBeVisible();
+    await expect(secondOpt).toBeVisible();
+    await secondOpt.click();
+    await expect(secondOpt).toHaveAttribute('aria-pressed', 'true');
+    await asyncQuestion.getByRole('textbox', { name: 'Allow non-zero instruction distance?' }).fill('preserve assembly parity');
+    await asyncQuestion.getByRole('button', { name: 'Send answer', exact: true }).click();
+    await expect(asyncQuestion).toHaveAttribute('data-answered', 'true');
+    await expect(asyncQuestion).toContainText('Your answer: Keep distance 0 — preserve assembly parity');
+    await expect(gui.locator('.aya-gui-messages')).toContainText('Answered: Keep distance 0 — preserve assembly parity');
+    await expect(turnStatus).toHaveText('Turn complete');
+    await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Saved locally');
+
+    await window.reload();
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    const reloadedQuestion = gui.locator('article.assistant .aya-gui-question-card').last();
+    await expect(reloadedQuestion).toHaveAttribute('data-answered', 'true');
+    await expect(reloadedQuestion).toContainText('Your answer: Keep distance 0 — preserve assembly parity');
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});

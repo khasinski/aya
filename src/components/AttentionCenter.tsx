@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { attentionRows, type AttentionRow } from "../attention";
 import type { ProjectConfig, ProjectEvent, TerminalState } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
@@ -50,6 +51,20 @@ export function AttentionCenter({
     { id: "done", title: "Finished", rows: groupedRows.done },
     { id: "idle", title: "Idle", rows: groupedRows.idle },
   ];
+
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
+        e.stopPropagation();
+        onCloseRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const focus = (row: AttentionRow) => {
     onSelectTerminal(row.project.slug, row.terminal.id);

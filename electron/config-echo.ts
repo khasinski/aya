@@ -27,8 +27,9 @@ export function hashConfig(content: string): string {
 /** Remember the content we just wrote to `filePath`, so when the watcher sees
  *  the same content come back we know it was our own save, not an edit. */
 export function recordWrite(filePath: string, content: string): void {
+  lastWrittenHash.delete(filePath);
   lastWrittenHash.set(filePath, hashConfig(content));
-  if (lastWrittenHash.size > 2048) lastWrittenHash.delete(lastWrittenHash.keys().next().value!);
+  if (lastWrittenHash.size > 500) lastWrittenHash.delete(lastWrittenHash.keys().next().value!);
 }
 
 /** Forget what we last wrote to `filePath`: once its delete is reported, the same bytes coming back (a `git checkout`

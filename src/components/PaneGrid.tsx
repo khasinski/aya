@@ -25,6 +25,7 @@ interface Props {
   activeLeafId: string | null;
   activeProjectId: string | null;
   setActiveSplitCell: (slug: string, leafId: string) => void;
+  unsplitLeaf?: (slug: string, leafId: string) => void;
   assignableProjectTerminals: TerminalState[];
   activePresets: Preset[];
   assignTerminalToSplitCell: (terminalId: string, leafId: string) => void;
@@ -68,6 +69,7 @@ export const PaneGrid = memo(function PaneGrid({
   activeLeafId,
   activeProjectId,
   setActiveSplitCell,
+  unsplitLeaf,
   assignableProjectTerminals,
   activePresets,
   assignTerminalToSplitCell,
@@ -126,6 +128,31 @@ export const PaneGrid = memo(function PaneGrid({
             >
               <div className="aya-pane-header">
                 <span className="aya-pane-header-title">Empty pane</span>
+                {isSplit && activeProjectId && unsplitLeaf && (
+                  <div className="aya-pane-header-meta">
+                    <button
+                      type="button"
+                      className="aya-pane-close"
+                      aria-label="Close pane"
+                      title="Close pane"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        unsplitLeaf(activeProjectId, leafId);
+                      }}
+                      style={{
+                        background: "transparent",
+                        border: 0,
+                        color: "var(--aya-pane-subtle)",
+                        cursor: "pointer",
+                        fontSize: 15,
+                        lineHeight: 1,
+                        padding: "0 2px",
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="aya-pane-empty-body">
                 {assignableProjectTerminals.length === 0 ? (
@@ -255,7 +282,19 @@ export const PaneGrid = memo(function PaneGrid({
         const preset = getPreset(presets, terminal.presetId);
         if (preset.interfaceMode !== "gui" || !guiSupportedAgent(preset) || project?.remote || terminal.spawnDeferred) return null;
         const pane = paneRects.find(p => p.terminalId === terminal.id);
-        return <ConversationView key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`} terminal={terminal} preset={preset} hidden={!pane} paneStyle={pane ? paneStyleFromRect(isSplit, pane.rect) : undefined} />;
+        return (
+          <ConversationView
+            key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`}
+            terminal={terminal}
+            preset={preset}
+            hidden={!pane}
+            paneStyle={pane ? paneStyleFromRect(isSplit, pane.rect) : undefined}
+            isActivePane={Boolean(isSplit && pane && activeLeafId === pane.leafId)}
+            onActivatePane={() => {
+              if (activeProjectId && pane) setActiveSplitCell(activeProjectId, pane.leafId);
+            }}
+          />
+        );
       })}
       {activeProjectId &&
         paneDividers.map((divider) => (

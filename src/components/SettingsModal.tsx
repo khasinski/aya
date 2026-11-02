@@ -220,6 +220,9 @@ export function SettingsModal({
     });
   };
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -237,16 +240,20 @@ export function SettingsModal({
       [...topmostDialog().querySelectorAll<HTMLElement>(focusableSelector)].filter(
         (element) => element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0,
       );
-    (focusable()[0] ?? topmostDialog()).focus();
+    const activeDialog = topmostDialog();
+    if (!activeDialog.contains(document.activeElement)) {
+      (focusable()[0] ?? activeDialog).focus();
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         if (showUsageConsent) {
           closeConsent(() => setShowUsageConsent(false));
         } else if (showStatusConsent) {
           closeConsent(() => setShowStatusConsent(false));
         } else {
-          onClose();
+          onCloseRef.current();
         }
         return;
       }
@@ -270,7 +277,7 @@ export function SettingsModal({
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [onClose, showStatusConsent, showUsageConsent]);
+  }, [showStatusConsent, showUsageConsent]);
 
   const tabItems: Array<{
     id: SettingsTab;
