@@ -52,6 +52,34 @@ test('artifact picker searches without marking results seen and unread counts su
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 
+test('a failed widget load offers retry and reloads after the preview service recovers', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow(), gui = window.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await app.evaluate(({ protocol }) => {
+      protocol.unhandle('aya-widget');
+      protocol.handle('aya-widget', () => new Response('Preview unavailable', { status: 404 }));
+    });
+    await prompt.fill('html-widget'); await prompt.press('Enter');
+    await expect(gui.getByRole('alert')).toContainText('Preview did not finish loading', { timeout: 10000 });
+    await expect(gui.locator('iframe[title="Capacity planner"]')).toBeHidden();
+    await app.evaluate(({ protocol }, root) => {
+      protocol.unhandle('aya-widget');
+      const require = process.getBuiltinModule('module').createRequire(root + '/package.json');
+      require(root + '/dist-electron/gui-artifact-documents.js').registerWidgetProtocol();
+    }, resolve('.'));
+    await gui.getByRole('button', { name: 'Reload preview', exact: true }).click();
+    await expect(gui.frameLocator('iframe[title="Capacity planner"]').getByRole('heading', { name: 'Team capacity' })).toBeVisible();
+    await expect(gui.getByRole('alert')).toHaveCount(0);
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
 test('large widget libraries persist outside the snapshot and old previews reload after cache eviction', async () => {
   test.setTimeout(120000);
   const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });

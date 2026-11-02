@@ -87,6 +87,7 @@ function ArtifactContent({ artifact, versions, version, onVersion, visible, onVi
     </>}
   </div>;
 }
+const PREVIEW_TIMEOUT_MESSAGE = "Preview did not finish loading. Reload it to try again.";
 function HtmlWidget({ artifact, onSuggest, onPreview }: { artifact: Extract<GuiArtifact, { kind: 'html' }>; onSuggest: (text: string) => void; onPreview: (id: string, revision?: number) => Promise<unknown> }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -101,20 +102,21 @@ function HtmlWidget({ artifact, onSuggest, onPreview }: { artifact: Extract<GuiA
     return () => { active = false; };
   }, [artifact.id, artifact.revision, attempt, onPreview]);
   useEffect(() => {
+    if (!previewUrl) return;
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
       const { type, value } = event.data;
-      if (type === 'aya:ready') setLoaded(true);
+      if (type === 'aya:ready') { clearTimeout(timer); setLoaded(true); setError(previous => previous === PREVIEW_TIMEOUT_MESSAGE ? '' : previous); }
       if (type === 'aya:error') setError('This widget encountered an error. Ask Codex to fix it or inspect Source.');
       if (type === 'aya:height' && typeof value === 'number' && Number.isFinite(value)) setHeight(Math.max(280, Math.min(1200, value)));
       if (type === 'aya:suggest' && typeof value === 'string' && value.trim() && value.length <= 4000) onSuggest(value);
     };
     window.addEventListener('message', receive);
-    const timer = setTimeout(() => { if (!frame.current) return; setLoaded(true); }, 5000);
+    const timer = setTimeout(() => { if (frame.current) setError(previous => previous || PREVIEW_TIMEOUT_MESSAGE); }, 5000);
     return () => { window.removeEventListener('message', receive); clearTimeout(timer); };
   }, [onSuggest, previewUrl, attempt]);
   return <div className="aya-widget-shell">
-    {!loaded && <div className="aya-widget-loading" role="status">Preparing preview<span>…</span></div>}
+    {!loaded && !error && <div className="aya-widget-loading" role="status">Preparing preview<span>…</span></div>}
     {error && <div className="aya-widget-error" role="alert">{error}<button onClick={() => { setError(''); setLoaded(false); setAttempt(attempt + 1); }}>Reload preview</button></div>}
     {previewUrl && <iframe key={`${artifact.id}:${artifact.revision}:${previewUrl}:${attempt}`} ref={frame} title={artifact.title} src={previewUrl} sandbox="allow-scripts" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" referrerPolicy="no-referrer" style={{ height, visibility: loaded ? 'visible' : 'hidden' }} />}
     <div className="aya-widget-footnote">Interactive preview <span>·</span> Actions prepare a message for you to review</div>

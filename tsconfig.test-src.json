@@ -48,6 +48,7 @@
     "src/project-path.ts",
     "src/project-persistence.ts",
     "src/poll-visible.ts",
+    "src/polling-task.ts",
     "src/project-reload.ts",
     "src/project-badges.ts",
     "src/preset-ids.ts",

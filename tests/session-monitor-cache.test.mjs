@@ -1,12 +1,9 @@
-// mtime-gated caching for cctop session files, isolated to a temp dir via the
-// optional dir parameter (the real ~/.cctop is never read). The renderer polls
-// every 5s, so unchanged files must reuse the cached parse. Proof of "no
-// re-read": rewrite the CONTENT but restore the exact mtime — the old parse
-// keeps coming back; only an mtime change surfaces the new state.
+// Metadata-gated cctop reads, isolated from the real ~/.cctop. Cache reuse
+// must avoid I/O while noticing atomic replacements with preserved mtime.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, utimesSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, utimesSync, rmSync, renameSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,19 +27,21 @@ const { listMonitoredSessions, resetSessionMonitorCache } = await import(
   "../dist-electron/session-monitor.js"
 );
 
-test("unchanged mtime returns the cached parse (content not re-read)", async () => {
-  writeFileSync(fileA, sessionJson("working"));
-  utimesSync(fileA, T1, T1);
-  let out = await listMonitoredSessions(dir);
-  assert.equal(out.length, 1);
-  assert.equal(out[0].level, "active");
+test("unchanged metadata returns the cached parse without opening the file", async t => {
+  writeFileSync(fileA, sessionJson("working")); utimesSync(fileA, T1, T1);
+  assert.equal((await listMonitoredSessions(dir))[0].level, "active");
+  const opening = t.mock.method(fs, 'open');
+  assert.equal((await listMonitoredSessions(dir))[0].level, "active");
+  assert.equal(opening.mock.callCount(), 0);
+});
 
-  // Rewrite to a waiting status but restore the mtime: the cached "active"
-  // parse must come back, proving the file wasn't re-read.
-  writeFileSync(fileA, sessionJson("waiting_permission"));
-  utimesSync(fileA, T1, T1);
-  out = await listMonitoredSessions(dir);
-  assert.equal(out[0].level, "active");
+test("atomic replacement with the same size and mtime refreshes the session", async () => {
+  const replacement = fileA + '.replacement';
+  writeFileSync(replacement, sessionJson("idle   ")); utimesSync(replacement, T1, T1);
+  renameSync(replacement, fileA);
+  assert.equal((await listMonitoredSessions(dir))[0].level, 'done');
+  writeFileSync(fileA, sessionJson('waiting_permission')); utimesSync(fileA, T1, T1);
+  assert.equal((await listMonitoredSessions(dir))[0].level, 'waiting');
 });
 
 test("an mtime change re-parses the file", async () => {
@@ -90,4 +89,14 @@ test("resetSessionMonitorCache forces a re-parse", async () => {
 
 test.after(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+
+test('oversized session files are skipped before opening their contents', async t => {
+  const { MAX_SESSION_FILE_BYTES } = await import('../dist-electron/session-monitor.js');
+  const own = mkdtempSync(join(tmpdir(), 'aya-session-bound-')); t.after(() => rmSync(own, { recursive: true, force: true }));
+  writeFileSync(join(own, 'huge.json'), 'x'.repeat(MAX_SESSION_FILE_BYTES + 1));
+  const opening = t.mock.method(fs, 'open');
+  assert.deepEqual(await listMonitoredSessions(own), []);
+  assert.equal(opening.mock.callCount(), 0);
 });

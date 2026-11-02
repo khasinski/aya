@@ -1,3 +1,4 @@
+import { createPollingTask } from "../polling-task";
 import { useEffect, useState } from "react";
 import {
   pollVisible,
@@ -20,52 +21,22 @@ export function useUsagePolling(
   // Poll provider usage: local snapshots and the official Antigravity CLI command.
   // Authentication stays with the provider tools.
   useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      void window.aya.getUsage().then((u) => {
-        if (!cancelled) {
-          setUsageAccounts((prev) => (samePollPayload(prev, u) ? prev : u));
-        }
-      });
-      void window.aya.getCodexUsage().then((u) => {
-        if (!cancelled) {
-          setCodexUsageAccounts((prev) =>
-            samePollPayload(prev, u) ? prev : u,
-          );
-        }
-      });
-      void window.aya.getAntigravityUsage().then((u) => {
-        if (!cancelled) setAntigravityUsageAccounts((prev) => samePollPayload(prev, u) ? prev : u);
-      }).catch(() => {});
-      void window.aya.getGrokUsage().then((u) => {
-        if (!cancelled) {
-          setGrokUsage((prev) => (samePollPayload(prev, u) ? prev : u));
-        }
-      });
-    };
-    const stop = pollVisible(refresh, USAGE_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      stop();
-    };
+    const tasks = [
+      createPollingTask(() => window.aya.getUsage(), value => setUsageAccounts(prev => samePollPayload(prev, value) ? prev : value)),
+      createPollingTask(() => window.aya.getCodexUsage(), value => setCodexUsageAccounts(prev => samePollPayload(prev, value) ? prev : value)),
+      createPollingTask(() => window.aya.getAntigravityUsage(), value => setAntigravityUsageAccounts(prev => samePollPayload(prev, value) ? prev : value)),
+      createPollingTask(() => window.aya.getGrokUsage(), value => setGrokUsage(prev => samePollPayload(prev, value) ? prev : value)),
+    ];
+    const stop = pollVisible(() => tasks.forEach(task => task.refresh()), USAGE_POLL_INTERVAL_MS);
+    return () => { stop(); tasks.forEach(task => task.stop()); };
   }, [samePollPayload]);
 
   useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      void window.aya.listMonitoredSessions().then((sessions) => {
-        if (!cancelled) {
-          setMonitoredSessions((prev) =>
-            samePollPayload(prev, sessions) ? prev : sessions,
-          );
-        }
-      });
-    };
-    const stop = pollVisible(refresh, SESSION_MONITOR_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      stop();
-    };
+    const task = createPollingTask(() => window.aya.listMonitoredSessions(), sessions => {
+      setMonitoredSessions(prev => samePollPayload(prev, sessions) ? prev : sessions);
+    });
+    const stop = pollVisible(task.refresh, SESSION_MONITOR_POLL_INTERVAL_MS);
+    return () => { stop(); task.stop(); };
   }, [samePollPayload]);
 
   return { usageAccounts, codexUsageAccounts, antigravityUsageAccounts, grokUsage, monitoredSessions };

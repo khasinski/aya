@@ -1,3 +1,4 @@
+import { createPollingTask } from "../polling-task";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { mergeGitInfo, type GitInfo } from "../project-helpers";
@@ -73,24 +74,16 @@ export function useGitStatus({
     liveCwdRef.current = null;
     setLiveCheckout(null);
     if (!activeTabId || !activeProjectCheckout) return;
-    let cancelled = false;
-    const refresh = () => {
-      void window.aya.ptyCwd(activeTabId).then(async (cwd) => {
-        if (cancelled || !cwd) return;
-        // Same cwd as last tick — the resolved root can't have changed, so skip
-        // the `git rev-parse`. Only a cd (or the first read) pays for it.
-        if (cwd === liveCwdRef.current) return;
-        const root = await window.aya.getGitRoot(cwd);
-        if (cancelled) return;
-        liveCwdRef.current = cwd;
-        setLiveCheckout(root);
-      });
-    };
-    const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      stop();
-    };
+    const task = createPollingTask(async signal => {
+      const cwd = await window.aya.ptyCwd(activeTabId);
+      if (signal.aborted || !cwd || cwd === liveCwdRef.current) return null;
+      return { cwd, root: await window.aya.getGitRoot(cwd) };
+    }, result => {
+      if (!result) return;
+      liveCwdRef.current = result.cwd; setLiveCheckout(result.root);
+    });
+    const stop = pollVisible(task.refresh, GIT_STATUS_POLL_INTERVAL_MS);
+    return () => { stop(); task.stop(); };
   }, [activeTabId, activeProjectCheckout, pollVisible]);
 
   // The checkout the status bar's git surface describes, in priority order:
@@ -109,19 +102,11 @@ export function useGitStatus({
   // project / worktree-tab switch.
   useEffect(() => {
     if (!activeGitDirectory) return;
-    let cancelled = false;
-    const refresh = () => {
-      if (cancelled) return;
-      void window.aya.getGitInfo(activeGitDirectory).then((info) => {
-        if (cancelled) return;
-        setGit((g) => mergeGitInfo(g, activeGitDirectory, info));
-      });
-    };
-    const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      stop();
-    };
+    const task = createPollingTask(() => window.aya.getGitInfo(activeGitDirectory), info => {
+      setGit(g => mergeGitInfo(g, activeGitDirectory, info));
+    });
+    const stop = pollVisible(task.refresh, GIT_STATUS_POLL_INTERVAL_MS);
+    return () => { stop(); task.stop(); };
   }, [activeGitDirectory, pollVisible]);
 
   // Poll the active local project's worktrees (with branch + dirty count). It
@@ -134,18 +119,11 @@ export function useGitStatus({
       setWorktrees([]);
       return;
     }
-    let cancelled = false;
-    const refresh = () => {
-      void window.aya.getGitWorktreeStatus(activeProjectCheckout).then((list) => {
-        if (cancelled) return;
-        setWorktrees((prev) => (samePollPayload(prev, list) ? prev : list));
-      });
-    };
-    const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      stop();
-    };
+    const task = createPollingTask(() => window.aya.getGitWorktreeStatus(activeProjectCheckout), list => {
+      setWorktrees(prev => samePollPayload(prev, list) ? prev : list);
+    });
+    const stop = pollVisible(task.refresh, GIT_STATUS_POLL_INTERVAL_MS);
+    return () => { stop(); task.stop(); };
   }, [activeProjectCheckout, worktreeNudge, pollVisible, samePollPayload]);
 
   // Drop a pin whose worktree is gone (removed, or the project now points at a

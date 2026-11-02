@@ -1,3 +1,4 @@
+import { mapConcurrent } from "./bounded-map";
 // Lightweight git info for the status bar. We shell out to `git` because we
 // already require a working POSIX env (claude / codex need it too). If git
 // isn't installed or the dir isn't a repo, return nulls.
@@ -75,7 +76,17 @@ export function parseStatusWithBranch(stdout: string): ProjectGitInfo {
   return { branch: branch || null, dirty };
 }
 
-export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
+const gitInfoReads = new Map<string, Promise<ProjectGitInfo>>();
+export function getGitInfo(directory: string): Promise<ProjectGitInfo> {
+  let reading = gitInfoReads.get(directory);
+  if (!reading) {
+    reading = readGitInfo(directory); gitInfoReads.set(directory, reading);
+    const current = reading;
+    void current.finally(() => { if (gitInfoReads.get(directory) === current) gitInfoReads.delete(directory); }).catch(() => {});
+  }
+  return reading.then(info => ({ ...info }));
+}
+async function readGitInfo(directory: string): Promise<ProjectGitInfo> {
   try {
     // This runs on the status-bar poll (every 3s while visible), so keep it to
     // ONE process: --branch folds the branch header into the porcelain output,
@@ -143,8 +154,8 @@ export async function listWorktrees(directory: string): Promise<Worktree[]> {
 
 /** `listWorktrees` for a caller that must tell "git failed" from "no worktrees". */
 export async function listWorktreesOrThrow(directory: string): Promise<Worktree[]> {
-  const { stdout } = await execAsync(
-    `${READ_ONLY_GIT} worktree list --porcelain`,
+  const { stdout } = await execFileAsync(
+    "git", [NO_LOCKS, "worktree", "list", "--porcelain"],
     { cwd: directory, ...OPTS },
   );
   // Paths come as recorded, not symlink-resolved like getGitRoot (macOS /tmp -> /private/tmp), and the status bar
@@ -407,8 +418,7 @@ export async function listWorktreeStatus(
   if (worktrees.length < 2) {
     return worktrees.map((w) => ({ ...w, dirty: 0 }));
   }
-  return Promise.all(
-    worktrees.map(async (w) => {
+  return mapConcurrent(worktrees, 4, async w => {
       // A prunable worktree's checkout is gone; running git there just fails.
       if (w.prunable || w.bare) return { ...w, dirty: 0 };
       // Take only the dirty count from `git status`: the branch already comes
@@ -417,8 +427,7 @@ export async function listWorktreeStatus(
       // sentinel, so the picker would show "HEAD" where it means "detached".
       const info = await getGitInfo(w.path);
       return { ...w, dirty: info.dirty };
-    }),
-  );
+  });
 }
 
 /** The root of the checkout containing `directory` (its own root for a git

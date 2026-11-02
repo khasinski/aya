@@ -1,3 +1,5 @@
+import { mapConcurrent } from "./bounded-map";
+import { readFileAtMost } from "./bounded-file-read";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -22,6 +24,8 @@ interface CctopSessionFile {
 }
 
 const CCTOP_SESSIONS_DIR = path.join(os.homedir(), ".cctop", "sessions");
+export const MAX_SESSION_FILE_BYTES = 64 * 1024;
+const MAX_CACHED_SESSION_FILES = 2048;
 const SUPPORTED_SOURCES = new Set(["cc", "codex"]);
 
 function optionalString(value: unknown): string | undefined {
@@ -104,7 +108,7 @@ function parseSessionFile(
 // file disappears.
 const sessionParseCache = new Map<
   string,
-  { mtimeMs: number; session: MonitoredSession | null }
+  { signature: string; session: MonitoredSession | null }
 >();
 
 /** Test hook: forget all cached session-file parses. */
@@ -120,32 +124,33 @@ export async function listMonitoredSessions(
     entries = await fs.readdir(dir);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return [];
+    if (code === "ENOENT") {
+      for (const key of sessionParseCache.keys()) if (key.startsWith(dir + path.sep)) sessionParseCache.delete(key);
+      return [];
+    }
     throw err;
   }
 
   const seen = new Set<string>();
-  const sessions = await Promise.all(
-    entries
-      .filter((entry) => entry.endsWith(".json"))
-      .map(async (entry): Promise<MonitoredSession | null> => {
+  const sessions = await mapConcurrent(entries.filter(entry => entry.endsWith(".json")), 16, async (entry): Promise<MonitoredSession | null> => {
         const filePath = path.join(dir, entry);
         seen.add(filePath);
         try {
           const st = await fs.stat(filePath);
+          if (!st.isFile() || st.size > MAX_SESSION_FILE_BYTES) { sessionParseCache.delete(filePath); return null; }
+          const signature = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
           const cached = sessionParseCache.get(filePath);
-          if (cached && cached.mtimeMs === st.mtimeMs) return cached.session;
-          const session = parseSessionFile(
-            entry,
-            JSON.parse(await fs.readFile(filePath, "utf8")) as CctopSessionFile,
-          );
-          sessionParseCache.set(filePath, { mtimeMs: st.mtimeMs, session });
+          if (cached?.signature === signature) return cached.session;
+          const raw = await readFileAtMost(filePath, MAX_SESSION_FILE_BYTES);
+          if (raw === null) { sessionParseCache.delete(filePath); return null; }
+          const session = parseSessionFile(entry, JSON.parse(raw) as CctopSessionFile);
+          sessionParseCache.set(filePath, { signature, session });
+          if (sessionParseCache.size > MAX_CACHED_SESSION_FILES) sessionParseCache.delete(sessionParseCache.keys().next().value!);
           return session;
         } catch {
           return null;
         }
-      }),
-  );
+  });
 
   // Drop cache entries for files that disappeared (scoped to this dir so a
   // non-default dir, e.g. in tests, can't evict the real one's entries).
