@@ -33,7 +33,9 @@ test('large GUI workload records opening, input-to-frame latency and memory whil
     expect(samples.length).toBeGreaterThanOrEqual(20);
     const previewStart = performance.now();
     await gui.getByRole('button', { name: 'Artifacts', exact: true }).click();
-    await expect(gui.frameLocator('iframe').getByRole('heading', { name: 'Benchmark widget 0' })).toBeVisible();
+    // Cold CI workers render 2,500 messages while preparing the first preview.
+    // Measure that latency below without imposing the normal small-view timeout.
+    await expect(gui.frameLocator('iframe').getByRole('heading', { name: 'Benchmark widget 0' })).toBeVisible({ timeout: 30000 });
     const artifactOpenMs = performance.now() - previewStart;
     // The whole text remains in the DOM, selectable and reachable by Chromium find.
     const matches = await app.evaluate(({ BrowserWindow }) => new Promise<number>(resolve => {
