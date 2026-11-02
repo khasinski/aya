@@ -1,3 +1,4 @@
+import { appendMessageDeltas, createTextDeltaBuffer, scheduleConversationFrame } from '../conversation-deltas';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -56,6 +57,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
   const pendingSnapshot = useRef<Record<string, unknown> | null>(null);
   const lastSnapshotSave = useRef(Date.now());
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushTextDeltas = useRef<() => void>(() => {});
   const composer = useRef<HTMLTextAreaElement>(null);
   const artifactButton = useRef<HTMLButtonElement>(null);
   const [drawer, setDrawer] = useState(false);
@@ -84,10 +86,36 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
   const [historyQuery, setHistoryQuery] = useState('');
   const [historyLoading, setHistoryLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const historyRequest = useRef(0);
+  const invalidateHistoryRequest = useCallback(() => { historyRequest.current++; }, []);
+  const historyStartView = useRef<Record<string, unknown> | null>(null);
+  const historyOpen = history !== null;
+  const loadHistory = useCallback(async (query: string, offset: number) => {
+    if (!api) return;
+    const request = ++historyRequest.current;
+    const view = historyStartView.current;
+    historyStartView.current = null;
+    setHistoryLoading(true);
+    if (!offset) setHistory([]);
+    try {
+      const page = await api.invoke(terminal.id, 'history', { historyPage: true, query, offset, ...(view ? { view } : {}) }) as { rows: NonNullable<typeof history>; hasMore: boolean };
+      if (request !== historyRequest.current) return;
+      setHistory(old => offset ? [...old || [], ...page.rows.filter(row => !old?.some(existing => existing.id === row.id))] : page.rows);
+      setHistoryHasMore(page.hasMore);
+    } catch (error) { if (request === historyRequest.current) setError(ipcMessage(error)); }
+    finally { if (request === historyRequest.current) setHistoryLoading(false); }
+  }, [api, terminal.id]);
   const openHistory = async (query = '') => {
-    setHistoryQuery(query); setHistory([]); setHistoryLoading(true);
-    try { setHistory(await invoke('history', pendingSnapshot.current) as NonNullable<typeof history>); } finally { setHistoryLoading(false); }
+    historyStartView.current = pendingSnapshot.current;
+    setHistoryQuery(query); setHistory([]); setHistoryHasMore(false); setHistoryLoading(true);
+    if (historyOpen && query === historyQuery) await loadHistory(query, 0);
   };
+  useEffect(() => {
+    if (!historyOpen) return;
+    const timer = setTimeout(() => { void loadHistory(historyQuery, 0); }, 150);
+    return () => { clearTimeout(timer); invalidateHistoryRequest(); };
+  }, [historyOpen, historyQuery, loadHistory, invalidateHistoryRequest]);
   const switchConversation = async (conversationId?: string) => {
     if (busy || requests.length || dispatching.current) throw Error('Stop the current turn and resolve approvals before switching conversations');
     setSwitching(true); setReady(false); setRestored(false);
@@ -120,17 +148,28 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     setMessages(old => [...old, { id: crypto.randomUUID(), type: 'goal', title, text: objective, goal: next }]);
   }, []);
   const fail = (e: unknown) => setError(ipcMessage(e));
-  const persistLatest = useCallback(async () => {
-    if (!api || !pendingSnapshot.current) return;
-    const revision = snapshotRevision.current, attempt = ++saveAttempt.current;
-    setSaveStatus('saving');
-    lastSnapshotSave.current = Date.now();
-    try {
-      await api.invoke(terminal.id, 'persist', pendingSnapshot.current);
-      if (viewMounted.current && attempt === saveAttempt.current && revision === snapshotRevision.current) { setSaveStatus('saved'); setSaveError(''); }
-    } catch (e) {
-      if (viewMounted.current && attempt === saveAttempt.current && revision === snapshotRevision.current) { setSaveStatus('error'); setSaveError(ipcMessage(e)); }
-    }
+  const persistInFlight = useRef<Promise<void> | null>(null);
+  const persistRequested = useRef(false);
+  const persistLatest = useCallback(() => {
+    persistRequested.current = true;
+    if (persistInFlight.current) return persistInFlight.current;
+    const write = Promise.resolve().then(async () => {
+      while (persistRequested.current && viewMounted.current) {
+        persistRequested.current = false;
+        if (!api || !pendingSnapshot.current) return;
+        const revision = snapshotRevision.current, attempt = ++saveAttempt.current;
+        setSaveStatus('saving');
+        lastSnapshotSave.current = Date.now();
+        try {
+          await api.invoke(terminal.id, 'persist', pendingSnapshot.current);
+          if (viewMounted.current && attempt === saveAttempt.current && revision === snapshotRevision.current) { setSaveStatus('saved'); setSaveError(''); }
+        } catch (e) {
+          if (viewMounted.current && attempt === saveAttempt.current && revision === snapshotRevision.current) { setSaveStatus('error'); setSaveError(ipcMessage(e)); }
+        }
+      }
+    }).finally(() => { persistInFlight.current = null; });
+    persistInFlight.current = write;
+    return write;
   }, [api, terminal.id]);
   const reconnect = async () => {
     if (connecting || ready || busy) return;
@@ -155,7 +194,17 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
   useEffect(() => {
     if (!api) { setError('Conversation GUI requires the Aya desktop app.'); return; }
     let mounted = true; viewMounted.current = true;
+    const textDeltas = createTextDeltaBuffer(deltas => {
+      const create = (delta: { id: string; text: string }): Message => ({ ...delta, type: 'assistant' });
+      setMessages(old => appendMessageDeltas(old, deltas, create));
+      // Teardown can run before React commits another frame. Include buffered
+      // text in the final snapshot synchronously as well as in visible state.
+      const snapshot = pendingSnapshot.current;
+      if (snapshot && Array.isArray(snapshot.messages)) pendingSnapshot.current = { ...snapshot, messages: appendMessageDeltas(snapshot.messages as Message[], deltas, create) };
+    }, scheduleConversationFrame);
+    flushTextDeltas.current = textDeltas.flush;
     const off = api.onEvent(terminal.id, event => {
+      if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') textDeltas.flush();
       const p = event.params;
       if (event.method === 'aya/session' && typeof p.model === 'string') setModel(p.model);
       if (event.method === 'aya/progress') {
@@ -184,7 +233,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       if (event.method === 'thread/goal/cleared') applyGoal(null);
       if (event.method === 'item/agentMessage/delta' || event.method === 'item/plan/delta') {
         const id = str(p.itemId);
-        setMessages(old => old.some(m => m.id === id) ? old.map(m => m.id === id ? { ...m, text: m.text + str(p.delta) } : m) : [...old, { id, type: 'assistant', text: str(p.delta) }]);
+        textDeltas.push(id, str(p.delta));
       }
       if (event.method === 'item/completed') {
         const item = obj(p.item);
@@ -222,7 +271,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true });
       if (mounted) { setReady(true); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
     })().catch(e => { if (mounted) fail(e); }).finally(() => { if (mounted) setConnecting(false); });
-    return () => { mounted = false; viewMounted.current = false; off(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; void api.invoke(terminal.id, 'close', pendingSnapshot.current || undefined).catch(() => {}); };
+    return () => { textDeltas.flush(); mounted = false; viewMounted.current = false; off(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; void api.invoke(terminal.id, 'close', pendingSnapshot.current || undefined).catch(() => {}); };
     // A conversation belongs to a panel; editing its preset affects new panels.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
@@ -236,7 +285,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
     persistTimer.current = setTimeout(() => { persistTimer.current = null; void persistLatest(); }, delay);
   }, [restored, api, terminal.id, persistLatest, importNotice, messages, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan]);
   useEffect(() => {
-    const flush = () => { if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; if (pendingSnapshot.current && api) void api.invoke(terminal.id, 'close', pendingSnapshot.current).catch(() => {}); };
+    const flush = () => { flushTextDeltas.current(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; if (pendingSnapshot.current && api) void api.invoke(terminal.id, 'close', pendingSnapshot.current).catch(() => {}); };
     window.addEventListener('pagehide', flush);
     return () => { window.removeEventListener('pagehide', flush); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; };
   }, [api, terminal.id]);
@@ -370,7 +419,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       <div><strong>Resume conversation</strong><button aria-label="Close conversation picker" onClick={() => { setHistory(null); composer.current?.focus(); }}>×</button></div>
       <input autoFocus aria-label="Search conversations" placeholder="Search saved conversations…" value={historyQuery} onChange={e => setHistoryQuery(e.target.value)} />
       <small>This project and account · Aya history{guiAgent === 'codex' ? ' and Codex history' : ''}. Drafts and artifacts saved in Aya are kept.</small>
-      <div className="aya-session-list">{historyLoading ? <p role="status">Loading conversations…</p> : history.filter(row => row.title.toLowerCase().includes(historyQuery.toLowerCase())).map(row => <button key={row.id} disabled={row.current || busy || switching || requests.length > 0} onClick={() => void switchConversation(row.id).catch(fail)}><span>{row.title}</span><small>{row.current ? 'Current conversation' : new Date(row.updatedAt).toLocaleString()}</small></button>)}{!historyLoading && !history.some(row => row.title.toLowerCase().includes(historyQuery.toLowerCase())) && <p>No saved conversations match.</p>}</div>
+      <div className="aya-session-list">{history.map(row => <button key={row.id} disabled={row.current || busy || switching || requests.length > 0} onClick={() => void switchConversation(row.id).catch(fail)}><span>{row.title}</span><small>{row.current ? 'Current conversation' : new Date(row.updatedAt).toLocaleString()}</small></button>)}{historyLoading && <p role="status">Loading conversations…</p>}{!historyLoading && !history.length && <p>No saved conversations match.</p>}{historyHasMore && <button disabled={historyLoading} onClick={() => void loadHistory(historyQuery, history.length)}>Load more conversations</button>}</div>
       <button disabled={busy || switching || requests.length > 0} onClick={() => void switchConversation().catch(fail)}>New conversation</button>
       {busy && <small>Stop the current turn before switching.</small>}
     </div>}
@@ -384,7 +433,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, onSw
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {messages.map(m => m.type === 'progress' && m.progress ? m.progress.status === 'running' ? null : <TaskProgress key={m.id} progress={m.progress} /> : (m.type === 'goal' || m.type === 'settings') ? <article className={`aya-gui-goal-message${m.type === 'settings' ? ' aya-gui-settings-message' : ''}`} key={m.id} aria-label={m.title}><span aria-hidden="true">{m.type === 'settings' ? '⚙' : '◎'}</span><div><strong>{m.title}</strong><p>{m.text}</p>{m.goal?.status === 'blocked' && <p className="aya-gui-goal-history-reason">{m.goal.reason || 'The agent did not provide a reason. Ask it what is blocking this goal.'}</p>}</div></article> : <article key={m.id} className={m.type}><small>{m.type === 'user' ? `YOU${m.delivery === 'sending' ? ' · Sending…' : m.delivery === 'failed' ? ' · Not sent' : m.delivery === 'unconfirmed' ? ' · Delivery unconfirmed' : ''}` : agentBadge}</small><ConversationMarkdown text={m.text} loadImage={loadConversationImage} /></article>)}
       {requests.map(request => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
-      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</details>}
+      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</div></details>}
       {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
         {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}

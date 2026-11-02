@@ -80,16 +80,22 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'history') {
       const snapshot = snapshots.get(key);
       if (!snapshot) throw Error('Panel is disconnected');
-      if (value && typeof value === 'object') snapshot.view = withPanelArtifacts(key, value as Record<string, unknown>);
-      await archiveConversation(snapshot);
-      const saved = await listConversations(snapshot);
+      const params = value as { historyPage?: boolean; query?: string; offset?: number; view?: Record<string, unknown> } | undefined;
+      const paged = params?.historyPage === true;
+      const view = paged ? params?.view : value;
+      if (view && typeof view === 'object') snapshot.view = withPanelArtifacts(key, view as Record<string, unknown>);
+      if (!paged || view) await archiveConversation(snapshot);
+      const query = paged && typeof params?.query === 'string' ? params.query.toLowerCase() : '';
+      const offset = paged && Number.isSafeInteger(params?.offset) && params!.offset! >= 0 ? params!.offset! : 0;
+      const saved = await listConversations(snapshot, { query, limit: paged ? Number.MAX_SAFE_INTEGER : 100 });
+      const page = (rows: { id: string; threadId?: string; title: string; updatedAt: number; current: boolean }[]) => paged ? { rows: rows.slice(offset, offset + 100), hasMore: rows.length > offset + 100 } : rows;
       const session = sessions.get(key)?.session;
-      if (!session?.listConversations) return saved;
+      if (!session?.listConversations) return page(saved);
       try {
         const native = await session.listConversations();
         const savedThreads = new Set(saved.filter(row => typeof row.threadId === 'string').map(row => 'codex:' + row.threadId));
-        return [...saved, ...native.filter(row => !savedThreads.has(row.id))].sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt));
-      } catch { return saved; }
+        return page([...saved, ...native.filter(row => !savedThreads.has(row.id) && row.title.toLowerCase().includes(query))].sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt)));
+      } catch { return page(saved); }
     }
     if (action === 'switch-conversation') {
       const snapshot = snapshots.get(key);

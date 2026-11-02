@@ -94,7 +94,7 @@ async function startWatched(t, { destroyed = false } = {}) {
   }
   received.length = 0;
   win.destroyedChecks = 0;
-  return { received, win, settle };
+  return { received, win, settle, stop };
 }
 
 test("an outside edit to a project config reloads the projects slice, other files in projects/ do not", async (t) => {
@@ -188,12 +188,15 @@ test("a window that is already closed is sent nothing", async (t) => {
 });
 
 test('one external edit reaches both windows; closing one does not stop the other watcher', async t => {
- const events=[[],[]];
- const windows=events.map(list=>({isDestroyed:()=>false,webContents:{send:(channel,value)=>list.push({channel,...value})}}));
- const stops=windows.map(startConfigWatcher);t.after(()=>stops.forEach(stop=>stop()));
+ // An edit made during the initial asynchronous scan can become the baseline,
+ // rather than a change. Wait for a quiet, initialized watcher before editing.
+ const { received: first, stop: stopFirst } = await startWatched(t);
+ const events=[first,[]];
+ const stopSecond=startConfigWatcher({isDestroyed:()=>false,webContents:{send:(channel,value)=>events[1].push({channel,...value})}});
+ t.after(stopSecond);
  await fs.writeFile(join(projectsDir,'multi-window.json'),freshProject());
  await waitFor(()=>events.every(list=>list.some(e=>e.slice==='projects')),5000);
- stops[0]();events[1].length=0;
+ stopFirst();events[1].length=0;
  await fs.writeFile(join(projectsDir,'multi-window.json'),freshProject());
  await waitFor(()=>events[1].some(e=>e.slice==='projects'),5000);
 });
