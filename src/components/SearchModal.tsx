@@ -1,3 +1,4 @@
+import { useModalFocus } from './useModalFocus';
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type BufferSearchHit,
@@ -385,6 +386,8 @@ export function SearchModal({
   const [contentHits, setContentHits] = useState<BufferSearchHit[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const leaveForSelection = useModalFocus(dialogRef, onClose);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Debounce inputValue → query. 100ms strikes a balance: fast enough that
@@ -457,6 +460,8 @@ export function SearchModal({
   }, []);
 
   const select = (r: SearchResult) => {
+    if (r.kind === "launcher" && launchDisabled) return;
+    leaveForSelection();
     if (r.kind === "launcher" && r.presetId) {
       if (launchDisabled) return;
       onRunPreset(r.presetId);
@@ -509,6 +514,7 @@ export function SearchModal({
       onClick={(e) => closeFromBackdropClick(e, onClose)}
     >
       <div
+        ref={dialogRef} role="dialog" aria-modal="true" aria-label="Search projects and terminals"
         className="aya-modal aya-modal--search"
         onClick={(e) => e.stopPropagation()}
       >

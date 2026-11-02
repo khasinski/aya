@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { errorDetails } from "../error-details";
+import { beginGuiRendererRecovery } from '../gui-renderer-recovery';
 
 interface State {
   failed: boolean;
@@ -18,6 +19,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
+    beginGuiRendererRecovery();
     this.setState({ componentStack: info.componentStack ?? null });
     console.error("Aya window error:", error);
   }

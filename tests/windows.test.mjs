@@ -105,7 +105,7 @@ test("creation preserves chrome, sandbox options, side effects and every listene
   });
   assert.deepEqual(log, [
     ["create", 1], ["maximize", 1], ["fullscreen", 1, true], ["send", 1, "app:fullscreen", true],
-    ["track", 1], ["window-listener", 1, "focus"], ["attach", 1], ["watch", 1],
+    ["track", 1], ["window-listener", 1, "focus"], ["attach", 1], ["contents-listener", 1, "render-process-gone"], ["watch", 1],
     ["window-listener", 1, "ready-to-show"], ["window-listener", 1, "closed"],
     ["window-listener", 1, "enter-full-screen"], ["window-listener", 1, "leave-full-screen"],
     ["window-listener", 1, "maximize"], ["window-listener", 1, "unmaximize"],
@@ -381,4 +381,18 @@ test("zoom installs before shortcut handling and still changes Chromium's zoom l
   assert.equal(win.contents.zoom, 1);
   input(win, { ...mod, key: "0" });
   assert.equal(win.contents.zoom, 0);
+});
+
+test('renderer recovery ignores clean exits and offers only one recovery flow at a time', async () => {
+  const calls = []; let finish;
+  const { windows } = setup({ onRendererGone: (win, details) => { calls.push([win.id, details.reason]); return new Promise(resolve => { finish = resolve; }); } });
+  const win = windows.createWindow(initial);
+  win.contents.emit('render-process-gone', {}, { reason: 'clean-exit' });
+  assert.deepEqual(calls, []);
+  win.contents.emit('render-process-gone', {}, { reason: 'crashed' });
+  win.contents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.deepEqual(calls, [[1, 'crashed']]);
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  win.contents.emit('render-process-gone', {}, { reason: 'oom' });
+  assert.deepEqual(calls, [[1, 'crashed'], [1, 'oom']]); finish();
 });

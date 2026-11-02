@@ -1,3 +1,4 @@
+import { useModalFocus } from './useModalFocus';
 import { useEffect, useRef, useState } from "react";
 import {
   type AyaIntelligenceConfig,
@@ -220,64 +221,11 @@ export function SettingsModal({
     });
   };
 
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const focusableSelector = [
-      "a[href]",
-      "button:not([disabled])",
-      "input:not([disabled]):not([type=hidden])",
-      "select:not([disabled])",
-      "textarea:not([disabled])",
-      '[tabindex]:not([tabindex="-1"])',
-    ].join(",");
-    const topmostDialog = () =>
-      dialog.querySelector<HTMLElement>(".aya-settings-consent-dialog") ?? dialog;
-    const focusable = () =>
-      [...topmostDialog().querySelectorAll<HTMLElement>(focusableSelector)].filter(
-        (element) => element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0,
-      );
-    const activeDialog = topmostDialog();
-    if (!activeDialog.contains(document.activeElement)) {
-      (focusable()[0] ?? activeDialog).focus();
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        if (showUsageConsent) {
-          closeConsent(() => setShowUsageConsent(false));
-        } else if (showStatusConsent) {
-          closeConsent(() => setShowStatusConsent(false));
-        } else {
-          onCloseRef.current();
-        }
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const items = focusable();
-      if (!items.length) {
-        e.preventDefault();
-        topmostDialog().focus();
-        return;
-      }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || !topmostDialog().contains(active))) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (active === last || !topmostDialog().contains(active))) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [showStatusConsent, showUsageConsent]);
+  useModalFocus(dialogRef, () => {
+    if (showUsageConsent) closeConsent(() => setShowUsageConsent(false));
+    else if (showStatusConsent) closeConsent(() => setShowStatusConsent(false));
+    else onClose();
+  }, { resolveDialog: () => dialogRef.current?.querySelector<HTMLElement>('.aya-settings-consent-dialog') || dialogRef.current, focusKey: `${showUsageConsent}:${showStatusConsent}` });
 
   const tabItems: Array<{
     id: SettingsTab;

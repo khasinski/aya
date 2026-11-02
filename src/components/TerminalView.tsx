@@ -56,6 +56,7 @@ import {
 } from "../spawnSession";
 import { SnippetBar } from "./SnippetBar";
 import { terminalFocusRetryStillOwned } from "../terminal-focus-retry";
+import { modalWillRestoreFocus } from './useModalFocus';
 import { displayIpcError, UPDATE_SPAWN_REFUSAL } from "../update-spawn";
 import { ipcMessage } from "./use-async-action";
 
@@ -571,7 +572,8 @@ function TerminalViewComponent({
       try {
         fit.fit();
         term.refresh(0, Math.max(term.rows - 1, 0));
-        if (shouldFocus) term.focus();
+        // A delayed fit/resize must not steal focus restored to modal chrome.
+        if (shouldFocus && (document.activeElement === document.body || host.contains(document.activeElement))) term.focus();
       } catch {
         /* ignore - xterm may be mid-dispose or still measuring fonts */
       }
@@ -1376,7 +1378,7 @@ function TerminalViewComponent({
   // focus while it's open, so defer to it.
   const wantsFocus = isActive && !findOpen;
   useEffect(() => {
-    if (!wantsFocus) return;
+    if (!wantsFocus || modalWillRestoreFocus(containerRef.current?.closest('[data-terminal-id]'))) return;
     let expectedActiveElement = document.activeElement;
     const focusNow = (shouldReassert: boolean) => {
       if (!terminalFocusRetryStillOwned(expectedActiveElement, document.activeElement)) return;

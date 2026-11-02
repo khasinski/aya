@@ -6,6 +6,7 @@ import { requireString } from "../validation";
 import { resolveDropTarget } from "../window-slices";
 
 export interface WindowIpcDeps {
+  prepareRendererRecovery?: (ownerId: number) => void;
   ipcMain: Pick<IpcMain, "handle" | "on">;
   senderWindow: (e: IpcMainInvokeEvent) => BrowserWindow | null;
   /** Every Aya window, in creation order. */
@@ -113,6 +114,6 @@ export function registerWindowIpc(deps: WindowIpcDeps): void {
   // was cancelled (measured in e2e, Electron 43), while webContents.reload() is not. Aya Web reloads
   // in its own page, so a stub event (sender: null) is a no-op.
   ipcMain.handle("window:reload", (e) => {
-    e.sender?.reload();
+    if (e.sender) { deps.prepareRendererRecovery?.(e.sender.id); e.sender.reload(); }
   });
 }

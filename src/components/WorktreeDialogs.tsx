@@ -1,3 +1,4 @@
+import { useModalFocus } from './useModalFocus';
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Preset, Worktree } from "../types";
 
@@ -29,23 +30,8 @@ export function WorktreeCreateDialog({ projectId, projectDir, presets, onCancel,
   const [finished, setFinished] = useState<{ created: { path: string; branch: string }[]; errors: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const baseInputRef = useRef<HTMLInputElement>(null);
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
-
-  useEffect(() => {
-    baseInputRef.current?.focus();
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyRef.current) {
-        e.preventDefault();
-        e.stopPropagation();
-        onCancelRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+  const dialogRef = useRef<HTMLFormElement>(null);
+  useModalFocus(dialogRef, onCancel, { blocked: busy });
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +73,7 @@ export function WorktreeCreateDialog({ projectId, projectDir, presets, onCancel,
 
   return (
     <div className="aya-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
-      <form className="aya-modal aya-worktree-dialog" role="dialog" aria-modal="true" aria-labelledby="worktree-create-title" onSubmit={submit}>
+      <form ref={dialogRef} className="aya-modal aya-worktree-dialog" role="dialog" aria-modal="true" aria-labelledby="worktree-create-title" onSubmit={submit}>
         <h2 id="worktree-create-title">Start in worktrees</h2>
         <p>Start up to 6 copies of this task in separate worktrees.</p>
         <label>Starting branch or ref
@@ -142,23 +128,7 @@ export function WorktreeRemoveDialog({ projectDir, base, worktree, onCancel, onR
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
-
-  useEffect(() => {
-    dialogRef.current?.focus();
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyRef.current) {
-        e.preventDefault();
-        e.stopPropagation();
-        onCancelRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+  useModalFocus(dialogRef, onCancel, { blocked: busy });
 
   useEffect(() => {
     let cancelled = false;

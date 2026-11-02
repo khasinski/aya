@@ -214,7 +214,13 @@ for (const spec of [
     const events = [];
     const session = new spec.SessionClass(e => events.push(e), process.execPath, [spec.fixturePath]);
     t.after(() => session.close());
-    const result = await session.connect(process.cwd(), '');
+    let result = await session.connect(process.cwd(), '');
+    // Antigravity deliberately returns a provisional identity after 300 ms.
+    // Loaded machines may start the fixture later; wait for its real init event.
+    if (spec.name === 'Antigravity' && (result.threadId !== spec.expectedThread || result.model !== spec.expectedModel)) {
+      await wait(() => events.some(event => event.method === 'aya/session'));
+      result = events.find(event => event.method === 'aya/session').params;
+    }
     assert.equal(result.threadId, spec.expectedThread);
     assert.equal(result.model, spec.expectedModel);
 
@@ -287,6 +293,7 @@ for (const spec of [
     await session.send('complete-goal');
     await wait(() => events.some(e => e.method === 'turn/completed'));
     assert.equal(events.filter(e => e.method === 'thread/goal/updated').at(-1).params.goal.status, 'complete');
+    assert.deepEqual((await session.command('goal', 'Next goal')).goal, { objective: 'Next goal', status: 'active' });
   });
 }
 
@@ -500,4 +507,16 @@ test('Codex side questions retry the sampling idle race without sending ordinary
   assert.equal(events.some(e => e.method === 'turn/started'), false);
   await assert.rejects(session.command('btw', 'sample-error'), /Sample unavailable/);
   assert.equal(events.filter(e => e.method === 'fixture/sample').length, 4, 'non-idle errors must not be retried');
+});
+
+test('a new Codex goal becomes active after the previous goal completed', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.command('goal', 'First objective');
+  await session.send('complete-goal');
+  await wait(() => !session.running);
+  assert.equal((await session.command('goal', '')).goal.status, 'complete');
+  assert.deepEqual((await session.command('goal', 'Second objective')).goal, { objective: 'Second objective', status: 'active' });
+  assert.equal((await session.command('goal', 'pause')).goal.status, 'paused');
+  assert.equal((await session.command('goal', 'resume')).goal.objective, 'Second objective');
 });

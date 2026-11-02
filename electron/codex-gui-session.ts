@@ -1,3 +1,4 @@
+import { GuiProtocolWriter } from './gui-protocol-writer';
 import { GuiJsonLines } from './gui-json-lines';
 import { PROGRESS_TOOL, progressUpdate } from './gui-progress';
 import type { GuiProgress } from '../shared/gui-progress';
@@ -13,6 +14,7 @@ export { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, workspaceImage, presentArtifact } fro
 
 export class CodexGuiSession {
   private child: ChildProcessWithoutNullStreams | null = null;
+  private writer: GuiProtocolWriter | null = null;
   private pending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private requests = new Map<string | number, { method: string; params: Record<string, unknown> }>();
   private nextId = 0;
@@ -30,16 +32,17 @@ export class CodexGuiSession {
   private stderr = '';
   cwd = '';
   constructor(private readonly emit: (event: GuiEvent) => void, private readonly executable = 'codex', private readonly args = ['app-server', '--listen', 'stdio://']) {}
-  private write(value: unknown) { if (!this.child || this.child.stdin.destroyed) throw Error('Codex is disconnected'); this.child.stdin.write(JSON.stringify(value) + '\n'); }
+  private write(value: unknown) { if (!this.child || this.child.stdin.destroyed) throw Error('Codex is disconnected'); if (!this.writer) throw Error('Codex is disconnected'); this.writer.write(value); }
   private rpc(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(Error(`${method} timed out`)); }, 60000); timer.unref();
+      const timer = setTimeout(() => { this.pending.delete(id); reject(Error(`${method} response timed out; the agent may still be working`)); }, 60000); timer.unref();
       this.pending.set(id, { resolve, reject, timer });
       try { this.write({ id, method, params }); } catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
   }
   private fail(message: string) {
+    this.writer?.close(); this.writer = null;
     for (const entry of this.pending.values()) { clearTimeout(entry.timer); entry.reject(Error(message)); }
     this.pending.clear(); this.requests.clear(); this.busy = false; this.turnId = null;
     for (const wake of this.samplingWaiters) wake();
@@ -54,6 +57,7 @@ export class CodexGuiSession {
     for (const key of ['ELECTRON_RUN_AS_NODE', 'AYA_SOCKET', 'AYA_TERMINAL_ID', 'AYA_PRESET_ID', 'AYA_PROJECT_SLUG', 'AYA_PROJECT_DIR', 'AYA_VIA', 'AYA_REMOTE_SOCKET']) delete env[key];
     this.child = spawn(this.executable, this.args, { cwd: this.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin.on('error', () => {});
+    this.writer = new GuiProtocolWriter(this.child.stdin, 'Codex', message => { this.fail(message); this.close(); });
     this.child.stderr.on('data', data => { this.stderr = (this.stderr + String(data)).slice(-4000); });
     this.child.stdout.setEncoding('utf8');
     const frames = new GuiJsonLines();
@@ -116,7 +120,7 @@ export class CodexGuiSession {
     return { threadId: id, view: { messages: messages.slice(-500), importNotice: 'Resumed from Codex history. This conversation keeps its original tool configuration. Start a new conversation for the latest Aya widget and progress tools.' } };
   }
   restoreProgress(progresses: GuiProgress[]) { for (const progress of progresses) this.progresses.set(progress.id, progress); }
-  restoreArtifacts(artifacts: GuiArtifact[]) {
+  restoreArtifacts(artifacts: Pick<GuiArtifact, 'id' | 'revision'>[]) {
     for (const artifact of artifacts) { this.artifactIds.add(artifact.id); this.artifactRevisions.set(artifact.id, artifact.revision || 1); }
   }
   async command(name: string, argument: string) {
@@ -126,7 +130,7 @@ export class CodexGuiSession {
       if (argument === 'clear') return this.rpc('thread/goal/clear', params);
       if (!argument) return this.rpc('thread/goal/get', params);
       if (argument === 'pause' || argument === 'resume') params.status = argument === 'pause' ? 'paused' : 'active';
-      else params.objective = argument;
+      else { params.objective = argument; params.status = 'active'; }
       return this.rpc('thread/goal/set', params);
     }
     if (name === 'compact') return this.rpc('thread/compact/start', { threadId: this.threadId });
@@ -280,6 +284,7 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
   }
   close() {
     this.closing = true;
+    this.writer?.close(); this.writer = null;
     const child = this.child; this.child = null;
     this.fail('Session closed');
     if (child?.pid) {

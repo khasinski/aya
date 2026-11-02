@@ -138,7 +138,9 @@ test.describe("project switching during worktree creation", () => {
     await expect(dialog).toBeVisible();
     await dialog.getByLabel("Worktree name").fill("must-not-start");
 
-    await fireShortcut(app, "project-2");
+    // Modal shortcuts are intentionally blocked. Simulate an external project
+    // selection through the tab handler to test ownership across state changes.
+    await window.locator('[data-project-slug="e2e-proj-2"]').dispatchEvent('click');
     await expect(dialog).toHaveCount(0);
     await fireShortcut(app, "project-1");
 
@@ -159,7 +161,9 @@ test.describe("project switching during worktree creation", () => {
     await expect(dialog.getByLabel("Worktree name")).toHaveValue("switch-race");
     await dialog.getByLabel("Number of worktrees").fill("1");
     await dialog.getByRole("button", { name: "Start worktrees" }).click();
-    await fireShortcut(app, "project-2");
+    // Modal shortcuts are intentionally blocked. Simulate an external project
+    // selection through the tab handler to test ownership across state changes.
+    await window.locator('[data-project-slug="e2e-proj-2"]').dispatchEvent('click');
     await expect(window.locator(".aya-sidebar-row[data-terminal-name='shell 3']")).toBeVisible();
     await expect(dialog).toHaveCount(0);
 

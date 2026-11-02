@@ -1,6 +1,6 @@
 import { debugLogsPending, flushDebugLogs } from "./team-debug";
 import { registerWidgetScheme } from './gui-artifact-documents';
-import { busyGuiSessionCount, isGuiSessionBusy, registerCodexGuiIpc } from "./codex-gui-ipc";
+import { busyGuiSessionCount, isGuiSessionBusy, registerCodexGuiIpc, prepareGuiRendererRecovery } from "./codex-gui-ipc";
 import {findAuthTransferTicket} from "./pty-host-auth-ticket";
 import { builtinScreenRules } from "./screen-rule-provider";
 import type { ScreenRuleSet } from "./screen-rule-data";
@@ -375,6 +375,17 @@ const windows = createAyaWindows({
   openExternalUrl: (raw) => openExternalUrl(raw, { shell: externalShell }),
   claimBootWindow: windowProjects.claimBootWindow,
   releaseWindowSlices: windowProjects.releaseWindowSlices,
+  onRendererGone: async (win, details) => {
+    if (appQuitting || win.isDestroyed()) return;
+    const result = await dialog.showMessageBox(win, {
+      type: 'error', title: 'Aya interface stopped', message: 'This window’s interface stopped responding.',
+      detail: `Reason: ${details.reason}. Your terminals and GUI agents are still running. Reload to restore the saved panels and reconnect to the same agents.`,
+      buttons: ['Reload window', 'Close window'], defaultId: 0, cancelId: 1, noLink: true,
+    });
+    if (win.isDestroyed()) return;
+    if (result.response === 0) { prepareGuiRendererRecovery(win.webContents.id); win.webContents.reload(); }
+    else win.close();
+  },
   onWindowClosed: (webContentsId) => forgetRemoteOutputSink(webContentsId),
   quitting: () => appQuitting,
 });
@@ -822,6 +833,7 @@ function registerIpc(): TeamRunner {
   });
 
   registerWindowIpc({
+    prepareRendererRecovery: prepareGuiRendererRecovery,
     ipcMain,
     senderWindow,
     windows: () => ayaWindows,

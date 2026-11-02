@@ -50,6 +50,7 @@
     "src/poll-visible.ts",
     "src/polling-task.ts",
     "src/conversation-deltas.ts",
+    "src/conversation-save-delay.ts",
     "src/project-reload.ts",
     "src/project-badges.ts",
     "src/preset-ids.ts",

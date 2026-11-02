@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useModalFocus } from './useModalFocus';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { UsageHistory, TokenUsageRow } from '../../shared/usage-history';
 import type { GrokUsage, UsageAccount } from '../types';
 import './usage-dashboard.css';
@@ -32,7 +33,7 @@ export function UsageDashboard({ onClose, accounts, codex, antigravity, grok }: 
   };
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
-  useEffect(() => { const previous = document.activeElement as HTMLElement | null; close.current?.focus(); return () => previous?.focus(); }, []);
+  useModalFocus(root, onClose);
   useEffect(() => {
     let active = true;
     if (!window.aya.getUsageHistory) { setError('Token history is available in the updated Aya desktop app.'); setLoading(false); return; }
@@ -46,18 +47,8 @@ export function UsageDashboard({ onClose, accounts, codex, antigravity, grok }: 
   const modelRows = [...rows.reduce((map, row) => { const key = row.provider + ':' + row.model; const item = map.get(key) || { provider: row.provider, model: row.model, tokens: 0, input: 0, output: 0, cache: 0 }; item.tokens += total(row); item.input += row.input; item.output += row.output; item.cache += row.cacheRead + row.cacheWrite; map.set(key, item); return map; }, new Map<string, { provider: TokenUsageRow['provider']; model: string; tokens: number; input: number; output: number; cache: number }>()).values()].sort((a, b) => b.tokens - a.tokens);
   const accountOptions = [...new Map((history?.rows || []).filter(r => provider === 'all' || r.provider === provider).map(r => [r.accountId, { id: r.accountId, name: `${names[r.provider]} · ${r.account}` }])).values()];
   const modelOptions = [...new Set((history?.rows || []).filter(r => (provider === 'all' || r.provider === provider) && (account === 'all' || r.accountId === account)).map(r => r.model))].sort();
-  const keyDown = useCallback((event: React.KeyboardEvent) => {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
-    if (event.key === 'Tab') {
-      const nodes = root.current?.querySelectorAll<HTMLElement>('button:not(:disabled),select,input,a[href],[tabindex="0"]');
-      if (!nodes?.length) return;
-      const first = nodes[0], last = nodes[nodes.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-  }, [onClose]);
   const limitGroups = [{ name: 'Codex', accounts: limitData.codex }, { name: 'Claude Code', accounts: limitData.accounts }, { name: 'Antigravity', accounts: limitData.antigravity }];
-  return <div className="aya-usage-screen" ref={root} role="dialog" aria-modal="true" aria-label="Usage" onKeyDown={keyDown}>
+  return <div className="aya-usage-screen" ref={root} role="dialog" aria-modal="true" aria-label="Usage">
     <header className="aya-usage-heading"><div><span className="aya-usage-eyebrow">YOUR AGENTS, AT A GLANCE</span><h1>Usage</h1><p>Token activity and account limits, in one place.</p></div><button ref={close} onClick={onClose} aria-label="Close usage" title="Close · Esc"><Icon name="close" /></button></header>
     <div className="aya-usage-controls"><div className="aya-usage-tabs" role="tablist" aria-label="Usage view">{(['tokens', 'limits'] as const).map(value => <button role="tab" aria-selected={tab === value} key={value} onClick={() => { setTab(value); if (value === 'limits') void refreshLimits(); }}>{value === 'tokens' ? 'Tokens' : 'Limits'}</button>)}</div>
       {tab === 'tokens' && <div className="aya-usage-periods" aria-label="Time range">{[1, 7, 30, 90].map(value => <button key={value} aria-pressed={days === value} onClick={() => { if (days !== value) { setHistory(null); setLoading(true); setDays(value); } }}>{value === 1 ? '24 hours' : `${value} days`}</button>)}</div>}

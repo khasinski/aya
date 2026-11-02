@@ -36,6 +36,7 @@
     "package": "npm ci && npm run build && electron-builder --publish never",
     "postinstall": "electron-builder install-app-deps",
     "build:pty-owner": "node scripts/build-pty-owner.cjs",
+    "benchmark:gui": "node scripts/benchmark-gui.cjs",
     "test:owner-package": "node scripts/package-owner-smoke.cjs",
     "test:gui-native": "npm run build:electron && node scripts/gui-native-smoke.mjs"
   },

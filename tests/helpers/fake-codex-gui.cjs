@@ -27,7 +27,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   } else if (message.method === 'model/list') write({ id: message.id, result: { data: [{ id: 'fake-codex', model: 'fake-codex', displayName: 'Fake Codex', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'low' }, { id: 'fake-pro', model: 'fake-pro', displayName: 'Fake Pro', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high' }] } });
   else if (message.method === 'turn/steer') { write({ id: message.id, result: { turnId: p.expectedTurnId } }); event('fixture/steer', p); }
   else if (message.method === 'thread/goal/set') {
-    goal = { objective: p.objective || goal?.objective || 'Existing goal', status: p.status || 'active' };
+    goal = { objective: p.objective || goal?.objective || 'Existing goal', status: p.status || goal?.status || 'active' };
     event('thread/goal/updated', { goal });
     event('thread/goal/updated', { goal: { ...goal, tokensUsed: 12 } });
     write({ id: message.id, result: { goal } });

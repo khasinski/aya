@@ -3,7 +3,9 @@ export type GuiArtifact = (
   | { id: string; kind: 'metric'; title: string; value: string; description: string }
   | { id: string; kind: 'html'; title: string; html: string; previewUrl?: string }
   | { id: string; kind: 'image'; title: string; path: string; dataUrl: string }) & { revision?: number };
-export interface GuiEvent { method: string; params: Record<string, unknown>; id?: string | number }
+export interface GuiEvent { method: string; params: Record<string, unknown>; id?: string | number; sequence?: number }
+export interface DeferredGuiArtifact { id: string; kind: GuiArtifact['kind']; title: string; revision?: number; $ayaArtifact: string; deferred: true }
+export type GuiArtifactEntry = GuiArtifact | DeferredGuiArtifact;
 
 export type GuiApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel'
   | { acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] } }

@@ -1,3 +1,4 @@
+import { waitFor } from './helpers/wait-for.mjs';
 // Which conversation a codex or grok pane is in (read from the CLI's own store), and how launch
 // commands get their own session id or have a stale resume rewritten.
 
@@ -177,15 +178,17 @@ test("pollSession reports every read that finds something, and none after stop",
   assert.equal(seen.length, count);
 });
 
-test("pollSession drops a read that finishes after stop, and survives a failing read", async () => {
+test("pollSession drops a read that finishes after stop, and survives a failing read", async t => {
   const seen = [];
   let release;
   const slow = new Promise((r) => (release = r));
-  const stop = pollSession(() => slow, (id) => seen.push(id), 5);
-  await sleep(20);
+  let started = false;
+  const stop = pollSession(() => { started = true; return slow; }, (id) => seen.push(id), 5);
+  t.after(stop);
+  await waitFor(() => started);
   stop();
   release("late");
-  await sleep(20);
+  await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(seen, []);
 
   let calls = 0;
@@ -194,7 +197,8 @@ test("pollSession drops a read that finishes after stop, and survives a failing 
     if (calls === 1) throw new Error("locked");
     return "ok";
   }, (id) => seen.push(id), 5);
-  await sleep(40);
+  t.after(stop2);
+  await waitFor(() => seen.includes("ok"));
   stop2();
   assert.ok(seen.includes("ok"));
 });

@@ -1,10 +1,13 @@
+import { artifactSearchText, normalizeArtifactSearch } from '../../shared/gui-artifact-search.cjs';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { GuiArtifact } from '../../shared/codex-gui';
+import type { GuiArtifact, GuiArtifactEntry } from '../../shared/codex-gui';
 
-const normalizeSearch = (text: string) => text.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase();
+const normalizeSearch = normalizeArtifactSearch;
 
-export function ArtifactPanel({ artifacts, selected, history, seenRevisions, visible, onViewed, onPreview, onSelect, onSuggest, onSave, onOpen, onBrowser }: {
-  artifacts: GuiArtifact[]; selected: string; history: Record<string, GuiArtifact[]>;
+export function ArtifactPanel({ artifacts, selected, history, seenRevisions, visible, onViewed, onPreview, onLoad, onSearch, onSelect, onSuggest, onSave, onOpen, onBrowser }: {
+  onSearch: (query: string) => Promise<string[]>;
+  onLoad: (id: string, revision?: number) => Promise<GuiArtifact>;
+  artifacts: GuiArtifactEntry[]; selected: string; history: Record<string, GuiArtifactEntry[]>;
   seenRevisions: Record<string, number>; visible: boolean; onViewed: (id: string, revision: number) => void; onPreview: (id: string, revision?: number) => Promise<unknown>;
   onSelect: (id: string) => void; onSuggest: (text: string) => void; onSave: (id: string, revision?: number) => Promise<unknown>; onOpen: (id: string, revision?: number) => Promise<unknown>; onBrowser: (id: string, revision?: number) => Promise<unknown>;
 }) {
@@ -18,13 +21,13 @@ export function ArtifactPanel({ artifacts, selected, history, seenRevisions, vis
   }}>
     {!artifacts.length ? <div className="aya-artifact-empty"><h3>No artifacts yet</h3><p>Tables, images and widgets created in this conversation will appear here.</p></div> : <>
       <div className="aya-artifact-navigation"><button aria-label="Previous artifact" title="Previous · Alt+←" disabled={index <= 0} onClick={() => onSelect(artifacts[index - 1].id)}>←</button><span role="status" aria-label="Artifact position">{index + 1} of {artifacts.length}</span><button aria-label="Next artifact" title="Next · Alt+→" disabled={index < 0 || index >= artifacts.length - 1} onClick={() => onSelect(artifacts[index + 1].id)}>→</button><button className="aya-artifact-expand" title={expanded ? 'Return to conversation' : 'Expand preview'} aria-label={expanded ? 'Reduce artifacts' : 'Expand artifacts'} aria-pressed={expanded} onClick={() => setExpanded(!expanded)}><span className="aya-gui-icon" aria-hidden="true">{expanded ? 'close_fullscreen' : 'open_in_full'}</span></button></div>
-      <ArtifactPicker artifacts={artifacts} selected={artifact?.id || ''} seenRevisions={seenRevisions} onSelect={onSelect} />
-      {artifact && <ArtifactContent key={artifact.id} artifact={artifact} versions={history[artifact.id] || [artifact]} version={versionByArtifact[artifact.id] || 'latest'} onVersion={version => setVersionByArtifact(old => ({ ...old, [artifact.id]: version }))} visible={visible} onViewed={onViewed} onPreview={onPreview} onSuggest={onSuggest} onSave={onSave} onOpen={onOpen} onBrowser={onBrowser} />}
+      <ArtifactPicker onSearch={onSearch} artifacts={artifacts} selected={artifact?.id || ''} seenRevisions={seenRevisions} onSelect={onSelect} />
+      {artifact && <ArtifactContent key={artifact.id} artifact={artifact} versions={history[artifact.id] || [artifact]} version={versionByArtifact[artifact.id] || 'latest'} onVersion={version => setVersionByArtifact(old => ({ ...old, [artifact.id]: version }))} visible={visible} onViewed={onViewed} onPreview={onPreview} onLoad={onLoad} onSuggest={onSuggest} onSave={onSave} onOpen={onOpen} onBrowser={onBrowser} />}
     </>}
   </aside>;
 }
 
-function ArtifactPicker({ artifacts, selected, seenRevisions, onSelect }: { artifacts: GuiArtifact[]; selected: string; seenRevisions: Record<string, number>; onSelect: (id: string) => void }) {
+function ArtifactPicker({ artifacts, selected, seenRevisions, onSelect, onSearch }: { onSearch: (query: string) => Promise<string[]>; artifacts: GuiArtifactEntry[]; selected: string; seenRevisions: Record<string, number>; onSelect: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -32,13 +35,29 @@ function ArtifactPicker({ artifacts, selected, seenRevisions, onSelect }: { arti
   const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const listId = useId();
-  const searchable = useMemo(() => artifacts.map(a => {
-    const content = a.kind === 'html' ? a.html.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ') : a.kind === 'table' ? a.columns.join(' ') + ' ' + a.rows.flat().join(' ') : a.kind === 'metric' ? a.value + ' ' + a.description : a.path;
-    return { artifact: a, text: normalizeSearch(`${a.title} ${content}`) };
-  }), [artifacts]);
+  const searchable = useMemo(() => artifacts.map(artifact => ({ artifact, text: 'deferred' in artifact ? normalizeSearch(artifact.title) : artifactSearchText(artifact) })), [artifacts]);
+  const [matches, setMatches] = useState<{ query: string; ids: string[] } | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  const [selectQuery, setSelectQuery] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || !query.trim() || !artifacts.some(artifact => 'deferred' in artifact)) { setSearching(false); return; }
+    let current = true; setSearching(true); setSearchError(false);
+    const timer = setTimeout(() => {
+      void onSearch(query).then(ids => { if (current) setMatches({ query, ids }); }, () => { if (current) setSearchError(true); }).finally(() => { if (current) setSearching(false); });
+    }, 150);
+    return () => { current = false; clearTimeout(timer); void onSearch('').catch(() => {}); };
+  }, [open, query, artifacts, onSearch]);
   const tokens = normalizeSearch(query).trim().split(/\s+/).filter(Boolean);
-  const filtered = searchable.filter(item => tokens.every(token => item.text.includes(token))).map(item => item.artifact);
-  const close = () => { setOpen(false); setQuery(''); setActive(0); };
+  const remoteMatches = new Set(matches?.query === query ? matches.ids : []);
+  const filtered = searchable.filter(item => tokens.every(token => item.text.includes(token)) || remoteMatches.has(item.artifact.id)).map(item => item.artifact);
+  useEffect(() => {
+    if (selectQuery === null || selectQuery !== query || matches?.query !== query || searching) return;
+    setSelectQuery(null);
+    const chosen = filtered[active];
+    if (chosen) { onSelect(chosen.id); setOpen(false); setQuery(''); setActive(0); trigger.current?.focus(); }
+  }, [selectQuery, query, matches, searching, filtered, active, onSelect]);
+  const close = () => { setSelectQuery(null); setOpen(false); setQuery(''); setActive(0); };
   const choose = (id: string) => { onSelect(id); close(); trigger.current?.focus(); };
   useEffect(() => { if (open) search.current?.focus(); }, [open]);
   useEffect(() => {
@@ -52,27 +71,41 @@ function ArtifactPicker({ artifacts, selected, seenRevisions, onSelect }: { arti
   return <div className="aya-artifact-picker" ref={root} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) close(); }} onKeyDown={e => {
     if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); close(); trigger.current?.focus(); }
     if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && open) { e.preventDefault(); setActive(old => Math.max(0, Math.min(filtered.length - 1, old + (e.key === 'ArrowDown' ? 1 : -1)))); }
-    if (e.key === 'Enter' && open && e.target === search.current) { e.preventDefault(); if (filtered[active]) choose(filtered[active].id); }
+    if (e.key === 'Enter' && open && e.target === search.current) { e.preventDefault(); if (query.trim() && artifacts.some(artifact => 'deferred' in artifact) && (searching || matches?.query !== query)) setSelectQuery(query); else if (filtered[active]) choose(filtered[active].id); }
   }}>
     <button ref={trigger} type="button" role="combobox" aria-label="Selected artifact" aria-expanded={open} aria-haspopup="listbox" aria-controls={open ? listId : undefined} onClick={() => { if (open) close(); else { setActive(0); setOpen(true); } }} onKeyDown={e => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); setOpen(true); } }}><span>{artifacts.find(a => a.id === selected)?.title || 'Choose an artifact'}</span><span aria-hidden="true">⌄</span></button>
     {open && <div className="aya-artifact-picker-menu">
-      <div className="aya-artifact-search"><input ref={search} type="search" aria-controls={listId} aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined} aria-label="Search artifacts" placeholder="Search artifacts…" value={query} onChange={e => { setQuery(e.target.value); setActive(0); }} />{query && <button type="button" aria-label="Clear artifact search" onClick={() => { setQuery(''); setActive(0); search.current?.focus(); }}>×</button>}</div>
+      <div className="aya-artifact-search"><input ref={search} type="search" aria-controls={listId} aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined} aria-label="Search artifacts" placeholder="Search artifacts…" value={query} onChange={e => { setSelectQuery(null); setQuery(e.target.value); setActive(0); }} />{query && <button type="button" aria-label="Clear artifact search" onClick={() => { setQuery(''); setActive(0); search.current?.focus(); }}>×</button>}</div>
       <div id={listId} role="listbox" aria-label="Artifacts" className="aya-artifact-options">{filtered.map((a, i) => {
         const unread = (seenRevisions[a.id] || 0) < (a.revision || 1);
         return <button type="button" role="option" id={`${listId}-${i}`} aria-selected={a.id === selected} data-active={i === active} className={unread ? 'aya-artifact-unread' : ''} key={a.id} onMouseEnter={() => setActive(i)} onClick={() => choose(a.id)}><span>{a.title}</span>{unread && <small>New</small>}{a.id === selected && <span aria-hidden="true">✓</span>}</button>;
       })}</div>
-      {!filtered.length && <div className="aya-artifact-no-matches">No matching artifacts</div>}
+      {searching && <div role="status">Searching artifact contents…</div>}
+      {searchError && <div role="alert">Could not search artifact contents. Change the search to retry.</div>}
+      {!filtered.length && !searching && <div className="aya-artifact-no-matches">No matching artifacts</div>}
     </div>}
   </div>;
 }
-function ArtifactContent({ artifact, versions, version, onVersion, visible, onViewed, onPreview, onSuggest, onSave, onOpen, onBrowser }: { artifact: GuiArtifact; versions: GuiArtifact[]; version: string; onVersion: (value: string) => void; visible: boolean; onViewed: (id: string, revision: number) => void; onPreview: (id: string, revision?: number) => Promise<unknown>; onSuggest: (text: string) => void; onSave: (id: string, revision?: number) => Promise<unknown>; onOpen: (id: string, revision?: number) => Promise<unknown>; onBrowser: (id: string, revision?: number) => Promise<unknown> }) {
+function ArtifactContent({ artifact, versions, version, onVersion, visible, onViewed, onPreview, onLoad, onSuggest, onSave, onOpen, onBrowser }: { artifact: GuiArtifactEntry; onLoad: (id: string, revision?: number) => Promise<GuiArtifact>; versions: GuiArtifactEntry[]; version: string; onVersion: (value: string) => void; visible: boolean; onViewed: (id: string, revision: number) => void; onPreview: (id: string, revision?: number) => Promise<unknown>; onSuggest: (text: string) => void; onSave: (id: string, revision?: number) => Promise<unknown>; onOpen: (id: string, revision?: number) => Promise<unknown>; onBrowser: (id: string, revision?: number) => Promise<unknown> }) {
   const [source, setSource] = useState(false);
   const [filter, setFilter] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
-  const a = version === 'latest' ? artifact : versions.find(v => String(v.revision) === version) || artifact;
-  useEffect(() => { if (visible) onViewed(a.id, a.revision || 1); }, [visible, a.id, a.revision, onViewed]);
+  const entry = version === 'latest' ? artifact : versions.find(v => String(v.revision) === version) || artifact;
+  const contentKey = `${entry.id}:${entry.revision || 1}:${'deferred' in entry ? entry.$ayaArtifact : 'live'}`;
+  const [content, setContent] = useState<{ key: string; artifact: GuiArtifact } | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const a = 'deferred' in entry ? content?.key === contentKey ? content.artifact : null : entry;
+  useEffect(() => {
+    if (!('deferred' in entry) || !visible) return;
+    let current = true; setLoadError('');
+    void onLoad(entry.id, entry.revision).then(artifact => { if (current) setContent({ key: contentKey, artifact }); }, error => { if (current) setLoadError(error instanceof Error ? error.message : String(error)); });
+    return () => { current = false; };
+  }, [entry, contentKey, visible, loadAttempt, onLoad]);
+  useEffect(() => { if (visible && a) onViewed(a.id, a.revision || 1); }, [visible, a, onViewed]);
   useEffect(() => { if (!saveStatus) return; const timer = setTimeout(() => setSaveStatus(''), 2500); return () => clearTimeout(timer); }, [saveStatus]);
-  const save = async () => { try { if (await onSave(a.id, a.revision)) setSaveStatus('Saved'); } catch { setSaveStatus('Could not save. Try again.'); } };
+  const save = async () => { if (!a) return; try { if (await onSave(a.id, a.revision)) setSaveStatus('Saved'); } catch { setSaveStatus('Could not save. Try again.'); } };
+  if (!a) return <div className="aya-artifact-content"><h3>{entry.title}</h3>{loadError ? <div role="alert">{loadError}<button onClick={() => setLoadAttempt(attempt => attempt + 1)}>Retry loading artifact</button></div> : <p role="status">Loading artifact…</p>}</div>;
   return <div className="aya-artifact-content">
     <div className="aya-artifact-caption"><div><small>{a.kind === 'html' ? 'INTERACTIVE WIDGET' : a.kind === 'image' ? 'GRAPHIC' : a.kind.toUpperCase()}</small><h3>{a.title}</h3></div><span className="aya-artifact-revision" key={artifact.revision}>v{a.revision || 1}</span></div>
     <div className="aya-artifact-toolbar">

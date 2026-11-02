@@ -1,4 +1,4 @@
-import type { GuiArtifact } from '../shared/codex-gui';
+import type { GuiArtifactEntry } from '../shared/codex-gui';
 import type { GuiAgentKind, GuiSessionInstance } from './codex-gui-session';
 import type { ConversationSnapshot } from './gui-conversation-store';
 export interface GuiBinding { cwd: string; configDir?: string; agent?: GuiAgentKind }
@@ -9,14 +9,20 @@ export function matchesGuiBinding(snapshot: ConversationSnapshot | undefined | n
 /** Owns all memory retained by a panel. Lifecycle actions are ordered so a late
  * save/close cannot race the next load or connection for that panel. */
 export class GuiPanelState {
-  readonly artifacts = new Map<string, Map<string, GuiArtifact>>();
-  readonly artifactVersions = new Map<string, Map<string, GuiArtifact[]>>();
-  readonly sessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind }>();
+  readonly artifacts = new Map<string, Map<string, GuiArtifactEntry>>();
+  readonly artifactVersions = new Map<string, Map<string, GuiArtifactEntry[]>>();
+  readonly sessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind; model?: string }>();
   readonly snapshots = new Map<string, ConversationSnapshot>();
   readonly attachments = new Map<string, Map<string, GuiAttachment>>();
   readonly closing = new Set<string>();
   private pending = new Map<string, Promise<unknown>>();
   constructor(private save: (id: string, snapshot: ConversationSnapshot) => Promise<void>, private clearDocuments: (key: string) => void) {}
+  artifact(key: string, id: string, revision?: number): GuiArtifactEntry | undefined {
+    const latest = this.artifacts.get(key)?.get(id);
+    if (revision === undefined) return latest;
+    return this.artifactVersions.get(key)?.get(id)?.find(artifact => (artifact.revision || 1) === revision)
+      || (latest && (latest.revision || 1) === revision ? latest : undefined);
+  }
   run<T>(key: string, action: () => Promise<T>): Promise<T> {
     const task = (this.pending.get(key) || Promise.resolve()).catch(() => {}).then(action);
     this.pending.set(key, task);

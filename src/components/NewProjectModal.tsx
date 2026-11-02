@@ -1,3 +1,4 @@
+import { useModalFocus } from './useModalFocus';
 import { useEffect, useRef, useState } from "react";
 import type {
   RemoteDirectoryListing,
@@ -107,26 +108,14 @@ export function NewProjectModal({
     index: number;
     applied: string;
   } | null>(null);
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onCancel, { blocked: submitting });
 
   useEffect(() => {
     const input = directoryRef.current;
     input?.focus();
     input?.setSelectionRange(input.value.length, input.value.length);
   }, [remoteVisible]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        e.preventDefault();
-        e.stopPropagation();
-        onCancelRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   const setDirectoryAndMaybeName = (next: string) => {
     setDirectory(next);
@@ -330,7 +319,7 @@ export function NewProjectModal({
         submitting ? undefined : (e) => closeFromBackdropClick(e, onCancel)
       }
     >
-      <div className="aya-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={title} className="aya-modal" onClick={(e) => e.stopPropagation()}>
         <div className="aya-modal-title">{title}</div>
         {hint && <div className="aya-modal-hint">{hint}</div>}
         {pathHint && (

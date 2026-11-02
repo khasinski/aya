@@ -98,7 +98,7 @@ test("network discovery confirms valid200, marks401/403 unconfirmed, ignores mal
   const base = `http://127.0.0.1:${http.address().port}`;
   for (const next of ["200", "401", "403", "malformed", "redirect", "large", "timeout"]) {
     mode = next;
-    const result = await discoverApiEndpoints("local", { probe: (url, token, options) => +new URL(url).port === 8080 ? probeApi(base, token, { ...options, timeoutMs: 50 }) : Promise.resolve({ up: false, models: null, error: "API not answering" }) });
+    const result = await discoverApiEndpoints("local", { probe: (url, token, options) => +new URL(url).port === 8080 ? probeApi(base, token, { ...options, timeoutMs: next === "timeout" ? 50 : 1000 }) : Promise.resolve({ up: false, models: null, error: "API not answering" }) });
     assert.deepEqual(result.candidates, next === "200" ? [{ baseUrl: "http://127.0.0.1:8080/v1", kind: "confirmed" }] : ["401", "403"].includes(next) ? [{ baseUrl: "http://127.0.0.1:8080/v1", kind: "auth-required" }] : []);
     assert.ok(!JSON.stringify(result).includes("private body"));
   }

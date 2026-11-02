@@ -70,6 +70,7 @@ export interface AyaWindowsDeps {
   openExternalUrl: (url: string) => Promise<void>;
   claimBootWindow: (windowId: number) => void;
   releaseWindowSlices: (windowId: number) => Promise<void>;
+  onRendererGone?: (win: BrowserWindow, details: Electron.RenderProcessGoneDetails) => Promise<void>;
   onWindowClosed?: (webContentsId: number) => void;
   quitting: () => boolean;
   loadMacOsWindowHack?: () => { apply(handle: Buffer): void };
@@ -246,6 +247,12 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
       mainWindow = win;
     });
     ptyHost.attachWebContents(windowWebContents);
+    let recoveryDialogOpen = false;
+    windowWebContents.on('render-process-gone', (_event, details) => {
+      if (details.reason === 'clean-exit' || recoveryDialogOpen || !deps.onRendererGone) return;
+      recoveryDialogOpen = true;
+      void deps.onRendererGone(win, details).catch(error => console.error('Renderer recovery failed', error)).finally(() => { recoveryDialogOpen = false; });
+    });
 
     // Watch ~/.aya/ for edits to snippets/presets/themes made outside the app
     // and reload that slice in the renderer. Stopped when the window closes.

@@ -114,3 +114,23 @@ test('collection lets an active reader finish even after its snapshot was replac
   assert.equal((await reading).view.artifacts[0].html, 'reading');
   assert.deepEqual(await cleaning, { removed: 1, aborted: false });
 });
+
+test('lazy conversation loads and saves only metadata; one selected revision hydrates with checksum verification', async t => {
+  const artifacts = Array.from({ length: 20 }, (_, i) => ({ id: `widget-${i}`, title: `Widget ${i}`, kind: 'html', revision: 1, html: `<h1>${i}</h1>` + 'x'.repeat(256 * 1024) }));
+  await store.saveConversation('lazy-panel', { ...binding, view: { artifacts, artifactHistory: { 'widget-0': [artifacts[0]] } } });
+  const open = t.mock.method(fs, 'open');
+  const lazy = await store.loadConversation('lazy-panel', { lazyArtifacts: true });
+  assert.equal(lazy.view.artifacts.length, 20);
+  assert.equal(lazy.view.artifacts[0].deferred, true);
+  assert.equal(lazy.view.artifacts[0].html, undefined);
+  assert.equal(open.mock.calls.filter(call => call.arguments[0].includes(path.sep + 'assets' + path.sep)).length, 0);
+  await store.saveConversation('lazy-panel', lazy);
+  assert.equal((await fs.readdir(path.join(directory, 'assets'))).length, 20);
+  assert.deepEqual(await store.hydrateConversationArtifact(lazy.view.artifacts[0]), artifacts[0]);
+  const broken = lazy.view.artifacts[1];
+  await fs.writeFile(path.join(directory, 'assets', broken.$ayaArtifact + '.json'), '{}');
+  assert.equal((await store.loadConversation('lazy-panel', { lazyArtifacts: true })).view.artifacts.length, 20);
+  await assert.rejects(store.hydrateConversationArtifact(broken), /damaged/);
+  assert.deepEqual(await store.hydrateConversationArtifact(lazy.view.artifacts[0]), artifacts[0]);
+  await assert.rejects(store.hydrateConversationArtifact({ ...broken, $ayaArtifact: '../outside' }), /Invalid/);
+});

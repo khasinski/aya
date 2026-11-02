@@ -1,3 +1,4 @@
+import { GuiProtocolWriter } from './gui-protocol-writer';
 import { GuiJsonLines } from './gui-json-lines';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat, readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -69,6 +70,7 @@ async function encodeImageAttachment(file: string): Promise<{ data: string; mime
 
 abstract class BaseManagedGuiSession implements GuiSessionInstance {
   protected child: ChildProcessWithoutNullStreams | null = null;
+  protected writer: GuiProtocolWriter | null = null;
   protected requests = new Map<
     string | number,
     {
@@ -97,7 +99,7 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
     for (const progress of progresses) this.progresses.set(progress.id, progress);
   }
 
-  restoreArtifacts(artifacts: GuiArtifact[]) {
+  restoreArtifacts(artifacts: Pick<GuiArtifact, 'id' | 'revision'>[]) {
     for (const artifact of artifacts) {
       this.artifactIds.add(artifact.id);
       this.artifactRevisions.set(artifact.id, artifact.revision || 1);
@@ -237,6 +239,7 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
 
   close() {
     this.closing = true;
+    this.writer?.close(); this.writer = null;
     const child = this.child;
     this.child = null;
     this.failSession('Session closed');
@@ -387,7 +390,7 @@ export class PiGuiSession extends BaseManagedGuiSession {
 
   private write(value: unknown) {
     if (!this.child || this.child.stdin.destroyed) throw Error('Pi is disconnected');
-    this.child.stdin.write(JSON.stringify(value) + '\n');
+    if (!this.writer) throw Error(`${this.agentLabel} is disconnected`); this.writer.write(value);
   }
 
   private rpc(type: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -395,7 +398,7 @@ export class PiGuiSession extends BaseManagedGuiSession {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(Error(`${type} timed out`));
+        reject(Error(`${type} response timed out; the agent may still be working`));
       }, 60000);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
@@ -410,6 +413,7 @@ export class PiGuiSession extends BaseManagedGuiSession {
   }
 
   protected failSession(message: string) {
+    this.writer?.close(); this.writer = null;
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(Error(message));
@@ -452,6 +456,7 @@ export class PiGuiSession extends BaseManagedGuiSession {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child.stdin.on('error', () => {});
+    this.writer = new GuiProtocolWriter(this.child.stdin, this.agentLabel, message => { this.failSession(message); this.close(); });
     this.child.stderr.on('data', (data) => {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
@@ -844,7 +849,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
   private write(value: unknown) {
     if (!this.child || this.child.stdin.destroyed) throw Error('Claude is disconnected');
-    this.child.stdin.write(JSON.stringify(value) + '\n');
+    if (!this.writer) throw Error(`${this.agentLabel} is disconnected`); this.writer.write(value);
   }
 
   private controlRequest(
@@ -855,7 +860,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingControl.delete(requestId);
-        reject(Error(`${subtype} timed out`));
+        reject(Error(`${subtype} response timed out; the agent may still be working`));
       }, 60000);
       timer.unref();
       this.pendingControl.set(requestId, { resolve, reject, timer });
@@ -874,6 +879,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   }
 
   protected failSession(message: string) {
+    this.writer?.close(); this.writer = null;
     for (const entry of this.pendingControl.values()) {
       clearTimeout(entry.timer);
       entry.reject(Error(message));
@@ -912,6 +918,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child.stdin.on('error', () => {});
+    this.writer = new GuiProtocolWriter(this.child.stdin, this.agentLabel, message => { this.failSession(message); this.close(); });
     this.child.stderr.on('data', (data) => {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
@@ -1392,10 +1399,11 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
 
   private write(value: unknown) {
     if (!this.child || this.child.stdin.destroyed) throw Error('Antigravity is disconnected');
-    this.child.stdin.write(JSON.stringify(value) + '\n');
+    if (!this.writer) throw Error(`${this.agentLabel} is disconnected`); this.writer.write(value);
   }
 
   protected failSession(message: string) {
+    this.writer?.close(); this.writer = null;
     if (this.initWaiter) {
       clearTimeout(this.initWaiter.timer);
       this.initWaiter.reject(Error(message));
@@ -1431,6 +1439,7 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child.stdin.on('error', () => {});
+    this.writer = new GuiProtocolWriter(this.child.stdin, this.agentLabel, message => { this.failSession(message); this.close(); });
     this.child.stderr.on('data', (data) => {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });

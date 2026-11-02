@@ -6,6 +6,7 @@ import { writeFileAtomic } from './atomic-write';
 import { readStoredJson, readStoredText } from './stored-json';
 import { LatestSnapshotWriter } from './latest-snapshot-writer';
 import { mapConcurrent } from './bounded-map';
+import type { DeferredGuiArtifact, GuiArtifact } from '../shared/codex-gui';
 export interface ConversationSnapshot { cwd: string; configDir?: string; agent?: string; threadId?: string; view?: Record<string, unknown> }
 const writes = new Map<string, Promise<void>>();
 const writers = new Map<string, LatestSnapshotWriter<ConversationSnapshot>>();
@@ -35,6 +36,12 @@ const assetWrites = new Map<string, Promise<void>>();
 const storedArtifacts = new WeakMap<object, ArtifactReference>();
 const assetFile = (hash: string) => path.join(AYA_HOME, 'conversations', 'assets', hash + '.json');
 async function storeArtifact(artifact: unknown): Promise<ArtifactReference> {
+  if (artifact && typeof artifact === 'object' && 'deferred' in artifact && artifact.deferred === true) {
+    const reference = deferredArtifact(artifact);
+    await stat(assetFile(reference.$ayaArtifact));
+    const { deferred: _deferred, ...stored } = reference;
+    return stored;
+  }
   if (artifact && typeof artifact === 'object') {
     const stored = storedArtifacts.get(artifact);
     if (stored) {
@@ -67,6 +74,19 @@ async function loadArtifact(reference: unknown): Promise<unknown> {
   if (createHash('sha256').update(data).digest('hex') !== hash) throw Error('Stored artifact is damaged');
   return JSON.parse(data);
 }
+function deferredArtifact(value: unknown): DeferredGuiArtifact {
+  const ref = value as Partial<DeferredGuiArtifact> | null;
+  if (!ref || typeof ref.$ayaArtifact !== 'string' || !/^[a-f0-9]{64}$/.test(ref.$ayaArtifact) || typeof ref.id !== 'string' || typeof ref.title !== 'string' || !['html', 'image', 'table', 'metric'].includes(ref.kind || '')) throw Error('Invalid stored artifact reference');
+  return { id: ref.id, title: ref.title, kind: ref.kind!, ...(ref.revision !== undefined ? { revision: ref.revision } : {}), $ayaArtifact: ref.$ayaArtifact, deferred: true };
+}
+export async function hydrateConversationArtifact(reference: DeferredGuiArtifact): Promise<GuiArtifact> {
+  return withStorageAccess(async () => {
+    const ref = deferredArtifact(reference);
+    const artifact = await loadArtifact(ref) as GuiArtifact;
+    if (artifact.id !== ref.id || artifact.kind !== ref.kind || artifact.title !== ref.title || (artifact.revision || 1) !== (ref.revision || 1)) throw Error('Stored artifact metadata is damaged');
+    return artifact;
+  });
+}
 async function mapArtifacts(view: Record<string, unknown> | undefined, map: (value: unknown) => Promise<unknown>) {
   if (!view) return view;
   const next = { ...view };
@@ -82,7 +102,7 @@ function validateArtifactLayout(view: Record<string, unknown> | undefined) {
   if (view.artifacts !== undefined && !Array.isArray(view.artifacts)) throw Error('Invalid artifact list');
   if (view.artifactHistory !== undefined && (!view.artifactHistory || typeof view.artifactHistory !== 'object' || Array.isArray(view.artifactHistory) || Object.values(view.artifactHistory).some(versions => !Array.isArray(versions)))) throw Error('Invalid artifact history');
 }
-export async function loadConversation(id: string): Promise<ConversationSnapshot | null> {
+export async function loadConversation(id: string, options: { lazyArtifacts?: boolean } = {}): Promise<ConversationSnapshot | null> {
   await writes.get(id);
   return withStorageAccess(async () => {
   try {
@@ -94,6 +114,7 @@ export async function loadConversation(id: string): Promise<ConversationSnapshot
     if (storageVersion === 2) {
       const assets = new Map<string, Promise<unknown>>();
       value.view = await mapArtifacts(value.view, reference => {
+        if (options.lazyArtifacts) return Promise.resolve(deferredArtifact(reference));
         const hash = (reference as Partial<ArtifactReference> | null)?.$ayaArtifact;
         if (typeof hash !== 'string') return loadArtifact(reference);
         let loaded = assets.get(hash);
@@ -229,9 +250,9 @@ export function collectUnusedConversationAssets(now = Date.now()): Promise<{ rem
   void task.finally(() => { if (collection === task) collection = null; }).catch(() => {});
   return task;
 }
-export async function readArchivedConversation(id: string, binding: ConversationSnapshot) {
+export async function readArchivedConversation(id: string, binding: ConversationSnapshot, options: { lazyArtifacts?: boolean } = {}) {
   if (!/^[a-f0-9]{64}$/.test(id)) throw Error('Invalid conversation');
-  const saved = await loadConversation('history:' + id);
+  const saved = await loadConversation('history:' + id, options);
   if (!saved || saved.cwd !== binding.cwd || saved.configDir !== binding.configDir || (saved.agent || 'codex') !== (binding.agent || 'codex')) throw Error('Conversation does not belong to this workspace and account');
   return saved;
 }

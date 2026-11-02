@@ -242,3 +242,8 @@
 .aya-split-dragging iframe{pointer-events:none!important}
 
 .aya-gui-activity-list{max-height:min(50dvh,420px);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}.aya-gui-activity-list:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* Keep history searchable/selectable in the DOM while skipping off-screen
+   layout and paint. Remember measured heights to preserve scroll anchoring. */
+.aya-gui-message-content>article{content-visibility:auto;contain-intrinsic-size:auto 180px}
+.aya-gui-message-content>article:nth-last-of-type(-n+3){content-visibility:visible;contain-intrinsic-size:none}

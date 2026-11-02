@@ -41,6 +41,6 @@ test('usage shows local token trends, model filters and separate account limits'
     await window.screenshot({ path: 'test-results/usage-dashboard.png' });
     await usage.getByRole('button', { name: 'Close usage' }).press('Escape');
     await expect(usage).toHaveCount(0);
-    await expect(window.locator('.aya-pane:visible .xterm-helper-textarea')).toBeFocused();
+    await expect(window.getByRole('button', { name: 'Open usage', exact: true })).toBeFocused();
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });

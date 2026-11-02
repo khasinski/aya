@@ -1,3 +1,4 @@
+import { useModalFocus } from './useModalFocus';
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { DEFAULT_CADENCE_MINUTES } from "../team-edit";
 import { paneRoles } from "../team-view";
@@ -173,20 +174,8 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
     setSavedTeamReturn(null);
   }, [editing, savedTeamReturn, teams, teamsGeneration, teamListState.slug, project.slug, project.tabs, terminals]);
 
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        e.preventDefault();
-        e.stopPropagation();
-        onCloseRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, onClose);
 
   return (
     <div
@@ -194,7 +183,7 @@ export function TeamsModal({ project, intelligence, waiting, terminals = {}, onC
       onMouseDown={markBackdropMouseDown}
       onClick={(e) => closeFromBackdropClick(e, onClose)}
     >
-      <section
+      <section ref={dialogRef}
         className="aya-modal aya-teams-modal"
         role="dialog"
         aria-modal="true"

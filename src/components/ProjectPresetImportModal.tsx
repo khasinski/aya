@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useModalFocus } from './useModalFocus';
+import { useRef } from "react";
 import type { Preset, ProjectConfig } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
@@ -15,19 +16,8 @@ export function ProjectPresetImportModal({
   onImport,
   onIgnore,
 }: Props) {
-  const onIgnoreRef = useRef(onIgnore);
-  onIgnoreRef.current = onIgnore;
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        e.preventDefault();
-        e.stopPropagation();
-        onIgnoreRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, onIgnore);
 
   return (
     <div
@@ -35,7 +25,7 @@ export function ProjectPresetImportModal({
       onMouseDown={markBackdropMouseDown}
       onClick={(e) => closeFromBackdropClick(e, onIgnore)}
     >
-      <section
+      <section ref={dialogRef}
         className="aya-modal aya-project-import-modal"
         role="dialog"
         aria-modal="true"

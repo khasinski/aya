@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useModalFocus } from './useModalFocus';
+import { useRef } from "react";
 import { attentionRows, type AttentionRow } from "../attention";
 import type { ProjectConfig, ProjectEvent, TerminalState } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
@@ -52,21 +53,11 @@ export function AttentionCenter({
     { id: "idle", title: "Idle", rows: groupedRows.idle },
   ];
 
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        e.preventDefault();
-        e.stopPropagation();
-        onCloseRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  const dialogRef = useRef<HTMLElement>(null);
+  const leaveForSelection = useModalFocus(dialogRef, onClose);
 
   const focus = (row: AttentionRow) => {
+    leaveForSelection();
     onSelectTerminal(row.project.slug, row.terminal.id);
     onClose();
   };
@@ -78,7 +69,7 @@ export function AttentionCenter({
       onMouseDown={markBackdropMouseDown}
       onClick={(e) => closeFromBackdropClick(e, onClose)}
     >
-      <section
+      <section ref={dialogRef}
         className="aya-attention-modal"
         role="dialog"
         aria-modal="true"
@@ -160,6 +151,7 @@ export function AttentionCenter({
                       type="button"
                       onClick={() => {
                         if (event.terminalId) {
+                          leaveForSelection();
                           onSelectTerminal(event.projectSlug, event.terminalId);
                           onClose();
                         }

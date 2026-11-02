@@ -1,10 +1,13 @@
+import { guiRendererRecoveryInProgress } from '../gui-renderer-recovery';
+import { conversationSaveDelay } from '../conversation-save-delay';
+import { useModalFocus } from './useModalFocus';
 import { appendMessageDeltas, createTextDeltaBuffer, scheduleConversationFrame } from '../conversation-deltas';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
-import type { GuiArtifact, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
+import type { GuiArtifact, GuiArtifactEntry, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
 import type { Preset, TerminalState } from '../types';
 import './conversation.css';
 import { ConversationMarkdown } from './ConversationMarkdown';
@@ -90,11 +93,11 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const agentBadge = guiAgent === 'pi' ? 'PI' : guiAgent === 'claude' ? 'CLAUDE' : guiAgent === 'antigravity' ? 'ANTIGRAVITY' : 'CODEX';
   const invoke = (action: string, value?: unknown) => { if (!api) return Promise.reject(Error('Conversation GUI is available in the desktop app only.')); return api.invoke(terminal.id, action, value); };
   const [messages, setMessages] = useState<Message[]>([]);
-  const [artifacts, setArtifacts] = useState<GuiArtifact[]>([]);
+  const [artifacts, setArtifacts] = useState<GuiArtifactEntry[]>([]);
   const [seenArtifactRevisions, setSeenArtifactRevisions] = useState<Record<string, number>>({});
   const markArtifactViewed = useCallback((id: string, revision: number) => setSeenArtifactRevisions(old => (old[id] || 0) >= revision ? old : { ...old, [id]: revision }), []);
   const unreadArtifactCount = artifacts.filter(a => (seenArtifactRevisions[a.id] || 0) < (a.revision || 1)).length;
-  const [artifactHistory, setArtifactHistory] = useState<Record<string, GuiArtifact[]>>({});
+  const [artifactHistory, setArtifactHistory] = useState<Record<string, GuiArtifactEntry[]>>({});
   const [suggestion, setSuggestion] = useState('');
   const draftRevision = useRef(0);
   const [attachments, setAttachmentValues] = useState<Attachment[]>([]);
@@ -116,6 +119,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const lastSnapshotSave = useRef(Date.now());
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushTextDeltas = useRef<() => void>(() => {});
+  const eventSequence = useRef(0);
+  const receivedEventSequence = useRef(0);
   const composer = useRef<HTMLTextAreaElement>(null);
   const artifactButton = useRef<HTMLButtonElement>(null);
   const [drawer, setDrawer] = useState(false);
@@ -149,6 +154,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const invalidateHistoryRequest = useCallback(() => { historyRequest.current++; }, []);
   const historyStartView = useRef<Record<string, unknown> | null>(null);
   const historyOpen = history !== null;
+  const historyDialog = useRef<HTMLDivElement>(null);
+  useModalFocus(historyDialog, () => setHistory(null), { enabled: historyOpen });
   const loadHistory = useCallback(async (query: string, offset: number) => {
     if (!api) return;
     const request = ++historyRequest.current;
@@ -202,7 +209,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       return;
     }
     lastGoal.current = next; setGoalDetails(next);
-    const title = !previous ? 'Goal set' : previous.objective !== objective ? 'Goal updated' : ({ active: 'Goal resumed', paused: 'Goal paused', blocked: 'Goal blocked', complete: 'Goal completed', usageLimited: 'Goal paused · usage limit', budgetLimited: 'Goal paused · token budget' } as Record<string, string>)[status] || `Goal ${status}`;
+    const title = !previous || (previous.status === 'complete' && status === 'active') ? 'Goal set' : previous.objective !== objective ? 'Goal updated' : ({ active: 'Goal resumed', paused: 'Goal paused', blocked: 'Goal blocked', complete: 'Goal completed', usageLimited: 'Goal paused · usage limit', budgetLimited: 'Goal paused · token budget' } as Record<string, string>)[status] || `Goal ${status}`;
     setMessages(old => [...old, { id: crypto.randomUUID(), type: 'goal', title, text: objective, goal: next }]);
   }, []);
   const fail = (e: unknown) => setError(ipcMessage(e));
@@ -237,7 +244,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     const revision = snapshotRevision.current;
     try {
       const result = await invoke('reconnect', { view: pendingSnapshot.current, unsafeMode: preset.unsafeMode === true });
-      setModel(str(obj(result).model)); setReady(true);
+      setModel(str(obj(result).model)); setReady(true); setImportNotice(old => old === 'Interface recovered. Reconnect the agent to continue.' ? '' : old);
       if (revision === snapshotRevision.current) { setSaveStatus('saved'); setSaveError(''); }
       void invoke('models').then(result => { if (Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(fail);
       composer.current?.focus();
@@ -245,6 +252,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     finally { setConnecting(false); }
   };
   const loadConversationImage = useCallback((path: string) => api ? api.invoke(terminal.id, 'image', path) : Promise.reject(Error('Desktop app required')), [api, terminal.id]);
+  const searchArtifactContents = useCallback((query: string): Promise<string[]> => api ? api.invoke(terminal.id, 'artifact-search', query) as Promise<string[]> : Promise.reject(Error('Desktop app required')), [api, terminal.id]);
+  const loadArtifactContent = useCallback((id: string, revision?: number): Promise<GuiArtifact> => api ? api.invoke(terminal.id, 'artifact-content', { id, revision }) as Promise<GuiArtifact> : Promise.reject(Error('Desktop app required')), [api, terminal.id]);
   const loadArtifactPreview = useCallback((id: string, revision?: number) => api ? api.invoke(terminal.id, 'artifact-preview', { id, revision }) : Promise.reject(Error('Desktop app required')), [api, terminal.id]);
   const availableCommands = guiCommands(guiAgent);
   const capabilities = guiCapabilities(guiAgent);
@@ -253,17 +262,24 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     if (!api) { setError('Conversation GUI requires the Aya desktop app.'); return; }
     let mounted = true; viewMounted.current = true;
     const textDeltas = createTextDeltaBuffer(deltas => {
+      eventSequence.current = receivedEventSequence.current;
       const create = (delta: { id: string; text: string }): Message => ({ ...delta, type: 'assistant' });
       setMessages(old => appendMessageDeltas(old, deltas, create));
       // Teardown can run before React commits another frame. Include buffered
       // text in the final snapshot synchronously as well as in visible state.
       const snapshot = pendingSnapshot.current;
-      if (snapshot && Array.isArray(snapshot.messages)) pendingSnapshot.current = { ...snapshot, messages: appendMessageDeltas(snapshot.messages as Message[], deltas, create) };
+      if (snapshot && Array.isArray(snapshot.messages)) pendingSnapshot.current = { ...snapshot, eventSequence: eventSequence.current, messages: appendMessageDeltas(snapshot.messages as Message[], deltas, create) };
     }, scheduleConversationFrame);
     flushTextDeltas.current = textDeltas.flush;
     const off = api.onEvent(terminal.id, event => {
+      if (event.method === 'aya/sessionEpoch') { textDeltas.flush(); eventSequence.current = 0; receivedEventSequence.current = 0; return; }
       if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') textDeltas.flush();
+      if (event.sequence) { receivedEventSequence.current = Math.max(receivedEventSequence.current, event.sequence); if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') eventSequence.current = receivedEventSequence.current; }
       const p = event.params;
+      if (event.method === 'aya/recovered') {
+        setBusy(p.running === true); setTurnOutcome(old => p.running ? null : old || 'interrupted'); setRequests(old => p.running ? old : []);
+        setImportNotice(p.connected === false ? 'Interface recovered. Reconnect the agent to continue.' : p.truncated ? 'Interface recovered. Some live output could not be retained while the window was unavailable. Saved messages are preserved.' : 'Interface recovered. Your agent connection was preserved.');
+      }
       if (event.method === 'aya/session' && typeof p.model === 'string') setModel(p.model);
       if (event.method === 'aya/progress') {
         const progress = p.progress as unknown as GuiProgress;
@@ -287,7 +303,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
         }
         if (!['agentMessage', 'userMessage', 'reasoning', 'plan'].includes(type)) {
           const label = type === 'commandExecution' ? str(item.command) || 'Running a command' : type === 'fileChange' ? 'Editing files' : type === 'dynamicToolCall' ? (item.tool === 'aya_open_artifact' ? 'Opening an artifact' : 'Preparing an artifact') : type === 'webSearch' ? 'Searching the web' : type === 'mcpToolCall' ? `Using ${str(item.tool) || 'a connected tool'}` : 'Using a tool';
-          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, label, status: event.method === 'item/completed' ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput) || a.output } : a) : [...old.slice(-49), { id: str(item.id), label, status: event.method === 'item/completed' ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput) }]);
+          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, label, status: event.method === 'item/completed' ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000) || a.output } : a) : [...old.slice(-49), { id: str(item.id), label, status: event.method === 'item/completed' ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000) }]);
         }
       }
       if (event.method === 'item/commandExecution/outputDelta') setActivities(old => old.map(a => a.id === p.itemId ? { ...a, output: (a.output + str(p.delta)).slice(-100000) } : a));
@@ -312,11 +328,12 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     void (async () => {
       const saved = obj(await api.invoke(terminal.id, 'load', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent }));
       if (!mounted) return;
+      eventSequence.current = Number(saved.eventSequence || 0); receivedEventSequence.current = eventSequence.current;
       setImportNotice(str(saved.importNotice));
       if (Array.isArray(saved.messages)) { setMessages(saved.messages as Message[]); lastGoal.current = [...saved.messages as Message[]].reverse().find(m => m.type === 'goal')?.goal || null; }
-      if (Array.isArray(saved.artifacts)) setArtifacts(saved.artifacts as GuiArtifact[]);
+      if (Array.isArray(saved.artifacts)) setArtifacts(saved.artifacts as GuiArtifactEntry[]);
       if (saved.seenArtifactRevisions && typeof saved.seenArtifactRevisions === 'object') setSeenArtifactRevisions(saved.seenArtifactRevisions as Record<string, number>);
-      if (saved.artifactHistory) setArtifactHistory(saved.artifactHistory as Record<string, GuiArtifact[]>);
+      if (saved.artifactHistory) setArtifactHistory(saved.artifactHistory as Record<string, GuiArtifactEntry[]>);
       if (typeof saved.prompt === 'string') setPrompt(saved.prompt);
       if (typeof saved.selected === 'string') setSelected(saved.selected);
       if (typeof saved.drawer === 'boolean') setDrawer(saved.drawer);
@@ -325,6 +342,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
         const cut = saved.goal.lastIndexOf(' · ');
         if (saved.goal) { const details = saved.goalDetails as GoalDetails | undefined || { objective: cut >= 0 ? saved.goal.slice(0, cut) : saved.goal, status: cut >= 0 ? saved.goal.slice(cut + 3) : 'active' }; setGoalDetails(details); lastGoal.current = details; }
       }
+      if (Array.isArray(saved.activities)) setActivities(saved.activities.slice(-50).map(value => { const activity = obj(value); return { id: str(activity.id), label: str(activity.label), status: activity.status === 'inProgress' && !saved.recoveryRunning ? 'interrupted' : str(activity.status), output: str(activity.output).slice(-100000) }; }));
       if (Array.isArray(saved.queue)) { setQueue(saved.queue as QueuedMessage[]); setQueueHeld(saved.queue.length > 0); }
       if (Array.isArray(saved.attachments)) setAttachments(saved.attachments as Attachment[]);
       if (typeof saved.selectedModel === 'string') setSelectedModel(saved.selectedModel);
@@ -334,21 +352,21 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       else if (saved.turnOutcome) setTurnOutcome(saved.turnOutcome as 'complete' | 'interrupted' | 'failed');
       setRestored(true);
       const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true });
-      if (mounted) { setReady(true); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
+      if (mounted) { setReady(obj(result).connected !== false); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
     })().catch(e => { if (mounted) fail(e); }).finally(() => { if (mounted) setConnecting(false); });
-    return () => { textDeltas.flush(); mounted = false; viewMounted.current = false; off(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; void api.invoke(terminal.id, 'close', pendingSnapshot.current || undefined).catch(() => {}); };
+    return () => { textDeltas.flush(); mounted = false; viewMounted.current = false; off(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; void api.invoke(terminal.id, guiRendererRecoveryInProgress() ? 'retain-for-recovery' : 'close', pendingSnapshot.current || undefined).catch(() => {}); };
     // A conversation belongs to a panel; editing its preset affects new panels.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
   useLayoutEffect(() => {
     if (!restored || !api) return;
-    pendingSnapshot.current = { importNotice, messages, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan };
+    pendingSnapshot.current = { eventSequence: eventSequence.current, importNotice, messages, activities, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan };
     snapshotRevision.current++;
     setSaveStatus(old => old === 'error' ? old : 'saving');
     if (persistTimer.current) clearTimeout(persistTimer.current);
-    const delay = busy ? Math.max(1000, Math.min(1500, 5000 - (Date.now() - lastSnapshotSave.current))) : 250;
+    const delay = conversationSaveDelay(busy, lastSnapshotSave.current);
     persistTimer.current = setTimeout(() => { persistTimer.current = null; void persistLatest(); }, delay);
-  }, [restored, api, terminal.id, persistLatest, importNotice, messages, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan]);
+  }, [restored, api, terminal.id, persistLatest, importNotice, messages, activities, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan]);
   useEffect(() => {
     const flush = () => { flushTextDeltas.current(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; if (pendingSnapshot.current && api) void api.invoke(terminal.id, 'close', pendingSnapshot.current).catch(() => {}); };
     window.addEventListener('pagehide', flush);
@@ -524,7 +542,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       <button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>
     </header>
     {restored && <div className="aya-gui-save-state" data-state={saveStatus}><span role="status" aria-label="Conversation save status">{saveStatus === 'saved' ? 'Saved locally' : saveStatus === 'error' ? 'Not saved' : 'Saving…'}</span>{saveError && <><span>{saveError}</span><button type="button" disabled={saveStatus === 'saving'} onClick={() => void persistLatest()}>Retry save</button></>}</div>}
-    {history !== null && <div className="aya-session-picker" role="dialog" aria-label="Resume conversation" onKeyDown={e => {
+    {history !== null && <div ref={historyDialog} className="aya-session-picker" role="dialog" aria-modal="true" aria-label="Resume conversation" onKeyDown={e => {
       if (e.key === 'Escape') { e.preventDefault(); setHistory(null); composer.current?.focus(); }
       if (e.key === 'Tab') { const nodes = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input')); const first = nodes[0], last = nodes[nodes.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } }
     }}>
@@ -621,7 +639,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       {models.length > 0 && <><select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select>}</>}
       <span className="aya-gui-compose-spacer" /><small className="aya-gui-enter-hint">Shift+Enter for a new line</small>{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{busy && !prompt.startsWith('/') ? 'Queue ↑' : 'Send ↑'}</button></div>
     </form></main>
-    {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
+    {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>
   </section>;
 }

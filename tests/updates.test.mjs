@@ -1,3 +1,4 @@
+import { waitFor } from './helpers/wait-for.mjs';
 // App-wide updates against a lazy stand-in updater and native UI; recovery files stay in a temporary home.
 
 import { test } from "node:test";
@@ -320,7 +321,7 @@ test("missing Squirrel update-downloaded times out, aborts handover, clears mark
   });
   downloaded(s);
   await s.updates.install();
-  await new Promise((resolve) => setTimeout(resolve, 35));
+  await waitFor(() => s.updates.getUpdateStatus().preparingUpdate === undefined);
   assert.equal(s.updates.getUpdateStatus().phase, "downloaded");
   assert.equal(s.updates.getUpdateStatus().preparingUpdate, undefined);
   assert.match(latest(s).message, /latest DMG.*install it manually.*within 1 second\./);
@@ -382,7 +383,7 @@ test("asynchronous Squirrel error releases the install and presents the DMG fall
   downloaded(s);
   await s.updates.install();
   s.squirrelEvents.emit("error", new Error("Squirrel unavailable at https://user:pass@example.test/update?token=secret"));
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await waitFor(() => s.updates.getUpdateStatus().preparingUpdate === undefined);
   assert.equal(s.updates.getUpdateStatus().phase, "downloaded");
   assert.equal(s.updates.getUpdateStatus().preparingUpdate, undefined);
   assert.match(latest(s).message, /latest DMG.*install it manually/);

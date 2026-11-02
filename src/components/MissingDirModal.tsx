@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useModalFocus } from './useModalFocus';
+import { useRef, useState } from "react";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 interface Props {
@@ -21,22 +22,8 @@ export function MissingDirModal({
 }: Props) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const creatingRef = useRef(creating);
-  creatingRef.current = creating;
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented && !creatingRef.current) {
-        e.preventDefault();
-        e.stopPropagation();
-        onCloseRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onClose, { blocked: creating });
 
   const handleCreate = async () => {
     setCreating(true);
@@ -53,9 +40,9 @@ export function MissingDirModal({
     <div
       className="aya-modal-backdrop"
       onMouseDown={markBackdropMouseDown}
-      onClick={(e) => closeFromBackdropClick(e, onClose)}
+      onClick={(e) => { if (!creating) closeFromBackdropClick(e, onClose); }}
     >
-      <div className="aya-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Directory not found" className="aya-modal" onClick={(e) => e.stopPropagation()}>
         <div className="aya-modal-title">Directory not found</div>
         <div className="aya-modal-hint">
           Project <strong>{projectName}</strong> points at a folder that

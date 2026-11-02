@@ -70,3 +70,16 @@ test('disconnect retires the old agent while preserving drafts, owned artifacts 
   assert.equal(state.attachments.size, 1);
   assert.deepEqual(documents, []);
 });
+
+test('artifact lookup resolves an explicit current revision without history and keeps older revisions distinct', () => {
+  const state = new GuiPanelState(async () => {}, () => {});
+  const latest = { id: 'image', title: 'Latest', kind: 'image', path: 'latest.png', dataUrl: 'new', revision: 2 };
+  const old = { ...latest, title: 'Older', revision: 1, dataUrl: 'old' };
+  state.artifacts.set('panel', new Map([[latest.id, latest]]));
+  assert.equal(state.artifact('panel', latest.id, 2), latest);
+  assert.equal(state.artifact('panel', latest.id, 1), undefined);
+  state.artifactVersions.set('panel', new Map([[latest.id, [old, latest]]]));
+  assert.equal(state.artifact('panel', latest.id, 1), old);
+  assert.equal(state.artifact('panel', latest.id), latest);
+  assert.equal(state.artifact('other-panel', latest.id), undefined);
+});
