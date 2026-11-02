@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Read Claude limits from Claude Code's own status-line `rate_limits` instead of
+  Anthropic's undocumented usage endpoint. No token is read and no request is
+  made. Enabling wraps your existing status line, disabling restores it, and the
+  old endpoint `Stop` hook is replaced at launch.
+
 ## v0.15.4 - 2026-11-02
 
 - Reconnect disconnected conversation GUI sessions without losing drafts, queued

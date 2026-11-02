@@ -1,14 +1,18 @@
-// Optional, user-enabled installer for the account-wide usage chip.
+// Optional, user-enabled installer for the account-wide Claude usage chip.
 //
-// IMPORTANT trust boundary: the Aya PROCESS never reads your auth token and
-// never calls Anthropic. This installer only writes a shell script + a Claude
-// Code "Stop" hook into ~/.claude/settings.json. The token read + the call to
-// the (undocumented, unsupported) usage endpoint happen later, in that separate
-// shell script, run by Claude Code - not in Aya. Aya only ever reads the plain
-// JSON file the script writes (see electron/usage.ts).
+// Claude Code hands every statusLine command a JSON document on stdin, and since
+// 2.1.x it carries `rate_limits.five_hour` / `rate_limits.seven_day`
+// (`used_percentage`, `resets_at`). That is the supported source: no token, no
+// network, no undocumented endpoint. This installer registers a small script as
+// the `statusLine` command in ~/.claude/settings.json. The script writes Aya's
+// plain JSON snapshot (see electron/usage.ts) and then runs the user's previous
+// statusLine command, if any, with the same input, so their status line keeps
+// working. The Aya PROCESS only writes the script and reads the snapshot.
 //
-// Enabling is explicit (a Settings toggle with a full-disclosure dialog) and
-// fully reversible - uninstall removes the hook entry and the script.
+// Enabling is explicit (a Settings toggle with a disclosure dialog) and fully
+// reversible - uninstall restores the previous statusLine and removes the script.
+// Earlier builds used a Stop hook that called an undocumented endpoint; install
+// and the launch-time refresh remove that hook.
 
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
@@ -41,10 +45,8 @@ const CLAUDE_SETTINGS_FILE =
 // by absolute path from the hook entry.
 export const HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-usage-hook.sh");
 
-// Generated-script tuning: skip a fetch if the file was written within the
-// throttle window, and bound the network call so a hung endpoint can't stall.
-export const HOOK_THROTTLE_SECONDS = 300;
-const HOOK_FETCH_TIMEOUT_SECONDS = 10;
+// A status line redraws many times a turn; rewrite the snapshot at most this often.
+export const HOOK_THROTTLE_SECONDS = 30;
 
 export interface UsageHookStatus {
   installed: boolean;
@@ -54,7 +56,8 @@ export interface UsageHookStatus {
   settingsPath: string;
 }
 
-function hookCommand(configDir: string): string {
+/** The Stop-hook command earlier builds registered; only ever removed now. */
+function legacyHookCommand(configDir: string): string {
   return `AYA_CLAUDE_CONFIG_DIR=${shellQuote(expandUserPath(configDir))} ${shellQuote(HOOK_SCRIPT_FILE)}`;
 }
 
@@ -100,19 +103,6 @@ export function hasStopHook(settings: unknown, command: string): boolean {
   );
 }
 
-/** Return a NEW settings object with our Stop hook added (idempotent), leaving
- *  every other key - and any other Stop hooks - untouched. */
-export function withStopHook(
-  settings: Record<string, unknown>,
-  command: string,
-): Record<string, unknown> {
-  if (hasStopHook(settings, command)) return settings;
-  const hooks = { ...((settings.hooks as Record<string, unknown>) ?? {}) };
-  const stop = Array.isArray(hooks.Stop) ? [...hooks.Stop] : [];
-  stop.push({ hooks: [{ type: "command", command }] });
-  return { ...settings, hooks: { ...hooks, Stop: stop } };
-}
-
 /** A NEW settings object without our Stop hook; emptied Stop / hooks containers go, other people's hooks
  *  stay. */
 export function withoutStopHook(
@@ -135,78 +125,137 @@ export function withoutStopHook(
   return next;
 }
 
-// ---- the generated fetch script ---------------------------------------------
+// ---- statusLine registration (pure, unit-tested) ---------------------------
+
+type StatusLine = { type?: string; command?: string; padding?: number };
+
+function statusLineOf(settings: unknown): StatusLine | undefined {
+  if (typeof settings !== "object" || settings === null) return undefined;
+  const sl = (settings as Record<string, unknown>).statusLine;
+  return typeof sl === "object" && sl !== null && !Array.isArray(sl) ? (sl as StatusLine) : undefined;
+}
+
+/** True if this statusLine is the one Aya registered. */
+export function isOurStatusLine(sl: unknown): boolean {
+  const c = (sl as StatusLine | undefined)?.command;
+  return typeof c === "string" && (c.includes(shellQuote(HOOK_SCRIPT_FILE)) || c.includes(HOOK_SCRIPT_FILE));
+}
+
+/** The user's statusLine command that our command wraps, if any. */
+export function wrappedStatusLineCommand(sl: unknown): string | undefined {
+  const c = (sl as StatusLine | undefined)?.command;
+  const m = typeof c === "string" ? /AYA_STATUSLINE_NEXT_B64=([A-Za-z0-9+/=]*)/.exec(c) : null;
+  return m?.[1] ? Buffer.from(m[1], "base64").toString("utf8") : undefined;
+}
+
+export function statusLineCommand(configDir: string, next?: string): string {
+  const parts = [`AYA_CLAUDE_CONFIG_DIR=${shellQuote(expandUserPath(configDir))}`];
+  if (next) parts.push(`AYA_STATUSLINE_NEXT_B64=${Buffer.from(next, "utf8").toString("base64")}`);
+  parts.push(shellQuote(HOOK_SCRIPT_FILE));
+  return parts.join(" ");
+}
+
+/** True if settings register our statusLine for exactly this config dir. */
+export function hasStatusLine(settings: unknown, configDir: string): boolean {
+  const sl = statusLineOf(settings);
+  return isOurStatusLine(sl) && sl?.command?.includes(shellQuote(expandUserPath(configDir))) === true;
+}
+
+/** A NEW settings object whose statusLine runs our script, wrapping the user's
+ *  own command (kept, so it still renders). A statusLine that is not a command
+ *  is left alone: there is nothing we could wrap. */
+export function withStatusLine(settings: Record<string, unknown>, configDir: string): Record<string, unknown> {
+  const sl = statusLineOf(settings);
+  let next: string | undefined;
+  let rest: StatusLine = {};
+  if (sl) {
+    if (isOurStatusLine(sl)) {
+      next = wrappedStatusLineCommand(sl);
+      rest = { padding: sl.padding };
+    } else if (sl.type === "command" && typeof sl.command === "string" && sl.command.trim()) {
+      next = sl.command;
+      rest = { padding: sl.padding };
+    } else return settings;
+  }
+  const out: StatusLine = { type: "command", command: statusLineCommand(configDir, next) };
+  if (typeof rest.padding === "number") out.padding = rest.padding;
+  return { ...settings, statusLine: out };
+}
+
+/** A NEW settings object with the user's own statusLine back (or none, if they had none). */
+export function withoutStatusLine(settings: Record<string, unknown>): Record<string, unknown> {
+  const sl = statusLineOf(settings);
+  if (!sl || !isOurStatusLine(sl)) return settings;
+  const next = wrappedStatusLineCommand(sl);
+  const out: Record<string, unknown> = { ...settings };
+  if (next) {
+    out.statusLine = { type: "command", command: next, ...(typeof sl.padding === "number" ? { padding: sl.padding } : {}) };
+  } else delete out.statusLine;
+  return out;
+}
+
+// ---- the generated script ---------------------------------------------------
 
 // The default Claude dir as the generated shell script spells it.
 const SH_HOME_CLAUDE_DIR = `$HOME/${CLAUDE_CONFIG_DIRNAME}`;
 
-/** Throttled; token from the OS credential store, the usage endpoint, Aya's file shape. Exits quietly on
- *  any missing dependency or failure so it never breaks a session. */
+/** Reads Claude Code's statusLine JSON on stdin, snapshots `rate_limits` in Aya's file shape (throttled), then
+ *  runs the user's previous statusLine command on the same input. Never fails the status line. */
 export function hookScriptSource(outFile: string): string {
   return `#!/usr/bin/env bash
-# Auto-generated by Aya (Settings -> usage chip). Writes the account-wide usage
-# snapshot Aya reads. It calls Anthropic's UNDOCUMENTED usage endpoint with your
-# OWN token — unsupported, may change. Remove it from Aya Settings.
-set -euo pipefail
+# Auto-generated by Aya (Settings -> usage chip). Claude Code's statusLine command:
+# saves the account-wide rate limits it reports to Aya's usage snapshot, then runs
+# your previous statusLine command (if any) with the same input. No token, no
+# network. Remove it from Aya Settings.
 OUT=${JSON.stringify(outFile)}
-command -v jq >/dev/null 2>&1 || exit 0
-command -v curl >/dev/null 2>&1 || exit 0
-CONFIG_DIR="\${AYA_CLAUDE_CONFIG_DIR:-\${CLAUDE_CONFIG_DIR:-${SH_HOME_CLAUDE_DIR}}}"
-mkdir -p "$(dirname "$OUT")"
-if command -v shasum >/dev/null 2>&1; then
-  HASH=$(printf '%s' "$CONFIG_DIR" | shasum -a 256 | awk '{print $1}')
-else
-  HASH=$(printf '%s' "$CONFIG_DIR" | sha256sum | awk '{print $1}')
-fi
-ACCOUNT_OUT="$(dirname "$OUT")/usage-claude-$HASH.json"
-# Throttle per account: skip if this config dir was written in the last 5 minutes.
-if [ -f "$ACCOUNT_OUT" ]; then
-  now=$(date +%s)
-  # GNU stat must come first. With coreutils, "stat -f %m" reads %m as a FILENAME,
-  # prints a filesystem dump to stdout and only THEN fails, so the fallback appends
-  # the real mtime to that dump and mod stops being a number - which then explodes
-  # in the arithmetic below under set -u. BSD stat has no -c, so it falls through.
-  mod=$(stat -c %Y "$ACCOUNT_OUT" 2>/dev/null || stat -f %m "$ACCOUNT_OUT" 2>/dev/null || true)
-  case "$mod" in ''|*[!0-9]*) mod=0 ;; esac
-  [ $((now - mod)) -lt ${HOOK_THROTTLE_SECONDS} ] && exit 0
-fi
-# Claude Code OAuth token: macOS Keychain, else Linux credentials file.
-if [ -f "$CONFIG_DIR/.credentials.json" ]; then
-  RAW=$(cat "$CONFIG_DIR/.credentials.json")
-elif RAW=$(security find-generic-password -s "Claude Code-credentials-\${HASH:0:8}" -w 2>/dev/null); then
-  :
-elif [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ] && RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
-  :
-elif [ -f "${SH_HOME_CLAUDE_DIR}/.credentials.json" ]; then
-  RAW=$(cat "${SH_HOME_CLAUDE_DIR}/.credentials.json")
-else
-  exit 0
-fi
-TOKEN=$(printf '%s' "$RAW" | jq -r '.claudeAiOauth.accessToken // empty')
-[ -n "$TOKEN" ] || exit 0
-# One scratch file per process: two panes ending a turn together both pass the
-# throttle, and a shared name made the second mv fail with ENOENT. The default
-# account's copy comes from this process's own file too: copied from the shared
-# one, another hook's mv could replace it mid-copy, and GNU cp then fails
-# ("replaced while being copied").
-TMP="$ACCOUNT_OUT.$$.tmp"
-TMP_OUT="$OUT.$$.tmp"
-trap 'rm -f "$TMP" "$TMP_OUT"' EXIT
-RESP=$(curl -sS -m ${HOOK_FETCH_TIMEOUT_SECONDS} -H "Authorization: Bearer $TOKEN" \\
-  https://api.anthropic.com/api/oauth/usage) || exit 0
-printf '%s' "$RESP" | jq \\
-  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
-  '{fiveHour:{pct:.five_hour.utilization, resetsAt:.five_hour.resets_at},
-    sevenDay:{pct:.seven_day.utilization, resetsAt:.seven_day.resets_at},
-    updatedAt:$ts}' > "$TMP" || exit 0
-DEFAULT_ACCOUNT=0
-if [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ]; then
-  DEFAULT_ACCOUNT=1
-  cp "$TMP" "$TMP_OUT"
-fi
-mv "$TMP" "$ACCOUNT_OUT"
-if [ "$DEFAULT_ACCOUNT" = 1 ]; then
-  mv "$TMP_OUT" "$OUT"
+INPUT=$(cat)
+snapshot() {
+  command -v jq >/dev/null 2>&1 || return 0
+  CONFIG_DIR="\${AYA_CLAUDE_CONFIG_DIR:-\${CLAUDE_CONFIG_DIR:-${SH_HOME_CLAUDE_DIR}}}"
+  mkdir -p "$(dirname "$OUT")" || return 0
+  if command -v shasum >/dev/null 2>&1; then
+    HASH=$(printf '%s' "$CONFIG_DIR" | shasum -a 256 | awk '{print $1}')
+  else
+    HASH=$(printf '%s' "$CONFIG_DIR" | sha256sum | awk '{print $1}')
+  fi
+  ACCOUNT_OUT="$(dirname "$OUT")/usage-claude-$HASH.json"
+  if [ -f "$ACCOUNT_OUT" ]; then
+    now=$(date +%s)
+    # GNU stat must come first. With coreutils, "stat -f %m" reads %m as a FILENAME,
+    # prints a filesystem dump to stdout and only THEN fails, so the fallback appends
+    # the real mtime to that dump and mod stops being a number. BSD stat has no -c,
+    # so it falls through.
+    mod=$(stat -c %Y "$ACCOUNT_OUT" 2>/dev/null || stat -f %m "$ACCOUNT_OUT" 2>/dev/null || true)
+    case "$mod" in ''|*[!0-9]*) mod=0 ;; esac
+    [ $((now - mod)) -lt ${HOOK_THROTTLE_SECONDS} ] && return 0
+  fi
+  SNAP=$(printf '%s' "$INPUT" | jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    def at: if type == "number" then ((if . > 100000000000 then . / 1000 else . end) | floor | todate) else tostring end;
+    def win: if (.used_percentage | type) == "number"
+      then {pct: .used_percentage} + (if .resets_at == null then {} else {resetsAt: (.resets_at | at)} end)
+      else null end;
+    (.rate_limits // {}) as $r
+    | (if $r.five_hour == null then null else ($r.five_hour | win) end) as $f
+    | (if $r.seven_day == null then null else ($r.seven_day | win) end) as $s
+    | if $f == null and $s == null then empty
+      else (if $f == null then {} else {fiveHour: $f} end) + (if $s == null then {} else {sevenDay: $s} end) + {updatedAt: $ts} end
+  ' 2>/dev/null) || return 0
+  [ -n "$SNAP" ] || return 0
+  # One scratch file per process: status lines of several panes can run together.
+  TMP="$ACCOUNT_OUT.$$.tmp"
+  TMP_OUT="$OUT.$$.tmp"
+  trap 'rm -f "$TMP" "$TMP_OUT"' RETURN
+  printf '%s\\n' "$SNAP" > "$TMP" || return 0
+  if [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ]; then
+    printf '%s\\n' "$SNAP" > "$TMP_OUT" || return 0
+    mv "$TMP_OUT" "$OUT"
+  fi
+  mv "$TMP" "$ACCOUNT_OUT"
+}
+snapshot >/dev/null 2>&1 || true
+if [ -n "\${AYA_STATUSLINE_NEXT_B64:-}" ]; then
+  NEXT=$(printf '%s' "$AYA_STATUSLINE_NEXT_B64" | base64 --decode 2>/dev/null) || exit 0
+  printf '%s' "$INPUT" | sh -c "$NEXT"
 fi
 `;
 }
@@ -239,9 +288,7 @@ export async function usageHookStatus(): Promise<UsageHookStatus> {
   const dirs = await claudeConfigDirs();
   for (const dir of dirs) {
     try {
-      const settingsPath = settingsFileForConfigDir(dir);
-      const settings = await readSettingsFile(settingsPath);
-      registered &&= hasStopHook(settings, hookCommand(dir)) || hasStopHook(settings, HOOK_SCRIPT_FILE);
+      registered &&= hasStatusLine(await readSettingsFile(settingsFileForConfigDir(dir)), dir);
     } catch {
       registered = false;
     }
@@ -254,12 +301,16 @@ export async function usageHookStatus(): Promise<UsageHookStatus> {
   };
 }
 
+/** Earlier builds registered a Stop hook that called an undocumented endpoint. */
+function withoutLegacyStopHook(settings: Record<string, unknown>, dir: string): Record<string, unknown> {
+  return withoutStopHook(withoutStopHook(settings, HOOK_SCRIPT_FILE), legacyHookCommand(dir));
+}
+
 async function install(): Promise<UsageHookStatus> {
   for (const dir of await claudeConfigDirs()) {
     const settingsPath = settingsFileForConfigDir(dir);
     const settings = await readSettingsFile(settingsPath);
-    const withoutLegacy = withoutStopHook(settings, HOOK_SCRIPT_FILE);
-    const next = withStopHook(withoutLegacy, hookCommand(dir));
+    const next = withStatusLine(withoutLegacyStopHook(settings, dir), dir);
     await fs.mkdir(path.dirname(settingsPath), { recursive: true });
     await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
   }
@@ -273,10 +324,7 @@ async function uninstall(): Promise<UsageHookStatus> {
     try {
       const settingsPath = settingsFileForConfigDir(dir);
       const settings = await readSettingsFile(settingsPath);
-      const next = withoutStopHook(
-        withoutStopHook(settings, HOOK_SCRIPT_FILE),
-        hookCommand(dir),
-      );
+      const next = withoutStatusLine(withoutLegacyStopHook(settings, dir));
       await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
     } catch {
       /* malformed/unreadable settings - leave it alone */
@@ -284,6 +332,18 @@ async function uninstall(): Promise<UsageHookStatus> {
   }
   await fs.rm(HOOK_SCRIPT_FILE, { force: true });
   return usageHookStatus();
+}
+
+async function hasLegacyStopHook(): Promise<boolean> {
+  for (const dir of await claudeConfigDirs()) {
+    try {
+      const settings = await readSettingsFile(settingsFileForConfigDir(dir));
+      if (hasStopHook(settings, legacyHookCommand(dir)) || hasStopHook(settings, HOOK_SCRIPT_FILE)) return true;
+    } catch {
+      /* unreadable settings: nothing to migrate there */
+    }
+  }
+  return false;
 }
 
 /** Rewrites `file` with `source` (executable) only when it exists and differs. */
@@ -299,9 +359,14 @@ export async function refreshInstalledScript(file: string, source: string): Prom
   await fs.chmod(file, EXECUTABLE_FILE_MODE);
 }
 
-/** Rewrites an ALREADY-installed, out-of-date script; never installs one. */
-export function refreshUsageHookScript(): Promise<void> {
-  return refreshInstalledScript(HOOK_SCRIPT_FILE, hookScriptSource(USAGE_FILE));
+/** At launch: an installed, out-of-date script is rewritten and a leftover endpoint Stop hook from an older build
+ *  is replaced by the statusLine. Never installs for a user who had the chip off. */
+export async function refreshUsageHookScript(): Promise<void> {
+  if (await hasLegacyStopHook()) {
+    await serially(install);
+    return;
+  }
+  await refreshInstalledScript(HOOK_SCRIPT_FILE, hookScriptSource(USAGE_FILE));
 }
 
 export const installUsageHook = (): Promise<UsageHookStatus> => serially(install);

@@ -38,36 +38,58 @@ writeFileSync(
   }),
 );
 
-const { installUsageHook, uninstallUsageHook, usageHookStatus, HOOK_SCRIPT_FILE } =
+const { installUsageHook, uninstallUsageHook, usageHookStatus, refreshUsageHookScript, wrappedStatusLineCommand, HOOK_SCRIPT_FILE } =
   await import("../dist-electron/usage-hook.js");
 
-test("install writes script + merges hook; idempotent; uninstall reverts; existing config preserved", async () => {
+test("install registers the statusLine; idempotent; uninstall restores the user's own; existing config preserved", async () => {
   assert.equal((await usageHookStatus()).installed, false);
+  const own = "/existing-statusline.sh";
+  const read = () => JSON.parse(readFileSync(settingsPath, "utf8"));
+  const seed = read();
+  seed.statusLine = { type: "command", command: own };
+  writeFileSync(settingsPath, JSON.stringify(seed));
 
-  // --- install ---
   const after = await installUsageHook();
   assert.equal(after.installed, true);
   assert.equal(existsSync(HOOK_SCRIPT_FILE), true);
-  const s1 = JSON.parse(readFileSync(settingsPath, "utf8"));
-  assert.equal(s1.env.FOO, "1"); // unrelated key preserved
-  assert.equal(s1.hooks.Stop[0].hooks[0].command, "/existing.sh"); // existing hook preserved
-  assert.equal(s1.hooks.Stop.length, 2); // ours appended, not replacing
-  assert.match(s1.hooks.Stop[1].hooks[0].command, /AYA_CLAUDE_CONFIG_DIR=/);
-  assert.match(s1.hooks.Stop[1].hooks[0].command, new RegExp(HOOK_SCRIPT_FILE));
+  const s1 = read();
+  assert.equal(s1.env.FOO, "1");
+  assert.equal(s1.hooks.Stop.length, 1); // the other Stop hook is untouched, none added
+  assert.equal(s1.hooks.Stop[0].hooks[0].command, "/existing.sh");
+  assert.match(s1.statusLine.command, /AYA_CLAUDE_CONFIG_DIR=/);
+  assert.match(s1.statusLine.command, new RegExp(HOOK_SCRIPT_FILE));
+  assert.equal(wrappedStatusLineCommand(s1.statusLine), own);
 
-  // --- idempotent: install again must not duplicate ---
   await installUsageHook();
-  const s2 = JSON.parse(readFileSync(settingsPath, "utf8"));
-  assert.equal(s2.hooks.Stop.length, 2);
+  assert.deepEqual(read(), s1);
 
-  // --- uninstall ---
   const off = await uninstallUsageHook();
   assert.equal(off.installed, false);
-  assert.equal(existsSync(HOOK_SCRIPT_FILE), false); // script removed
-  const s3 = JSON.parse(readFileSync(settingsPath, "utf8"));
-  assert.equal(s3.hooks.Stop.length, 1); // back to just the pre-existing hook
-  assert.equal(s3.hooks.Stop[0].hooks[0].command, "/existing.sh");
+  assert.equal(existsSync(HOOK_SCRIPT_FILE), false);
+  const s3 = read();
+  assert.deepEqual(s3.statusLine, { type: "command", command: own });
+  assert.equal(s3.hooks.Stop.length, 1);
   assert.equal(s3.env.FOO, "1");
+});
+
+test("launch migrates a leftover endpoint Stop hook to the statusLine", async () => {
+  const s = JSON.parse(readFileSync(settingsPath, "utf8"));
+  delete s.statusLine;
+  const legacy = `AYA_CLAUDE_CONFIG_DIR='${root}' '${HOOK_SCRIPT_FILE}'`;
+  s.hooks.Stop.push({ hooks: [{ type: "command", command: legacy }] });
+  writeFileSync(settingsPath, JSON.stringify(s));
+  await refreshUsageHookScript();
+  const after = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.equal(after.hooks.Stop.length, 1);
+  assert.equal(after.hooks.Stop[0].hooks[0].command, "/existing.sh");
+  assert.equal((await usageHookStatus()).installed, true);
+  await uninstallUsageHook();
+});
+
+test("launch never installs for a user who had the chip off", async () => {
+  await refreshUsageHookScript();
+  assert.equal((await usageHookStatus()).installed, false);
+  assert.equal(existsSync(HOOK_SCRIPT_FILE), false);
 });
 
 test.after(() => rmSync(root, { recursive: true, force: true }));

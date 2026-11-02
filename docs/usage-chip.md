@@ -9,7 +9,8 @@ current project or terminal.
 
 For Claude, Aya is deliberately **source-agnostic and hands-off**: it only
 **reads** a small JSON file and renders it. It never fetches usage, never reads
-your auth token, and ships no endpoint code. You decide what writes that file.
+your auth token, and calls no endpoint. You decide what writes that file; the
+built-in option is Claude Code's own status line (below).
 
 ```
 ~/.aya/usage.json        (or ~/.aya-dev/usage.json under `npm run dev`)
@@ -70,67 +71,41 @@ account in the dropdown.
 
 ## Easiest: the Settings toggle
 
-**Settings → Claude usage chip → Enable.** A dialog spells out exactly what it
-does; on confirm, Aya writes the fetch script and a `Stop` hook into your
-`~/.claude/settings.json` (merged safely — your other hooks are untouched).
-**Disable** removes both. That's the whole setup.
+**Settings → Claude usage chip → Enable.** A dialog spells out what it does; on
+confirm, Aya writes a small script and sets it as the `statusLine` command in
+`~/.claude/settings.json`. **Disable** restores your previous status line and
+removes the script.
 
-Crucial trust boundary: the **Aya process never reads your token and never calls
-the endpoint.** It only writes the script and reads the resulting file. The
-token read + the network call happen later, in that script, run by Claude Code.
+Claude Code passes every status-line command a JSON document on stdin that
+includes `rate_limits.five_hour` and `rate_limits.seven_day`
+(`used_percentage`, `resets_at`). The script saves those two windows in the
+shape above, then runs your previous status-line command (if you had one) with
+the same input, so it keeps rendering as before. No token is read and nothing
+goes over the network. The numbers refresh while a Claude Code session is open
+(the file is rewritten at most every 30 seconds); with no session running the
+chip dims as "stale" after 15 minutes. A window Claude Code has no figure for
+yet is simply left out.
 
-The data comes from an **undocumented** endpoint
-(`https://api.anthropic.com/api/oauth/usage`) — the same one `/usage` calls.
-Using it programmatically is **unsupported** and is **your own decision** for
-your own account; that's why enabling is explicit and reversible.
+Builds before this one used a `Stop` hook that called Anthropic's undocumented
+usage endpoint. Aya removes that hook at launch and switches the chip to the
+status line automatically.
 
-## Or wire it manually (your responsibility)
+## Or wire it manually
 
-Prefer not to let Aya touch `~/.claude`? Set it up yourself. A throttled Claude
-Code **hook** that fetches on `Stop` and writes the file works well — it runs in
-your shell, with your token, Aya not involved.
-
-`~/bin/aya-usage-hook.sh` (macOS — token from Keychain):
+Prefer not to let Aya touch `~/.claude`? Write the file from your own
+`statusLine` script. Minimal example (`jq` required):
 
 ```sh
 #!/usr/bin/env bash
-set -euo pipefail
-OUT="$HOME/.aya/usage.json"
-# Throttle: skip if written in the last 5 minutes.
-if [ -f "$OUT" ] && [ "$(( $(date +%s) - $(stat -f %m "$OUT") ))" -lt 300 ]; then
-  exit 0
-fi
-TOKEN="$(security find-generic-password -s 'Claude Code-credentials' -w \
-  | jq -r '.claudeAiOauth.accessToken // empty')"
-[ -n "$TOKEN" ] || exit 0
-RESP="$(curl -sS -m 10 -H "Authorization: Bearer $TOKEN" \
-  https://api.anthropic.com/api/oauth/usage)" || exit 0
-mkdir -p "$HOME/.aya"
-printf '%s' "$RESP" | jq \
-  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{fiveHour:{pct:.five_hour.utilization, resetsAt:.five_hour.resets_at},
-    sevenDay:{pct:.seven_day.utilization, resetsAt:.seven_day.resets_at},
-    updatedAt:$ts}' > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+INPUT=$(cat)
+printf '%s' "$INPUT" | jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+  {fiveHour: {pct: .rate_limits.five_hour.used_percentage},
+   sevenDay: {pct: .rate_limits.seven_day.used_percentage},
+   updatedAt: $ts}' > "$HOME/.aya/usage.json.tmp" && mv "$HOME/.aya/usage.json.tmp" "$HOME/.aya/usage.json"
 ```
 
-Register it in `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      { "hooks": [ { "type": "command", "command": "~/bin/aya-usage-hook.sh" } ] }
-    ]
-  }
-}
-```
-
-(On Linux the token lives in `~/.claude/.credentials.json` instead of the
-Keychain — adjust the `TOKEN=` line accordingly.)
-
-Prefer not to touch the endpoint at all? Point the file at any other source —
-e.g. a `ccusage`-based script — as long as it emits the shape above. Aya doesn't
-care where the numbers come from.
+Any other source works too (e.g. a `ccusage`-based script) as long as it emits
+the shape above. Aya doesn't care where the numbers come from.
 
 ## Google Antigravity
 

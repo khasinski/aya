@@ -1,5 +1,5 @@
 import { readUsageHistory } from "../usage-history";
-// Usage and agent-hook IPC: the Claude, Codex and Grok usage snapshots, the optional Claude usage hook, and the
+// Usage and agent-hook IPC: the Claude, Codex and Grok usage snapshots, the optional Claude usage statusLine, and the
 // automatic-status hooks for Claude Code and Codex.
 
 import type { IpcMain } from "electron";
@@ -62,9 +62,8 @@ export function registerUsageIpc(ipcMain: Pick<IpcMain, "handle">): void {
     const presets = await listPresets();
     return presets.some((p) => p.agent === "antigravity") ? readAntigravityUsage() : [];
   });
-  // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
-  // + a fetch script). The Aya process never reads a token or calls the
-  // endpoint - that happens later in the script, run by Claude Code.
+  // Optional, user-enabled installer (sets a statusLine script in ~/.claude/settings.json). The Aya process
+  // never reads a token or calls anything; the script saves Claude Code's own rate_limits.
   ipcMain.handle("usage-hook:status", async () => usageHookStatus());
   ipcMain.handle("usage-hook:install", async () => installUsageHook());
   ipcMain.handle("usage-hook:uninstall", async () => uninstallUsageHook());

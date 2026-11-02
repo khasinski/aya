@@ -21,9 +21,9 @@ export function useAgentHooks() {
     };
   }, []);
 
-  // Enabling writes a hook + script into ~/.claude (after the consent dialog);
-  // disabling removes both. The Aya process itself never reads a token or hits
-  // the endpoint — that only happens later in the script, run by Claude Code.
+  // Enabling sets a statusLine script in ~/.claude (after the consent dialog),
+  // wrapping the user's own; disabling restores it. The Aya process itself never
+  // reads a token or calls anything - the script only saves Claude Code's own rate_limits.
   const enableUsageHook = async () => {
     setUsageHookBusy(true);
     try {

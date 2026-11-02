@@ -11,6 +11,7 @@ import { join } from "node:path";
 const root = mkdtempSync(join(tmpdir(), "aya-status-refresh-"));
 process.env.AYA_HOME = join(root, "aya");
 mkdirSync(process.env.AYA_HOME, { recursive: true });
+process.env.AYA_CLAUDE_SETTINGS = join(root, "settings.json"); // never the real ~/.claude
 
 const claude = await import("../dist-electron/status-hook.js");
 const codex = await import("../dist-electron/status-hook-codex.js");
@@ -40,7 +41,7 @@ test("the generated status-hook scripts are unchanged", () => {
 const cases = [
   ["claude", claude.STATUS_HOOK_SCRIPT_FILE, claude.refreshStatusHookScript, /AYA_VIA=hook "\$AYA" status/],
   ["codex", codex.STATUS_HOOK_CODEX_SCRIPT_FILE, codex.refreshStatusCodexHookScript, /AYA_VIA=hook "\$AYA" status/],
-  ["usage", usage.HOOK_SCRIPT_FILE, usage.refreshUsageHookScript, /^ {2}cp "\$TMP" "\$TMP_OUT"$/m],
+  ["usage", usage.HOOK_SCRIPT_FILE, usage.refreshUsageHookScript, /AYA_STATUSLINE_NEXT_B64/],
 ];
 
 for (const [name, file, refresh, current] of cases) {

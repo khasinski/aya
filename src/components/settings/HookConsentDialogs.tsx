@@ -1,4 +1,3 @@
-import { HOOK_THROTTLE_MINUTES } from "../../main-mirrors";
 import { closeFromBackdropClick, markBackdropMouseDown } from "../modal-backdrop";
 
 interface ConsentDialogProps {
@@ -34,17 +33,16 @@ export function UsageConsentDialog({ onClose, onConfirm }: ConsentDialogProps) {
       >
         <div className="aya-modal-title">Enable the usage chip?</div>
         <div className="aya-modal-hint" style={{ lineHeight: 1.6 }}>
-          This writes a small script and a <code>Stop</code> hook into{" "}
-          <code>~/.claude/settings.json</code>. After each Claude Code
-          response (throttled to every {HOOK_THROTTLE_MINUTES}&nbsp;min) the hook queries
-          Anthropic&apos;s <strong>undocumented</strong> usage endpoint with
-          your own token and saves the result locally for the chip.
+          This writes a small script and sets it as your Claude Code{" "}
+          <code>statusLine</code> in <code>~/.claude/settings.json</code>. Claude
+          Code already reports your 5-hour and weekly limits to the status line;
+          the script saves those two numbers locally for the chip.
           <br />
           <br />
-          It is <strong>unsupported</strong> and may change without notice.
-          Aya itself never reads your token and never makes the call — that
-          happens only in the hook, run by Claude Code. Nothing is sent
-          anywhere else. You can turn it off here anytime (it removes both).
+          If you already have a status line, it keeps running and looks the
+          same. No token is read and nothing is sent anywhere. Numbers refresh
+          while a Claude Code session is open. You can turn it off here anytime
+          (it restores your previous status line).
         </div>
         <div
           style={{

@@ -18,7 +18,7 @@ export const PTY_HOST_NOT_CONNECTED = "PTY host is not connected";
 // which reads AYA_HOME once at load.
 // Claude Code's config dir when a preset names none (CLAUDE_CONFIG_DIR aside).
 export const CLAUDE_CONFIG_DIRNAME = ".claude";
-// Claude Code's settings file inside a config dir (where the usage hook goes).
+// Claude Code's settings file inside a config dir (where the usage statusLine goes).
 export const CLAUDE_SETTINGS_FILENAME = "settings.json";
 // Codex's home when neither CODEX_HOME nor a preset names one.
 export const CODEX_DIRNAME = ".codex";

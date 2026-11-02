@@ -4,14 +4,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   hasStopHook,
-  withStopHook,
+  withStatusLine,
+  withoutStatusLine,
+  hasStatusLine,
+  statusLineCommand,
+  wrappedStatusLineCommand,
+  HOOK_SCRIPT_FILE,
   withoutStopHook,
   hookScriptSource,
   settingsFileForConfigDir,
@@ -20,7 +20,7 @@ import { CLAUDE_SETTINGS_FILENAME } from "../dist-electron/usage.js";
 
 const CMD = "/Users/x/.aya/aya-usage-hook.sh";
 
-test("hasStopHook finds our command among other Stop hooks", () => {
+test("hasStopHook (legacy cleanup) finds our command among other Stop hooks", () => {
   const s = {
     hooks: {
       Stop: [
@@ -40,41 +40,11 @@ test("hasStopHook is false for missing/garbage shapes", () => {
   assert.equal(hasStopHook(null, CMD), false);
 });
 
-test("withStopHook adds our entry but keeps other keys + Stop + hook kinds", () => {
+test("withoutStopHook removes only our entry, keeps the rest", () => {
   const before = {
     model: "opus",
-    hooks: {
-      Stop: [{ hooks: [{ type: "command", command: "/keep.sh" }] }],
-      PreToolUse: [{ hooks: [{ type: "command", command: "/pre.sh" }] }],
-    },
+    hooks: { Stop: [{ hooks: [{ command: "/keep.sh" }] }, { hooks: [{ type: "command", command: CMD }] }] },
   };
-  const after = withStopHook(before, CMD);
-  assert.equal(after.model, "opus"); // unrelated key intact
-  assert.equal(after.hooks.Stop[0].hooks[0].command, "/keep.sh"); // other Stop hook intact
-  assert.equal(after.hooks.PreToolUse[0].hooks[0].command, "/pre.sh"); // other kind intact
-  assert.equal(hasStopHook(after, CMD), true);
-  assert.equal(after.hooks.Stop.length, 2);
-  assert.equal(before.hooks.Stop.length, 1); // original not mutated
-});
-
-test("withStopHook is idempotent (never duplicates)", () => {
-  const once = withStopHook({}, CMD);
-  const twice = withStopHook(once, CMD);
-  assert.equal(twice.hooks.Stop.length, 1);
-});
-
-test("withStopHook creates the structure from empty settings", () => {
-  assert.equal(hasStopHook(withStopHook({}, CMD), CMD), true);
-});
-
-test("withoutStopHook removes only our entry, keeps the rest", () => {
-  const before = withStopHook(
-    {
-      model: "opus",
-      hooks: { Stop: [{ hooks: [{ type: "command", command: "/keep.sh" }] }] },
-    },
-    CMD,
-  );
   const after = withoutStopHook(before, CMD);
   assert.equal(hasStopHook(after, CMD), false);
   assert.equal(after.hooks.Stop[0].hooks[0].command, "/keep.sh");
@@ -82,7 +52,7 @@ test("withoutStopHook removes only our entry, keeps the rest", () => {
 });
 
 test("withoutStopHook drops now-empty Stop/hooks containers", () => {
-  const after = withoutStopHook(withStopHook({}, CMD), CMD);
+  const after = withoutStopHook({ hooks: { Stop: [{ hooks: [{ type: "command", command: CMD }] }] } }, CMD);
   assert.equal("hooks" in after, false);
 });
 
@@ -93,51 +63,56 @@ test("withoutStopHook is a no-op when our hook isn't present", () => {
   assert.equal(after.hooks.Stop[0].hooks[0].command, "/keep.sh");
 });
 
-test("hookScriptSource bakes the out path, throttle, and curl timeout in", () => {
+test("statusLine: no existing statusLine -> ours, and removal leaves none", () => {
+  const after = withStatusLine({ model: "opus" }, "/c");
+  assert.equal(after.model, "opus");
+  assert.equal(after.statusLine.type, "command");
+  assert.equal(hasStatusLine(after, "/c"), true);
+  assert.equal(hasStatusLine(after, "/other"), false);
+  assert.equal(wrappedStatusLineCommand(after.statusLine), undefined);
+  const back = withoutStatusLine(after);
+  assert.equal("statusLine" in back, false);
+  assert.equal(back.model, "opus");
+});
+
+test("statusLine: the user's own command is wrapped, kept through reinstall, and restored", () => {
+  const own = `bash -c 'echo "it'\\''s fine"' && x`;
+  const before = { statusLine: { type: "command", command: own, padding: 2 } };
+  const once = withStatusLine(before, "/c");
+  assert.equal(wrappedStatusLineCommand(once.statusLine), own);
+  assert.equal(once.statusLine.padding, 2);
+  const twice = withStatusLine(once, "/c"); // idempotent: never wraps itself
+  assert.deepEqual(twice, once);
+  assert.deepEqual(withoutStatusLine(once), before);
+  assert.equal(before.statusLine.command, own); // input not mutated
+});
+
+test("statusLine: a statusLine that is not a command is left alone", () => {
+  const s = { statusLine: { type: "static", text: "x" } };
+  assert.equal(withStatusLine(s, "/c"), s);
+  assert.equal(withoutStatusLine(s), s);
+});
+
+test("statusLineCommand quotes the config dir and names the script", () => {
+  const c = statusLineCommand("/a b/c", "next");
+  assert.match(c, /^AYA_CLAUDE_CONFIG_DIR='\/a b\/c' AYA_STATUSLINE_NEXT_B64=\S+ /);
+  assert.ok(c.includes(HOOK_SCRIPT_FILE));
+});
+
+test("hookScriptSource bakes the out path and throttle in, and never touches the network", () => {
   const s = hookScriptSource("/tmp/aya/usage.json");
-  assert.match(s, /OUT="\/tmp\/aya\/usage\.json"/); // writes the file Aya reads
-  assert.match(s, /-lt 300\b/); // 5-min throttle from HOOK_THROTTLE_SECONDS
-  assert.match(s, /-m 10\b/); // curl timeout from HOOK_FETCH_TIMEOUT_SECONDS
-  assert.match(s, /oauth\/usage/); // queries the usage endpoint
+  assert.match(s, /OUT="\/tmp\/aya\/usage\.json"/);
+  assert.match(s, /-lt 30\b/);
+  assert.doesNotMatch(s, /curl|oauth|security find|credentials/);
 });
 
 // GNU stat has to be tried before the BSD spelling, not after: "stat -f %m" on
 // coreutils reads %m as a filename, prints a filesystem dump and only then fails,
 // so an `|| stat -c %Y` fallback appends the mtime to that dump instead of
-// replacing it. Cheap to assert, and it is the half that regressed.
+// replacing it.
 test("hookScriptSource asks GNU stat first, BSD stat second", () => {
   const s = hookScriptSource("/tmp/aya/usage.json");
   assert.match(s, /stat -c %Y[\s\S]*stat -f %m/);
-});
-
-const hasBinary = (name) =>
-  spawnSync("sh", ["-c", `command -v ${name}`], { stdio: "ignore" }).status === 0;
-
-// The script runs under `set -euo pipefail`, so a non-numeric $mod is fatal rather
-// than cosmetic: the hook dies in the throttle arithmetic before it ever fetches,
-// and the usage chip freezes at whatever it last wrote with no visible complaint.
-// Only running it for real catches that, because which stat spelling misbehaves is
-// a property of the host. HOME is redirected at the temp dir so the credential
-// probe finds nothing and the test can never reach the network.
-test("generated hook survives its own throttle branch on this platform", (t) => {
-  if (!hasBinary("jq") || !hasBinary("curl")) {
-    t.skip("script exits early without jq and curl, leaving nothing to exercise");
-    return;
-  }
-  const dir = mkdtempSync(join(tmpdir(), "aya-usage-hook-"));
-  const configDir = join(dir, "claude");
-  const hash = createHash("sha256").update(configDir).digest("hex");
-  // Written now, so the throttle must short-circuit on this very file.
-  writeFileSync(join(dir, `usage-claude-${hash}.json`), "{}");
-  const script = join(dir, "hook.sh");
-  writeFileSync(script, hookScriptSource(join(dir, "usage.json")), { mode: 0o755 });
-
-  const run = spawnSync("bash", [script], {
-    env: { ...process.env, HOME: dir, AYA_CLAUDE_CONFIG_DIR: configDir },
-    encoding: "utf8",
-  });
-  assert.doesNotMatch(run.stderr ?? "", /unbound variable|arithmetic/);
-  assert.equal(run.status, 0, `hook exited ${run.status}: ${run.stderr}`);
 });
 
 test("settingsFileForConfigDir: <configDir>/settings.json when AYA_CLAUDE_SETTINGS is unset", () => {

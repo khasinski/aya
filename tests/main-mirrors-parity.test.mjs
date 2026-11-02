@@ -8,7 +8,6 @@ import * as mirrors from "../dist-test/main-mirrors.js";
 import * as localSummary from "../dist-electron/local-summary-errors.js";
 import * as validation from "../dist-electron/validation.js";
 import * as teams from "../dist-electron/team-definition.js";
-import * as usageHook from "../dist-electron/usage-hook.js";
 import * as usageGrok from "../dist-electron/usage-grok.js";
 import { TeamRunner } from "../dist-electron/team-runner.js";
 import { TeamStore, teamDir } from "../dist-electron/team-store.js";
@@ -28,11 +27,6 @@ test("the renderer writes the project-state version main validates", () => {
 test("the renderer's cadence ceiling is the one main's team parser enforces", () => {
   assert.equal(mirrors.MAX_CADENCE_MINUTES, 24 * 60);
   assert.equal(mirrors.MAX_CADENCE_MINUTES, teams.MAX_CADENCE_MINUTES);
-});
-
-test("the usage-chip dialog's throttle is the generated hook script's", () => {
-  assert.equal(mirrors.HOOK_THROTTLE_MINUTES, 5);
-  assert.equal(mirrors.HOOK_THROTTLE_MINUTES * 60, usageHook.HOOK_THROTTLE_SECONDS);
 });
 
 test("the Grok chip's day count is main's usage window", () => {

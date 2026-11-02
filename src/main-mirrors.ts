@@ -14,9 +14,6 @@ export const MAX_CADENCE_MINUTES = 24 * 60;
 export const DELIVERY_TEST_PREFIX = "Delivery test:";
 export const DELIVERY_TEST_ANSWER = "ok";
 
-/** electron/usage-hook.ts HOOK_THROTTLE_SECONDS, in the minutes the UI shows. */
-export const HOOK_THROTTLE_MINUTES = 5;
-
 /** electron/usage-grok.ts GROK_USAGE_WINDOW_MS, in the days the UI shows. */
 export const GROK_USAGE_WINDOW_DAYS = 7;
 

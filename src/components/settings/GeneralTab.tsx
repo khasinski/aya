@@ -354,7 +354,7 @@ export function GeneralTab({
     )}
     >
     {usageHook?.installed
-    ? "On. Updated by a Claude Code hook."
+    ? "On. Read from Claude Code\u2019s status line."
     : "Off. Shows Claude limits."}
     </SettingsRow>
     <SettingsRow
