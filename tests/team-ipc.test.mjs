@@ -59,6 +59,23 @@ test("TEAM_REDELIVERY_MS is 15 s", () => {
   assert.equal(TEAM_REDELIVERY_MS, 15_000);
 });
 
+test("held peer messages are retried before a team has started its round clock", async (context) => {
+  context.mock.timers.enable({ apis: ["setInterval"] });
+  const t = register();
+  let passes = 0;
+  t.runner.redeliverWaiting = async () => ++passes;
+  try {
+    assert.equal(t.runner.hasRunningTeams, false);
+    context.mock.timers.tick(TEAM_REDELIVERY_MS);
+    assert.equal(passes, 1);
+    t.teardowns.forEach((fn) => fn());
+    context.mock.timers.tick(TEAM_REDELIVERY_MS);
+    assert.equal(passes, 1, "quit cancels retries");
+  } finally {
+    t.teardowns.forEach((fn) => fn());
+  }
+});
+
 test("AYA_E2E_TEAM_REDELIVERY_MS sets the retry period, unset it is TEAM_REDELIVERY_MS", () => {
   const periods = [];
   const realSetInterval = globalThis.setInterval;

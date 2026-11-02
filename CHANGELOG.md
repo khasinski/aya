@@ -29,6 +29,7 @@
 - Reduce idle polling, duplicate Git processes and background worktree scans.
   Bound session-monitor reads and widget preview memory; make widget failures
   retryable and improve cache invalidation and shutdown persistence.
+- Retry held team messages even before the team's round clock has started.
 - Read Claude limits from Claude Code's own status-line `rate_limits` instead of
   Anthropic's undocumented usage endpoint. No token is read and no request is
   made. Enabling wraps your existing status line, disabling restores it, and the

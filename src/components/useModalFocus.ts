@@ -51,7 +51,7 @@ export function useModalFocus(root: RefObject<HTMLElement | null>, close: () => 
     return () => {
       const index = stack.indexOf(entry); if (index >= 0) stack.splice(index, 1);
       if (!stack.length) { window.removeEventListener('keydown', onKey, true); document.removeEventListener('focusin', onFocus, true); }
-      const restoring = !skipRestore.current && !callbacks.current.options.blocked && !!previous?.isConnected && !previous.hasAttribute('disabled');
+      const restoring = !skipRestore.current && !callbacks.current.options.blocked && !!previous?.isConnected && previous !== document.body && previous !== document.documentElement && !previous.hasAttribute('disabled');
       const panes = [...document.querySelectorAll<HTMLElement>('[data-testid="terminal-pane"]')].filter(pane => pane.getClientRects().length);
       const pane = panes.find(pane => pane.classList.contains('aya-pane--active-split')) || panes[0];
       if (restoring) pendingRestores++;

@@ -100,10 +100,10 @@ run commands.
 ## Install
 
 Download the [latest release](https://github.com/khasinski/aya/releases/latest)
-from GitHub (Aya 0.8.0):
+from GitHub (Aya 0.15.5):
 
-- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.8.0/Aya-0.8.0-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.8.0/Aya-0.8.0-arm64-mac.zip)
-- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.8.0/Aya-0.8.0.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.8.0/aya_0.8.0_amd64.deb)
+- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.15.5/Aya-0.15.5-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.15.5/Aya-0.15.5-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.15.5/Aya-0.15.5.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.15.5/aya_0.15.5_amd64.deb)
 
 ### macOS
 
@@ -115,15 +115,15 @@ signed and Apple-notarized.
 On Ubuntu and Debian-like systems, prefer the DEB:
 
 ```sh
-sudo apt install ./aya_0.8.0_amd64.deb
+sudo apt install ./aya_0.15.5_amd64.deb
 /opt/Aya/aya
 ```
 
 The AppImage can be run directly:
 
 ```sh
-chmod +x Aya-0.8.0.AppImage
-./Aya-0.8.0.AppImage
+chmod +x Aya-0.15.5.AppImage
+./Aya-0.15.5.AppImage
 ```
 
 The AppImage ships the statically linked AppImage runtime, so it does **not**
@@ -134,7 +134,7 @@ distributions do install by default.
 On a system with no FUSE at all, run the AppImage without mounting it:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.8.0.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.15.5.AppImage
 ```
 
 Older releases (0.7.9 and earlier) embedded the legacy runtime and failed with
@@ -152,7 +152,7 @@ that. (`StartupWMClass` does not - it is an X11 `WM_CLASS` hint, and Wayland has
 no `WM_CLASS`.)
 
 ```sh
-./scripts/install-desktop-entry.sh ./Aya-0.8.0.AppImage
+./scripts/install-desktop-entry.sh ./Aya-0.15.5.AppImage
 ```
 
 That writes `~/.local/share/applications/aya.desktop` plus every icon size to

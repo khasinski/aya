@@ -85,6 +85,7 @@ test.describe("a lead that asked the user, then shows a permission dialog", () =
     await expect(card().getByLabel("ux-review lead waiting")).toHaveText(/tester is waiting for you since \d\d:\d\d: need the staging password/);
     // The answer itself, typed at the composer, ends it.
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await window.locator(`[data-terminal-id="${seeded.tabIds.left}"] .xterm-helper-textarea`).focus();
     await window.keyboard.type("the password is hunter2");
     await window.keyboard.press("Enter");
     await expect.poll(() => lead(), { timeout: TYPED_TIMEOUT_MS }).toContain("the password is hunter2");

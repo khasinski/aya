@@ -44,7 +44,8 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   };
   const redelivery = setInterval(
     () => {
-      if (teamRunner.hasRunningTeams) void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err));
+      // Peer messages can be owed before Start arms a round clock.
+      void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err));
       tellRelaunched();
     },
     // E2E only: a spec that waits on a held message should not wait a production period.

@@ -24,6 +24,8 @@ test("a question from before the restart that no session confirms: rounds go on,
   await expect(reopened.getByTestId("team-ux-review").getByLabel("ux-review lead waiting")).toHaveText(/tester asked you before the restart \(\d\d:\d\d\), not confirmed since/);
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(dialog).toBeHidden();
+  // Closing the modal restores its opener; choose the answer pane explicitly.
+  await window.locator(`[data-terminal-id="${seeded.tabIds.left}"] .xterm-helper-textarea`).focus();
   await window.keyboard.type("use the test one");
   await window.keyboard.press("Enter");
   await expect.poll(() => lead(), { timeout: TYPED_TIMEOUT_MS }).toContain("use the test one");

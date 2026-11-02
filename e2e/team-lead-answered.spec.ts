@@ -17,6 +17,7 @@ test("the user answers in the lead's pane: the window no longer says the lead is
   await expect(waiting).toHaveText(/tester is waiting for you since \d\d:\d\d: need the staging password/);
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(dialog).toBeHidden();
+  await window.locator(`[data-terminal-id="${seeded.tabIds.left}"] .xterm-helper-textarea`).focus();
   await window.keyboard.type("the password is hunter2");
   await window.keyboard.press("Enter");
   await expect.poll(() => lead(), { timeout: TYPED_TIMEOUT_MS }).toContain("the password is hunter2");
