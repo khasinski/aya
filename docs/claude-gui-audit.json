@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-06",
+  "reviewer": "Claude Code / Claude Opus 5.5",
+  "model": "claude-opus-5-5",
+  "scope": "Lokalne zmiany Conversation GUI, Snippets, odzyskiwania sesji i testów; diff oraz nowe pliki przekazane w treści zadania.",
+  "mode": "Tylko odczyt w katalogu projektu Aya; narzędzia Read, Glob, Grep. Bez edycji kodu i uruchamiania testów przez audytora.",
+  "summary_pl": "Claude nie zgłosił potwierdzonych P1/P2. Zgłosił jeden P3: nieaktualny alert po podwójnym uruchomieniu Steer, mimo powodzenia pierwszego żądania.",
+  "verification": {
+    "finding_P3": "Potwierdzone przez głównego agenta w kodzie: guard ustawia błąd, a ścieżka sukcesu i finally go nie usuwają. Bez dodatkowego odtworzenia E2E w tej turze.",
+    "test_gaps": "Sugestie pokrycia testowego, nie potwierdzone nowe błędy. Szczególnie istotne: odświeżenie podczas oczekiwania na ACK kolejki i cykl życia zgody podrzędnego agenta.",
+    "code_changes": "Audyt nie zmienił kodu aplikacji."
+  },
+  "review": {
+    "summary": "I read the whole patch and the code around it: ConversationView send/dispatch/steer/queue/question/snippet/scroll paths, the codex-gui-ipc connect/reconnect/recovery/attachment/send actions, CodexGuiSession connect/send/turn bookkeeping, GuiPanelState, PaneGrid/SnippetBar wiring, PresetsTab/drafts, ArtifactPanel and the fixture. I found no substantiated P1 or P2 bug. These paths hold up: (1) a turn that completes before its start ACK. dispatching.current blocks the queue, and the dispatchRevision bump in finally re-runs the queue effect. (2) A rejected start that overlaps an automatic turn. samplingEpoch in the session and turnRevision in the renderer keep busy and the turn ID. (3) The synchronous steering guard, which also keeps the queue from re-sending a queued steer as a new turn after completion. (4) A failed send whose draft changed meanwhile goes to the front of the paused queue with its attachments. (5) Queued question answers. They are stored on the message only after send or steer succeeds, and are kept across reloads. (6) Reattach marking. disconnect() keeps the attachment map, so reconnect reports accurate IDs, and reload or close calls forget(), so restored items are correctly flagged. (7) The session's unsafe mode is reported on connect, reconnect and renderer recovery. (8) Server requests from subagent threads are answered before the threadId filter runs. The only defect I could reproduce is minor: a stale error after a double-activated Steer. The bigger risks are coverage gaps: scroll anchoring is now enabled, and fixture events have no threadId.",
+    "findings": [
+      {
+        "severity": "P3",
+        "title": "A second Steer activation leaves a stale 'A steer is already being sent' alert after the first steer succeeds",
+        "file": "src/components/ConversationView.tsx",
+        "line": 539,
+        "scenario": "While a turn is running, queue a message and activate its Steer button twice before React commits the disabled state. This is exactly what e2e/gui-steer-state.spec.ts does with button.click(); button.click(), and it can also happen on a fast double-click or keyboard repeat. The first call clears the error and starts the RPC. The second call hits the guard and sets the alert. The first steer then succeeds, is shown as '↳ queued steer', and leaves the queue, but the alert still says the steer is pending. The same happens when a question card's 'Send answer' goes through steer() while another steer is in flight and that steer then succeeds.",
+        "evidence": "Line 539: `if (steering.current) { setError('A steer is already being sent. Wait for it to finish before trying again.'); return false; }`. The success path (line 545) and the finally block (line 547) never clear this error. setError('') runs only at the start of the call that is already in flight (line 543), which is before the duplicate sets the error. The e2e test performs the double click but never checks the alert after success. The next alert assertion only passes because the following steer calls setError('') first.",
+        "recommendation": "For a duplicate activation, either return silently (the button already shows 'Sending…' and is disabled), or tag the guard message and clear it in steer()'s finally block when it is still the current error. Add an assertion that no alert is visible after the first steer succeeds.",
+        "confidence": "high"
+      }
+    ],
+    "test_gaps": [
+      "Most fixture notifications have no threadId, so the new threadId filter is only exercised by the synthetic child-thread cases. Nothing checks that main-thread item/turn/goal events from a real tagged stream still arrive after resume. That would catch a filter that drops main-thread events if the resumed thread ID ever differs from the saved ID that is now assigned before the thread/resume RPC.",
+      "A subagent server request is forwarded (it can block the queue and show 'Waiting for your response'). If the main turn/completed arrives first, both the renderer and CodexGuiSession.requests clear it, so the child request can no longer be answered. No test covers this lifecycle.",
+      "Removing `overflow-anchor: none` re-enables browser scroll anchoring, and it now interacts with content-visibility:auto articles (no remembered size before they first switch to auto) and the new lastFollowTop check in scrollToLatest. The CI test starts reading at scrollTop 0, where anchoring is not applied. Mid-history anchoring is only checked by the opt-in real-Codex test. Nothing checks that a reader following at the bottom keeps following when one commit shrinks content above the anchor and adds 80px or more below, for example a large non-streamed item/completed message or a queued user message, which can set follow=false.",
+      "If the renderer crashes or reloads while a queued item waits for its send ACK, that item stays in the persisted queue and the history shows 'Delivery unconfirmed'. Resuming the queue can send it again. pendingQueuedId is not persisted, and this path is untested.",
+      "No test answers an async question while a composer or queued steer is in flight. That covers the guard's rejection path and checks that the card stays editable without recording an answer.",
+      "No test runs an auto-run snippet when the composer holds a slash command or attachments that need reattachment, or while the first connection is still in progress. In that last case the 'Reconnect before sending it' error appears even though no reconnect is possible yet.",
+      "After Resume, queued items whose attachments need reattachment are dispatched again. Each attempt adds another 'Not sent' message and pauses the queue again. No test covers repeated Resume attempts."
+    ]
+  },
+  "follow_up": {
+    "status": "P3 fixed before PR",
+    "change": "Clear only the transient duplicate-steer alert when the pending request settles; retain other errors.",
+    "validation": "Typecheck, build, build:test-src and 4 targeted E2E passed. gui-steer-state now asserts the alert is absent after successful delivery.",
+    "remaining_test_gaps": "The seven review suggestions remain audit recommendations, not confirmed defects."
+  }
+}

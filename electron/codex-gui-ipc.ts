@@ -201,10 +201,10 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         const replay = journals.get(key)?.replay(Number(snapshots.get(key)?.view?.eventSequence || 0));
         for (const payload of replay?.events || []) event.sender.send('codex-gui:event', id, payload);
         const connected = journals.get(key)?.connectionLost !== true;
-        event.sender.send('codex-gui:event', id, { method: 'aya/recovered', params: { connected, running: connected && current.session.running, truncated: replay?.truncated === true } });
+        event.sender.send('codex-gui:event', id, { method: 'aya/recovered', params: { connected, running: connected && current.session.running, truncated: replay?.truncated === true, unsafeMode: current.unsafeMode } });
         recoverablePanels.delete(key);
         if (!connected) { panels.disconnect(key); event.sender.send('codex-gui:event', id, { method: 'aya/disconnected', params: { message: 'The agent connection was lost while the interface was unavailable. Reconnect to resume the saved conversation.' } }); }
-        return { connected, threadId: snapshots.get(key)?.threadId, model: current.model || current.agent };
+        return { connected, threadId: snapshots.get(key)?.threadId, model: current.model || current.agent, unsafeMode: current.unsafeMode, attachmentIds: [...attachments.get(key)?.keys() || []] };
       }
       if (sessions.has(key)) throw Error('Panel already connected');
       const agent = normalizeGuiAgent(params.agent);
@@ -226,7 +226,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         }
         if (!recoverablePanels.has(key) && !event.sender.isDestroyed()) { try { event.sender.send('codex-gui:event', id, payload); } catch { /* Renderer recovery replays this journal. */ } }
       });
-      sessions.set(key, { session, cwd: params.cwd, agent });
+      sessions.set(key, { session, cwd: params.cwd, agent, unsafeMode: params.unsafeMode === true });
       try {
         const saved = snapshots.get(key);
         const result = await session.connect(params.cwd, '', params.configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.type !== 'settings' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, params.unsafeMode === true);
@@ -236,7 +236,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         const snapshot = { ...saved, cwd: params.cwd, configDir: params.configDir, agent, threadId: result.threadId };
         snapshots.set(key, snapshot);
         await saveConversation(id, snapshot);
-        return result;
+        return { ...result, unsafeMode: params.unsafeMode === true, attachmentIds: [...attachments.get(key)?.keys() || []] };
       }
       catch (error) { panels.disconnect(key); throw error; }
     }
@@ -308,8 +308,9 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       const result = await dialog.showOpenDialog(window, { title: `Attach files to ${agentLabel}`, properties: ['openFile', 'multiSelections'] });
       if (sessions.get(key)?.session !== entry.session || panels.closing.has(key)) throw Error('Panel closed while selecting attachments');
       if (result.canceled) return [];
+      if (result.filePaths.length > 20) throw Error('Select at most 20 files at a time. No files were added.');
       let owned = attachments.get(key); if (!owned) { owned = new Map(); attachments.set(key, owned); }
-      return result.filePaths.slice(0, 20).map(file => { const item = { id: randomUUID(), name: path.basename(file), path: file, image: /\.(png|jpe?g|webp)$/i.test(file) }; owned!.set(item.id, item); return item; });
+      return result.filePaths.map(file => { const item = { id: randomUUID(), name: path.basename(file), path: file, image: /\.(png|jpe?g|webp)$/i.test(file) }; owned!.set(item.id, item); return item; });
     }
     if (action === 'paste-image') {
       const img = clipboard.readImage();

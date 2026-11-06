@@ -189,7 +189,9 @@ A 22-round reviewer/implementer UX session hit:
   ..."; a pane that lost its role is listed as still carrying the note), and
   restarting the pane gives it the current note. What a pane got is kept as a
   digest of the exact text (brief and note), so an Aya update that rewords
-  either, or a brief toggled since, shows "started with an older brief". Reloading the window or
+  either, or a brief toggled since, shows that Aya's startup instructions changed; even a wording-only
+  change is enough. `aya team whoami` refreshes the role, but cannot replace the startup instructions.
+  Reloading the window or
   reconnecting to a running pane changes nothing: what a pane was told is
   recorded only when a process starts. A resumed Codex session keeps its first
   note, so a changed role needs a new Codex session. A running pane with no

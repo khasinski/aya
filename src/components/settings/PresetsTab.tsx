@@ -331,19 +331,19 @@ export function PresetsTab({
               />
             </label>
           )}
-          {isAgent && (
+          {(isAgent || guiAgent) && (
             <label className="aya-preset-toggle">
               <span>
                 <strong>Unsafe approvals</strong>
-                <small>Adds the agent's unsafe approval flag.</small>
+                <small>{isAgent ? "Applies to Conversation GUI and adds the agent's unsafe flag to the terminal command." : "Applies to Conversation GUI; the terminal command is unchanged."}</small>
               </span>
               <input
                 type="checkbox"
                 checked={!!row.unsafeMode}
                 onChange={(e) =>
-                  updateAgentFields(row.__key, {
-                    unsafeMode: e.target.checked,
-                  })
+                  isAgent
+                    ? updateAgentFields(row.__key, { unsafeMode: e.target.checked })
+                    : updateRow(row.__key, { unsafeMode: e.target.checked })
                 }
               />
             </label>

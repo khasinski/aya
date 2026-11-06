@@ -29,6 +29,7 @@
 .aya-conversation {
   font-family: var(--font-sans);
   font-size: 14px;
+  container-type: inline-size;
 }
 .aya-conversation .aya-gui-header {
   flex: none;
@@ -38,6 +39,7 @@
 .aya-gui-header .aya-gui-heading { min-width: 0; margin-right: auto; }
 .aya-gui-heading strong { font-size: 13px; font-weight: 600; }
 .aya-gui-header small { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aya-gui-unsafe-badge { flex:none; font-size:10px; font-weight:600; line-height:1.2; padding:4px 7px; border:1px solid color-mix(in oklab,var(--status-error) 40%,var(--border)); border-radius:6px; color:var(--fg-primary); background:color-mix(in oklab,var(--status-error) 10%,var(--bg)); }
 .aya-conversation .aya-gui-icon-button {
   box-sizing: border-box;
   width: 32px;
@@ -67,7 +69,6 @@
   min-width: 0;
   box-sizing: border-box;
   overscroll-behavior: contain;
-  overflow-anchor: none;
 }
 .aya-gui-message-content { display: flow-root; }
 .aya-gui-messages article { font-size: 14px; line-height: 1.6; }
@@ -247,3 +248,23 @@
    layout and paint. Remember measured heights to preserve scroll anchoring. */
 .aya-gui-message-content>article{content-visibility:auto;contain-intrinsic-size:auto 180px}
 .aya-gui-message-content>article:nth-last-of-type(-n+3){content-visibility:visible;contain-intrinsic-size:none}
+
+/* The shared snippet drawer keeps the same controls in terminal and GUI panes. */
+.aya-conversation .aya-snippetbar .aya-snippet { background:var(--aya-snippet-row-bg); border:1px solid var(--aya-snippetbar-divider); border-radius:8px; padding:9px 11px; color:var(--aya-snippetbar-fg); }
+.aya-conversation .aya-snippetbar .aya-snippet:hover { background:var(--aya-snippet-row-hover-bg); border-color:var(--aya-snippetbar-border); }
+.aya-conversation .aya-snippetbar .aya-snippetbar-headbtn { background:none; border:0; padding:2px; color:var(--aya-snippetbar-subtle); }
+.aya-conversation .aya-snippetbar .aya-snippetbar-headbtn:hover { color:var(--aya-snippetbar-fg); }
+.aya-conversation .aya-snippetbar .aya-snippetbar-empty-link { background:none; border:0; padding:0; color:var(--accent); }
+.aya-gui-attachment-notice { margin:0 0 8px; color:var(--fg-secondary); font-size:11px; }
+.aya-gui-queued small { overflow-wrap:anywhere; }
+
+/* A split pane can be narrow even when the application window is wide. */
+@container (max-width: 850px) {
+  .aya-gui-artifacts { position:absolute; inset:0 0 0 auto; width:88%; min-width:0; max-width:500px; z-index:3; box-shadow:-10px 0 40px #0005; }
+  .aya-gui-artifacts--expanded { inset:0; width:auto; max-width:none; z-index:4; border-left:0; }
+  .aya-artifact-heading { padding:12px; }
+  .aya-widget-suggestion { flex-wrap:wrap; }
+  .aya-widget-suggestion>div { flex-basis:100%; }
+  .aya-gui-enter-hint { display:none!important; }
+  .aya-gui-compose-footer select { max-width:130px; }
+}
