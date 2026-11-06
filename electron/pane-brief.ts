@@ -287,7 +287,7 @@ async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefD
   if (launch.unknown) return cannot(await capabilityGap(tab, preset, deps)) ?? fix(unknown);
   if (launch.carried && sameRole(launch.role, current)) {
     const now = digest(carriedText(briefOn(preset, presetAgent(preset), current), current));
-    return launch.told && launch.told !== now ? fix(`This agent started with older instructions from Aya. To give it the current ones, ${how}.`) : null;
+    return launch.told && launch.told !== now ? fix(`Aya's startup instructions have changed since this agent started; even small wording changes count. To start with the current instructions, ${how}.`) : null;
   }
   if (launch.carried && launch.role) {
     if (!context || context.read === current.role) return null;

@@ -60,6 +60,7 @@ export interface SeedOptions {
     interfaceMode?: "terminal" | "gui";
     agent?: string;
     autoResume?: boolean;
+    unsafeMode?: boolean;
   }>;
   /** Extra environment variables for the Electron process. */
   launchEnv?: Record<string, string>;

@@ -8,6 +8,10 @@ let goal = null;
 let progressId = '';
 let progressStep = 0;
 let holdProgress = false;
+let rejectNextSteer = false;
+let slowSteer = false;
+let rejectedSlowSteer = false;
+let secretQuestion = false;
 let bulkIndex = -1;
 const write = value => process.stdout.write(JSON.stringify(value) + '\n');
 const event = (method, params) => write({ method, params });
@@ -23,9 +27,25 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (message.method === 'initialize') write({ id: message.id, result: { userAgent: 'test' } });
   else if ((message.method === 'thread/start' || message.method === 'thread/resume')) {
     event('fixture/config', p);
+    if (message.method === 'thread/resume' && p.threadId === 'resuming-main') {
+      activeTurn = 'resumed-turn'; busy = true;
+      event('turn/started', { threadId: p.threadId, turn: { id: activeTurn } });
+      event('turn/started', { threadId: 'child-thread', turn: { id: 'child-turn' } });
+      event('turn/completed', { threadId: 'child-thread', turn: { id: 'child-turn', status: 'completed' } });
+    }
     write({ id: message.id, result: { thread: { id: p.threadId || (process.env.AYA_E2E_RUN === '1' ? 'thread-' + process.pid : 'test-thread') }, model: 'fake-codex' } });
   } else if (message.method === 'model/list') write({ id: message.id, result: { data: [{ id: 'fake-codex', model: 'fake-codex', displayName: 'Fake Codex', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'low' }, { id: 'fake-pro', model: 'fake-pro', displayName: 'Fake Pro', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high' }] } });
-  else if (message.method === 'turn/steer') { write({ id: message.id, result: { turnId: p.expectedTurnId } }); event('fixture/steer', p); }
+  else if (message.method === 'turn/steer') {
+    if (slowSteer) {
+      event('fixture/steer', p);
+      const shouldReject = p.input?.[0]?.text === 'reject once' && !rejectedSlowSteer;
+      if (shouldReject) rejectedSlowSteer = true;
+      setTimeout(() => write(shouldReject ? { id: message.id, error: { code: -32600, message: 'Steering was rejected' } } : { id: message.id, result: { turnId: p.expectedTurnId } }), 1500);
+      return;
+    }
+    if (rejectNextSteer) { rejectNextSteer = false; write({ id: message.id, error: { code: -32600, message: 'Steering was rejected' } }); }
+    else { write({ id: message.id, result: { turnId: p.expectedTurnId } }); event('fixture/steer', p); }
+  }
   else if (message.method === 'thread/goal/set') {
     goal = { objective: p.objective || goal?.objective || 'Existing goal', status: p.status || goal?.status || 'active' };
     event('thread/goal/updated', { goal });
@@ -68,7 +88,40 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     activeTurn = 'turn';
     event('fixture/turn', p);
     const prompt = p.input[0].text;
+    if (prompt.startsWith('delayed-reject')) {
+      setTimeout(() => { busy = false; write({ id: message.id, error: { code: -32600, message: 'Delayed send rejected' } }); }, 1000);
+      return;
+    }
+    slowSteer = prompt === 'slow-steer-wait';
+    if (prompt === 'Reject this answer') {
+      busy = false;
+      write({ id: message.id, error: { code: -32600, message: 'The answer could not be sent' } });
+      return;
+    }
+    if (prompt === 'foreign-agent-turn') {
+      write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
+      event('turn/started', { threadId: p.threadId, turn: { id: 'turn' } });
+      event('turn/started', { threadId: 'child-thread', turn: { id: 'child-turn' } });
+      event('item/agentMessage/delta', { threadId: 'child-thread', itemId: 'child-message', delta: 'Private child output' });
+      write({ id: 'child-approval', method: 'item/commandExecution/requestApproval', params: { threadId: 'child-thread', command: 'pwd' } });
+      event('serverRequest/resolved', { threadId: 'child-thread', requestId: 'child-approval' });
+      event('turn/completed', { threadId: 'child-thread', turn: { id: 'child-turn', status: 'completed' } });
+      event('fixture/foreign-finished', {});
+      return;
+    }
     if (prompt === 'slow-start') { setTimeout(() => { write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } }); event('turn/started', { turn: { id: 'turn' } }); }, 100); return; }
+    if (prompt === 'complete-before-ack') {
+      event('turn/started', { turn: { id: 'turn' } });
+      setTimeout(() => complete('First turn completed before its start acknowledgement.'), 800);
+      setTimeout(() => write({ id: message.id, result: { turn: { id: 'turn', status: 'completed' } } }), 1800);
+      return;
+    }
+    if (prompt === 'reject-with-automatic-turn') {
+      activeTurn = 'goal-turn';
+      event('turn/started', { threadId: p.threadId, turn: { id: activeTurn } });
+      write({ id: message.id, error: { code: -32600, message: 'An automatic turn is already active' } });
+      return;
+    }
     if (prompt === 'handoff-before-ack') {
       event('turn/started', { turn: { id: 'turn' } });
       event('turn/completed', { turn: { id: 'turn', status: 'completed' } });
@@ -80,6 +133,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
     event('turn/started', { turn: { id: 'turn' } });
     if (prompt === 'many-widgets') { bulkIndex = 0; nextBulkWidget(); return; }
+    if (prompt === 'empty-table') { write({ id: 'present', method: 'item/tool/call', params: { tool: 'aya_present', arguments: { kind: 'table', title: 'Empty table', columns: ['Name'], rows: [], open: true } } }); return; }
     if (prompt === 'long-stream') {
       const itemId = 'stream-' + Date.now();
       let chunk = 0;
@@ -108,8 +162,22 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       setTimeout(() => process.exit(0), 1000);
     }
     else if (prompt === 'approval') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval' } });
-    else if (prompt === 'wait') return;
+    else if (prompt === 'wait' || prompt === 'slow-steer-wait') return;
+    else if (prompt === 'question-secret') { secretQuestion = true; write({ id: 'question', method: 'item/tool/requestUserInput', params: { questions: [{ id: 'choice', question: 'Enter secret', isSecret: true, options: [] }] } }); }
     else if (prompt === 'question') write({ id: 'question', method: 'item/tool/requestUserInput', params: { questions: [{ id: 'choice', question: 'Which option?', options: [{ label: 'A', description: 'First' }] }] } });
+    else if (prompt === 'async-secret-question') {
+      const questions = [{ id: 'secret', title: 'Enter a secret', isSecret: true, options: [] }];
+      event('item/started', { item: { id: 'call_async_secret', type: 'agentMessage', text: '', delivery: 'async', questions } });
+      event('item/completed', { item: { id: 'call_async_secret', type: 'agentMessage', text: '', delivery: 'async', questions } });
+      event('turn/completed', { turn: { id: 'turn', status: 'completed' } });
+      busy = false;
+    }
+    else if (prompt === 'async-question-wait') {
+      const questions = [{ title: 'Choose a direction', options: ['First', 'Second'] }];
+      event('item/started', { item: { id: 'call_async_wait', type: 'agentMessage', text: '', delivery: 'async', questions } });
+      event('item/completed', { item: { id: 'call_async_wait', type: 'agentMessage', text: '', delivery: 'async', questions } });
+      rejectNextSteer = true;
+    }
     else if (prompt === 'async-question') {
       const qTitle = 'Allow non-zero instruction distance?';
       const opts = ['Readable C, allow non-zero distance', 'Keep distance 0'];
@@ -134,7 +202,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (++bulkIndex < 20) nextBulkWidget();
     else complete('Twenty large widgets are saved.');
   }
-  else if (!message.method && message.id === 'question') complete(message.result.answers.choice.answers[0]);
+  else if (!message.method && message.id === 'question') { const response = secretQuestion ? 'Secret received' : message.result.answers.choice.answers[0]; secretQuestion = false; complete(response); }
   else if (!message.method && message.id === 'open-artifact') complete(message.result.success ? 'Artifact opened' : 'Unknown artifact');
   else if (!message.method && message.id === 'present') { lastArtifactId = message.result.contentItems[0].text.match(/artifactId: ([^.]+)\./)?.[1] || ''; complete(message.result.success ? '## Wynik\n\nTabela jest w panelu artefaktów.\n\n| Element | Stan |\n| --- | --- |\n| Aya | Gotowe |' : 'Tool failed'); }
   else if (message.method && message.id) write({ id: message.id, error: { code: -32601, message: 'Unsupported fixture request' } });

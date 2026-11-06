@@ -273,7 +273,7 @@ test("restart offered: not for older instructions when the preset, edited since,
     await start();
     await deps.records.set("t1", { ...(await deps.records.get("t1")), told: "000000000000" });
     const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
-    assert.deepEqual((await roleNoteReport(project, "ux-review", { tester: "t1" }, deps)).roleNotes.tester, { text: "This agent started with older instructions from Aya. To give it the current ones, click Restart.", severity: "action" });
+    assert.deepEqual((await roleNoteReport(project, "ux-review", { tester: "t1" }, deps)).roleNotes.tester, { text: "Aya's startup instructions have changed since this agent started; even small wording changes count. To start with the current instructions, click Restart.", severity: "action" });
     const [preset] = await deps.listPresets();
     preset.command = "claude && echo done";
     const report = await roleNoteReport(project, "ux-review", { tester: "t1" }, deps);
@@ -606,7 +606,7 @@ for (const agent of ["claude", "grok", "opencode", "codex"]) {
           mutate(preset);
           const gap = await gapOf();
           if (!flagged) return assert.equal(gap, null);
-          assert.equal(gap, `This agent started with older instructions from Aya. To give it the current ones, ${how}.`);
+          assert.equal(gap, `Aya's startup instructions have changed since this agent started; even small wording changes count. To start with the current instructions, ${how}.`);
         });
       });
     }
@@ -638,7 +638,7 @@ for (const [agent, received] of Object.entries(RECEIVED)) {
         assert.notEqual(older, text);
         await deps.records.set("t1", { role: ROLE, carried: true, told: toldDigest(older) });
         const how = agent === "codex" ? "pick a new session for this role in its pane list" : "click Restart";
-        assert.equal(await gap(), `This agent started with older instructions from Aya. To give it the current ones, ${how}.`);
+        assert.equal(await gap(), `Aya's startup instructions have changed since this agent started; even small wording changes count. To start with the current instructions, ${how}.`);
       }));
   }
 }
@@ -653,7 +653,7 @@ test("restart: the digest of what a pane was told survives in the records file, 
     const launch = await deps.records.get("t1");
     await deps.records.set("t1", { ...launch, told: "0".repeat(TOLD_DIGEST_HEX_CHARS) });
     deps.records = fileLaunchRecords(file);
-    assert.match((await gap()) ?? "", /^This agent started with older instructions from Aya\./);
+    assert.match((await gap()) ?? "", /^Aya's startup instructions have changed since this agent started;/);
   });
 });
 

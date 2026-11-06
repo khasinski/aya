@@ -107,6 +107,40 @@ test('Codex preserves a newer automatic turn across a late start ACK and stale c
   assert.equal(events.filter(e => e.method === 'turn/completed').length, 1);
 });
 
+test('a rejected start does not erase an automatic turn that began in the meantime', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await assert.rejects(session.send('reject-with-automatic-turn'), /automatic turn is already active/);
+  assert.equal(session.running, true);
+  await session.steer('Continue');
+  await wait(() => events.some(e => e.method === 'fixture/steer'));
+  assert.equal(events.find(e => e.method === 'fixture/steer').params.expectedTurnId, 'goal-turn');
+});
+
+test('a subagent turn cannot replace or end the current thread turn', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('foreign-agent-turn');
+  await wait(() => events.some(e => e.method === 'fixture/foreign-finished'));
+  assert.equal(session.running, true);
+  await session.steer('Continue');
+  await wait(() => events.some(e => e.method === 'fixture/steer'));
+  assert.equal(events.find(e => e.method === 'fixture/steer').params.expectedTurnId, 'turn');
+  assert.equal(events.some(e => e.params?.threadId === 'child-thread' && /^(turn|item\/agentMessage)\//.test(e.method)), false);
+  assert.ok(events.some(e => e.id === 'child-approval'));
+  assert.ok(events.some(e => e.method === 'serverRequest/resolved' && e.params.requestId === 'child-approval'));
+});
+
+test('subagent notifications during resume do not replace the resumed turn', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '', undefined, 'resuming-main');
+  assert.equal(session.running, true);
+  await session.steer('Continue');
+  await wait(() => events.some(e => e.method === 'fixture/steer'));
+  assert.equal(events.find(e => e.method === 'fixture/steer').params.expectedTurnId, 'resumed-turn');
+  assert.equal(events.some(e => e.params?.threadId === 'child-thread'), false);
+});
+
 test('native goals and side questions use dedicated RPCs, never ordinary turns', async t => {
   const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
   t.after(() => session.close()); await session.connect(process.cwd(), '');
