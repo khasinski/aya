@@ -247,3 +247,8 @@
    layout and paint. Remember measured heights to preserve scroll anchoring. */
 .aya-gui-message-content>article{content-visibility:auto;contain-intrinsic-size:auto 180px}
 .aya-gui-message-content>article:nth-last-of-type(-n+3){content-visibility:visible;contain-intrinsic-size:none}
+
+.aya-gui-body form > .aya-gui-request, .aya-gui-body form > .aya-gui-question-card { margin: 0 0 12px; }
+.aya-gui-request-actions button[data-primary] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.aya-gui-request-hint { display: block; margin-top: 8px; color: var(--fg-tertiary); font-size: 11px; }
+.aya-gui-question-key { margin-left: auto; padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--fg-tertiary); font: inherit; font-size: 10px; }

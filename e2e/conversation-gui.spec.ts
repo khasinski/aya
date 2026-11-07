@@ -263,6 +263,18 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await gui.getByRole('button', { name: 'Decline', exact: true }).click();
     await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
     await expect(gui.getByText('Approval required')).toHaveCount(0);
+    // The keyboard answers an approval too: Ctrl+Enter allows once, Ctrl+Backspace declines when the draft is empty.
+    await prompt.fill('approval'); await prompt.press('Enter');
+    await expect(gui.getByText('Approval required')).toBeVisible();
+    await expect(gui.locator('.aya-gui-body form .aya-gui-request')).toHaveCount(1);
+    await expect(gui.locator('.aya-gui-request-hint')).toContainText('allow once');
+    await window.keyboard.press('Control+Enter');
+    await expect(gui.getByText('Approval required')).toHaveCount(0);
+    await expect(turnStatus).toHaveText('Turn complete');
+    await prompt.fill('approval'); await prompt.press('Enter');
+    await expect(gui.getByText('Approval required')).toBeVisible();
+    await window.keyboard.press('Control+Backspace');
+    await expect(gui.getByText('Approval required')).toHaveCount(0);
     await prompt.fill('html-widget'); await prompt.press('Enter');
     const preview = gui.frameLocator('iframe[title="Capacity planner"]');
     await expect(preview.getByRole('heading', { name: 'Team capacity' })).toBeVisible();
@@ -670,7 +682,9 @@ test('sync and async harness questions support option selection, custom notes an
     const syncQuestion = gui.locator('.aya-gui-request.aya-gui-question-card');
     await expect(syncQuestion).toContainText('Codex has a question');
     await expect(syncQuestion).toContainText('Which option?');
-    await syncQuestion.getByRole('button', { name: /A/ }).click();
+    // The number keys pick an option when the focus is not in a text field.
+    await syncQuestion.locator('.aya-gui-question-option').first().focus();
+    await window.keyboard.press('1');
     await expect(syncQuestion.getByRole('button', { name: /A/ })).toHaveAttribute('aria-pressed', 'true');
     await syncQuestion.getByRole('textbox', { name: 'Which option?' }).fill('with custom note');
     await syncQuestion.getByRole('button', { name: 'Send answer', exact: true }).click();

@@ -594,7 +594,6 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
           onAnswerMessageQuestions={handleAnswerMessageQuestions}
         />
       ))}
-      {requests.map(request => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
       {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</div></details>}
       {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
@@ -604,6 +603,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     {showJump && <button className="aya-gui-jump" onClick={() => { follow.current = true; setShowJump(false); scrollToLatest(); }}>Jump to latest ↓</button>}</div>
     {side && <aside className="aya-gui-side"><button aria-label="Close side question" onClick={() => { setSide(''); setSideQuestion(''); }}>×</button><strong>Side question</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
+      {requests.map((request, index) => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} active={index === 0 && !hidden} promptEmpty={!prompt} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
       {messages.filter(m => m.progress?.status === 'running').slice(-3).map(m => <TaskProgress key={m.id} progress={m.progress!} compact />)}
       {plan.length > 0 && <details className="aya-gui-plan"><summary>Plan <small>{plan.filter(p => p.status === 'completed').length}/{plan.length}</small></summary><ol>{plan.map((step, i) => <li key={i} data-state={step.status}>{step.status === 'completed' ? '✓' : step.status === 'inProgress' ? '◌' : '○'} {step.step}</li>)}</ol></details>}
       {queue.length > 0 && <div className="aya-gui-queue"><div><strong>{queueHeld ? 'Queue paused' : 'Up next'} <small>{queue.length}</small></strong>{queueHeld && <button type="button" disabled={busy} onClick={() => setQueueHeld(false)}>Resume queue</button>}</div>{queue.map((item, index) => <div className="aya-gui-queued" key={item.id}><textarea aria-label={`Queued message ${index + 1}`} value={item.text} onChange={e => setQueue(old => old.map(q => q.id === item.id ? { ...q, text: e.target.value } : q))} /><div>{item.attachments.length > 0 && <small>{item.attachments.map(a => a.name).join(', ')}</small>}{busy && capabilities.steer && !item.attachments.length && <button type="button" disabled={!item.text.trim()} title="Send into the running turn" onClick={() => void steer(item.text, item.id)}>Steer ↗</button>}{index > 0 && <button type="button" aria-label={`Move queued message ${index + 1} up`} onClick={() => setQueue(old => { const next = [...old]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}>↑</button>}<button type="button" aria-label={`Remove queued message ${index + 1}`} onClick={() => setQueue(old => old.filter(q => q.id !== item.id))}>×</button></div></div>)}</div>}
@@ -789,7 +789,14 @@ function GuiQuestionCard({
     try { await onSubmit(answers); }
     finally { setSending(false); }
   };
-  return <section className={`${isRequest ? 'aya-gui-request ' : ''}aya-gui-question-card`} data-answered={answered}>
+  const flat = questions.flatMap(q => q.options.map(o => ({ q, o })));
+  return <section className={`${isRequest ? 'aya-gui-request ' : ''}aya-gui-question-card`} data-answered={answered} onKeyDown={e => {
+    // 1-9 pick an option when the focus is not in a text field.
+    if (answered || sending || e.metaKey || e.ctrlKey || e.altKey || e.nativeEvent.isComposing) return;
+    if ((e.target as HTMLElement).closest('input,textarea')) return;
+    const n = /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : -1;
+    if (n >= 0 && flat[n]) { e.preventDefault(); toggleOption(flat[n].q.id, flat[n].o.label, flat[n].q.multiSelect); }
+  }}>
     <div className="aya-gui-question-card-header">
       <strong>{`${agentLabel} has a question`}</strong>
       {answered && <small>Answered</small>}
@@ -814,6 +821,7 @@ function GuiQuestionCard({
               onClick={() => toggleOption(q.id, o.label, q.multiSelect)}
             >
               <span className="aya-gui-question-check" aria-hidden="true">{q.multiSelect ? (isSelected ? '☑' : '☐') : (isSelected ? '●' : '○')}</span>
+              {!answered && flat.findIndex(f => f.q === q && f.o === o) < 9 && <kbd className="aya-gui-question-key" aria-hidden="true">{flat.findIndex(f => f.q === q && f.o === o) + 1}</kbd>}
               <span className="aya-gui-question-option-body">
                 <strong>{o.label}</strong>
                 {o.description && <small>{o.description}</small>}
@@ -853,7 +861,7 @@ function GuiQuestionCard({
     </div>}
   </section>;
 }
-function GuiRequest({ request, agentLabel, codex, respond }: { request: GuiEvent; agentLabel: string; codex: boolean; respond: (value: unknown) => Promise<unknown> }) {
+function GuiRequest({ request, agentLabel, codex, active, promptEmpty, respond }: { request: GuiEvent; agentLabel: string; codex: boolean; /** The first pending request of a visible pane answers the keyboard shortcuts. */ active: boolean; /** Cmd+Backspace declines only when it cannot be deleting text. */ promptEmpty: boolean; respond: (value: unknown) => Promise<unknown> }) {
   const decisions: GuiApprovalDecision[] = codex && Array.isArray(request.params.availableDecisions)
     ? request.params.availableDecisions as GuiApprovalDecision[]
     : ['accept', ...(codex ? ['acceptForSession' as const] : []), ...(codex && Array.isArray(request.params.proposedExecpolicyAmendment) ? [{ acceptWithExecpolicyAmendment: { execpolicy_amendment: request.params.proposedExecpolicyAmendment as string[] } }] : []), 'decline'];
@@ -868,6 +876,18 @@ function GuiRequest({ request, agentLabel, codex, respond }: { request: GuiEvent
   const questions = normalizeQuestions(request.params.questions);
   const [sending, setSending] = useState(false);
   const submit = async (value: unknown) => { setSending(true); try { await respond(value); } finally { setSending(false); } };
+  const isApproval = questions.length === 0;
+  const canAllow = decisions.includes('accept'), canDecline = decisions.includes('decline');
+  useEffect(() => {
+    if (!active || !isApproval) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing || sending) return;
+      if (e.key === 'Enter' && canAllow) { e.preventDefault(); void submit({ decision: 'accept' }); }
+      else if (e.key === 'Backspace' && canDecline && promptEmpty) { e.preventDefault(); void submit({ decision: 'decline' }); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
   if (questions.length > 0) return <GuiQuestionCard questions={questions} agentLabel={agentLabel} isRequest onSubmit={answers => submit({ answers })} />;
-  return <section className="aya-gui-request"><strong>Approval required</strong><pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre><div className="aya-gui-request-actions">{decisions.map((decision, index) => <button key={index} disabled={sending} onClick={() => void submit({ decision })}>{decisionLabel(decision)}</button>)}</div></section>;
+  return <section className="aya-gui-request" role="group" aria-label="Approval required"><strong>Approval required</strong><pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre><div className="aya-gui-request-actions">{decisions.map((decision, index) => <button key={index} disabled={sending} data-primary={decision === 'accept' || undefined} aria-keyshortcuts={decision === 'accept' ? 'Control+Enter Meta+Enter' : decision === 'decline' && promptEmpty ? 'Control+Backspace Meta+Backspace' : undefined} onClick={() => void submit({ decision })}>{decisionLabel(decision)}</button>)}</div>{active && (canAllow || canDecline) && <small className="aya-gui-request-hint">{canAllow ? '⌘↵ allow once' : ''}{canAllow && canDecline && promptEmpty ? ' · ' : ''}{canDecline && promptEmpty ? '⌘⌫ decline' : ''}</small>}</section>;
 }
