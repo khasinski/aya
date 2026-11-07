@@ -35,6 +35,7 @@
     "src/diff-review.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
+    "src/gui-composer.ts",
     "src/gui-status.ts",
     "src/harness-search-coverage.ts",
     "src/harness-search-sequence.ts",

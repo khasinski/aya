@@ -21,6 +21,9 @@ export const NO_HARNESS_HINT_DISMISSED_STORAGE_KEY = "aya:no-harness-hint-dismis
 /** "1" logs every keystroke a terminal sends, for debugging input handling. */
 export const DEBUG_TERMINAL_INPUT_STORAGE_KEY = "aya:debug-terminal-input";
 
+/** What Enter does in the Conversation GUI composer while the agent works: "queue" or "steer". */
+export const GUI_FOLLOW_UP_STORAGE_KEY = "aya:gui-follow-up";
+
 /** A project whose .aya launchers the user ignored or already imported. */
 export function repoConfigIgnoredKey(directory: string): string {
   return `aya:repo-config-ignored:${directory}`;

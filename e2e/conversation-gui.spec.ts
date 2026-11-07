@@ -386,6 +386,15 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await gui.getByRole('button', { name: 'Steer ↗', exact: true }).click();
     await expect(prompt).toHaveValue('');
     await expect(gui.locator('.aya-gui-messages')).toContainText('↳ Focus on the interaction details');
+    // Enter queues by default and Cmd+Enter does the opposite for one message; the toggle changes the default.
+    await expect(gui.locator('.aya-gui-enter-hint')).toContainText('Enter queues · ⌘Enter steers');
+    await prompt.fill('Second nudge'); await prompt.press('Meta+Enter');
+    await expect(gui.locator('.aya-gui-messages')).toContainText('↳ Second nudge');
+    await gui.getByRole('button', { name: /Enter while working: queue/ }).click();
+    await expect(gui.locator('.aya-gui-enter-hint')).toContainText('Enter steers · ⌘Enter queues');
+    await prompt.fill('Third nudge'); await prompt.press('Enter');
+    await expect(gui.locator('.aya-gui-messages')).toContainText('↳ Third nudge');
+    await gui.getByRole('button', { name: /Enter while working: steer/ }).click();
     await prompt.fill('widgets'); await prompt.press('Enter');
     await expect(gui.getByRole('textbox', { name: 'Queued message 1' })).toHaveValue('widgets');
     await gui.getByRole('button', { name: 'Stop', exact: true }).click();

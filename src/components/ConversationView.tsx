@@ -7,6 +7,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
+import { followUpHint, parseFollowUpPreference, sendAction, sendLabel, type FollowUpPreference } from '../gui-composer';
+import { GUI_FOLLOW_UP_STORAGE_KEY } from '../storage-keys';
 import { guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
 import type { GuiArtifact, GuiArtifactEntry, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
 import type { Preset, TerminalState } from '../types';
@@ -106,6 +108,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const [attachments, setAttachmentValues] = useState<Attachment[]>([]);
   const setAttachments = useCallback((value: SetStateAction<Attachment[]>) => { draftRevision.current++; setAttachmentValues(value); }, []);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
+  const [followUp, setFollowUpValue] = useState<FollowUpPreference>(() => { try { return parseFollowUpPreference(localStorage.getItem(GUI_FOLLOW_UP_STORAGE_KEY)); } catch { return 'queue'; } });
+  const setFollowUp = (value: FollowUpPreference) => { setFollowUpValue(value); try { localStorage.setItem(GUI_FOLLOW_UP_STORAGE_KEY, value); } catch { /* the choice lasts until reload */ } };
   const [queueHeld, setQueueHeld] = useState(false);
   const [sideQuestion, setSideQuestion] = useState('');
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -477,12 +481,13 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     // Queue changes drive dispatch. Model/effort changes apply to the next turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, busy, sideQuestion, queueHeld, queue, requests.length]);
-  const send = async (text: string) => {
+  const send = async (text: string, opposite = false) => {
     if ((!text.trim() && !attachments.length) || !ready || switching) return;
     setError('');
     try {
       if (text.startsWith('/')) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
       if (busy || sideQuestion || queue.length) {
+        if (sendAction({ mustWait: true, busy, steerSupported: capabilities.steer, preference: followUp, opposite, hasAttachments: attachments.length > 0, isCommand: false }) === 'steer') { await steer(text); return; }
         setQueue(old => [...old, { id: crypto.randomUUID(), text: text || 'Inspect the attached files.', attachments }]); setPrompt(''); setAttachments([]); return;
       }
       if (dispatching.current) return;
@@ -652,15 +657,21 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
               return;
             }
           }
+          if (e.key === 'Enter' && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+            // Cmd/Ctrl+Shift+Enter sends the oldest queued message into the running turn.
+            const first = queue[0];
+            if (busy && capabilities.steer && first && !first.attachments.length && first.text.trim()) { e.preventDefault(); void steer(first.text, first.id); }
+            return;
+          }
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
-            void send(prompt);
+            void send(prompt, e.metaKey || e.ctrlKey);
           }
         }}
       />
       <div className="aya-gui-compose-footer"><button className="aya-gui-icon-button" type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => setAttachments(old => [...old, ...(files as Attachment[])].slice(0, 20))).catch(fail)}><span className="aya-gui-icon" aria-hidden="true">add</span></button>
       {models.length > 0 && <><select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select>}</>}
-      <span className="aya-gui-compose-spacer" /><small className="aya-gui-enter-hint">Shift+Enter for a new line</small>{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{busy && !prompt.startsWith('/') ? 'Queue ↑' : 'Send ↑'}</button></div>
+      <span className="aya-gui-compose-spacer" /><small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small>{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
     </form></main>
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>
