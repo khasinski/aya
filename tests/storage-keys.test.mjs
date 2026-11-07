@@ -36,6 +36,7 @@ test("every stored preference keeps the key it is stored under today", () => {
 
 test("an ignored repo config is remembered per project directory", () => {
   assert.equal(keys.repoConfigIgnoredKey("/Users/me/app"), "aya:repo-config-ignored:/Users/me/app");
+  assert.equal(keys.guiStashKey("t1"), "aya:gui-stash:t1");
 });
 
 test("the GPU relaunch window event keeps its name", () => {

@@ -252,3 +252,7 @@
 .aya-gui-request-actions button[data-primary] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .aya-gui-request-hint { display: block; margin-top: 8px; color: var(--fg-tertiary); font-size: 11px; }
 .aya-gui-question-key { margin-left: auto; padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--fg-tertiary); font: inherit; font-size: 10px; }
+
+.aya-gui-quote { position: fixed; z-index: 5; box-shadow: 0 6px 24px #0005; background: var(--accent) !important; color: var(--bg) !important; border-color: var(--accent) !important; }
+.aya-gui-stash { color: var(--fg-tertiary); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; }
+.aya-gui-compose-footer small.aya-gui-stash { flex: none; }

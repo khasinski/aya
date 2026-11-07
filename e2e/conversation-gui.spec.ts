@@ -726,3 +726,65 @@ test('sync and async harness questions support option selection, custom notes an
     await expect(reloadedQuestion).toContainText('Your answer: Keep distance 0 — preserve assembly parity');
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
+
+test('the composer recalls sent prompts, stashes drafts and quotes an assistant reply', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow();
+    const gui = window.locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    const turnStatus = gui.getByRole('status', { name: 'Turn status' });
+
+    await prompt.fill('widgets'); await prompt.press('Enter');
+    await expect(turnStatus).toHaveText('Turn complete');
+    await prompt.fill('question'); await prompt.press('Enter');
+    await gui.locator('.aya-gui-request').getByRole('button', { name: 'Send answer', exact: true }).waitFor({ state: 'attached' });
+    await gui.locator('.aya-gui-question-option').first().click();
+    await gui.getByRole('button', { name: 'Send answer', exact: true }).click();
+    await expect(turnStatus).toHaveText('Turn complete');
+
+    // ArrowUp in an empty composer walks back through what was sent.
+    await prompt.focus();
+    await prompt.press('ArrowUp');
+    await expect(prompt).toHaveValue('question');
+    await prompt.press('ArrowUp');
+    await expect(prompt).toHaveValue('widgets');
+    await prompt.press('ArrowDown');
+    await expect(prompt).toHaveValue('question');
+    await prompt.press('ArrowDown');
+    await expect(prompt).toHaveValue('');
+
+    // Typed text is not replaced by recall.
+    await prompt.fill('half a thought');
+    await prompt.press('ArrowUp');
+    await expect(prompt).toHaveValue('half a thought');
+
+    // Cmd+S stashes the draft; in an empty composer it brings it back.
+    await prompt.press('Meta+s');
+    await expect(prompt).toHaveValue('');
+    await expect(gui.locator('.aya-gui-stash')).toHaveText('Stash 1');
+    await prompt.press('Meta+s');
+    await expect(prompt).toHaveValue('half a thought');
+    await expect(gui.locator('.aya-gui-stash')).toHaveCount(0);
+    await prompt.fill('');
+
+    // Selecting words of an assistant reply offers to quote them.
+    const reply = gui.locator('article.assistant').first();
+    await expect(reply).toBeVisible();
+    const quoted = await reply.evaluate(node => {
+      const range = document.createRange(); range.selectNodeContents(node.querySelector('p') ?? node);
+      const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+      return selection.toString().trim();
+    });
+    await gui.locator('.aya-gui-messages').dispatchEvent('mouseup');
+    await gui.getByRole('button', { name: 'Quote in composer', exact: true }).click();
+    expect((await prompt.inputValue()).startsWith('> ')).toBe(true);
+    expect(await prompt.inputValue()).toContain(quoted.split('\n')[0]);
+    await expect(gui.getByRole('button', { name: 'Quote in composer', exact: true })).toHaveCount(0);
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});

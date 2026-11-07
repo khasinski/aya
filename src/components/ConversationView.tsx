@@ -7,8 +7,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
-import { followUpHint, parseFollowUpPreference, sendAction, sendLabel, type FollowUpPreference } from '../gui-composer';
-import { GUI_FOLLOW_UP_STORAGE_KEY } from '../storage-keys';
+import { followUpHint, parseFollowUpPreference, recallStep, sendAction, sendLabel, sentPromptText, stashStep, withQuote, type FollowUpPreference, type Recall } from '../gui-composer';
+import { GUI_FOLLOW_UP_STORAGE_KEY, guiStashKey } from '../storage-keys';
 import { guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
 import type { GuiArtifact, GuiArtifactEntry, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
 import type { Preset, TerminalState } from '../types';
@@ -129,6 +129,10 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const eventSequence = useRef(0);
   const receivedEventSequence = useRef(0);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const recall = useRef<Recall | null>(null);
+  const [stash, setStashValue] = useState<string[]>(() => { try { const saved: unknown = JSON.parse(localStorage.getItem(guiStashKey(terminal.id)) || '[]'); return Array.isArray(saved) ? saved.filter((v): v is string => typeof v === 'string').slice(-20) : []; } catch { return []; } });
+  const setStash = (next: string[]) => { setStashValue(next); try { if (next.length) localStorage.setItem(guiStashKey(terminal.id), JSON.stringify(next)); else localStorage.removeItem(guiStashKey(terminal.id)); } catch { /* kept until reload */ } };
+  const [quote, setQuote] = useState<{ text: string; left: number; top: number } | null>(null);
   const artifactButton = useRef<HTMLButtonElement>(null);
   const [drawer, setDrawer] = useState(false);
   const [selected, setSelected] = useState('');
@@ -587,7 +591,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       <button className="aya-gui-icon-button" disabled={goalPending} aria-label="Clear goal" title="Clear goal" onClick={() => void command('goal', 'clear').catch(fail)}><span className="aya-gui-icon" aria-hidden="true">close</span></button>
     </div>}
     {goalDetails?.status === 'blocked' && <div className="aya-gui-goal-reason" aria-label="Goal block reason"><strong>Why blocked</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{goalDetails.reason || 'The agent did not provide a reason. Ask it what is blocking this goal.'}</ReactMarkdown></div>}
-    <div className="aya-gui-body"><main><div className="aya-gui-scroll-area"><div ref={scrollViewport} className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
+    <div className="aya-gui-body"><main><div className="aya-gui-scroll-area"><div ref={scrollViewport} onMouseUp={() => { const selection = window.getSelection(); const text = selection?.toString() ?? ''; const node = selection?.anchorNode; const inside = node && (node instanceof Element ? node : node.parentElement)?.closest('article.assistant'); if (!selection || selection.isCollapsed || !text.trim() || !inside) { setQuote(null); return; } const rect = selection.getRangeAt(0).getBoundingClientRect(); setQuote({ text, left: Math.max(8, rect.right - 110), top: rect.bottom + 6 }); }} className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {messages.map(m => (
         <ConversationMessageItem
@@ -607,6 +611,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={() => { follow.current = true; setShowJump(false); scrollToLatest(); }}>Jump to latest ↓</button>}</div>
     {side && <aside className="aya-gui-side"><button aria-label="Close side question" onClick={() => { setSide(''); setSideQuestion(''); }}>×</button><strong>Side question</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
+    {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
       {requests.map((request, index) => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} active={index === 0 && !hidden} promptEmpty={!prompt} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
       {messages.filter(m => m.progress?.status === 'running').slice(-3).map(m => <TaskProgress key={m.id} progress={m.progress!} compact />)}
@@ -638,6 +643,20 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
           }).catch(fail);
         }}
         onKeyDown={e => {
+          if (!e.nativeEvent.isComposing) {
+            const el = e.currentTarget;
+            if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+              const step = stashStep(stash, prompt);
+              if (step) { e.preventDefault(); recall.current = null; setPrompt(step.prompt); setStash(step.stash); }
+              return;
+            }
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && el.selectionStart === el.selectionEnd) {
+              const up = e.key === 'ArrowUp';
+              const atEdge = up ? !prompt.slice(0, el.selectionStart).includes('\n') : !prompt.slice(el.selectionEnd).includes('\n');
+              const step = recallStep(messages.filter(m => m.type === 'user').map(m => sentPromptText(m.text)), recall.current, prompt, up ? 'up' : 'down', atEdge);
+              if (step) { e.preventDefault(); recall.current = step.recall; setPrompt(step.prompt); return; }
+            }
+          }
           if (
             e.key === 'Tab' &&
             !e.shiftKey &&
@@ -671,7 +690,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       />
       <div className="aya-gui-compose-footer"><button className="aya-gui-icon-button" type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => setAttachments(old => [...old, ...(files as Attachment[])].slice(0, 20))).catch(fail)}><span className="aya-gui-icon" aria-hidden="true">add</span></button>
       {models.length > 0 && <><select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select>}</>}
-      <span className="aya-gui-compose-spacer" /><small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small>{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
+      <span className="aya-gui-compose-spacer" />{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}<small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small>{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
     </form></main>
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>

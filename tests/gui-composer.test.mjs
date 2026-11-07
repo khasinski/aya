@@ -44,3 +44,50 @@ test("the stored preference defaults to queue", () => {
   assert.equal(parseFollowUpPreference(null), "queue");
   assert.equal(parseFollowUpPreference("junk"), "queue");
 });
+
+import { quoteMarkdown, recallStep, sentPromptText, stashStep, withQuote } from "../dist-test/gui-composer.js";
+
+test("ArrowUp walks back through sent prompts, ArrowDown forward, and past the newest clears", () => {
+  const history = ["one", "two", "three"];
+  let r = recallStep(history, null, "", "up", true);
+  assert.deepEqual(r, { prompt: "three", recall: { index: 2, text: "three" } });
+  r = recallStep(history, r.recall, r.prompt, "up", true);
+  assert.equal(r.prompt, "two");
+  r = recallStep(history, r.recall, r.prompt, "up", true);
+  r = recallStep(history, r.recall, r.prompt, "up", true);
+  assert.equal(r.prompt, "one", "stops at the oldest");
+  r = recallStep(history, r.recall, r.prompt, "down", true);
+  assert.equal(r.prompt, "two");
+  r = recallStep(history, r.recall, r.prompt, "down", true);
+  r = recallStep(history, r.recall, r.prompt, "down", true);
+  assert.deepEqual(r, { prompt: "", recall: null });
+});
+
+test("recall leaves the arrows alone when text was typed, edited, or the caret is not on the edge line", () => {
+  const history = ["one", "two"];
+  assert.equal(recallStep(history, null, "typing", "up", true), null);
+  assert.equal(recallStep(history, null, "", "up", false), null);
+  assert.equal(recallStep(history, { index: 1, text: "two" }, "two edited", "up", true), null, "an edited recall is a draft");
+  assert.equal(recallStep(history, null, "", "down", true), null);
+  assert.equal(recallStep([], null, "", "up", true), null);
+});
+
+test("a steered message is recalled without its arrow", () => {
+  assert.equal(sentPromptText("↳ look at the tests"), "look at the tests");
+  assert.equal(sentPromptText("plain"), "plain");
+});
+
+test("a selection becomes a block quote placed after the draft", () => {
+  assert.equal(quoteMarkdown("a\nb"), "> a\n> b\n\n");
+  assert.equal(quoteMarkdown("a\n\nb"), "> a\n>\n> b\n\n");
+  assert.equal(withQuote("", "hello"), "> hello\n\n");
+  assert.equal(withQuote("my draft  \n", "hello"), "my draft\n\n> hello\n\n");
+  assert.equal(withQuote("draft", "   "), "draft");
+});
+
+test("Cmd+S stashes a draft and brings the latest one back to an empty composer", () => {
+  assert.deepEqual(stashStep([], "half a thought"), { prompt: "", stash: ["half a thought"] });
+  assert.deepEqual(stashStep(["a", "b"], ""), { prompt: "b", stash: ["a"] });
+  assert.equal(stashStep([], ""), null);
+  assert.deepEqual(stashStep(["a"], "new"), { prompt: "", stash: ["a", "new"] });
+});

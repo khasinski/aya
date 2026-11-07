@@ -28,3 +28,8 @@ export const GUI_FOLLOW_UP_STORAGE_KEY = "aya:gui-follow-up";
 export function repoConfigIgnoredKey(directory: string): string {
   return `aya:repo-config-ignored:${directory}`;
 }
+
+/** The drafts a Conversation GUI pane has stashed with Cmd+S. */
+export function guiStashKey(terminalId: string): string {
+  return `aya:gui-stash:${terminalId}`;
+}
