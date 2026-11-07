@@ -862,3 +862,24 @@ test('plan mode proposes a plan card that can be carried out', async () => {
     await expect(card.getByRole('button', { name: 'Implement this plan' })).toHaveCount(0);
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
+
+test('Add context puts another terminal\'s output into the draft', async () => {
+  const seed = seedEnv({ rightTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'shell', name: 'Shell', icon: '$', color: '', command: '$SHELL' }, { id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow();
+    const gui = window.locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    await gui.getByRole('button', { name: '@ Context' }).click();
+    const menu = gui.getByRole('menu', { name: 'Add context' });
+    await expect(menu.getByRole('menuitem', { name: /^Output of shell/ }).first()).toBeVisible();
+    await menu.getByRole('menuitem', { name: /^Output of shell/ }).first().click();
+    await expect(menu).toHaveCount(0);
+    await expect(prompt).toHaveValue(/^Output of the terminal "shell \d":\n```\n/);
+    await expect(prompt).toBeFocused();
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});

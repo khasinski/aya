@@ -37,6 +37,7 @@
     "src/focus-reporting.ts",
     "src/gui-activity.ts",
     "src/gui-composer.ts",
+    "src/gui-context.ts",
     "src/gui-find.ts",
     "src/gui-status.ts",
     "src/harness-search-coverage.ts",

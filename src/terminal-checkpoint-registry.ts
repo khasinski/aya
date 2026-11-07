@@ -13,3 +13,23 @@ export function registerCheckpointTerminal(id:string,terminal:Terminal,ready:()=
   }
   return ()=>{if(terminals.get(id)===entry)terminals.delete(id);};
 }
+
+/** The last `maxLines` lines of a terminal's screen and scrollback, or null when it has no live xterm (a GUI pane, a
+ *  terminal that is not open). Rows the terminal wrapped are joined, so a long line is one line. */
+export function terminalExcerpt(id: string, maxLines = 60): string | null {
+  const entry = terminals.get(id);
+  if (!entry) return null;
+  const buffer = entry.term.buffer.active;
+  const lines: string[] = [];
+  let carry = "";
+  for (let y = buffer.length - 1; y >= 0 && lines.length < maxLines; y--) {
+    const row = buffer.getLine(y);
+    if (!row) continue;
+    const text = row.translateToString(true) + carry;
+    if (row.isWrapped) { carry = text; continue; }
+    carry = "";
+    lines.unshift(text);
+  }
+  while (lines.length && !lines[lines.length - 1]!.trim()) lines.pop();
+  return lines.join("\n");
+}

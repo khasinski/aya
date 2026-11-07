@@ -1,4 +1,4 @@
-import { memo, type RefObject } from "react";
+import { memo, useCallback, useRef, type RefObject } from "react";
 import { guiSupportedAgent } from "../agentPreset";
 import { emptyProjectPaneTitle, paneStyleFromRect } from "../pane-grid";
 import { findProject, terminalSpawn } from "../project-helpers";
@@ -109,6 +109,13 @@ export const PaneGrid = memo(function PaneGrid({
   resizeSplit,
   projectTerminals,
 }: Props) {
+  // A stable lookup, so a GUI pane (memoised) does not re-render whenever another terminal's status changes.
+  const terminalsRef = useRef(terminals);
+  terminalsRef.current = terminals;
+  const listSiblingTerminals = useCallback((self: { id: string; projectSlug: string }) =>
+    Object.values(terminalsRef.current)
+      .filter((t) => t.projectSlug === self.projectSlug && t.id !== self.id)
+      .map((t) => ({ id: t.id, name: t.name })), []);
   return (
     <div className={`aya-panes ${isSplit ? "aya-panes--split" : ""}`}>
       {paneRects.map(({ leafId, terminalId, rect }) => {
@@ -298,6 +305,7 @@ export const PaneGrid = memo(function PaneGrid({
               if (activeProjectId && pane) setActiveSplitCell(activeProjectId, pane.leafId);
             }}
             onReportStatus={onReportPaneStatus}
+            listSiblingTerminals={listSiblingTerminals}
             findOpen={findInPaneFor === terminal.id}
             onCloseFind={closeFindPane}
           />

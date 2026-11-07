@@ -273,3 +273,9 @@
 
 .aya-gui-activity-phase { margin: 10px 0 2px; color: var(--fg-tertiary); font-size: 10px; letter-spacing: .8px; text-transform: uppercase; }
 .aya-gui-activity-time { color: var(--fg-tertiary); }
+
+.aya-gui-context { position: relative; }
+.aya-gui-context-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 6; min-width: 240px; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 30px #0005; }
+.aya-gui-context-menu button { text-align: left; }
+.aya-gui-context-menu small { color: var(--fg-tertiary); }
+.aya-gui-compose-footer .aya-gui-context-empty { flex: none; max-width: 260px; padding: 4px 6px; }

@@ -10,6 +10,8 @@ import type { GuiProgress } from '../../shared/gui-progress';
 import { followUpHint, parseFollowUpPreference, pasteBecomesAttachment, recallStep, sendAction, sendLabel, sentPromptText, stashStep, withQuote, type FollowUpPreference, type Recall } from '../gui-composer';
 import { GUI_FOLLOW_UP_STORAGE_KEY, guiStashKey } from '../storage-keys';
 import { activityDuration, activityKind, activityPhases, phaseText, shortDuration, type ActivityKind } from '../gui-activity';
+import { reviewCommentsBlock, terminalExcerptBlock, withContextBlock } from '../gui-context';
+import { terminalExcerpt } from '../terminal-checkpoint-registry';
 import { findStatus, findTextMatches, stepMatch } from '../gui-find';
 import { formatElapsed, guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
 import type { GuiArtifact, GuiArtifactEntry, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
@@ -25,6 +27,7 @@ const goalText = (value: unknown) => { const goal = obj(value); return [str(goal
 interface Attachment { id: string; name: string; path: string; image: boolean }
 interface QueuedMessage { id: string; text: string; attachments: Attachment[] }
 interface ModelOption { id: string; model: string; displayName: string; supportedReasoningEfforts: { reasoningEffort: string }[]; defaultReasoningEffort: string }
+type ContextComment = { id: string; file: string; hunk: string; line: string; newLine: number | null; oldLine: number | null; note: string; sentAt: string | null; checkout: string };
 interface Activity { id: string; label: string; status: string; output: string; kind?: ActivityKind; startedAt?: number; endedAt?: number }
 interface GoalDetails { objective: string; status: string; reason?: string }
 interface GuiQuestionOption { label: string; description: string }
@@ -91,12 +94,14 @@ type ConversationProps = {
   /** Cmd+F opened the find bar for this pane. */
   findOpen?: boolean;
   onCloseFind?: () => void;
+  /** The other terminals of this project, for "Add context". */
+  listSiblingTerminals?: (self: { id: string; projectSlug: string }) => { id: string; name: string }[];
 };
 export const ConversationView = memo(function ConversationView(props: ConversationProps) {
   const [generation, setGeneration] = useState(0);
   return <ConversationSession key={`${props.terminal.id}:${generation}`} {...props} onSwitch={() => setGeneration(n => n + 1)} />;
 });
-function ConversationSession({ terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, onSwitch }: ConversationProps & { onSwitch: () => void }) {
+function ConversationSession({ terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, listSiblingTerminals, onSwitch }: ConversationProps & { onSwitch: () => void }) {
   const api = window.ayaGui;
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
   const agentLabel = guiAgent === 'pi' ? 'Pi' : guiAgent === 'claude' ? 'Claude' : guiAgent === 'antigravity' ? 'Antigravity' : 'Codex';
@@ -135,6 +140,18 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const receivedEventSequence = useRef(0);
   const composer = useRef<HTMLTextAreaElement>(null);
   const recall = useRef<Recall | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ comments: ContextComment[]; terminals: { id: string; name: string; available: boolean }[] } | null>(null);
+  const openContextMenu = async () => {
+    if (contextMenu) { setContextMenu(null); return; }
+    const siblings = listSiblingTerminals?.({ id: terminal.id, projectSlug: terminal.projectSlug }) ?? [];
+    let comments: ContextComment[] = [];
+    try { comments = (await window.aya.listDiffComments(terminal.projectSlug)).filter(c => c.sentAt === null && c.checkout === terminal.cwd); } catch { /* no comments to offer */ }
+    setContextMenu({ comments, terminals: siblings.map(t => ({ ...t, available: terminalExcerpt(t.id, 1) !== null })).filter(t => t.available) });
+  };
+  const addContext = (build: () => string) => {
+    try { recall.current = null; setPrompt(old => withContextBlock(old, build())); setContextMenu(null); composer.current?.focus(); }
+    catch (e) { fail(e); setContextMenu(null); }
+  };
   const [planMode, setPlanModeValue] = useState(false);
   const planRef = useRef(false);   // read by dispatch in the same tick that /plan or Implement changes it
   const setPlanMode = (value: boolean | ((old: boolean) => boolean)) => { const next = typeof value === 'function' ? value(planRef.current) : value; planRef.current = next; setPlanModeValue(next); };
@@ -754,7 +771,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       />
       <div className="aya-gui-compose-footer"><button className="aya-gui-icon-button" type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => setAttachments(old => [...old, ...(files as Attachment[])].slice(0, 20))).catch(fail)}><span className="aya-gui-icon" aria-hidden="true">add</span></button>
       {models.length > 0 && <><select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select>}</>}
-      <span className="aya-gui-compose-spacer" />{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}<small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small>{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
+      <span className="aya-gui-compose-spacer" /><span className="aya-gui-context"><button type="button" className="aya-gui-context-button" aria-haspopup="menu" aria-expanded={contextMenu !== null} title="Add review comments or terminal output to the message" onClick={() => void openContextMenu()}>@ Context</button>{contextMenu && <div className="aya-gui-context-menu" role="menu" aria-label="Add context">{contextMenu.comments.length > 0 && <button type="button" role="menuitem" onClick={() => addContext(() => reviewCommentsBlock(contextMenu.comments, terminal.cwd))}>Review comments <small>{contextMenu.comments.length}</small></button>}{contextMenu.terminals.map(t => <button type="button" role="menuitem" key={t.id} onClick={() => addContext(() => terminalExcerptBlock(t.name, terminalExcerpt(t.id, 60) ?? ''))}>Output of {t.name}</button>)}{!contextMenu.comments.length && !contextMenu.terminals.length && <small className="aya-gui-context-empty">Nothing to add: no unsent review comments for this checkout and no other terminal open.</small>}</div>}</span>{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}<small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small>{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
     </form></main>
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>
