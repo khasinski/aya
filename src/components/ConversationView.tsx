@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
-import { followUpHint, parseFollowUpPreference, recallStep, sendAction, sendLabel, sentPromptText, stashStep, withQuote, type FollowUpPreference, type Recall } from '../gui-composer';
+import { followUpHint, parseFollowUpPreference, pasteBecomesAttachment, recallStep, sendAction, sendLabel, sentPromptText, stashStep, withQuote, type FollowUpPreference, type Recall } from '../gui-composer';
 import { GUI_FOLLOW_UP_STORAGE_KEY, guiStashKey } from '../storage-keys';
 import { findStatus, findTextMatches, stepMatch } from '../gui-find';
 import { formatElapsed, guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
@@ -684,7 +684,15 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
           const data = e.clipboardData;
           if (!data || !ready) return;
           const types = Array.from(data.types || []);
-          if (types.includes('text/plain') && data.getData('text/plain')) return;
+          const pasted = types.includes('text/plain') ? data.getData('text/plain') : '';
+          if (pasted && pasteBecomesAttachment(pasted, prompt.length)) {
+            e.preventDefault();
+            void invoke('paste-text', { text: pasted }).then(item => {
+              if (item && typeof item === 'object' && 'id' in item) setAttachments(old => [...old, item as Attachment].slice(0, 20));
+            }).catch(fail);
+            return;
+          }
+          if (pasted) return;
           const items = Array.from(data.items || []);
           const hasImage = items.some(item => item.type.startsWith('image/')) || types.some(t => t.startsWith('image/'));
           if (!hasImage) return;

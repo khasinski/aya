@@ -773,6 +773,24 @@ test('the composer recalls sent prompts, stashes drafts and quotes an assistant 
     await expect(gui.locator('.aya-gui-stash')).toHaveCount(0);
     await prompt.fill('');
 
+    // A very large paste becomes a text-file attachment instead of filling the composer.
+    await prompt.evaluate(el => {
+      const data = new DataTransfer(); data.setData('text/plain', 'line of pasted text\n'.repeat(3000));
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    await expect(gui.locator('.aya-gui-attachments')).toContainText('pasted-text-');
+    await expect(gui.locator('.aya-gui-attachments')).toContainText('3001 lines');
+    await expect(prompt).toHaveValue('');
+    await gui.getByRole('button', { name: /^Remove pasted-text-/ }).click();
+    await expect(gui.locator('.aya-gui-attachments')).toHaveCount(0);
+    await prompt.fill('a small paste stays text');
+    await prompt.evaluate(el => {
+      const data = new DataTransfer(); data.setData('text/plain', ' and short');
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    await expect(gui.locator('.aya-gui-attachments')).toHaveCount(0);
+    await prompt.fill('');
+
     // Cmd+F finds text in the conversation, steps through the matches and highlights them.
     await fireShortcut(app, 'find-in-pane');
     const find = gui.getByRole('searchbox', { name: 'Find in conversation' });

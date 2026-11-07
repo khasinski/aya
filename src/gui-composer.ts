@@ -101,3 +101,16 @@ export function stashStep(
   if (stash.length === 0) return null;
   return { prompt: stash[stash.length - 1]!, stash: stash.slice(0, -1) };
 }
+
+// ---- large pastes --------------------------------------------------------------------------------------------------
+
+/** A paste this big would fill the model's context and the composer: it becomes a text-file attachment instead. */
+export const LARGE_PASTE_BYTES = 32 * 1024;
+/** The longest message Aya sends. */
+export const MAX_PROMPT_CHARS = 100000;
+
+export function pasteBecomesAttachment(pasted: string, currentPromptLength: number): boolean {
+  if (!pasted) return false;
+  if (new TextEncoder().encode(pasted).length >= LARGE_PASTE_BYTES) return true;
+  return currentPromptLength + pasted.length > MAX_PROMPT_CHARS;
+}

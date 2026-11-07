@@ -326,6 +326,20 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       owned.set(item.id, item);
       return item;
     }
+    if (action === 'paste-text') {
+      const pasted = typeof (value as { text?: unknown } | null)?.text === 'string' ? (value as { text: string }).text : '';
+      if (!pasted || Buffer.byteLength(pasted) > 8 * 1024 * 1024) throw Error('Pasted text must be between 1 byte and 8 MiB');
+      const fileId = randomUUID();
+      const dir = path.join(AYA_HOME, 'gui-attachments');
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      const file = path.join(dir, `${fileId}.txt`);
+      await fs.writeFile(file, pasted, { mode: 0o600 });
+      let owned = attachments.get(key); if (!owned) { owned = new Map(); attachments.set(key, owned); }
+      const lines = pasted.split('\n').length;
+      const item = { id: fileId, name: `pasted-text-${fileId.slice(0, 4)}.txt (${lines} lines)`, path: file, image: false };
+      owned.set(item.id, item);
+      return item;
+    }
     if (action === 'send') {
       if (typeof value === 'string') return entry.session.send(value);
       const params = value as { text: string; model?: string; effort?: string; plan?: boolean; attachmentIds?: string[] };

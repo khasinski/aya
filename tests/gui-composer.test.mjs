@@ -91,3 +91,15 @@ test("Cmd+S stashes a draft and brings the latest one back to an empty composer"
   assert.equal(stashStep([], ""), null);
   assert.deepEqual(stashStep(["a"], "new"), { prompt: "", stash: ["a", "new"] });
 });
+
+import { LARGE_PASTE_BYTES, pasteBecomesAttachment } from "../dist-test/gui-composer.js";
+
+test("a paste of 32 KiB or more, or one that would overflow the message, becomes an attachment", () => {
+  assert.equal(pasteBecomesAttachment("short", 0), false);
+  assert.equal(pasteBecomesAttachment("", 0), false);
+  assert.equal(pasteBecomesAttachment("x".repeat(LARGE_PASTE_BYTES - 1), 0), false);
+  assert.equal(pasteBecomesAttachment("x".repeat(LARGE_PASTE_BYTES), 0), true);
+  assert.equal(pasteBecomesAttachment("é".repeat(LARGE_PASTE_BYTES / 2), 0), true, "bytes, not characters");
+  assert.equal(pasteBecomesAttachment("x".repeat(20000), 90000), true, "would exceed 100000 characters");
+  assert.equal(pasteBecomesAttachment("x".repeat(20000), 70000), false);
+});
