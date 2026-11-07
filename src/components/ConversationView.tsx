@@ -2,13 +2,14 @@ import { guiRendererRecoveryInProgress } from '../gui-renderer-recovery';
 import { conversationSaveDelay } from '../conversation-save-delay';
 import { useModalFocus } from './useModalFocus';
 import { appendMessageDeltas, createTextDeltaBuffer, scheduleConversationFrame } from '../conversation-deltas';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
 import { followUpHint, parseFollowUpPreference, pasteBecomesAttachment, recallStep, sendAction, sendLabel, sentPromptText, stashStep, withQuote, type FollowUpPreference, type Recall } from '../gui-composer';
 import { GUI_FOLLOW_UP_STORAGE_KEY, guiStashKey } from '../storage-keys';
+import { activityDuration, activityKind, activityPhases, phaseText, shortDuration, type ActivityKind } from '../gui-activity';
 import { findStatus, findTextMatches, stepMatch } from '../gui-find';
 import { formatElapsed, guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
 import type { GuiArtifact, GuiArtifactEntry, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
@@ -24,7 +25,7 @@ const goalText = (value: unknown) => { const goal = obj(value); return [str(goal
 interface Attachment { id: string; name: string; path: string; image: boolean }
 interface QueuedMessage { id: string; text: string; attachments: Attachment[] }
 interface ModelOption { id: string; model: string; displayName: string; supportedReasoningEfforts: { reasoningEffort: string }[]; defaultReasoningEffort: string }
-interface Activity { id: string; label: string; status: string; output: string }
+interface Activity { id: string; label: string; status: string; output: string; kind?: ActivityKind; startedAt?: number; endedAt?: number }
 interface GoalDetails { objective: string; status: string; reason?: string }
 interface GuiQuestionOption { label: string; description: string }
 interface GuiQuestion { id: string; header: string; question: string; isSecret: boolean; multiSelect: boolean; options: GuiQuestionOption[] }
@@ -331,7 +332,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
         }
         if (!['agentMessage', 'userMessage', 'reasoning', 'plan'].includes(type)) {
           const label = type === 'commandExecution' ? str(item.command) || 'Running a command' : type === 'fileChange' ? 'Editing files' : type === 'dynamicToolCall' ? (item.tool === 'aya_open_artifact' ? 'Opening an artifact' : 'Preparing an artifact') : type === 'webSearch' ? 'Searching the web' : type === 'mcpToolCall' ? `Using ${str(item.tool) || 'a connected tool'}` : 'Using a tool';
-          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, label, status: event.method === 'item/completed' ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000) || a.output } : a) : [...old.slice(-49), { id: str(item.id), label, status: event.method === 'item/completed' ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000) }]);
+          const finished = event.method === 'item/completed', now = Date.now();
+          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, label, status: finished ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000) || a.output, ...(finished && a.endedAt === undefined ? { endedAt: now } : {}) } : a) : [...old.slice(-49), { id: str(item.id), label, status: finished ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000), kind: activityKind(type), startedAt: now, ...(finished ? { endedAt: now } : {}) }]);
         }
       }
       if (event.method === 'item/commandExecution/outputDelta') setActivities(old => old.map(a => a.id === p.itemId ? { ...a, output: (a.output + str(p.delta)).slice(-100000) } : a));
@@ -370,7 +372,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
         const cut = saved.goal.lastIndexOf(' · ');
         if (saved.goal) { const details = saved.goalDetails as GoalDetails | undefined || { objective: cut >= 0 ? saved.goal.slice(0, cut) : saved.goal, status: cut >= 0 ? saved.goal.slice(cut + 3) : 'active' }; setGoalDetails(details); lastGoal.current = details; }
       }
-      if (Array.isArray(saved.activities)) setActivities(saved.activities.slice(-50).map(value => { const activity = obj(value); return { id: str(activity.id), label: str(activity.label), status: activity.status === 'inProgress' && !saved.recoveryRunning ? 'interrupted' : str(activity.status), output: str(activity.output).slice(-100000) }; }));
+      if (Array.isArray(saved.activities)) setActivities(saved.activities.slice(-50).map(value => { const activity = obj(value); return { id: str(activity.id), label: str(activity.label), status: activity.status === 'inProgress' && !saved.recoveryRunning ? 'interrupted' : str(activity.status), output: str(activity.output).slice(-100000), ...(typeof activity.kind === 'string' ? { kind: activity.kind as ActivityKind } : {}), ...(typeof activity.startedAt === 'number' ? { startedAt: activity.startedAt } : {}), ...(typeof activity.endedAt === 'number' ? { endedAt: activity.endedAt } : {}) }; }));
       if (Array.isArray(saved.queue)) { setQueue(saved.queue as QueuedMessage[]); setQueueHeld(saved.queue.length > 0); }
       if (Array.isArray(saved.attachments)) setAttachments(saved.attachments as Attachment[]);
       if (typeof saved.selectedModel === 'string') setSelectedModel(saved.selectedModel);
@@ -579,6 +581,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     counts[status]++;
     return counts;
   }, { running: 0, completed: 0, failed: 0, interrupted: 0 });
+  const activityPhaseList = activityPhases(activities.map(x => ({ kind: x.kind ?? 'tool', startedAt: x.startedAt, endedAt: x.endedAt })));
   const activitySummary = [`${activities.length} ${activities.length === 1 ? 'action' : 'actions'}`,
     ...Object.entries(activityCounts).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`),
   ].join(' · ');
@@ -656,7 +659,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
           onImplementPlan={m.id === messages[messages.length - 1]?.id && !busy && ready ? () => { setPlanMode(false); void send('Implement the plan.'); } : undefined}
         />
       ))}
-      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</div></details>}
+      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map((a, index) => { const phase = activityPhaseList.find(p => p.index === index); const took = activityDuration(a); return <Fragment key={a.id}>{phase && <div className="aya-gui-activity-phase" role="presentation">{phaseText(phase)}</div>}<details><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}{took !== null && <small className="aya-gui-activity-time"> · {shortDuration(took)}</small>}</summary>{a.output && <pre>{a.output}</pre>}</details></Fragment>; })}</div></details>}
       {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-row"><div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
         {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}

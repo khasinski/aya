@@ -239,6 +239,9 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await activitySummary.click();
     await expect(gui.locator('.aya-gui-activity')).toContainText('npm test');
     await expect(gui.locator('.aya-gui-activity-list > details > summary').first()).toHaveCSS('font-family', /mono/i);
+    // Consecutive calls of one kind read as a phase, with how long each took.
+    await expect(gui.locator('.aya-gui-activity-phase').first()).toHaveText(/^Commands · 3/);
+    await expect(gui.locator('.aya-gui-activity-list > details > summary .aya-gui-activity-time').first()).toHaveText(/^ · (<1s|\d+s)$/);
     await gui.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(activitySummary).toContainText('3 actions · 1 completed · 1 failed · 1 interrupted');
     await expect(gui.locator('.aya-gui-side')).toHaveCount(0);

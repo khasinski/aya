@@ -270,3 +270,6 @@
 .aya-gui-plan-card header strong { flex: 1; }
 .aya-gui-plan-card footer { justify-content: flex-end; margin-top: 8px; }
 .aya-gui-plan-toggle[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+.aya-gui-activity-phase { margin: 10px 0 2px; color: var(--fg-tertiary); font-size: 10px; letter-spacing: .8px; text-transform: uppercase; }
+.aya-gui-activity-time { color: var(--fg-tertiary); }
