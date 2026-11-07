@@ -7,7 +7,9 @@
   with keyboard shortcuts. Enter queues or steers while the agent works (Cmd/Ctrl+Enter does the
   opposite). The composer recalls sent prompts (ArrowUp), stashes drafts (Cmd/Ctrl+S) and quotes
   assistant replies. Cmd/Ctrl+F finds text in the conversation, and each turn shows how long it ran.
-  See docs/experimental-conversation-gui.md.
+  /btw answers while Codex works (forked side thread), /plan shows a plan card with Implement,
+  large pastes become attachments, tool calls are grouped into timed phases, and @ Context adds
+  review comments or another terminal's output. See docs/experimental-conversation-gui.md.
 
 ## v0.15.5 - 2026-11-02
 

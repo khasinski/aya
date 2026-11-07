@@ -42,7 +42,7 @@ Use **Previous/Next** (or Alt+Left/Right), title/content search, and the artifac
 Goal changes are also recorded as conversation entries; the goal bar shows a separate Active/Paused/Complete status and icon actions. Repeated token accounting updates do not duplicate goal entries.
 
 - `/goal <objective>`, `/goal`, `/goal pause`, `/goal resume`, `/goal clear` use native thread goal operations with Codex; other adapters keep goal metadata in Aya.
-- `/btw <question>` samples the completed thread context without adding a normal conversation turn. This experimental implementation requires an idle thread with a completed turn; it cannot yet answer while the main turn is running.
+- `/btw <question>` samples the completed thread context without adding a normal conversation turn. On Codex, `/btw` also works while the main turn runs: Aya forks the thread through the last finished turn into an ephemeral, read-only side thread and answers there, so the main turn is untouched.
 - `/compact` requests native context compaction.
 - Unsupported commands show an explicit error. CLI-only features remain available through Terminal mode.
 
@@ -67,4 +67,9 @@ Codex also lists native CLI history through app-server `thread/list` and reads c
 - **Find in conversation.** Cmd/Ctrl+F opens a find bar for the pane: Enter and Shift+Enter step through the matches, Escape closes it. Text inside a closed tool-activity section is not searched.
 - **Turn timer.** *Working for 12s* while a turn runs and *Worked for 2m 07s* after it.
 
-Not done: a side question while the main turn runs (Codex's `thread/sample` needs an idle thread), plan cards (Aya's session has no plan mode to produce them) and pasting a very large text as an attachment.
+- `/plan` (or the Plan toggle) starts a Codex turn in plan mode. The proposed plan appears as a card with Copy, Show all and "Implement this plan", which switches back to default mode and sends it.
+- Pasting more than 32 KB into the composer turns it into a text attachment instead of filling the box.
+- Tool calls are grouped into phases (Explored, Edited, Ran, ...) and each row shows how long it took.
+- `@ Context` inserts unsent diff review comments or the recent output of another terminal in the project into the draft. Comments inserted this way are not marked as sent, and terminal output works only for xterm panes.
+
+Only Codex has side chat and plan mode so far.
