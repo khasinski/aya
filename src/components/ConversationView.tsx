@@ -28,7 +28,7 @@ interface Activity { id: string; label: string; status: string; output: string }
 interface GoalDetails { objective: string; status: string; reason?: string }
 interface GuiQuestionOption { label: string; description: string }
 interface GuiQuestion { id: string; header: string; question: string; isSecret: boolean; multiSelect: boolean; options: GuiQuestionOption[] }
-interface Message { progress?: GuiProgress; id: string; type: string; text: string; delivery?: 'sending' | 'sent' | 'failed' | 'unconfirmed'; title?: string; goal?: GoalDetails | null; questions?: unknown[]; questionAnswers?: Record<string, string> }
+interface Message { kind?: 'plan'; progress?: GuiProgress; id: string; type: string; text: string; delivery?: 'sending' | 'sent' | 'failed' | 'unconfirmed'; title?: string; goal?: GoalDetails | null; questions?: unknown[]; questionAnswers?: Record<string, string> }
 function normalizeQuestions(raw: unknown): GuiQuestion[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((item, index) => {
@@ -134,6 +134,10 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const receivedEventSequence = useRef(0);
   const composer = useRef<HTMLTextAreaElement>(null);
   const recall = useRef<Recall | null>(null);
+  const [planMode, setPlanModeValue] = useState(false);
+  const planRef = useRef(false);   // read by dispatch in the same tick that /plan or Implement changes it
+  const setPlanMode = (value: boolean | ((old: boolean) => boolean)) => { const next = typeof value === 'function' ? value(planRef.current) : value; planRef.current = next; setPlanModeValue(next); };
+  const planWasOn = useRef(false);   // leaving plan mode must be said to Codex once
   const [findQuery, setFindQuery] = useState('');
   const [findIndex, setFindIndex] = useState(-1);
   const [findCount, setFindCount] = useState(0);
@@ -345,7 +349,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
         }
         if (item.type === 'agentMessage' || item.type === 'plan') {
           const qs = Array.isArray(item.questions) && item.questions.length > 0 ? (item.questions as unknown[]) : undefined;
-          setMessages(old => old.some(m => m.id === item.id) ? old.map(m => m.id === item.id ? { ...m, text: str(item.text), ...(qs ? { questions: qs } : {}) } : m) : [...old, { id: str(item.id), type: 'assistant', text: str(item.text), ...(qs ? { questions: qs } : {}) }]);
+          setMessages(old => old.some(m => m.id === item.id) ? old.map(m => m.id === item.id ? { ...m, text: str(item.text), ...(qs ? { questions: qs } : {}) } : m) : [...old, { id: str(item.id), type: 'assistant', text: str(item.text), ...(item.type === 'plan' ? { kind: 'plan' as const } : {}), ...(qs ? { questions: qs } : {}) }]);
         }
       }
     });
@@ -474,9 +478,16 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       if (argument) { const option = models.find(item => item.model === argument || item.displayName.toLowerCase() === argument.toLowerCase()); if (!option) throw Error('Unknown model. Choose an available model below the composer.'); changeModel(option.model); }
       composer.current?.closest('section.aya-conversation')?.querySelector<HTMLSelectElement>('[aria-label="Model for next turn"]')?.focus(); return;
     }
+    if (name === 'plan') {
+      if (!capabilities.plan) throw Error(`${agentLabel} has no plan mode in GUI mode.`);
+      const next = argument.trim() ? true : !planMode;
+      setPlanMode(next);
+      if (argument.trim()) { setPrompt(''); await send(argument.trim()); }
+      return;
+    }
     if (name === 'status') { setSide(`${agentLabel} · ${model}\n${busy ? 'Working' : ready ? 'Ready' : 'Disconnected'}\nWorkspace: ${terminal.cwd}\nGoal: ${goal || 'None'}\nQueued messages: ${queue.length}`); return; }
     if (name === 'help') { setSide('Available commands:\n\n' + availableCommands.map(item => `- /${item.name} — ${item.description}`).join('\n')); return; }
-    if (!['goal', 'btw', 'compact'].includes(name)) throw Error(`Unknown GUI command /${name}. Use /help.`);
+    if (!['goal', 'btw', 'compact', 'plan'].includes(name)) throw Error(`Unknown GUI command /${name}. Use /help.`);
     if (name === 'btw') {
       if (!capabilities.sideQuestions) throw Error(`${agentLabel} does not support side questions in GUI mode. Send a regular message instead.`);
       if (!argument.trim()) throw Error('Usage: /btw your side question');
@@ -509,7 +520,8 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     const messageId = crypto.randomUUID();
     setMessages(old => [...old, { id: messageId, type: 'user', delivery: 'sending', text: text + (files.length ? `\n\n${files.map(a => `📎 ${a.name}`).join(' · ')}` : '') }]);
     try {
-      await invoke('send', { text, attachmentIds: files.map(a => a.id), model: selectedModel || undefined, effort: effort || undefined });
+      await invoke('send', { text, attachmentIds: files.map(a => a.id), model: selectedModel || undefined, effort: effort || undefined, ...(capabilities.plan && (planRef.current || planWasOn.current) ? { plan: planRef.current } : {}) });
+      planWasOn.current = planRef.current;
       setMessages(old => old.map(m => m.id === messageId ? { ...m, delivery: 'sent' } : m));
       return true;
     } catch (e) { fail(e); setMessages(old => old.map(m => m.id === messageId ? { ...m, delivery: 'failed' } : m)); setBusy(false); setTurnOutcome('failed'); setQueueHeld(true); return false; }
@@ -641,6 +653,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
           agentLabel={agentLabel}
           loadConversationImage={loadConversationImage}
           onAnswerMessageQuestions={handleAnswerMessageQuestions}
+          onImplementPlan={m.id === messages[messages.length - 1]?.id && !busy && ready ? () => { setPlanMode(false); void send('Implement the plan.'); } : undefined}
         />
       ))}
       {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</div></details>}
@@ -730,7 +743,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       />
       <div className="aya-gui-compose-footer"><button className="aya-gui-icon-button" type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => setAttachments(old => [...old, ...(files as Attachment[])].slice(0, 20))).catch(fail)}><span className="aya-gui-icon" aria-hidden="true">add</span></button>
       {models.length > 0 && <><select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select>}</>}
-      <span className="aya-gui-compose-spacer" />{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}<small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small>{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
+      <span className="aya-gui-compose-spacer" />{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}<small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small>{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{busy && <><button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" onClick={() => void steer(prompt)}>Steer ↗</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
     </form></main>
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>
@@ -757,12 +770,32 @@ function paintFind(ranges: Range[], current: number) {
   CSS.highlights.set('aya-find', new Highlight(...ranges.filter((_, i) => i !== current)));
   if (ranges[current]) CSS.highlights.set('aya-find-current', new Highlight(ranges[current]));
 }
+
+/** A plan the agent proposed in plan mode: collapsed when long, copyable, with a button that carries it out. */
+function PlanCard({ text, loadImage, onImplement }: { text: string; loadImage: (path: string) => Promise<unknown>; onImplement?: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const lines = text.split('\n');
+  const long = lines.length > 14 || text.length > 900;
+  const shown = long && !expanded ? lines.slice(0, 10).join('\n') + '\n\n…' : text;
+  return <article className="aya-gui-plan-card assistant" aria-label="Proposed plan">
+    <header><strong>Proposed plan</strong>
+      <button type="button" onClick={() => { void navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); }}>{copied ? 'Copied' : 'Copy'}</button>
+    </header>
+    <ConversationMarkdown text={shown} loadImage={loadImage} />
+    <footer>
+      {long && <button type="button" onClick={() => setExpanded(value => !value)}>{expanded ? 'Show less' : 'Show all'}</button>}
+      {onImplement && <button type="button" className="aya-gui-send" onClick={onImplement}>Implement this plan</button>}
+    </footer>
+  </article>;
+}
 const ConversationMessageItem = memo(function ConversationMessageItem({
   message: m,
   agentBadge,
   agentLabel,
   loadConversationImage,
   onAnswerMessageQuestions,
+  onImplementPlan,
 }: {
   message: Message;
   agentBadge: string;
@@ -773,7 +806,9 @@ const ConversationMessageItem = memo(function ConversationMessageItem({
     questions: GuiQuestion[],
     answers: Record<string, string>,
   ) => Promise<void>;
+  onImplementPlan?: () => void;
 }) {
+  if (m.kind === 'plan') return <PlanCard text={m.text} loadImage={loadConversationImage} onImplement={onImplementPlan} />;
   if (m.type === 'progress' && m.progress) {
     return m.progress.status === 'running' ? null : <TaskProgress progress={m.progress} />;
   }

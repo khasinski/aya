@@ -21,6 +21,7 @@ export class CodexGuiSession {
   private turnId: string | null = null;
   private startingTurn: Promise<Record<string, unknown>> | null = null;
   private threadId = '';
+  private model = '';
   /** Side chats running on forked threads: their notifications never reach the conversation. */
   private sideThreads = new Map<string, { text: string; done: (error?: Error) => void }>();
   private busy = false;
@@ -85,6 +86,7 @@ export class CodexGuiSession {
         developerInstructions: 'You are displayed inside Aya GUI, a local graphical frontend for Codex. Respond in the user’s language. You own the normal Codex tool loop, context and sandbox. Use Markdown freely. For useful tables, metrics and local images, use aya_present to create artifacts. Set open=true when you want to show a newly created artifact immediately; use aya_open_artifact with its returned artifactId to reopen an existing one. Use HTML widgets for interactive visuals, forms, charts and mockups; use local PNG/JPEG/WebP/SVG files for graphics. Widgets are self-contained and cannot access the network or files. Widget row clicks arrive as user follow-ups. For measurable tasks use aya_progress with a label, actual completed units, total units and optional stage detail. Reuse its returned progressId for updates instead of creating new bars. Do not invent progress for tasks without measurable units. Do not start subagents unless the user requests delegation.',
       });
       this.threadId = text(object(result.thread).id);
+      this.model = text(result.model);
       if (!this.threadId) throw Error('Codex did not return a thread ID');
       return { threadId: this.threadId, model: text(result.model) || model || 'Codex default' };
     } catch (error) { this.close(); throw error; }
@@ -180,12 +182,13 @@ export class CodexGuiSession {
     if (!this.busy || !this.turnId) throw Error('There is no active turn to steer');
     return this.rpc('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input: [{ type: 'text', text: prompt, text_elements: [] }] });
   }
-  async send(prompt: string, options: { model?: string; effort?: string; images?: string[] } = {}) {
+  async send(prompt: string, options: { model?: string; effort?: string; plan?: boolean; images?: string[] } = {}) {
     if (!this.threadId) throw Error('Connect to Codex first');
     if (this.busy) throw Error('Codex is working; stop the current turn first');
     if (!prompt.trim() || prompt.length > 100000) throw Error('Prompt must contain 1–100000 characters');
     this.busy = true;
-    const starting = this.rpc('turn/start', { threadId: this.threadId, ...(options.model ? { model: options.model } : {}), ...(options.effort ? { effort: options.effort } : {}), input: [{ type: 'text', text: prompt, text_elements: [] }, ...(options.images || []).map(file => ({ type: 'localImage', path: file }))] });
+    const mode = options.plan === undefined ? null : { mode: options.plan ? 'plan' : 'default', settings: { model: options.model || this.model, reasoning_effort: null, developer_instructions: null } };
+    const starting = this.rpc('turn/start', { threadId: this.threadId, ...(mode ? { collaborationMode: mode } : {}), ...(options.model ? { model: options.model } : {}), ...(options.effort ? { effort: options.effort } : {}), input: [{ type: 'text', text: prompt, text_elements: [] }, ...(options.images || []).map(file => ({ type: 'localImage', path: file }))] });
     this.startingTurn = starting;
     try {
       const result = await starting;

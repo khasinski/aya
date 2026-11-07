@@ -812,3 +812,32 @@ test('the composer recalls sent prompts, stashes drafts and quotes an assistant 
     await expect(gui.getByRole('button', { name: 'Quote in composer', exact: true })).toHaveCount(0);
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
+
+test('plan mode proposes a plan card that can be carried out', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui' }] });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-codex-gui.cjs'), join(bin, 'codex')); chmodSync(join(bin, 'codex'), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow();
+    const gui = window.locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    const turnStatus = gui.getByRole('status', { name: 'Turn status' });
+    const toggle = gui.getByRole('button', { name: /^Plan/ });
+
+    await prompt.fill('/plan'); await prompt.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await prompt.fill('add a LICENSE file'); await prompt.press('Enter');
+    const card = gui.getByRole('article', { name: 'Proposed plan' });
+    await expect(card).toContainText('Read the code');
+    await expect(card).toContainText('Run the tests');
+    await expect(turnStatus).toHaveText('Turn complete');
+    await card.getByRole('button', { name: 'Implement this plan' }).click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(gui.locator('.aya-gui-messages')).toContainText('Implement the plan.');
+    await expect(turnStatus).toHaveText('Turn complete');
+    await expect(card.getByRole('button', { name: 'Implement this plan' })).toHaveCount(0);
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});

@@ -10,7 +10,8 @@ const common = [
 ];
 exports.guiCommands = agent => [
   ...common,
-  ...(agent === 'pi' || agent === 'antigravity' ? [] : [{ name: 'btw', description: 'Ask a side question; waits for the current turn to finish.' }]),
+  ...(agent === 'codex' ? [{ name: 'plan', description: 'Plan before acting: the next turns propose a plan instead of editing. Toggle, or add a request.' }] : []),
+  ...(agent === 'pi' || agent === 'antigravity' ? [] : [{ name: 'btw', description: agent === 'codex' ? 'Ask a side question; answered right away, even while Codex works.' : 'Ask a side question; waits for the current turn to finish.' }]),
 ];
 
-exports.guiCapabilities = agent => ({ steer: agent !== 'antigravity', sideQuestions: agent === 'codex' || agent === 'claude', sideWhileWorking: agent === 'codex' });
+exports.guiCapabilities = agent => ({ steer: agent !== 'antigravity', sideQuestions: agent === 'codex' || agent === 'claude', sideWhileWorking: agent === 'codex', plan: agent === 'codex' });

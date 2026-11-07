@@ -328,10 +328,10 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     }
     if (action === 'send') {
       if (typeof value === 'string') return entry.session.send(value);
-      const params = value as { text: string; model?: string; effort?: string; attachmentIds?: string[] };
+      const params = value as { text: string; model?: string; effort?: string; plan?: boolean; attachmentIds?: string[] };
       const files = (params.attachmentIds || []).map(id => { const file = attachments.get(key)?.get(id); if (!file) throw Error('Please reattach this file after reconnecting'); return file; });
       const text = params.text + (files.filter(f => !f.image).length ? '\n\nAttached files (selected by the user):\n' + files.filter(f => !f.image).map(f => JSON.stringify(f.path)).join('\n') : '');
-      return entry.session.send(text, { model: params.model, effort: params.effort, images: files.filter(f => f.image).map(f => f.path) });
+      return entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) });
     }
     if (action === 'interrupt') return entry.session.interrupt();
     if (action === 'image') return workspaceImage(entry.cwd, String(value));

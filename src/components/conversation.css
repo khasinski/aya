@@ -264,3 +264,9 @@
 .aya-gui-find small { min-width: 64px; color: var(--fg-tertiary); font-size: 11px; text-align: center; }
 ::highlight(aya-find) { background: #ffd54a66; }
 ::highlight(aya-find-current) { background: #ffb300; color: #000; }
+
+.aya-gui-plan-card { margin: 12px 0; padding: 12px 16px !important; border: 1px solid var(--accent); border-radius: 12px; background: var(--bg-secondary); }
+.aya-gui-plan-card header, .aya-gui-plan-card footer { display: flex; align-items: center; gap: 8px; }
+.aya-gui-plan-card header strong { flex: 1; }
+.aya-gui-plan-card footer { justify-content: flex-end; margin-top: 8px; }
+.aya-gui-plan-toggle[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }

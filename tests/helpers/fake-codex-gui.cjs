@@ -81,6 +81,13 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     activeTurn = 'turn';
     event('fixture/turn', p);
     const prompt = p.input[0].text;
+    if (p.collaborationMode && p.collaborationMode.mode === 'plan') {
+      write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
+      event('turn/started', { turn: { id: 'turn' } });
+      event('item/started', { item: { id: 'plan-1', type: 'plan', text: '' } });
+      event('item/completed', { item: { id: 'plan-1', type: 'plan', text: '1. Read the code\n2. Change it\n3. Run the tests\n' } });
+      event('turn/completed', { turn: { id: 'turn', status: 'completed' } }); busy = false; return;
+    }
     if (prompt === 'slow-start') { setTimeout(() => { write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } }); event('turn/started', { turn: { id: 'turn' } }); }, 100); return; }
     if (prompt === 'handoff-before-ack') {
       event('turn/started', { turn: { id: 'turn' } });
