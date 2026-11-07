@@ -298,6 +298,8 @@ export const PaneGrid = memo(function PaneGrid({
               if (activeProjectId && pane) setActiveSplitCell(activeProjectId, pane.leafId);
             }}
             onReportStatus={onReportPaneStatus}
+            findOpen={findInPaneFor === terminal.id}
+            onCloseFind={closeFindPane}
           />
         );
       })}

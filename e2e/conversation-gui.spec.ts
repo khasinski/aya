@@ -1,4 +1,5 @@
 import { test, expect, launchApp, closeAndWait } from './fixtures';
+import { fireShortcut } from './helpers/shortcut';
 import { seedEnv } from './helpers/seed';
 import { mkdirSync, copyFileSync, chmodSync, rmSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -772,6 +773,30 @@ test('the composer recalls sent prompts, stashes drafts and quotes an assistant 
     await expect(prompt).toHaveValue('half a thought');
     await expect(gui.locator('.aya-gui-stash')).toHaveCount(0);
     await prompt.fill('');
+
+    // Cmd+F finds text in the conversation, steps through the matches and highlights them.
+    await fireShortcut(app, 'find-in-pane');
+    const find = gui.getByRole('searchbox', { name: 'Find in conversation' });
+    await expect(find).toBeFocused();
+    await find.fill('e');
+    const results = gui.getByRole('status', { name: 'Find results' });
+    await expect(results).toHaveText(/^1 of \d+$/);
+    const total = Number(((await results.textContent()) ?? '').split(' of ')[1]);
+    expect(total).toBeGreaterThanOrEqual(2);
+    await find.press('Enter');
+    await expect(results).toHaveText(`2 of ${total}`);
+    await find.press('Shift+Enter');
+    await expect(results).toHaveText(`1 of ${total}`);
+    expect(await window.evaluate(() => CSS.highlights.get('aya-find-current')?.size ?? 0)).toBe(1);
+    await find.fill('zzz-no-such-text');
+    await expect(results).toHaveText('No results');
+    await find.press('Escape');
+    await expect(find).toHaveCount(0);
+    await expect(prompt).toBeFocused();
+    expect(await window.evaluate(() => CSS.highlights.size)).toBe(0);
+
+    // The turn that just ended says how long it took.
+    await expect(gui.locator('.aya-gui-turn-timer')).toHaveText(/^Worked for \d+s$/);
 
     // Selecting words of an assistant reply offers to quote them.
     const reply = gui.locator('article.assistant').first();

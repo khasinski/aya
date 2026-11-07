@@ -256,3 +256,11 @@
 .aya-gui-quote { position: fixed; z-index: 5; box-shadow: 0 6px 24px #0005; background: var(--accent) !important; color: var(--bg) !important; border-color: var(--accent) !important; }
 .aya-gui-stash { color: var(--fg-tertiary); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; }
 .aya-gui-compose-footer small.aya-gui-stash { flex: none; }
+
+.aya-gui-turn-row { display: flex; align-items: baseline; gap: 10px; }
+.aya-gui-turn-timer { padding: 12px 0 20px; color: var(--fg-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.aya-gui-find { position: absolute; top: 8px; right: 24px; z-index: 4; display: flex; align-items: center; gap: 6px; padding: 6px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 30px #0005; }
+.aya-gui-find input { width: 220px; }
+.aya-gui-find small { min-width: 64px; color: var(--fg-tertiary); font-size: 11px; text-align: center; }
+::highlight(aya-find) { background: #ffd54a66; }
+::highlight(aya-find-current) { background: #ffb300; color: #000; }

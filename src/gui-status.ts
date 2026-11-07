@@ -52,3 +52,12 @@ export function sameGuiPaneStatus(a: GuiPaneStatus | null, b: GuiPaneStatus | nu
   if (!a || !b || a === "clear" || b === "clear") return false;
   return a.level === b.level && a.text === b.text;
 }
+
+/** 42s, 3m 07s, 1h 05m: how long a turn has run or took. */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}m ${String(total % 60).padStart(2, "0")}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}

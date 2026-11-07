@@ -9,7 +9,8 @@ import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
 import { followUpHint, parseFollowUpPreference, recallStep, sendAction, sendLabel, sentPromptText, stashStep, withQuote, type FollowUpPreference, type Recall } from '../gui-composer';
 import { GUI_FOLLOW_UP_STORAGE_KEY, guiStashKey } from '../storage-keys';
-import { guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
+import { findStatus, findTextMatches, stepMatch } from '../gui-find';
+import { formatElapsed, guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
 import type { GuiArtifact, GuiArtifactEntry, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
 import type { Preset, TerminalState } from '../types';
 import './conversation.css';
@@ -86,12 +87,15 @@ type ConversationProps = {
   onActivatePane?: () => void;
   /** Tells the rest of Aya (status rail, attention centre, sidebar) what this pane is doing. */
   onReportStatus?: (terminalId: string, status: GuiPaneStatus) => void;
+  /** Cmd+F opened the find bar for this pane. */
+  findOpen?: boolean;
+  onCloseFind?: () => void;
 };
 export const ConversationView = memo(function ConversationView(props: ConversationProps) {
   const [generation, setGeneration] = useState(0);
   return <ConversationSession key={`${props.terminal.id}:${generation}`} {...props} onSwitch={() => setGeneration(n => n + 1)} />;
 });
-function ConversationSession({ terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, onSwitch }: ConversationProps & { onSwitch: () => void }) {
+function ConversationSession({ terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, onSwitch }: ConversationProps & { onSwitch: () => void }) {
   const api = window.ayaGui;
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
   const agentLabel = guiAgent === 'pi' ? 'Pi' : guiAgent === 'claude' ? 'Claude' : guiAgent === 'antigravity' ? 'Antigravity' : 'Codex';
@@ -130,6 +134,15 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
   const receivedEventSequence = useRef(0);
   const composer = useRef<HTMLTextAreaElement>(null);
   const recall = useRef<Recall | null>(null);
+  const [findQuery, setFindQuery] = useState('');
+  const [findIndex, setFindIndex] = useState(-1);
+  const [findCount, setFindCount] = useState(0);
+  const findInput = useRef<HTMLInputElement>(null);
+  const findRanges = useRef<Range[]>([]);
+  const messagesRoot = useRef<HTMLDivElement | null>(null);
+  const [turnElapsed, setTurnElapsed] = useState<number | null>(null);
+  const [lastTurnMs, setLastTurnMs] = useState<number | null>(null);
+  const turnStartedAt = useRef<number | null>(null);
   const [stash, setStashValue] = useState<string[]>(() => { try { const saved: unknown = JSON.parse(localStorage.getItem(guiStashKey(terminal.id)) || '[]'); return Array.isArray(saved) ? saved.filter((v): v is string => typeof v === 'string').slice(-20) : []; } catch { return []; } });
   const setStash = (next: string[]) => { setStashValue(next); try { if (next.length) localStorage.setItem(guiStashKey(terminal.id), JSON.stringify(next)); else localStorage.removeItem(guiStashKey(terminal.id)); } catch { /* kept until reload */ } };
   const [quote, setQuote] = useState<{ text: string; left: number; top: number } | null>(null);
@@ -390,6 +403,30 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       setShowJump(false);
     }
   }, []);
+  useEffect(() => {
+    if (busy) {
+      if (turnStartedAt.current === null) turnStartedAt.current = Date.now();
+      setLastTurnMs(null);
+      const tick = () => setTurnElapsed(Date.now() - (turnStartedAt.current ?? Date.now()));
+      tick();
+      const timer = setInterval(tick, 1000);
+      return () => clearInterval(timer);
+    }
+    if (turnStartedAt.current !== null) { setLastTurnMs(Date.now() - turnStartedAt.current); turnStartedAt.current = null; }
+    setTurnElapsed(null);
+  }, [busy]);
+  useEffect(() => { if (findOpen) { findInput.current?.focus(); findInput.current?.select(); } }, [findOpen]);
+  useEffect(() => {
+    if (!findOpen || !messagesRoot.current) { paintFind([], -1); findRanges.current = []; setFindCount(0); return; }
+    const ranges = collectFindRanges(messagesRoot.current, findQuery);
+    findRanges.current = ranges;
+    setFindCount(ranges.length);
+    const index = ranges.length === 0 ? -1 : Math.min(Math.max(findIndex, 0), ranges.length - 1);
+    if (index !== findIndex) setFindIndex(index);
+    paintFind(ranges, index);
+    ranges[index]?.startContainer.parentElement?.scrollIntoView({ block: 'center' });
+    return () => paintFind([], -1);
+  }, [findOpen, findQuery, findIndex, messages, activities]);
   const reportedStatus = useRef<GuiPaneStatus | null>(null);
   const turnRanHere = useRef(false);   // a turn restored from disk is history, not news
   useEffect(() => {
@@ -591,7 +628,10 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       <button className="aya-gui-icon-button" disabled={goalPending} aria-label="Clear goal" title="Clear goal" onClick={() => void command('goal', 'clear').catch(fail)}><span className="aya-gui-icon" aria-hidden="true">close</span></button>
     </div>}
     {goalDetails?.status === 'blocked' && <div className="aya-gui-goal-reason" aria-label="Goal block reason"><strong>Why blocked</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{goalDetails.reason || 'The agent did not provide a reason. Ask it what is blocking this goal.'}</ReactMarkdown></div>}
-    <div className="aya-gui-body"><main><div className="aya-gui-scroll-area"><div ref={scrollViewport} onMouseUp={() => { const selection = window.getSelection(); const text = selection?.toString() ?? ''; const node = selection?.anchorNode; const inside = node && (node instanceof Element ? node : node.parentElement)?.closest('article.assistant'); if (!selection || selection.isCollapsed || !text.trim() || !inside) { setQuote(null); return; } const rect = selection.getRangeAt(0).getBoundingClientRect(); setQuote({ text, left: Math.max(8, rect.right - 110), top: rect.bottom + 6 }); }} className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
+    <div className="aya-gui-body"><main>{findOpen && <div className="aya-gui-find" role="search"><input ref={findInput} type="search" aria-label="Find in conversation" placeholder="Find in conversation" value={findQuery} onChange={e => { setFindQuery(e.target.value); setFindIndex(0); }} onKeyDown={e => {
+        if (e.key === 'Escape') { e.preventDefault(); onCloseFind?.(); composer.current?.focus(); }
+        else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); setFindIndex(stepMatch(findIndex, findCount, e.shiftKey ? -1 : 1)); }
+      }} /><small role="status" aria-label="Find results">{findStatus(findQuery, findIndex, findCount)}</small><button type="button" aria-label="Previous match" disabled={!findCount} onClick={() => setFindIndex(stepMatch(findIndex, findCount, -1))}>↑</button><button type="button" aria-label="Next match" disabled={!findCount} onClick={() => setFindIndex(stepMatch(findIndex, findCount, 1))}>↓</button><button type="button" aria-label="Close find" onClick={() => { onCloseFind?.(); composer.current?.focus(); }}>×</button></div>}<div className="aya-gui-scroll-area"><div ref={node => { scrollViewport.current = node; messagesRoot.current = node; }} onMouseUp={() => { const selection = window.getSelection(); const text = selection?.toString() ?? ''; const node = selection?.anchorNode; const inside = node && (node instanceof Element ? node : node.parentElement)?.closest('article.assistant'); if (!selection || selection.isCollapsed || !text.trim() || !inside) { setQuote(null); return; } const rect = selection.getRangeAt(0).getBoundingClientRect(); setQuote({ text, left: Math.max(8, rect.right - 110), top: rect.bottom + 6 }); }} className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {messages.map(m => (
         <ConversationMessageItem
@@ -604,10 +644,10 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
         />
       ))}
       {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map(a => <details key={a.id}><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}</summary>{a.output && <pre>{a.output}</pre>}</details>)}</div></details>}
-      {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
+      {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-row"><div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
         {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
-      </div>}
+      </div>{(busy ? turnElapsed : lastTurnMs) !== null && <span className="aya-gui-turn-timer" aria-hidden="true">{busy ? 'Working' : 'Worked'} for {formatElapsed((busy ? turnElapsed : lastTurnMs) ?? 0)}</span>}</div>}
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={() => { follow.current = true; setShowJump(false); scrollToLatest(); }}>Jump to latest ↓</button>}</div>
     {side && <aside className="aya-gui-side"><button aria-label="Close side question" onClick={() => { setSide(''); setSideQuestion(''); }}>×</button><strong>Side question</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
@@ -695,6 +735,27 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>
   </section>;
+}
+
+/** The ranges of `query` in the text shown under `root`, skipping text that is not laid out (a closed <details>). */
+function collectFindRanges(root: HTMLElement, query: string): Range[] {
+  const ranges: Range[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (const m of findTextMatches(node.nodeValue ?? '', query)) {
+      const range = document.createRange();
+      range.setStart(node, m.start); range.setEnd(node, m.start + m.length);
+      if (range.getClientRects().length > 0) ranges.push(range);
+    }
+  }
+  return ranges;
+}
+function paintFind(ranges: Range[], current: number) {
+  if (typeof CSS === 'undefined' || !('highlights' in CSS)) return;
+  CSS.highlights.delete('aya-find'); CSS.highlights.delete('aya-find-current');
+  if (!ranges.length) return;
+  CSS.highlights.set('aya-find', new Highlight(...ranges.filter((_, i) => i !== current)));
+  if (ranges[current]) CSS.highlights.set('aya-find-current', new Highlight(ranges[current]));
 }
 const ConversationMessageItem = memo(function ConversationMessageItem({
   message: m,
