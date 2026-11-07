@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Conversation GUI: panes now report working, waiting (with the approval or question), done and
+  error to the status rail and attention centre. Approvals and questions sit above the composer
+  with keyboard shortcuts. Enter queues or steers while the agent works (Cmd/Ctrl+Enter does the
+  opposite). The composer recalls sent prompts (ArrowUp), stashes drafts (Cmd/Ctrl+S) and quotes
+  assistant replies. Cmd/Ctrl+F finds text in the conversation, and each turn shows how long it ran.
+  See docs/experimental-conversation-gui.md.
+
 ## v0.15.5 - 2026-11-02
 
 - Recover conversation GUI panels after renderer crashes or React errors without
