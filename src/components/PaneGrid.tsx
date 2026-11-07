@@ -16,6 +16,7 @@ import {
 } from "../types";
 import { SplitResizeHandle } from "./SplitResizeHandle";
 import { ConversationView } from "./ConversationView";
+import type { GuiPaneStatus } from "../gui-status";
 import { TerminalView } from "./TerminalView";
 
 interface Props {
@@ -49,6 +50,8 @@ interface Props {
   restartTerminal: (terminalId: string) => void;
   onSpawnFailure: (terminalId: string) => void;
   restartTriggers: Record<string, number>;
+  /** A Conversation GUI pane's status, for the status rail, attention centre and sidebar. */
+  onReportPaneStatus?: (terminalId: string, status: GuiPaneStatus) => void;
   macOptionKeyMode: MacOptionKeyMode;
   anyOverlayOpen: boolean;
   closeFocusHold: { slug: string; terminalId: string } | null;
@@ -93,6 +96,7 @@ export const PaneGrid = memo(function PaneGrid({
   restartTerminal,
   onSpawnFailure,
   restartTriggers,
+  onReportPaneStatus,
   macOptionKeyMode,
   anyOverlayOpen,
   closeFocusHold,
@@ -293,6 +297,7 @@ export const PaneGrid = memo(function PaneGrid({
             onActivatePane={() => {
               if (activeProjectId && pane) setActiveSplitCell(activeProjectId, pane.leafId);
             }}
+            onReportStatus={onReportPaneStatus}
           />
         );
       })}

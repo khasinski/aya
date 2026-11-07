@@ -255,6 +255,11 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await expect(gui.getByText('Approval required')).toBeVisible();
     await expect(turnStatus).toHaveText('Waiting for your response');
     await expect(turnStatus).toHaveAttribute('data-working', 'false');
+    // The same wait reaches Aya's attention pipeline, as an agent's `aya status` would.
+    await window.getByTitle('Open attention center').click();
+    const attention = window.locator('.aya-attention-modal');
+    await expect(attention.locator('.aya-attention-row', { hasText: 'Codex GUI' })).toContainText('Approval needed');
+    await window.keyboard.press('Escape');
     await gui.getByRole('button', { name: 'Decline', exact: true }).click();
     await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
     await expect(gui.getByText('Approval required')).toHaveCount(0);

@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
 import type { GuiProgress } from '../../shared/gui-progress';
+import { guiPaneStatus, sameGuiPaneStatus, type GuiPaneStatus } from '../gui-status';
 import type { GuiArtifact, GuiArtifactEntry, GuiEvent, GuiApprovalDecision } from '../../shared/codex-gui';
 import type { Preset, TerminalState } from '../types';
 import './conversation.css';
@@ -81,12 +82,14 @@ type ConversationProps = {
   hidden?: boolean;
   isActivePane?: boolean;
   onActivatePane?: () => void;
+  /** Tells the rest of Aya (status rail, attention centre, sidebar) what this pane is doing. */
+  onReportStatus?: (terminalId: string, status: GuiPaneStatus) => void;
 };
 export const ConversationView = memo(function ConversationView(props: ConversationProps) {
   const [generation, setGeneration] = useState(0);
   return <ConversationSession key={`${props.terminal.id}:${generation}`} {...props} onSwitch={() => setGeneration(n => n + 1)} />;
 });
-function ConversationSession({ terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onSwitch }: ConversationProps & { onSwitch: () => void }) {
+function ConversationSession({ terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, onSwitch }: ConversationProps & { onSwitch: () => void }) {
   const api = window.ayaGui;
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
   const agentLabel = guiAgent === 'pi' ? 'Pi' : guiAgent === 'claude' ? 'Claude' : guiAgent === 'antigravity' ? 'Antigravity' : 'Codex';
@@ -379,6 +382,26 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       setShowJump(false);
     }
   }, []);
+  const reportedStatus = useRef<GuiPaneStatus | null>(null);
+  const turnRanHere = useRef(false);   // a turn restored from disk is history, not news
+  useEffect(() => {
+    if (!onReportStatus) return;
+    const asked = requests.map(request => {
+      const questions = normalizeQuestions(request.params.questions);
+      return questions.length > 0
+        ? { kind: 'question' as const, text: questions[0].question }
+        : { kind: 'approval' as const, text: str(request.params.command) || str(request.params.reason) };
+    });
+    const last = messages[messages.length - 1];
+    const lastQuestions = last && last.type === 'assistant' && !busy ? extractMessageQuestions(last) : [];
+    const unanswered = lastQuestions.length > 0 && !(last?.questionAnswers && Object.keys(last.questionAnswers).length > 0) ? lastQuestions[0].question : undefined;
+    if (busy) turnRanHere.current = true;
+    const computed = guiPaneStatus({ agentLabel, ready, busy, requests: asked, ...(unanswered ? { unansweredQuestion: unanswered } : {}), turnOutcome, queueHeld, queued: queue.length });
+    const next: GuiPaneStatus = computed !== 'clear' && (computed.level === 'done' || computed.level === 'error') && !turnRanHere.current ? 'clear' : computed;
+    if (sameGuiPaneStatus(next, reportedStatus.current)) return;
+    reportedStatus.current = next;
+    onReportStatus(terminal.id, next);
+  }, [onReportStatus, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length]);
   useLayoutEffect(() => { if (!hidden) scrollToLatest(); }, [hidden, messages, activities, side, requests, plan, scrollToLatest]);
   useEffect(() => {
     const observer = new ResizeObserver(scrollToLatest);

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sharingPaneIds } from "./agentPreset";
 import { projectBaseCwd } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
+import type { GuiPaneStatus } from "./gui-status";
 import {
   applyReportedStatus,
   clearedTerminalStatus,
@@ -498,6 +499,28 @@ export function App() {
       });
     }).catch(() => {});
   }, [didBootstrap]);
+
+  /** A Conversation GUI pane reports like a terminal agent running `aya status`, so one attention pipeline serves both. */
+  const reportPaneStatus = useCallback((terminalId: string, status: GuiPaneStatus) => {
+    setTerminals((prev) => {
+      const terminal = prev[terminalId];
+      if (!terminal) return prev;
+      if (status === "clear") return terminal.externalStatus ? { ...prev, [terminalId]: clearedTerminalStatus(terminal) } : prev;
+      const updatedAt = Date.now();
+      const next = applyReportedStatus(terminal, { level: status.level, text: status.text, updatedAt });
+      if (status.level !== "active") {
+        appendProjectEvent({
+          projectSlug: terminal.projectSlug,
+          terminalId: terminal.id,
+          level: status.level,
+          title: controlStatusEventTitle(terminal.name, status.level),
+          detail: status.text,
+          createdAt: updatedAt,
+        });
+      }
+      return { ...prev, [terminalId]: next };
+    });
+  }, [appendProjectEvent]);
 
   useEffect(() => {
     return window.aya.onControlStatus((update) => {
@@ -1228,6 +1251,7 @@ export function App() {
             restartTerminal={restartTerminal}
             onSpawnFailure={handleSpawnFailure}
             restartTriggers={restartTriggers}
+            onReportPaneStatus={reportPaneStatus}
             macOptionKeyMode={macOptionKeyMode}
             anyOverlayOpen={anyOverlayOpen}
             closeFocusHold={closeFocusHold}
