@@ -13,4 +13,4 @@ exports.guiCommands = agent => [
   ...(agent === 'pi' || agent === 'antigravity' ? [] : [{ name: 'btw', description: 'Ask a side question; waits for the current turn to finish.' }]),
 ];
 
-exports.guiCapabilities = agent => ({ steer: agent !== 'antigravity', sideQuestions: agent === 'codex' || agent === 'claude' });
+exports.guiCapabilities = agent => ({ steer: agent !== 'antigravity', sideQuestions: agent === 'codex' || agent === 'claude', sideWhileWorking: agent === 'codex' });

@@ -482,7 +482,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       if (!argument.trim()) throw Error('Usage: /btw your side question');
       if (sideQuestion) throw Error('A side question is already pending. Close it to cancel before asking another.');
       setSideQuestion(argument);
-      setSide(`${busy ? 'Waiting for the current turn to finish…' : 'Answering…'}\n\n${argument}`);
+      setSide(`${busy && !capabilities.sideWhileWorking ? 'Waiting for the current turn to finish…' : 'Answering…'}\n\n${argument}`);
       return;
     }
     if (name === 'goal') setGoalPending(true);
@@ -492,7 +492,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     } finally { if (name === 'goal') setGoalPending(false); }
   };
   useEffect(() => {
-    if (!ready || busy || !sideQuestion) return;
+    if (!ready || (busy && !capabilities.sideWhileWorking) || !sideQuestion) return;
     let cancelled = false;
     setSide(`Answering…\n\n${sideQuestion}`);
     void invoke('command', { name: 'btw', argument: sideQuestion }).then(result => {
@@ -501,7 +501,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     return () => { cancelled = true; };
     // Wait for the current turn, and finish the side answer before dispatching queued messages.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, busy, sideQuestion]);
+  }, [ready, busy, sideQuestion, capabilities.sideWhileWorking]);
   const dispatch = async (text: string, files: Attachment[] = []) => {
     if (dispatching.current) return false;
     dispatching.current = true;

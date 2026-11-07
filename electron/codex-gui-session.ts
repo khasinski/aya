@@ -21,6 +21,8 @@ export class CodexGuiSession {
   private turnId: string | null = null;
   private startingTurn: Promise<Record<string, unknown>> | null = null;
   private threadId = '';
+  /** Side chats running on forked threads: their notifications never reach the conversation. */
+  private sideThreads = new Map<string, { text: string; done: (error?: Error) => void }>();
   private busy = false;
   private samplingEpoch = 0;
   private samplingWaiters = new Set<() => void>();
@@ -136,6 +138,7 @@ export class CodexGuiSession {
     if (name === 'compact') return this.rpc('thread/compact/start', { threadId: this.threadId });
     if (name === 'btw') {
       if (!argument.trim()) throw Error('Usage: /btw your side question');
+      if (this.busy) return this.sideQuestionWhileWorking(argument);
       // turn/completed can arrive before the sampling source becomes idle.
       // Automatic goal turns can also start between listing the source and sampling it.
       const deadline = Date.now() + 30000;
@@ -190,6 +193,30 @@ export class CodexGuiSession {
     } catch (error) { this.busy = false; throw error; }
     finally { if (this.startingTurn === starting) this.startingTurn = null; }
   }
+  /** Answers a side question while a turn runs: fork the thread through its last finished turn into an ephemeral,
+   *  read-only copy, ask it there, and drop it. The running turn is untouched. */
+  private async sideQuestionWhileWorking(question: string): Promise<{ text: string; sourceTurnId: string }> {
+    const listed = await this.rpc('thread/turns/list', { threadId: this.threadId, limit: 5, sortDirection: 'desc', itemsView: 'notLoaded' });
+    const finished = (Array.isArray(listed.data) ? listed.data : []).map(object).find(turn => text(turn.id) && text(turn.id) !== this.turnId && text(turn.status) !== 'inProgress');
+    const sourceTurnId = text(finished?.id);
+    if (!sourceTurnId) throw Error('There is no finished turn to ask about yet. Wait for the first answer, then try /btw again.');
+    const forked = await this.rpc('thread/fork', { threadId: this.threadId, lastTurnId: sourceTurnId, ephemeral: true, sandbox: 'read-only', approvalPolicy: 'never', excludeTurns: true });
+    const sideId = text(object(forked.thread).id);
+    if (!sideId) throw Error('Codex did not return a side thread');
+    const side = { text: '', done: (_error?: Error) => {} };
+    const finishedTurn = new Promise<void>((resolve, reject) => { side.done = error => (error ? reject(error) : resolve()); });
+    this.sideThreads.set(sideId, side);
+    const timer = setTimeout(() => side.done(Error('The side question timed out')), 120000);
+    try {
+      await this.rpc('turn/start', { threadId: sideId, input: [{ type: 'text', text: `Answer this side question briefly from the conversation so far, without using tools: ${question}`, text_elements: [] }] });
+      await finishedTurn;
+      return { text: side.text, sourceTurnId };
+    } finally {
+      clearTimeout(timer);
+      this.sideThreads.delete(sideId);
+      void this.rpc('thread/unsubscribe', { threadId: sideId }).catch(() => {});
+    }
+  }
   async interrupt() {
     if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
     if (this.turnId) await this.rpc('turn/interrupt', { threadId: this.threadId, turnId: this.turnId });
@@ -227,6 +254,15 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
     }
     if (!method) return;
     const hasId = typeof message.id === 'number' || typeof message.id === 'string';
+    const sideThread = this.sideThreads.get(text(params.threadId));
+    if (sideThread) {
+      // A forked side chat runs read-only and never asks; anything it does ask is refused, and none of it is shown.
+      if (hasId) { this.write({ id: message.id, error: { code: -32000, message: 'Side questions cannot use tools or ask for approval' } }); return; }
+      const item = object(params.item);
+      if (method === 'item/completed' && item.type === 'agentMessage' && text(item.text)) sideThread.text = text(item.text);
+      if (method === 'turn/completed') sideThread.done(object(params.turn).status === 'failed' ? Error(text(object(object(params.turn).error).message) || 'The side question failed') : undefined);
+      return;
+    }
     if (hasId) {
       const id = message.id as string | number;
       if (method === 'item/tool/call' && params.tool === 'aya_progress') {

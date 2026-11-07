@@ -43,6 +43,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   }
   else if (message.method === 'thread/turns/list') {
     event('fixture/history', { method: message.method, ...p });
+    if (p.itemsView === 'notLoaded' && p.limit === 5) { write({ id: message.id, result: { data: [{ id: 'turn', status: 'inProgress', items: [] }, { id: 'turn-prev', status: 'completed', items: [] }], nextCursor: null } }); return; }
     if (p.itemsView === 'notLoaded') { write({ id: message.id, result: { data: [{ id: 'turn', items: [] }], nextCursor: null } }); return; }
     if (p.threadId === 'large-history') {
       const offset = Number(p.cursor || 0);
@@ -56,6 +57,18 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       ? [{ id: 'native-user', type: 'userMessage', content: [{ type: 'text', text: 'A question from the CLI' }] }]
       : [{ id: 'native-agent', type: 'agentMessage', text: 'An answer from the CLI' }]
     }], nextCursor: p.cursor ? null : 'older' } });
+  }
+  else if (message.method === 'thread/fork') {
+    event('fixture/fork', p);
+    write({ id: message.id, result: { thread: { id: 'side-thread' } } });
+  }
+  else if (message.method === 'thread/unsubscribe') write({ id: message.id, result: {} });
+  else if (message.method === 'turn/start' && p.threadId === 'side-thread') {
+    event('fixture/side-turn', p);
+    write({ id: message.id, result: { turn: { id: 'side-turn', status: 'inProgress' } } });
+    event('turn/started', { threadId: 'side-thread', turn: { id: 'side-turn' } });
+    event('item/completed', { threadId: 'side-thread', item: { id: 'side-answer', type: 'agentMessage', text: 'A forked side answer' } });
+    event('turn/completed', { threadId: 'side-thread', turn: { id: 'side-turn', status: 'completed' } });
   }
   else if (message.method === 'thread/sample') {
     event('fixture/sample', { attempt: ++sampleAttempts, ...p });

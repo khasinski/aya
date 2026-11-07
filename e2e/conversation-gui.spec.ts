@@ -223,18 +223,17 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await expect(turnStatus).toHaveText('Codex is working…');
     await prompt.fill('/btw Explain the context'); await prompt.press('Enter');
     await expect(prompt).toHaveValue('');
-    await expect(gui.locator('.aya-gui-side')).toContainText('Waiting for the current turn to finish');
-    await expect(gui.locator('.aya-gui-side')).toContainText('Explain the context');
+    // Codex answers on a forked thread while the turn keeps running.
+    await expect(gui.locator('.aya-gui-side')).toContainText('A forked side answer');
     await expect(turnStatus).toHaveText('Codex is working…');
+    await gui.getByRole('button', { name: 'Close side question' }).click();
     await gui.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(turnStatus).toHaveText('Interrupted');
-    await expect(gui.locator('.aya-gui-side')).toContainText('A separate side answer');
-    await gui.getByRole('button', { name: 'Close side question' }).click();
     await expect(activitySummary).toContainText('2 completed');
     await prompt.fill('mixed-tools-wait'); await prompt.press('Enter');
     await expect(activitySummary).toContainText('3 actions · 1 running · 1 completed · 1 failed');
     await prompt.fill('/btw This question will be cancelled'); await prompt.press('Enter');
-    await expect(gui.locator('.aya-gui-side')).toContainText('Waiting for the current turn');
+    await expect(gui.locator('.aya-gui-side')).toBeVisible();
     await prompt.press('Escape');
     await expect(gui.locator('.aya-gui-side')).toHaveCount(0);
     await activitySummary.click();
