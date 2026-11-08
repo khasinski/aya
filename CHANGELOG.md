@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `aya pane send --wait [--timeout seconds]` sends a prompt and blocks until the pane has started
+  working and is idle, waiting for input or exited. See docs/pane-wait.md.
 - Conversation GUI: panes now report working, waiting (with the approval or question), done and
   error to the status rail and attention centre. Approvals and questions sit above the composer
   with keyboard shortcuts. Enter queues or steers while the agent works (Cmd/Ctrl+Enter does the

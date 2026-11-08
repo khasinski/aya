@@ -268,3 +268,11 @@ test("a Start task is capped like a message", () => {
   assert.throws(() => parseControlRequest({ type: "team-start", team: "ux", task: "x".repeat(TEAM_MESSAGE_MAX_CHARS + 1) }), new RegExp(`the most is ${TEAM_MESSAGE_MAX_CHARS}`));
   assert.equal(parseControlRequest({ type: "team-start", team: "ux", task: "x".repeat(TEAM_MESSAGE_MAX_CHARS) }).task.length, TEAM_MESSAGE_MAX_CHARS);
 });
+
+test("pane-send accepts a bounded waitMs and drops an absent one", () => {
+  assert.equal(parseControlRequest({ type: "pane-send", target: "x", text: "go", waitMs: 5000 }).waitMs, 5000);
+  assert.equal("waitMs" in parseControlRequest({ type: "pane-send", target: "x", text: "go" }), false);
+  for (const waitMs of [0, -1, 1.5, "5", 86_400_001]) {
+    assert.throws(() => parseControlRequest({ type: "pane-send", target: "x", text: "go", waitMs }), /waitMs/, String(waitMs));
+  }
+});

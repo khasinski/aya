@@ -92,3 +92,25 @@ test("flags alone are not text: usage error, nothing sent", async () => {
   assert.notEqual(status, 0);
   assert.equal(request, null);
 });
+
+test("--wait sends the timeout in milliseconds, 300 seconds by default", async () => {
+  assert.equal((await paneSend(["reviewer", "go"])).request.waitMs, undefined);
+  assert.equal((await paneSend(["reviewer", "go", "--wait"])).request.waitMs, 300_000);
+  const { request } = await paneSend(["reviewer", "--wait", "--timeout", "45", "go"]);
+  assert.equal(request.waitMs, 45_000);
+  assert.equal(request.text, "go");
+});
+
+test("--timeout without --wait, or a bad timeout, is a usage error and sends nothing", async () => {
+  for (const args of [["reviewer", "go", "--timeout", "5"], ["reviewer", "go", "--wait", "--timeout", "x"], ["reviewer", "go", "--wait", "--timeout", "0"], ["reviewer", "go", "--wait", "--timeout"]]) {
+    const { status, request } = await paneSend(args);
+    assert.notEqual(status, 0, args.join(" "));
+    assert.equal(request, null, args.join(" "));
+  }
+});
+
+test("-- sends --wait as text", async () => {
+  const { request } = await paneSend(["reviewer", "--", "--wait"]);
+  assert.equal(request.text, "--wait");
+  assert.equal(request.waitMs, undefined);
+});

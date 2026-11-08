@@ -1,6 +1,6 @@
 import type { AutomaticWriteContext } from "./screen-user-rule-input";
 import { formatPaneState, type PaneStateResult } from "./pane-state";
-import { formatPaneWaitReply, waitForPaneTargets, type PaneWaitCondition } from "./pane-wait";
+import { formatPaneSendWaitReply, formatPaneWaitReply, waitForPaneTargets, waitForPaneToSettle, type PaneWaitCondition } from "./pane-wait";
 import type { BrowserWindow } from "electron";
 import { notePaneInput, paneInputRevision, withPaneInputLock } from "./pane-input-queue";
 import { listenOwnerOnly } from "./owner-socket";
@@ -656,6 +656,16 @@ async function handleRequest(
     });
     return formatPaneWaitReply(result, targets, request.until, request.timeoutMs);
   }
+  if (request.type === "pane-send" && request.waitMs) {
+    if (!options.paneState || !options.subscribePaneState) throw new Error("pane wait is not available");
+    // Once the text and Enter are in: wait for work to start, then for the pane to settle.
+    const sent = await handlePaneRequest(request, options, callerDisconnected);
+    const target = { terminalId: String(sent?.terminalId), name: String(sent?.name) };
+    const result = await waitForPaneToSettle(target, {
+      timeoutMs: request.waitMs, signal: callerGone, readState: options.paneState, subscribe: options.subscribePaneState,
+    });
+    return { ...sent, ...formatPaneSendWaitReply(result, target.name, request.waitMs) };
+  }
   if (request.type === "pane-read" || request.type === "pane-send") {
     return handlePaneRequest(request, options, callerDisconnected);
   }
@@ -817,7 +827,7 @@ export function startControlServerOn(
           const [request, caller] = [parseControlRequest(raw), parseControlCaller(raw)];
           // A pane wait owns its own deadline, which may be much longer than the
           // ordinary idle limit for unanswered control requests.
-          if (request.type === "pane-wait") socket.setTimeout(0);
+          if (request.type === "pane-wait" || (request.type === "pane-send" && request.waitMs)) socket.setTimeout(0);
           const { undo, ...payload } = (await debugAnswer(options.team, request, caller, handleRequest(request, caller, options, callerGone.signal, callerDisconnected.signal))) ?? {};
           if (!(await sendJson(socket, { ok: true, ...payload })) && typeof undo === "function") await undo();
         } catch (err) {

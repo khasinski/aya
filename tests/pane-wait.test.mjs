@@ -205,3 +205,40 @@ test("CLI parses pane wait flags and preserves timeout / bad-target exit codes",
   assert.equal(malformed.code, 1);
   assert.match(malformed.stderr, /Usage:/);
 });
+
+test("send --wait settles only after the pane was seen working", async (t) => {
+  const { waitForPaneToSettle, formatPaneSendWaitReply } = await import("../dist-electron/pane-wait.js");
+  const target = { terminalId: "a", name: "Builder" };
+  const run = (s, o = {}) => waitForPaneToSettle(target, { timeoutMs: o.timeoutMs ?? 400, startGraceMs: o.startGraceMs ?? 100, readState: s.readState, subscribe: s.subscribe });
+
+  await t.test("idle before the work starts is not done", async () => {
+    const s = subject({ a: state("idle") });
+    const pending = run(s);
+    await new Promise((r) => setTimeout(r, 30));
+    s.update("a", state("busy"));
+    await new Promise((r) => setTimeout(r, 30));
+    s.update("a", state("idle"));
+    assert.deepEqual(await pending, { outcome: "idle", started: true });
+  });
+  await t.test("an approval prompt settles as waiting", async () => {
+    const s = subject({ a: state("busy") });
+    const pending = run(s);
+    s.update("a", state("waiting", true));
+    assert.deepEqual(await pending, { outcome: "waiting", started: true });
+  });
+  await t.test("a pane that never starts is reported as idle without work seen", async () => {
+    const s = subject({ a: state("idle") });
+    assert.deepEqual(await run(s), { outcome: "idle", started: false });
+  });
+  await t.test("a pane that keeps working times out", async () => {
+    const s = subject({ a: state("busy") });
+    assert.deepEqual(await run(s, { timeoutMs: 120 }), { outcome: "timeout", started: true });
+    assert.equal(s.listenerCount("a"), 0);
+  });
+  await t.test("replies say what happened and fail only on timeout", () => {
+    assert.deepEqual(formatPaneSendWaitReply({ outcome: "idle", started: true }, "Builder", 5000), { output: '"Builder" finished and is idle.\n', exitCode: 0 });
+    assert.match(formatPaneSendWaitReply({ outcome: "idle", started: false }, "Builder", 5000).output, /No work was seen starting/);
+    assert.equal(formatPaneSendWaitReply({ outcome: "waiting", started: true }, "Builder", 5000).output, '"Builder" is waiting for input.\n');
+    assert.deepEqual(formatPaneSendWaitReply({ outcome: "timeout", started: true }, "Builder", 5000), { output: 'Timed out after 5 seconds. "Builder" is still working.\n', exitCode: 1 });
+  });
+});

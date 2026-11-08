@@ -63,6 +63,8 @@ export type ControlRequest =
       projectSlug?: string;
       text: string;
       submit?: boolean;
+      /** Wait up to this long for the pane to start working and settle; absent means send and return. */
+      waitMs?: number;
     }
   // List the panes/agents in the caller's project (or all projects when no
   // slug). `selfTerminalId` marks the caller's own pane in the output.
@@ -301,7 +303,9 @@ export function parseControlRequest(value: unknown): ControlRequest {
     // pane can accept whatever prompt happens to be on screen.
     const text = typeof value.text === "string" ? value.text : "";
     if (!text) throw new Error("pane-send.text is required");
-    return { type, ...common, text, submit: value.submit === true };
+    const waitMs = value.waitMs;
+    if (waitMs !== undefined && (typeof waitMs !== "number" || !Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > 86_400_000)) throw new Error("pane-send.waitMs must be between 1 and 86400000");
+    return { type, ...common, text, submit: value.submit === true, ...(waitMs ? { waitMs } : {}) };
   }
   throw new Error("unknown control request type");
 }

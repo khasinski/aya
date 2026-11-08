@@ -49,9 +49,12 @@ Usage:
                                      Print another pane's recent output;
                                      target is a pane name or an id from
                                      aya pane list
-  aya pane send target [--no-submit] [--project slug] text
+  aya pane send target [--no-submit] [--wait [--timeout seconds]] [--project slug] text
                                      Type text into another pane and press
-                                     Enter (--no-submit: type only)
+                                     Enter (--no-submit: type only). --wait
+                                     then blocks until the pane has started
+                                     working and is idle, waiting for input
+                                     or exited (default timeout 300 seconds)
   aya pane rename target name [--project slug]
                                      Rename a pane's tab
   aya pane close target [--force] [--project slug]
@@ -282,6 +285,7 @@ function requestFromArgs() {
       text: process.argv[5],
       submit: process.argv[6] === "submit",
       projectSlug: process.argv[7] || optionalEnv("AYA_PROJECT_SLUG"),
+      ...(process.argv[8] ? { waitMs: Number(process.argv[8]) } : {}),
     };
   }
   if (kind === "team-whoami" || kind === "team-inbox") return { type: kind };
@@ -352,6 +356,8 @@ const connectDeadline = Date.now() + Number(connectWait || 0) * 1000;
 // (an agent's tool call) forever.
 const REPLY_TIMEOUT_MS = request.type === "pane-wait"
   ? request.timeoutMs + 5_000
+  : request.type === "pane-send" && request.waitMs
+  ? request.waitMs + 125_000
   : Number(process.env.AYA_REPLY_TIMEOUT_MS) || 120_000;
 let response = "";
 
@@ -927,18 +933,38 @@ case "$command" in
         submit="submit"
         text=""
         literal=""
-        for arg do
+        wait=""
+        timeout=300
+        timeout_given=""
+        while [ "$#" -gt 0 ]; do
+          arg=$1
+          shift
           if [ -z "$literal" ]; then
             case "$arg" in
               --submit) continue ;;
               --no-submit) submit=""; continue ;;
+              --wait) wait=1; continue ;;
+              --timeout)
+                [ "$#" -ge 1 ] || usage_fail
+                timeout=$1; timeout_given=1
+                shift
+                continue
+                ;;
               --) literal=1; continue ;;
             esac
           fi
           text="${text:+$text }$arg"
         done
         if [ -z "$target" ] || [ -z "$text" ]; then usage_fail; fi
-        send_control pane-send "$target" "$text" "$submit" "$project"
+        if [ -n "$timeout_given" ] && [ -z "$wait" ]; then usage_fail; fi
+        wait_ms=""
+        if [ -n "$wait" ]; then
+          case "$timeout" in ''|*[!0-9]*) usage_fail ;; esac
+          [ "${#timeout}" -le 5 ] || usage_fail
+          if [ "$timeout" -lt 1 ] || [ "$timeout" -gt 86400 ]; then usage_fail; fi
+          wait_ms=$((timeout * 1000))
+        fi
+        send_control pane-send "$target" "$text" "$submit" "$project" "$wait_ms"
         ;;
       *)
         usage_fail

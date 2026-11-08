@@ -1,6 +1,7 @@
 import type { PaneStateResult } from "./pane-state";
 
-export type PaneWaitCondition = "idle" | "waiting" | "exited";
+// "busy" is internal: the CLI offers idle, waiting and exited. A send --wait uses it to see the agent start.
+export type PaneWaitCondition = "idle" | "waiting" | "exited" | "busy";
 export const PANE_WAIT_DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface PaneWaitTarget {
@@ -27,6 +28,7 @@ export function paneWaitMatches(state: PaneStateResult, until: readonly PaneWait
   return until.some((condition) => {
     if (condition === "idle") return state.state === "idle" || state.state === "shell";
     if (condition === "waiting") return state.waiting === true;
+    if (condition === "busy") return state.state === "busy";
     return state.exited === true;
   });
 }
@@ -87,4 +89,49 @@ export function formatPaneWaitReply(
     output: `Timed out after ${seconds} seconds. Still waiting for ${still.map((target) => `"${target.name}" to be ${condition}`).join(", ")}.\n`,
     exitCode: 1,
   };
+}
+
+/** How long a send --wait gives the agent to start working before it takes an idle pane for a finished one. */
+export const PANE_SEND_START_GRACE_MS = 10_000;
+
+export interface PaneSettleResult {
+  outcome: "idle" | "waiting" | "exited" | "timeout";
+  /** False when the pane never left idle after the send: the answer may have been instant, or the prompt ignored. */
+  started: boolean;
+}
+
+/**
+ * After a send: wait for the pane to start working, then for it to settle (idle, waiting for input or exited).
+ * A pane that is still idle right after the send is not "done", so settling is only believed once work was seen,
+ * or once the start grace passed without any.
+ */
+export async function waitForPaneToSettle(
+  target: PaneWaitTarget,
+  options: Omit<PaneWaitOptions, "until" | "any"> & { startGraceMs?: number },
+): Promise<PaneSettleResult> {
+  const deadline = Date.now() + options.timeoutMs;
+  const grace = Math.min(options.startGraceMs ?? PANE_SEND_START_GRACE_MS, options.timeoutMs);
+  const common = { signal: options.signal, readState: options.readState, subscribe: options.subscribe };
+  const began = await waitForPaneTargets([target], { ...common, until: ["busy", "waiting", "exited"], any: true, timeoutMs: grace });
+  const settled = await waitForPaneTargets([target], {
+    ...common, until: ["idle", "waiting", "exited"], any: true, timeoutMs: Math.max(0, deadline - Date.now()),
+  });
+  if (!settled.met) return { outcome: "timeout", started: began.met };
+  const last = await options.readState(target.terminalId).catch(() => null);
+  const outcome = last?.exited ? "exited" : last?.waiting ? "waiting" : "idle";
+  return { outcome, started: began.met };
+}
+
+export function formatPaneSendWaitReply(
+  result: PaneSettleResult,
+  name: string,
+  timeoutMs: number,
+): { output: string; exitCode: 0 | 1 } {
+  const quoted = `"${name}"`;
+  if (result.outcome === "timeout") {
+    return { output: `Timed out after ${timeoutMs / 1000} seconds. ${quoted} is still ${result.started ? "working" : "not idle"}.\n`, exitCode: 1 };
+  }
+  const what = result.outcome === "idle" ? "finished and is idle" : result.outcome === "waiting" ? "is waiting for input" : "exited";
+  const note = result.started ? "" : `No work was seen starting within ${PANE_SEND_START_GRACE_MS / 1000} seconds: the answer may have come back instantly, or the prompt was ignored.\n`;
+  return { output: `${quoted} ${what}.\n${note}`, exitCode: 0 };
 }
