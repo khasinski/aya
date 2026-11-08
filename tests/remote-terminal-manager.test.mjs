@@ -104,7 +104,8 @@ test("remote pane writes and resizes through v2, detaches without ending, and re
   assert.equal(clients[0].calls.at(-1)[0], "detach");
   assert.equal(await manager.spawn({ ...request, attachOnly: true }, "devbox", "remote-repo"), "remote");
   assert.deepEqual(clients[1].calls, [["attach", "tab-uuid", 5]]);
-  clients[1].emit("output", { terminalId: "tab-uuid", offset: 0, data: "replayed" });
+  // The host replays from the requested offset (5), never below it.
+  clients[1].emit("output", { terminalId: "tab-uuid", offset: 5, data: "replayed" });
   assert.equal(events.at(-1).chunk, "replayed");
 });
 
@@ -303,4 +304,28 @@ test("remote reconnect backoff resets after success and then repeats its last de
   assert.deepEqual(Array.from({ length: 8 }, () => backoff.next()), [1_000, 2_000, 5_000, 10_000, 30_000, 30_000, 30_000, 30_000]);
   backoff.reset();
   assert.equal(backoff.next(), 1_000);
+});
+
+test("output is delivered once by absolute offset: an overlapping replay is dropped, a partial overlap trimmed", async () => {
+  const client = new FakeTerminalClient();
+  const sent = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, sendEvent: (event) => { if (event.type === "data") sent.push(event.chunk); } });
+  await manager.spawn(request, "devbox", "remote-repo");
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "READY\r\n" });
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "READY\r\n" });
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "READY\r\nGAP\r\n" });
+  client.emit("output", { terminalId: request.ptyId, offset: 12, data: "NEXT" });
+  assert.deepEqual(sent, ["READY\r\n", "GAP\r\n", "NEXT"]);
+});
+
+test("a replay that overlaps in the middle of a multi-byte character never delivers half of it", async () => {
+  const client = new FakeTerminalClient();
+  const sent = [];
+  const manager = new RemoteTerminalManager({ connect: () => client, sendEvent: (event) => { if (event.type === "data") sent.push(event.chunk); } });
+  await manager.spawn(request, "devbox", "remote-repo");
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "a" });
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "aéb" }); // é is 2 bytes: offsets 1-2, b at 3
+  assert.deepEqual(sent, ["a", "éb"]);
+  client.emit("output", { terminalId: request.ptyId, offset: 0, data: "aé" });
+  assert.deepEqual(sent, ["a", "éb"]);
 });

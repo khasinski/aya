@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A remote pane no longer shows output twice when two attaches overlap (a remount racing a reconnect): the manager
+  delivers each byte by absolute offset once.
 - Artifacts for TUI panes: `aya present --title <t> (--html|--image|--table|--metric ...)` opens an HTML widget,
   image, table or metric card in its own window, `--id` updates it in place, and `aya artifact list|open` finds it
   again. See `docs/tui-artifacts.md`.

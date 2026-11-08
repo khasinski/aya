@@ -39,6 +39,8 @@ interface ManagedTerminal {
   onError: (error: Error) => void;
   readOnly: boolean;
   outputOffset: number;
+  /** The end of the last byte handed to the pane. Unlike outputOffset, an attach does not move it: the replay that follows an attach is still to be delivered. */
+  deliveredOffset: number;
   exited: boolean;
   reconnect: RemoteReconnectBackoff;
   cancelReconnect?: CancelReconnect;
@@ -115,6 +117,7 @@ export class RemoteTerminalManager {
       client,
       readOnly: false,
       outputOffset: existing?.outputOffset ?? 0,
+      deliveredOffset: existing?.deliveredOffset ?? 0,
       exited: false,
       reconnect: existing?.reconnect ?? new RemoteReconnectBackoff(),
       connecting: false,
@@ -123,16 +126,29 @@ export class RemoteTerminalManager {
       outputDeliverySequence: existing?.outputDeliverySequence ?? 0,
       onOutput: (event) => {
         if (event.terminalId !== terminal.remoteTerminalId) return;
-        terminal.outputOffset = Math.max(terminal.outputOffset, event.offset + Buffer.byteLength(event.data, "utf8"));
+        // Idempotent by absolute offset: attaches that overlap (a remount racing a reconnect, two spawns of one pane)
+        // each replay the same bytes, and the pane must see each byte once.
+        let data = event.data;
+        const length = Buffer.byteLength(data, "utf8");
+        if (event.offset + length <= terminal.deliveredOffset) return;
+        if (event.offset < terminal.deliveredOffset) {
+          const rest = Buffer.from(data, "utf8").subarray(terminal.deliveredOffset - event.offset);
+          let start = 0;
+          while (start < rest.length && (rest[start] & 0xc0) === 0x80) start += 1;
+          data = rest.subarray(start).toString("utf8");
+          if (!data) return;
+        }
+        terminal.deliveredOffset = event.offset + length;
+        terminal.outputOffset = Math.max(terminal.outputOffset, event.offset + length);
         const source = terminal.client;
         const awaiting = new Set(this.deps.outputSinks?.() ?? []);
         if (source?.pauseOutput && awaiting.size > 0) {
           const id = `${request.ptyId}:${++terminal.outputDeliverySequence}`;
           terminal.pendingOutputDelivery = { id, client: source, awaiting };
           source.pauseOutput();
-          this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: event.data, remoteDeliveryId: id });
+          this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: data, remoteDeliveryId: id });
         } else {
-          this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: event.data });
+          this.deps.sendEvent({ type: "data", ptyId: request.ptyId, chunk: data });
         }
       },
       onExit: (event) => {
