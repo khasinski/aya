@@ -4,3 +4,4 @@
 - No test may open the real browser: external URLs go through main's externalShell, which in e2e writes them to AYA_E2E_OPEN_EXTERNAL_LOG instead of opening them. Assert that log; never stub shell.openExternal from a spec (2026-10-21, test runs opened github.com tabs).
 - Run e2e locally without `CI=1`. `CI` turns off `AYA_E2E_HEADLESS` (CI has xvfb), so on a Mac every test window appears on the user's screen (2026-10-21).
 - Rebuild (`npm run build && npm run build:test-src`) in the checkout before an e2e run; the specs run the built `dist`, not the source.
+- A headless test run must leave no icon in the macOS Dock or menu bar: `main.ts` takes the accessory activation policy when `AYA_E2E_HEADLESS=1`, and `e2e/headless-dock.spec.ts` asserts it. A new main-process window or launch path must not undo it (2026-11-08, test runs showed an Electron icon in the Dock).

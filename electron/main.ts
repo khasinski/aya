@@ -998,6 +998,18 @@ app.on("open-file", (event, filePath) => {
 });
 
 app.whenReady().then(async () => {
+  // A hidden test run must not put an icon in the Dock or the menu bar of whoever is at the machine: an Electron process
+  // registers as a foreground app even with every window hidden, unless it takes the accessory policy.
+  if (IS_E2E_HEADLESS && !app.isPackaged && process.platform === "darwin") {
+    // Electron puts the policy back to regular while it finishes starting and when a window is created, so it is
+    // taken again after each window appears; both calls are idempotent.
+    const hideFromDock = () => { app.setActivationPolicy("accessory"); app.dock?.hide(); };
+    hideFromDock();
+    app.on("browser-window-created", (_event, window) => {
+      hideFromDock();
+      window.webContents.once("did-finish-load", hideFromDock);
+    });
+  }
   app.once("before-quit", watchDebugSwitch(AYA_HOME));
   configureAppIdentity();
 
