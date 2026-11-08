@@ -90,6 +90,10 @@ Usage:
                                      lead's round digest instead)
   aya debug on|off|status            Turn on/off writing every team decision
                                      to the team's debug log
+  aya rules fetch <https-url> --agent <name> [--replace]
+                                     Bring a user screen-rule file in from the
+                                     web, once, on request; checked like a hand-
+                                     written one, never overwrites without --replace
   aya presets [--json]               List presets, whether each is installed and
                                      whether a role's pane of it reaches Aya
   aya machines [--json]              Show machines: GPU, CPU, memory, API or
@@ -293,6 +297,7 @@ function requestFromArgs() {
     return { type: "team-send", role: process.argv[4], text: process.argv[5] };
   }
   if (kind === "team-pause") return { type: kind, text: process.argv[4] || undefined };
+  if (kind === "rules-fetch") return { type: kind, url: process.argv[4], agent: process.argv[5], replace: process.argv[6] === "replace" };
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
   if (kind === "machines") {
     const argv = process.argv.slice(4);
@@ -761,6 +766,21 @@ case "$command" in
   machines)
     shift
     send_control machines "$@" 3<&0
+    ;;
+  rules)
+    [ "${2:-}" = fetch ] || usage_fail
+    shift 2
+    rules_url=""; rules_agent=""; rules_replace=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --agent) [ "$#" -ge 2 ] || usage_fail; rules_agent="$2"; shift 2 ;;
+        --replace) rules_replace=replace; shift ;;
+        -*) usage_fail ;;
+        *) [ -z "$rules_url" ] || usage_fail; rules_url="$1"; shift ;;
+      esac
+    done
+    [ -n "$rules_url" ] && [ -n "$rules_agent" ] || usage_fail
+    send_control rules-fetch "$rules_url" "$rules_agent" "$rules_replace"
     ;;
   presets)
     [ "$#" -eq 0 ] || shift

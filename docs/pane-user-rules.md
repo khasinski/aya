@@ -198,3 +198,11 @@ Five compiled mutations fail their dedicated cases: skip the composer ACK, skip 
 Stage6b follow-up F6 closes the builtin-only asynchronous gap too. Every policy call captures the exact provider configuration before selecting its no-files fast path; after a legacy hold, busy or pane-state read it checks that the same configuration is still active and the facade is not disposed. A late hold/state result becomes unknown; a late busy read returns the existing fail-open false. On configured reads, the same captured object is passed through snapshot evaluation, composer ACK and post-ACK reacquisition. If a configured screen read fails, only a same-epoch read-only status may report stopped/starting; a stale active builtin result cannot grant clearance. No-files calls still use exactly the original methods and issue zero extra snapshot, worker or ACK requests.
 
 The added cases defer each legacy read, then change the provider epoch or dispose before resolving it; none may publish the old idle/clear/true result. A user prompt on a builtin-idle pane is also shown as a waiting user rule. Final selected contracts are350/350 Node26.10 and350/350 Electron43.5/Node24.19; TypeScript and lint pass. Three removal mutations, one each for legacy hold, busy and state post-await ownership checks, fail their exact regression. The existing five stage6b mutation cases and restored16/16 facade cases remain green; no full npm/native-workflow/GUI or production activation claim is made.
+
+## Fetching a rule file
+
+`aya rules fetch <https-url> --agent <name> [--replace]` downloads one rule file into `~/.aya/screen-rules/<name>.json`.
+It runs only when you ask: Aya never polls a rule server and ships no default address. The file must be https, at most
+64 KiB, and passes the same schema as a hand-written file. It is validated together with the other files in the folder
+(built-in id collisions, rule counts) before it replaces anything, it can only add rules, and it is written with mode
+0600. An existing `<name>.json` is kept unless you pass `--replace`. Errors never echo the response body.

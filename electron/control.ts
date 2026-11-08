@@ -129,6 +129,8 @@ export interface ControlServerOptions {
   panePid?: (terminalId: string) => Promise<number | null | undefined>;
   /** Where aya machines keeps its registry, finds ~/.ssh/config and asks the user; by default the Aya config home, the user's home and Aya's dialog. */
   machines?: MachinesDeps;
+  /** Brings a user screen-rule file in from an https address (aya rules fetch); off without it. */
+  fetchUserRules?: (request: { url: string; agent: string; replace: boolean }) => Promise<string>;
   /** Test-only override of the process table read for the ancestry check. */
   processTable?: typeof processTable;
   /** Test-only override of the idle reap window. */
@@ -540,6 +542,10 @@ async function handleRequest(
       clearTimeout(timer);
     }
     return;
+  }
+  if (request.type === "rules-fetch") {
+    if (!options.fetchUserRules) throw new Error("fetching rules is not available");
+    return { output: `${await options.fetchUserRules({ url: request.url, agent: request.agent, replace: request.replace })}\n` };
   }
   if (request.type === "machines") {
     const pane = caller.terminalId ? (await options.listProjects?.().catch(() => []))?.flatMap((p) => p.tabs).find((t) => t.id === caller.terminalId)?.name : undefined;

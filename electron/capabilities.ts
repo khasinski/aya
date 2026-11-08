@@ -258,6 +258,15 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: ["The user's switch: do not turn it on or off unless the user asks."],
   },
   {
+    command: "rules fetch",
+    usage: "aya rules fetch <https-url> --agent <name> [--replace]",
+    summary: "Download one user screen-rule file (<=64 KiB, https only) into ~/.aya/screen-rules/<name>.json, once, on request.",
+    notes: [
+      "The user's switch: fetch only an address the user gave you. Nothing is fetched in the background.",
+      "The file is validated like a hand-written one and can only add rules; an existing <name>.json is kept unless --replace.",
+    ],
+  },
+  {
     command: "presets",
     usage: "aya presets [--json]",
     summary: "List this Aya's presets: id, name, the agent it runs, and whether its CLI is installed.",

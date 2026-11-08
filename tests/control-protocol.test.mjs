@@ -276,3 +276,9 @@ test("pane-send accepts a bounded waitMs and drops an absent one", () => {
     assert.throws(() => parseControlRequest({ type: "pane-send", target: "x", text: "go", waitMs }), /waitMs/, String(waitMs));
   }
 });
+
+test("rules-fetch needs a url and an agent; replace only when true", () => {
+  assert.deepEqual(parseControlRequest({ type: "rules-fetch", url: "https://a.test/x.json", agent: "claude", replace: true }), { type: "rules-fetch", url: "https://a.test/x.json", agent: "claude", replace: true });
+  assert.equal(parseControlRequest({ type: "rules-fetch", url: "https://a.test/x.json", agent: "claude", replace: "yes" }).replace, false);
+  assert.throws(() => parseControlRequest({ type: "rules-fetch", url: "https://a.test/x.json" }), /url and agent/);
+});

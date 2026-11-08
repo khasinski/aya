@@ -25,6 +25,8 @@ export type TeamPanesRequest =
   | ({ type: "team-start"; team: string; task?: string; to?: string } & TeamAuthorScope);
 
 export type ControlRequest =
+  // Bring a user screen-rule file in from an https address, on request (electron/screen-rule-fetch.ts).
+  | { type: "rules-fetch"; url: string; agent: string; replace: boolean }
   | { type: "open"; path: string }
   | { type: "focus" }
   | {
@@ -185,6 +187,12 @@ export function parseControlRequest(value: unknown): ControlRequest {
   if (type === "team-show") {
     const team = optionalString(value.team);
     return { type, ...(team ? { team } : {}), json: value.json === true, ...scope };
+  }
+  if (type === "rules-fetch") {
+    const url = optionalString(value.url), agent = optionalString(value.agent);
+    if (!url || !agent) throw new Error("rules-fetch requires url and agent");
+    if (url.length > 2048) throw new Error("rules-fetch.url is too long");
+    return { type, url, agent, replace: value.replace === true };
   }
   if (type === "presets") return { type, json: value.json === true };
   if (type === "team-open") {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `aya rules fetch <https-url> --agent <name> [--replace]` brings a user screen-rule file in from the web, only on
+  request: https, 64 KiB, validated like a hand-written file, additive-only, 0600, never overwrites without `--replace`.
 - Built-in screen rules are now one file per agent (`electron/screen-rules/<agent>.json`), each with its own
   version, instead of one bundle; the bundle's version and digest still identify them together.
 - Experimental "Stacked" window layout (Settings > Window layout), after herdr: no tabs on top; projects and

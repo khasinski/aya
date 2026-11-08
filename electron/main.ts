@@ -5,6 +5,7 @@ import {findAuthTransferTicket} from "./pty-host-auth-ticket";
 import { builtinScreenRules } from "./screen-rule-provider";
 import type { ScreenRuleSet } from "./screen-rule-data";
 import { UserRuleProvider } from "./screen-user-rule-provider";
+import { fetchUserRuleFile } from "./screen-rule-fetch";
 import { GuardedRuleInput } from "./screen-user-rule-input";
 import { UserRulePanePolicy } from "./screen-user-rule-pane";
 import { isUserOnlyHold } from "./pane-holds";
@@ -1122,6 +1123,11 @@ app.whenReady().then(async () => {
   }
   startControlServer({
     getWindow: () => focusedAyaWindow(),
+    // The user's own request, one https GET; the file joins the user rule files and is picked up like a hand-written one.
+    fetchUserRules: async ({ url, agent, replace }) => {
+      const done = await fetchUserRuleFile({ url, agent, replace, directory: path.join(AYA_HOME, "screen-rules"), builtin: builtinRuleSet });
+      return `${done.replaced ? "replaced" : "added"} ${done.path}: ${done.ruleCount} rule${done.ruleCount === 1 ? "" : "s"}, version ${done.version}`;
+    },
     // Pane read/send resolve their target against the on-disk project configs
     // and act through the pty host, so they work regardless of which window
     // (if any) currently owns the target project.
