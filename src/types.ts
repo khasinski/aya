@@ -301,8 +301,10 @@ export interface ProjectGitInfo {
 
 /** Overall window layout. "classic": project tabs on top + terminal list on
  *  the left. "projects-left": project tabs in a left rail + terminal tabs on
- *  top. The two are rendered by separate, self-contained layout components. */
-export type LayoutMode = "classic" | "projects-left";
+ *  top. "stacked": no tabs on top; two boxes on the left, projects above and
+ *  the project's terminals below (each scrolling inside its box), with the
+ *  active terminal's header in the top bar. The last two split no panes. */
+export type LayoutMode = "classic" | "projects-left" | "stacked";
 
 export type GitHubLinkKind = "pr" | "branch";
 

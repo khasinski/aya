@@ -3582,3 +3582,12 @@ select.aya-modal-input {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+
+/* "Stacked" layout: the terminal list is a vertical box in the left rail, not the top strip, so it scrolls on y
+   and is not part of the window's drag region (the .aya-tabs rules above force the strip's own behaviour). */
+.aya-tabs.aya-termtabs--stacked {
+  -webkit-app-region: no-drag !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  flex: 1 1 auto;
+}

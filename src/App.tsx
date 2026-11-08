@@ -158,6 +158,8 @@ export function App() {
   const [themes, setThemes] = useState<Theme[]>([]);
   const [activeThemeId, setActiveThemeId] = useState<string>("");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  // The "stacked" layout's top bar offers a slot where the active terminal draws its header.
+  const [paneHeaderSlot, setPaneHeaderSlot] = useState<HTMLElement | null>(null);
   const [warmProjectSlugs, setWarmProjectSlugs] = useState<string[]>([]);
   const [terminals, setTerminals] = useState<Record<string, TerminalState>>({});
   const { projectEvents, appendProjectEvent } = useProjectTimeline();
@@ -407,7 +409,7 @@ export function App() {
   // ref lets the split callbacks below (defined before the render-time gating)
   // bail out, so keyboard shortcuts and pane clicks can't create or reshape a
   // split that would only surface after switching back to the classic layout.
-  const splitEnabled = layoutMode !== "projects-left";
+  const splitEnabled = layoutMode === "classic";
   const splitEnabledRef = useRef(splitEnabled);
   splitEnabledRef.current = splitEnabled;
   const presetsRef = useRef(presets);
@@ -1160,7 +1162,7 @@ export function App() {
         return;
       }
       if (!terminalInput) return;
-      const selector = layoutMode === "projects-left"
+      const selector = layoutMode !== "classic"
         ? '.aya-termtab[role="tab"][aria-selected="true"]'
         : '.aya-sidebar-row[role="listitem"][aria-current="true"]';
       const nextRegion = document.querySelector<HTMLElement>(selector);
@@ -1263,6 +1265,7 @@ export function App() {
             presets={presets}
             ignoreSnippetsOpenChange={ignoreSnippetsOpenChange}
             paneDividers={paneDividers}
+            headerSlot={layoutMode === "stacked" ? paneHeaderSlot : null}
             resizeSplit={resizeSplit}
             projectTerminals={projectTerminals}
           />
@@ -1308,9 +1311,11 @@ export function App() {
         );
         const body =
           !didBootstrap ? loadingNode : isEmpty ? emptyStateNode : null;
-        if (layoutMode === "projects-left") {
+        if (layoutMode !== "classic") {
           return (
             <ProjectsLeftLayout
+              stacked={layoutMode === "stacked"}
+              onHeaderSlot={setPaneHeaderSlot}
               teamsByProject={teamsByProject}
               onAssignTeamRole={onAssignTeamRole}
               projects={projects}

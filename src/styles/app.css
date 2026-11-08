@@ -1594,3 +1594,67 @@ body {
   width: 4px;
   cursor: col-resize;
 }
+
+/* ============================================================
+   "Stacked" layout: no tabs on top. Two boxes on the left (projects, then the
+   project's terminals), each scrolling inside itself; the active terminal's
+   header takes the place of the tabs in the top bar.
+   ============================================================ */
+.aya-projectrail--stacked {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.aya-projectrail--stacked .aya-projectrail-list { min-height: 0; overflow-y: auto; }
+.aya-stacked-terminals {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+.aya-stacked-boxtitle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 2px 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-tertiary);
+}
+.aya-termtabs--stacked {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.aya-termtabs--stacked .aya-termtab {
+  max-width: none;
+  border-right: 0;
+  border-left: 2px solid transparent;
+  padding: 8px 10px 16px;
+  min-height: 40px;
+}
+.aya-termtabs--stacked .aya-termtab.aya-tab--active { border-left-color: var(--accent); background: var(--bg); }
+.aya-termtabs--stacked .aya-termtab::after { display: none; }
+.aya-termtabs--stacked .aya-termtab > .aya-tab-close { opacity: 0; top: calc(50% - 6px); }
+.aya-termtabs--stacked .aya-termtab:hover > .aya-tab-close { opacity: 1; }
+.aya-stacked-headerslot {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  -webkit-app-region: drag;
+}
+.aya-stacked-headerslot .aya-pane-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border-bottom: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.aya-stacked-headerslot .aya-pane-header-process { overflow: hidden; text-overflow: ellipsis; }

@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type MouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { createRendererVt,restoreRendererVt,type RendererVtCheckpoint } from "../terminal-vt-checkpoint";
 import {registerCheckpointTerminal} from "../terminal-checkpoint-registry";
@@ -120,6 +121,8 @@ interface Props {
   snippetsOpen: boolean;
   onSnippetsOpenChange: (open: boolean) => void;
   isVisible: boolean;
+  /** Draw the pane header here (a portal) instead of at the top of the pane; see PaneGrid. */
+  headerSlot?: HTMLElement | null;
   cwd: string;
   lastActivity?: number;
   fontFamily?: string;
@@ -260,6 +263,7 @@ function terminalViewPropsEqual(a: Props, b: Props): boolean {
     a.snippets === b.snippets &&
     a.snippetsOpen === b.snippetsOpen &&
     a.isVisible === b.isVisible &&
+    a.headerSlot === b.headerSlot &&
     a.cwd === b.cwd &&
     lastActivityRenderBucket(a.lastActivity) ===
       lastActivityRenderBucket(b.lastActivity) &&
@@ -320,6 +324,7 @@ function TerminalViewComponent({
   snippetsOpen,
   onSnippetsOpenChange,
   isVisible,
+  headerSlot = null,
   cwd,
   lastActivity,
   fontFamily,
@@ -1630,20 +1635,7 @@ function TerminalViewComponent({
     xtermRef.current?.focus();
   };
 
-  return (
-    <div
-      data-testid="terminal-pane"
-      data-terminal-id={terminal.id}
-      data-terminal-name={terminal.name}
-      className={
-        `aya-pane ${terminal.remoteHost ? "aya-pane--remote" : ""} ${isScrollbarHidden ? "aya-pane--scrollbar-hidden" : ""} ${
-          isActivePane ? "aya-pane--active-split" : ""
-        }`
-      }
-      style={{ display: isVisible ? "flex" : "none", ...(paneStyle ?? {}) }}
-      onMouseDown={onActivatePane}
-    >
-      <div className="aya-pane-active" />
+  const paneHeader = (
       <div className="aya-pane-header">
         <span
           className="aya-sidebar-icon"
@@ -1683,6 +1675,22 @@ function TerminalViewComponent({
           </div>
         )}
       </div>
+  );
+  return (
+    <div
+      data-testid="terminal-pane"
+      data-terminal-id={terminal.id}
+      data-terminal-name={terminal.name}
+      className={
+        `aya-pane ${terminal.remoteHost ? "aya-pane--remote" : ""} ${isScrollbarHidden ? "aya-pane--scrollbar-hidden" : ""} ${
+          isActivePane ? "aya-pane--active-split" : ""
+        }`
+      }
+      style={{ display: isVisible ? "flex" : "none", ...(paneStyle ?? {}) }}
+      onMouseDown={onActivatePane}
+    >
+      <div className="aya-pane-active" />
+      {headerSlot && isVisible ? createPortal(paneHeader, headerSlot) : paneHeader}
       {terminal.spawnFailure && (
         <div className="aya-pane-recovery">
           <div className="aya-pane-recovery-text">

@@ -45,7 +45,7 @@ test("Mac option codec preserves both modes and defaults to right-option-compose
 });
 
 test("layout codec preserves both layouts and defaults to classic", () => {
-  checkEnum(LAYOUT_CODEC, ["classic", "projects-left"], "classic");
+  checkEnum(LAYOUT_CODEC, ["classic", "projects-left", "stacked"], "classic");
 });
 
 for (const [name, codec, fallback] of [

@@ -269,6 +269,7 @@ export function GeneralTab({
       {([
         ["classic", "Projects on top"],
         ["projects-left", "Projects on left"],
+        ["stacked", "Stacked"],
       ] as const).map(([mode, label]) => (
         <button
           key={mode}
@@ -286,7 +287,9 @@ export function GeneralTab({
     >
     Classic keeps project tabs on top with the terminal list on the
     left. "Projects on left" moves projects into a left rail and puts
-    terminal tabs along the top. Split panes are disabled in this layout.
+    terminal tabs along the top. "Stacked" has no tabs on top: projects and
+    terminals sit in two boxes on the left, and the terminal's header takes
+    the place of the tabs. Split panes are disabled in both.
     </SettingsRow>
     <SettingsRow
     icon="manage_search"

@@ -61,6 +61,8 @@ interface Props {
   presets: Preset[];
   ignoreSnippetsOpenChange: (open: boolean) => void;
   paneDividers: DividerRect[];
+  /** "Stacked" layout: where the visible terminal draws its header (the top bar); null keeps it in the pane. */
+  headerSlot?: HTMLElement | null;
   resizeSplit: (slug: string, splitId: string, ratio: number) => void;
   projectTerminals: TerminalState[];
 }
@@ -106,6 +108,7 @@ export const PaneGrid = memo(function PaneGrid({
   presets,
   ignoreSnippetsOpenChange,
   paneDividers,
+  headerSlot = null,
   resizeSplit,
   projectTerminals,
 }: Props) {
@@ -220,6 +223,7 @@ export const PaneGrid = memo(function PaneGrid({
               setSnippetDrawerTerminalId(open ? terminal.id : null)
             }
             isVisible
+            headerSlot={headerSlot}
             cwd={activeProject?.remote ? homeDir : terminal.cwd}
             lastActivity={lastActivityRef.current[terminal.id]}
             fontFamily={effectiveTerminalFontFamily}

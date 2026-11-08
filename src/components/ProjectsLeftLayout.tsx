@@ -78,6 +78,11 @@ interface Props {
   teamsByProject?: Record<string, TeamSummary[]>;
   onAssignTeamRole?: (team: string, role: string, paneId: string | null) => void;
 
+  /** The "stacked" layout: no tabs on top; the terminals list sits under the projects in the left rail, and the
+   *  top bar offers a slot (onHeaderSlot) for the active terminal's header. */
+  stacked?: boolean;
+  onHeaderSlot?: (element: HTMLElement | null) => void;
+
   // App chrome
   isDev: boolean;
   platform: NodeJS.Platform;
@@ -133,6 +138,8 @@ function ProjectsLeftLayoutImpl({
   onRestartTerminal,
   teamsByProject = NO_TEAMS_BY_PROJECT,
   onAssignTeamRole,
+  stacked = false,
+  onHeaderSlot,
   isDev,
   platform,
   isFullScreen,
@@ -223,7 +230,7 @@ function ProjectsLeftLayoutImpl({
     dragId,
     dropTarget: termDrop,
     itemHandlers: termDragHandlers,
-  } = useDragReorder("x", terminals.map((t) => t.id), onReorderTerminals);
+  } = useDragReorder(stacked ? "y" : "x", terminals.map((t) => t.id), onReorderTerminals);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(
     null,
   );
@@ -254,7 +261,7 @@ function ProjectsLeftLayoutImpl({
   useLayoutEffect(() => {
     if (!focusTerminalAfterMove || terminals.findIndex((terminal) => terminal.id === focusTerminalAfterMove.id) !== focusTerminalAfterMove.index) return;
     const id = focusTerminalAfterMove.id;
-    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>('.aya-topbar--alt .aya-termtab-list [role="tab"][data-terminal-id]')]
+    window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>('.aya-termtab-list [role="tab"][data-terminal-id]')]
       .find((item) => item.dataset.terminalId === id)?.focus());
     setFocusTerminalAfterMove(null);
   }, [focusTerminalAfterMove, terminals]);
@@ -264,7 +271,7 @@ function ProjectsLeftLayoutImpl({
     const opener = terminalMenuOpenerRef.current;
     const target = opener?.isConnected && opener.dataset.terminalId === id
       ? opener
-      : [...document.querySelectorAll<HTMLElement>('.aya-topbar--alt .aya-termtab-list [role="tab"][data-terminal-id]')]
+      : [...document.querySelectorAll<HTMLElement>('.aya-termtab-list [role="tab"][data-terminal-id]')]
         .find((item) => item.dataset.terminalId === id);
     target?.focus();
     setRestoreTerminalFocusId(null);
@@ -422,7 +429,7 @@ function ProjectsLeftLayoutImpl({
   // the classic project tab strip).
   useEffect(() => {
     const el = tabsRef.current;
-    if (!el) return;
+    if (!el || stacked) return;
     const onWheel = (e: WheelEvent) => {
       // Leave wheel scrolling that belongs to the open launcher dropdown alone;
       // otherwise this would hijack it into horizontal tab-strip scroll.
@@ -434,7 +441,7 @@ function ProjectsLeftLayoutImpl({
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [stacked]);
 
   const startTermRename = (t: TerminalState) => {
     setRenamingId(t.id);
@@ -470,16 +477,72 @@ function ProjectsLeftLayoutImpl({
     };
   }, [onRailResize]);
 
-  const topbarNode = (
-      <header className="aya-topbar aya-topbar--alt">
-        <MacWindowControls
-          platform={platform}
-          isFullScreen={isFullScreen}
-          onClose={onCloseWindow}
-          onMinimize={onMinimizeWindow}
-          onToggleFullScreen={onToggleFullScreenWindow}
-        />
-        <div className="aya-tabs aya-termtabs" ref={tabsRef}>
+  const launcherNode = (
+          <div className="aya-termtab-launcher" ref={launcherRef}>
+            <div
+              className={`aya-tab-new${updatePreparing ? " aya-tab-new--disabled" : ""}`}
+              title={updatePreparing ? "Aya is preparing to restart for an update." : "New terminal"}
+              role="button"
+              tabIndex={0}
+              aria-label="New terminal"
+              aria-disabled={updatePreparing}
+              onClick={(e) => { if (!updatePreparing) toggleLauncher(e.currentTarget); }}
+              onKeyDown={(e) => {
+                if (updatePreparing) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleLauncher(e.currentTarget);
+                }
+              }}
+              aria-haspopup="menu"
+              aria-expanded={showLauncher}
+            >
+              <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
+            </div>
+            {showLauncher && menuPos && (
+              // position:fixed so the dropdown escapes the tab strip's
+              // overflow:hidden clip; anchored to the "+" button's rect.
+              <div
+                className="aya-recent-menu"
+                role="menu"
+                style={{
+                  position: "fixed",
+                  top: menuPos.top,
+                  ...("left" in menuPos
+                    ? { left: menuPos.left }
+                    : { right: menuPos.right }),
+                }}
+              >
+                <div className="aya-recent-menu-title">New terminal</div>
+                {updatePreparing && <div className="aya-search-secondary" role="status">Aya is preparing to restart for an update.</div>}
+                {presets.map((p) => (
+                  <button
+                    key={p.id}
+                    className="aya-recent-menu-item"
+                    role="menuitem"
+                    disabled={updatePreparing}
+                    onClick={() => {
+                      setShowLauncher(false);
+                      onLaunchTerminal(p);
+                    }}
+                    title={p.command}
+                  >
+                    <span
+                      className="aya-launcher-btn-icon"
+                      style={p.color ? { color: p.color } : undefined}
+                    >
+                      {p.icon}
+                    </span>
+                    <span className="aya-recent-menu-name">{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+  );
+
+  const termTabsNode = (
+        <div className={`aya-tabs aya-termtabs${stacked ? " aya-termtabs--stacked" : ""}`} ref={tabsRef}>
           <div className="aya-termtab-list" role="tablist" aria-label="Terminals">
           {terminals.map((t) => {
             const isActive = t.id === activeTerminalId;
@@ -605,68 +668,22 @@ function ProjectsLeftLayoutImpl({
             );
           })}
           </div>
-          <div className="aya-termtab-launcher" ref={launcherRef}>
-            <div
-              className={`aya-tab-new${updatePreparing ? " aya-tab-new--disabled" : ""}`}
-              title={updatePreparing ? "Aya is preparing to restart for an update." : "New terminal"}
-              role="button"
-              tabIndex={0}
-              aria-label="New terminal"
-              aria-disabled={updatePreparing}
-              onClick={(e) => { if (!updatePreparing) toggleLauncher(e.currentTarget); }}
-              onKeyDown={(e) => {
-                if (updatePreparing) return;
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  toggleLauncher(e.currentTarget);
-                }
-              }}
-              aria-haspopup="menu"
-              aria-expanded={showLauncher}
-            >
-              <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
-            </div>
-            {showLauncher && menuPos && (
-              // position:fixed so the dropdown escapes the tab strip's
-              // overflow:hidden clip; anchored to the "+" button's rect.
-              <div
-                className="aya-recent-menu"
-                role="menu"
-                style={{
-                  position: "fixed",
-                  top: menuPos.top,
-                  ...("left" in menuPos
-                    ? { left: menuPos.left }
-                    : { right: menuPos.right }),
-                }}
-              >
-                <div className="aya-recent-menu-title">New terminal</div>
-                {updatePreparing && <div className="aya-search-secondary" role="status">Aya is preparing to restart for an update.</div>}
-                {presets.map((p) => (
-                  <button
-                    key={p.id}
-                    className="aya-recent-menu-item"
-                    role="menuitem"
-                    disabled={updatePreparing}
-                    onClick={() => {
-                      setShowLauncher(false);
-                      onLaunchTerminal(p);
-                    }}
-                    title={p.command}
-                  >
-                    <span
-                      className="aya-launcher-btn-icon"
-                      style={p.color ? { color: p.color } : undefined}
-                    >
-                      {p.icon}
-                    </span>
-                    <span className="aya-recent-menu-name">{p.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {!stacked && launcherNode}
         </div>
+  );
+
+  const topbarNode = (
+      <header className={`aya-topbar aya-topbar--alt${stacked ? " aya-topbar--stacked" : ""}`}>
+        <MacWindowControls
+          platform={platform}
+          isFullScreen={isFullScreen}
+          onClose={onCloseWindow}
+          onMinimize={onMinimizeWindow}
+          onToggleFullScreen={onToggleFullScreenWindow}
+        />
+        {stacked
+          ? <div className="aya-stacked-headerslot" ref={onHeaderSlot} />
+          : termTabsNode}
         <div className="aya-topbar-right">
           {updatePreparing && <div className="aya-update-preparing" role="status">Aya is preparing to restart for an update.</div>}
           {usageAccounts.length > 0 && (
@@ -735,7 +752,7 @@ function ProjectsLeftLayoutImpl({
   );
 
   const railNode = (
-        <nav aria-label="Projects and terminals" className="aya-projectrail" style={{ width: railWidth }}>
+        <nav aria-label="Projects and terminals" className={`aya-projectrail${stacked ? " aya-projectrail--stacked" : ""}`} style={{ width: railWidth }}>
           <div className="aya-projectrail-header">
             <div className="aya-brand">
               <span
@@ -899,6 +916,15 @@ function ProjectsLeftLayoutImpl({
             <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
             New project
           </button>
+          {stacked && (
+            <div className="aya-stacked-terminals">
+              <div className="aya-stacked-boxtitle">
+                <span>Terminals</span>
+                {launcherNode}
+              </div>
+              {termTabsNode}
+            </div>
+          )}
           <div
             className="aya-projectrail-resize"
             onMouseDown={() => {
@@ -1022,7 +1048,7 @@ function ProjectsLeftLayoutImpl({
     <>
       {topbarNode}
       <main aria-label="Terminal workspace"
-        className="aya-main aya-main--alt"
+        className={`aya-main aya-main--alt${stacked ? " aya-main--stacked" : ""}`}
         style={{ gridTemplateColumns: `${railWidth}px 1fr` }}
       >
         <h1 className="aya-visually-hidden">Aya</h1>

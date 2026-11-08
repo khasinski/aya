@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Experimental "Stacked" window layout (Settings > Window layout), after herdr: no tabs on top; projects and
+  the project's terminals sit in two boxes on the left, each scrolling inside itself, and the active terminal's
+  header takes the tabs' place in the top bar. Split panes are off, as in "Projects on left".
+- The sidebar dot and the project badge show an agent at work from its screen (steady across repaints between tool
+  calls) instead of any output, and a finished agent you watched finish in a focused window no longer keeps a
+  "done" badge.
 - `aya pane send --wait [--timeout seconds]` sends a prompt and blocks until the pane has started
   working and is idle, waiting for input or exited. See docs/pane-wait.md.
 - Conversation GUI: panes now report working, waiting (with the approval or question), done and

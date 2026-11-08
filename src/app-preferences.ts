@@ -23,8 +23,9 @@ export const MAC_OPTION_CODEC: PreferenceCodec<MacOptionKeyMode> = {
 };
 // "classic" (default): project tabs on top, terminal list left.
 // "projects-left": project tabs in a left rail, terminal tabs on top.
+// "stacked": projects and terminals in two boxes on the left, no tabs on top.
 export const LAYOUT_CODEC = enumPreference<LayoutMode>(
-  ["classic", "projects-left"],
+  ["classic", "projects-left", "stacked"],
   "classic",
 );
 // Harness names show by default; the PR/branch link is opt-in (needs gh).
