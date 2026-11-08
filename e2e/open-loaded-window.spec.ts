@@ -1,11 +1,14 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { test, expect } from "./fixtures";
+import { test, expect, expectHeadlessUiEvents } from "./fixtures";
 import { sendControl } from "./helpers/control";
 import { waitForShellReady } from "./helpers/terminal";
 
 // Several `aya open` requests into a window that has already loaded must all become projects.
+
+// Every `aya open` focuses the window it lands in, and a headless run logs that instead of doing it.
+test.beforeEach(({ seeded }) => expectHeadlessUiEvents(seeded, [{ kind: "window.focus", allowAny: true }]));
 
 const tabNames = (window: Page) => window.locator(".aya-topbar .aya-tab .aya-tab-name");
 

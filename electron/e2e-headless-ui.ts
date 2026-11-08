@@ -29,14 +29,18 @@ const installed = new WeakSet<object>();
 const ipcInstalled = new WeakSet<object>();
 type RendererResponse = { message?: string; messagePrefix?: string; response: unknown };
 
-export interface HeadlessUiEventExpectation { kind: string; detail?: string }
+/** `allowAny` lets a test whose number of requests is not fixed (a burst of `aya open`s, each focusing the window)
+ *  declare the kind once: zero or more events of that kind, whatever their detail. Everything else stays exact. */
+export interface HeadlessUiEventExpectation { kind: string; detail?: string; allowAny?: true }
 export interface HeadlessUiEventRecord { kind: string; detail?: string; expected?: boolean }
 
 /** Compare unhandled headless requests with exact per-call declarations. */
 export function headlessUiEventMismatch(logged: HeadlessUiEventRecord[], expected: HeadlessUiEventExpectation[]): string | null {
-  const actual = logged.filter((event) => event.expected !== true)
+  const anyKinds = new Set(expected.filter((event) => event.allowAny === true).map((event) => event.kind));
+  const exact = expected.filter((event) => event.allowAny !== true);
+  const actual = logged.filter((event) => event.expected !== true && !anyKinds.has(event.kind))
     .map(({ kind, detail }) => detail === undefined ? { kind } : { kind, detail });
-  return JSON.stringify(actual) === JSON.stringify(expected)
+  return JSON.stringify(actual) === JSON.stringify(exact)
     ? null
     : `expected ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`;
 }

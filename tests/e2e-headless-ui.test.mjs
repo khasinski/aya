@@ -486,3 +486,13 @@ test("main installs the router before app windows and all Electron e2e launches 
   assert.match(routerSpec, /BrowserWindow\.getAllWindows\(\)\[0\][\s\S]*?window\.show\(\)/, "the probe must call show on Aya's real main window");
   assert.doesNotMatch(readFileSync(join(root, "electron/preload.ts"), "utf8"), /probeVisibleWindow/);
 });
+
+test('allowAny accepts any number of that kind with any detail, and nothing else', async () => {
+  const { headlessUiEventMismatch } = await import('../dist-electron/e2e-headless-ui.js');
+  const allow = [{ kind: 'window.focus', allowAny: true }];
+  assert.equal(headlessUiEventMismatch([], allow), null);
+  assert.equal(headlessUiEventMismatch([{ kind: 'window.focus', detail: 'Aya' }, { kind: 'window.focus', detail: 'Aya — agentic terminal manager' }], allow), null);
+  assert.notEqual(headlessUiEventMismatch([{ kind: 'window.show', detail: 'Aya' }], allow), null);
+  assert.equal(headlessUiEventMismatch([{ kind: 'window.focus', detail: 'x' }, { kind: 'window.show', detail: 'Aya' }], [...allow, { kind: 'window.show', detail: 'Aya' }]), null);
+  assert.notEqual(headlessUiEventMismatch([{ kind: 'window.focus', detail: 'x' }], []), null);
+});

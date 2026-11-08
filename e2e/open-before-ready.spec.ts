@@ -1,10 +1,13 @@
 import net from "node:net";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { test, expect } from "./fixtures";
+import { test, expect, expectHeadlessUiEvents } from "./fixtures";
 
 // The control socket is up before the window's renderer has loaded. `aya open`
 // sent in that gap was acked and then lost, so the project never opened.
+
+// Every `aya open` focuses the window it lands in, and a headless run logs that instead of doing it.
+test.beforeEach(({ seeded }) => expectHeadlessUiEvents(seeded, [{ kind: "window.focus", allowAny: true }]));
 
 const SOCKET_POLL_MS = 10;
 
