@@ -117,18 +117,19 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     example: 'aya pane read "reviewer"',
     notes: [
       "target is a pane name or an id from aya pane list; --project picks the project a name is looked up in.",
-      "There is no 'wait until done': poll, and leave time between reads.",
+      "To wait for an agent to finish, use pane wait or pane send --wait instead of polling.",
       "When Aya cannot tell the pane's size (a terminal host from an older build, a pane that just exited), the output is rendered at 80x24: a TUI that places text by cursor position may read differently.",
     ],
   },
   {
     command: "pane send",
-    usage: "aya pane send target [--no-submit] [--project slug] text",
+    usage: "aya pane send target [--no-submit] [--wait [--timeout seconds]] [--project slug] text",
     summary: "Type text into another pane and press Enter.",
     example: 'aya pane send "reviewer" "run the tests"',
     notes: [
       "target and --project work as in pane read.",
       "--no-submit types without pressing Enter, for a prompt the user should review first.",
+      "--wait then blocks until the pane has started working and is idle, waiting for input (an approval or a question) or exited; the default --timeout is 300 seconds. Exit 1 on timeout. Read the answer with pane read afterwards.",
       "Only drive a pane the user asked you to drive.",
     ],
   },

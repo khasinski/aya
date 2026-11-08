@@ -68,6 +68,7 @@
     "src/terminal-rendering.ts",
     "src/terminal-vt-checkpoint.ts",
     "src/terminal-sound-prefs.ts",
+    "src/terminal-seen.ts",
     "src/terminal-focus-retry.ts",
     "src/terminal-visibility.ts",
     "src/update-spawn.ts",

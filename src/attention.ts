@@ -3,7 +3,7 @@
 // never disagree about what counts as waiting / failed / finished — a split
 // that would show a badge in one place and nothing in the other.
 
-import { isTerminalDone } from "./pty-event-reducer";
+import { isTerminalDone, isTerminalWorking } from "./pty-event-reducer";
 import { WAITING_ON, type ProjectConfig, type TerminalState } from "./types";
 
 export type AttentionLevel = "error" | "waiting" | "done" | "idle";
@@ -13,13 +13,13 @@ export type ProjectBadgeLevel = "active" | "done" | "waiting" | "error";
 
 /** What one terminal adds to its project's badge, or null for nothing (a wait on a teammate among them). */
 export function projectBadgeLevel(
-  t: Pick<TerminalState, "status" | "externalStatus" | "spawnFailure" | "bell" | "exitCode" | "presetId" | "remoteDisconnected">,
+  t: Pick<TerminalState, "status" | "externalStatus" | "spawnFailure" | "bell" | "exitCode" | "presetId" | "remoteDisconnected" | "working" | "disconnected" | "stopped">,
 ): ProjectBadgeLevel | null {
   if (t.remoteDisconnected) return null;
   if (t.status === "error" || t.externalStatus?.level === "error" || t.spawnFailure) return "error";
   if (t.bell || t.status === "waiting" || t.externalStatus?.level === "waiting") return "waiting";
   if (isTerminalDone(t)) return "done";
-  if (t.externalStatus?.level === "active") return "active";
+  if (isTerminalWorking(t)) return "active";
   return null;
 }
 

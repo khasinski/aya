@@ -62,6 +62,7 @@ import {
   useTerminalNotifications,
 } from "./hooks/useTerminalSignals";
 import { useTerminalSounds } from "./hooks/useTerminalSounds";
+import { useAcknowledgeWatchedDone } from "./hooks/useAcknowledgeWatchedDone";
 import { useTeams } from "./hooks/useTeams";
 import { useProjectPersistence, useProjectSessionPersistence } from "./hooks/useProjectPersistence";
 import { useTerminalActions } from "./hooks/useTerminalActions";
@@ -847,6 +848,7 @@ export function App() {
     activeTerminalId: activeTabId,
     prefs: terminalSoundPrefs,
   });
+  useAcknowledgeWatchedDone(terminals, activeTabId, setTerminals);
   const snippetsOpenForActiveTerminal =
     !!activeTerminal && snippetDrawerTerminalId === activeTerminal.id;
   useGitHubLinkEffect({

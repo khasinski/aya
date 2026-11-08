@@ -514,6 +514,8 @@ body {
   background: var(--fg-tertiary);
 }
 .aya-sidebar-statusdot--running { background: var(--accent); will-change: opacity, transform; animation: aya-pulse 1.6s ease-in-out infinite; }
+.aya-sidebar-statusdot--working { background: var(--accent); will-change: opacity, transform; animation: aya-pulse 1.6s ease-in-out infinite; }
+.aya-sidebar-statusdot--done    { background: var(--status-active, #40c463); }
 .aya-sidebar-statusdot--idle    { background: var(--fg-tertiary); opacity: 0.5; }
 .aya-sidebar-statusdot--waiting { background: var(--status-waiting); }
 .aya-sidebar-statusdot--error   { background: #c01c28; }

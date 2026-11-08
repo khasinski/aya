@@ -53,6 +53,16 @@ export function isTerminalDone(
   );
 }
 
+/** An agent at work: its screen says so (vt-activity), or it reported "active". A dialog, an error, an exit or a
+ *  stopped pane outrank it, so the dot and the badge never claim work from a pane that cannot be working. */
+export function isTerminalWorking(
+  t: Pick<TerminalState, "working" | "externalStatus" | "status" | "exitCode" | "disconnected" | "stopped" | "spawnFailure">,
+): boolean {
+  if (t.exitCode !== null || t.disconnected || t.stopped || t.spawnFailure) return false;
+  if (t.status === "waiting" || t.status === "error") return false;
+  return t.working === true || t.externalStatus?.level === "active";
+}
+
 /** The PTY-lifecycle status of a terminal, ignoring any agent-reported overlay.
  *  Single source of truth for "what colour is this terminal from its process
  *  alone": a spawn failure or a non-zero exit is an "error"; a live or
@@ -206,6 +216,12 @@ export function applyPtyEvent(
       ...prev,
       [event.ptyId]: { ...rest, ...(reported ? { externalStatus: reported } : {}), ...(screenDialog ? { screenDialog } : {}), status, bell: event.waiting },
     };
+  }
+
+  if (event.type === "vt-activity") {
+    const t = prev[event.ptyId];
+    if (!t || (t.working === true) === event.busy) return prev;
+    return { ...prev, [event.ptyId]: { ...t, working: event.busy } };
   }
 
   if (event.type === "osc-session") {

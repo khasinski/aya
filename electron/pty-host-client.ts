@@ -1,4 +1,5 @@
 import {validatePlannedContinuity} from "./pty-handover-continuity";
+import { BusyTracker } from "./busy-tracker";
 import { explainPaneSnapshot, unavailablePaneState, type PaneStateResult } from "./pane-state";
 import { prepareSpawn, watchAgentSession } from "./pty-prepare";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
@@ -308,6 +309,8 @@ export class PtyHostClient {
   private readonly knownSessionIds = new Map<string, string>();
   private readonly sessionWatches = new Map<string, () => void>();
   private readonly screenStates = new Map<string, { generation: string; waiting: boolean; dialog?: string }>();
+  /** Whether each pane's screen shows work in progress, steadied so a repaint between tool calls is not "idle". */
+  private readonly busyScreens = new BusyTracker((ptyId, busy) => this.sendToSinks([{ type: "vt-activity", ptyId, busy }]));
   private userRuleStatusObserver:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}|null>)|null=null;
   private readonly latestRuleSnapshots=new Map<string,VtSnapshot>();
   private readonly ruleStatusStates=new Map<string,{generation:string;revision:string;waiting:boolean;dialog?:string}>();
@@ -525,7 +528,7 @@ export class PtyHostClient {
     this.live.delete(ptyId);this.recoveredStates.delete(ptyId);
     this.sessionWatches.get(ptyId)?.();
     this.sessionWatches.delete(ptyId);
-    this.screenStates.delete(ptyId);
+    this.screenStates.delete(ptyId);this.busyScreens.release(ptyId);
     this.knownSessionIds.delete(ptyId);this.recoveryLaunches.delete(ptyId);this.latestRuleSnapshots.delete(ptyId);
     this.ruleStatusStates.delete(ptyId);this.observedPaneExits.delete(ptyId);this.uncertainInput.delete(ptyId);this.recoveryScreens.delete(ptyId);
     const ruleTimer=this.ruleStatusTimers.get(ptyId);if(ruleTimer)clearTimeout(ruleTimer);
@@ -1164,6 +1167,8 @@ export class PtyHostClient {
   private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false, allowComposerAck = true): void {
     if (this.lostOwned.has(ptyId)) return;
     this.latestRuleSnapshots.set(ptyId,snapshot);
+    // Work in progress is read from the builtin rules whatever user rules say about waiting; an unreadable screen has no opinion.
+    this.busyScreens.observe(ptyId, snapshot.recoveryUnknown ? null : snapshotBusy(snapshot));
     if(this.userRuleStatusObserver){this.evaluateRuleStatus(ptyId,snapshot);return;}
     const verdict = snapshotStatus(snapshot);
     if (allowComposerAck&&verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
@@ -1613,7 +1618,7 @@ export class PtyHostClient {
           this.knownSessionIds.delete(message.event.ptyId);
           this.sessionWatches.get(message.event.ptyId)?.();
           this.sessionWatches.delete(message.event.ptyId);
-          this.screenStates.delete(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);
+          this.screenStates.delete(message.event.ptyId);this.busyScreens.release(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);
           this.recoveryLaunches.delete(message.event.ptyId);if(!this.recoveredStates.has(message.event.ptyId))this.uncertainInput.delete(message.event.ptyId);
           this.latestRuleSnapshots.delete(message.event.ptyId);this.ruleStatusStates.delete(message.event.ptyId);
           const ruleTimer=this.ruleStatusTimers.get(message.event.ptyId);if(ruleTimer)clearTimeout(ruleTimer);this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);

@@ -519,7 +519,9 @@ export type PtyEvent =
   // whether an approval prompt is on screen RIGHT NOW. Unlike the raw-byte
   // heuristic it also reports when the prompt goes away, so it is emitted on
   // both edges. `dialog` names a dialog Aya tells apart (an account-wide offer).
-  | { type: "vt-status"; ptyId: string; waiting: boolean; dialog?: string };
+  | { type: "vt-status"; ptyId: string; waiting: boolean; dialog?: string }
+  // Whether the screen shows an agent at work (electron/busy-tracker.ts steadies it). Repeated while busy.
+  | { type: "vt-activity"; ptyId: string; busy: boolean };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;
@@ -1145,6 +1147,8 @@ export interface TerminalState {
     /** The teammate a "waiting-on" status names. */
     on?: string;
   };
+  /** The pane's screen shows an agent at work right now (vt-activity); see isTerminalWorking for what counts. */
+  working?: boolean;
   /** The screen's dialog while Aya names it (vt-status `dialog`): what the waiting line says instead of a generic ask. */
   screenDialog?: string;
   /** Tab added by an external config edit (#4): kept out of the hidden
