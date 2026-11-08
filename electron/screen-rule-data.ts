@@ -14,6 +14,8 @@ export interface DataScreenRule {
 }
 export interface ScreenRuleSet {
   readonly version: string; readonly digest: string;
+  /** Each bundled file's own version and digest (empty when the rules are unavailable). */
+  readonly files: readonly { readonly agent: RuleAgent; readonly version: string; readonly digest: string }[];
   readonly sets: Readonly<Record<RuleAgent, readonly DataScreenRule[]>>;
 }
 function fail(reason: string): never { throw new Error(`Invalid screen rule data: ${reason}`); }
@@ -46,39 +48,66 @@ export function parseScreenRuleJson(input: Buffer): unknown {
   }
   return JSON.parse(text) as unknown;
 }
-export function parseScreenRules(input: Buffer): ScreenRuleSet {
-  const root = object(parseScreenRuleJson(input), ["schemaVersion", "ruleSetVersion", "sets"]);
+/** One bundled per-agent file, validated but not compiled. */
+export interface BuiltinRuleFile {
+  readonly agent: RuleAgent; readonly version: string; readonly digest: string;
+  readonly rules: readonly { id: string; kind: RuleKind; region: ScreenRegion; pattern: string; flags: string; source: string }[];
+}
+/** `{schemaVersion, ruleSetVersion, agent, rules}`: the same envelope as a user file, one per agent. Generic is
+ *  inherited by every other agent, fixed by the loader, not by the file. */
+export function parseScreenRuleFile(input: Buffer, agent: RuleAgent): BuiltinRuleFile {
+  const root = object(parseScreenRuleJson(input), ["schemaVersion", "ruleSetVersion", "agent", "rules"]);
   if (root.schemaVersion !== 1 || typeof root.ruleSetVersion !== "string" || !/^[A-Za-z0-9._-]{1,80}$/.test(root.ruleSetVersion)) fail("version");
-  const sets = object(root.sets, RULE_AGENTS);
-  let count = 0;
+  if (root.agent !== agent) fail("agent");
+  if (!Array.isArray(root.rules) || root.rules.length > 128) fail("set");
+  const rules = root.rules.map(value => {
+    const r = object(value, ["id", "kind", "region", "pattern", "flags"]);
+    if (typeof r.id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(r.id)) fail("rule id/count");
+    if (!["prompt", "suppressor", "dialog", "busy", "usage-limit", "account-setting"].includes(r.kind as string) || !["tail", "lastLine", "screen"].includes(r.region as string)) fail("kind/region");
+    if (typeof r.pattern !== "string" || typeof r.flags !== "string") fail("pattern/flags");
+    if ((r.pattern as string).length === 0 || (r.pattern as string).length > 2048) fail("pattern length");
+    const flags = r.flags as string;
+    if (!/^[imu]*$/.test(flags) || new Set(flags).size !== flags.length) fail("flags");
+    return { id: r.id as string, kind: r.kind as RuleKind, region: r.region as ScreenRegion, pattern: r.pattern as string, flags, source: `builtin/${agent}` };
+  });
+  return Object.freeze({ agent, version: root.ruleSetVersion, digest: createHash("sha256").update(input).digest("hex"), rules: Object.freeze(rules) });
+}
+/** The bundle's one identity: the files' own version when they agree, else each agent's; the digest covers every
+ *  file's bytes in fixed order, so an edit to any one file changes it. */
+export function composeScreenRules(files: Readonly<Record<RuleAgent, BuiltinRuleFile>>): ScreenRuleSet {
   const ids = new Set<string>();
-  const authored = {} as Record<RuleAgent, { id: string; kind: RuleKind; region: ScreenRegion; pattern: string; flags: string; source: string }[]>;
+  let count = 0;
   for (const agent of RULE_AGENTS) {
-    const set = object(sets[agent], ["extends", "rules"]);
-    if (set.extends !== (agent === "generic" ? null : "generic") || !Array.isArray(set.rules) || set.rules.length > 128) fail("set");
-    authored[agent] = set.rules.map(value => {
-      const r = object(value, ["id", "kind", "region", "pattern", "flags"]);
-      if (++count > 256 || typeof r.id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(r.id) || ids.has(r.id)) fail("rule id/count");
+    for (const r of files[agent].rules) {
+      if (++count > 256 || ids.has(r.id)) fail("rule id/count");
       ids.add(r.id);
-      if (!["prompt", "suppressor", "dialog", "busy", "usage-limit", "account-setting"].includes(r.kind as string) || !["tail", "lastLine", "screen"].includes(r.region as string)) fail("kind/region");
-      if (typeof r.pattern !== "string" || typeof r.flags !== "string") fail("pattern/flags");
-      if ((r.pattern as string).length === 0 || (r.pattern as string).length > 2048) fail("pattern length");
-      const flags = r.flags as string;
-      if (!/^[imu]*$/.test(flags) || new Set(flags).size !== flags.length) fail("flags");
-      return { id: r.id as string, kind: r.kind as RuleKind, region: r.region as ScreenRegion, pattern: r.pattern as string, flags: r.flags as string, source: `builtin/${agent}` };
-    });
+    }
   }
   // No RegExp construction until the entire set passes the closed schema. These bundled patterns are trusted like the TS they replace.
   // No static-complexity lint is a production safety boundary; PR2 must use a killable worker.
   const compiled = {} as Record<RuleAgent, readonly DataScreenRule[]>;
   for (const agent of RULE_AGENTS) {
-    const rules = [...(agent === "generic" ? [] : authored.generic), ...authored[agent]];
+    const rules = [...(agent === "generic" ? [] : files.generic.rules), ...files[agent].rules];
     if (rules.length > 128) fail("expanded rule count");
     compiled[agent] = Object.freeze(rules.map(r => Object.freeze({ id: r.id, kind: r.kind, region: r.region, source: r.source, pattern: Object.freeze(new RegExp(r.pattern, r.flags)) })));
   }
-  return Object.freeze({ version: root.ruleSetVersion as string, digest: createHash("sha256").update(input).digest("hex"), sets: Object.freeze(compiled) });
+  const versions = new Set(RULE_AGENTS.map(agent => files[agent].version));
+  const hash = createHash("sha256").update("builtin-rules-v2\0");
+  for (const agent of RULE_AGENTS) hash.update(`${agent}\0${files[agent].digest}\n`);
+  return Object.freeze({
+    version: versions.size === 1 ? [...versions][0] : RULE_AGENTS.map(agent => `${agent}:${files[agent].version}`).join(","),
+    digest: hash.digest("hex"),
+    files: Object.freeze(RULE_AGENTS.map(agent => Object.freeze({ agent, version: files[agent].version, digest: files[agent].digest }))),
+    sets: Object.freeze(compiled),
+  });
 }
-export function loadScreenRulesFile(file: string, io = { openSync, fstatSync, readSync, closeSync }): ScreenRuleSet {
+export function parseScreenRules(inputs: Readonly<Record<RuleAgent, Buffer>>): ScreenRuleSet {
+  const files = {} as Record<RuleAgent, BuiltinRuleFile>;
+  for (const agent of RULE_AGENTS) files[agent] = parseScreenRuleFile(inputs[agent], agent);
+  return composeScreenRules(files);
+}
+/** One bounded, non-blocking, no-symlink read of a rule file. */
+export function readScreenRuleFile(file: string, io = { openSync, fstatSync, readSync, closeSync }): Buffer {
   const fd = io.openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = io.fstatSync(fd);
@@ -87,10 +116,12 @@ export function loadScreenRulesFile(file: string, io = { openSync, fstatSync, re
     let size = 0, count = 0;
     do { count = io.readSync(fd, bytes, size, bytes.length - size, null); size += count; } while (count && size < bytes.length);
     if (size > MAX_RULE_FILE_BYTES) fail("file size");
-    return parseScreenRules(bytes.subarray(0, size));
+    return bytes.subarray(0, size);
   } finally { io.closeSync(fd); }
 }
 
-export function loadBundledScreenRules(): ScreenRuleSet {
-  return loadScreenRulesFile(path.join(__dirname, "screen-rules", "builtin.json"));
+export function loadBundledScreenRules(directory = path.join(__dirname, "screen-rules")): ScreenRuleSet {
+  const inputs = {} as Record<RuleAgent, Buffer>;
+  for (const agent of RULE_AGENTS) inputs[agent] = readScreenRuleFile(path.join(directory, `${agent}.json`));
+  return parseScreenRules(inputs);
 }

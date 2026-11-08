@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "ruleSetVersion": "1",
+  "agent": "grok",
+  "rules": [
+    {
+      "id": "grok-permission",
+      "kind": "dialog",
+      "region": "tail",
+      "pattern": "\\bYes, (?:allow once|allow all edits|always allow|and don't ask again|proceed|send once)\\b|\\bNo, and (?:tell Grok|don't ask again)\\b|^\\s*Allow(?: Edit| Delete| Execute)?\\?\\s*$",
+      "flags": "m"
+    },
+    {
+      "id": "grok-composer-drawn",
+      "kind": "suppressor",
+      "region": "tail",
+      "pattern": "\\n\\s*│[^\\n]*│\\n\\s*╰─+[^\\n]*─╯\\n[^\\n]*(?:Shift\\+Tab:mod|Ctrl\\+x:shortcuts|Ctrl\\+c:cancel)[^\\n]*$",
+      "flags": ""
+    },
+    {
+      "id": "grok-spinner",
+      "kind": "busy",
+      "region": "tail",
+      "pattern": "^\\s*[⠀-⣿]\\s+\\S[^\\n]*\\[stop\\]\\s*\\n\\s*╭─",
+      "flags": "m"
+    },
+    {
+      "id": "grok-cancel-hint",
+      "kind": "busy",
+      "region": "lastLine",
+      "pattern": "\\bCtrl\\+c:cancel\\b",
+      "flags": ""
+    }
+  ]
+}

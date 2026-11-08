@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "ruleSetVersion": "1",
+  "agent": "generic",
+  "rules": [
+    {
+      "id": "do-you-want",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Do you want (?:to|me to)",
+      "flags": "i"
+    },
+    {
+      "id": "numbered-yes",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "❯\\s*1\\.\\s*Yes",
+      "flags": "i"
+    },
+    {
+      "id": "yes-and-dont",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "1\\)\\s*Yes,\\s*and don't",
+      "flags": "i"
+    },
+    {
+      "id": "approve-action",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Approve\\s*(?:this\\s+)?(?:edit|change|action|tool|command)",
+      "flags": "i"
+    },
+    {
+      "id": "accept-reject",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "\\bAccept all\\b.*\\bReject all\\b",
+      "flags": "i"
+    },
+    {
+      "id": "run-command",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Run this command\\?\\s*\\[Y\\/N\\]",
+      "flags": "i"
+    },
+    {
+      "id": "yn-suffix",
+      "kind": "prompt",
+      "region": "lastLine",
+      "pattern": "\\[y\\/n\\]:?\\s*$",
+      "flags": "i"
+    },
+    {
+      "id": "yN-suffix",
+      "kind": "prompt",
+      "region": "lastLine",
+      "pattern": "\\(y\\/N\\):?\\s*$",
+      "flags": "i"
+    },
+    {
+      "id": "allow-question",
+      "kind": "prompt",
+      "region": "lastLine",
+      "pattern": "\\b(?:Allow|Permit)\\b.*\\?\\s*$",
+      "flags": "i"
+    },
+    {
+      "id": "press-enter",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Press\\s+enter\\s+to\\s+(?:continue|confirm)",
+      "flags": "i"
+    },
+    {
+      "id": "waiting-for-input",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Waiting for (?:your )?(?:input|approval|confirmation)",
+      "flags": "i"
+    }
+  ]
+}

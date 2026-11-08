@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "ruleSetVersion": "1",
+  "agent": "antigravity",
+  "rules": [
+    {
+      "id": "antigravity-select",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "↑\\/↓ Navigate\\s*·\\s*enter (?:Confirm|Select)|enter Select\\s+esc Go Back",
+      "flags": ""
+    },
+    {
+      "id": "antigravity-busy",
+      "kind": "busy",
+      "region": "tail",
+      "pattern": "^\\s*\\S\\s+Generating\\.\\.\\.",
+      "flags": "m"
+    }
+  ]
+}

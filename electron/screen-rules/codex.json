@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "ruleSetVersion": "1",
+  "agent": "codex",
+  "rules": [
+    {
+      "id": "codex-composer-drawn",
+      "kind": "suppressor",
+      "region": "tail",
+      "pattern": "(?:^|\\n)\\s*›(?!\\s*\\d+[.)])[^\\n]*(?:\\n(?![^\\n]*(?:\\?|\\[y\\/n\\]|\\(y\\/N\\))\\s*$)[^\\n]*){0,2}$",
+      "flags": ""
+    },
+    {
+      "id": "codex-composer-hint",
+      "kind": "suppressor",
+      "region": "lastLine",
+      "pattern": "send\\s+.*\\bctrl\\b.*\\bnewline\\b|\\bEsc\\b.*\\binterrupt\\b",
+      "flags": "i"
+    },
+    {
+      "id": "codex-busy",
+      "kind": "busy",
+      "region": "tail",
+      "pattern": "^\\s*\\S\\s+Working \\(.*\\besc to interrupt\\)",
+      "flags": "im"
+    },
+    {
+      "id": "codex-usage-limit",
+      "kind": "usage-limit",
+      "region": "tail",
+      "pattern": "\\bYour workspace is out of credits\\b|\\bUsage limit reached\\b",
+      "flags": ""
+    }
+  ]
+}

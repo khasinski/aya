@@ -44,11 +44,12 @@ test('a rule-only data edit changes the rule identity while the real PTY core id
  try{
   for(const name of hostModuleFiles(built,'pty-host.js')){const target=path.join(dir,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(path.join(built,name),target);}
   for(const [name,data] of Object.entries({'aya-pty-owner':'owner','pty-owner-bridge.node':'bridge','node_modules/node-pty/package.json':'{"main":"lib/index.js"}','node_modules/node-pty/lib/index.js':'runtime','node_modules/node-pty/build/Release/pty.node':'native','node_modules/@xterm/headless/package.json':'{"main":"lib-headless/xterm-headless.js"}','node_modules/@xterm/headless/lib-headless/xterm-headless.js':'mirror'})){const target=path.join(dir,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,data);}
-  const bytes=fs.readFileSync(new URL('../electron/screen-rules/builtin.json',import.meta.url));
-  const a=parseScreenRules(bytes),before=hostBuildHash(dir,'pty-host.js');
-  const changed=JSON.parse(bytes);changed.ruleSetVersion='2';changed.sets.generic.rules[0].pattern='new prompt';
-  fs.mkdirSync(path.join(dir,'screen-rules'));const raw=Buffer.from(JSON.stringify(changed));fs.writeFileSync(path.join(dir,'screen-rules/builtin.json'),raw);
-  const b=parseScreenRules(raw);assert.notEqual(a.digest,b.digest);assert.equal(b.version,'2');assert.equal(hostBuildHash(dir,'pty-host.js'),before);
+  const {RULE_AGENTS}=await import('../dist-electron/screen-rule-data.js');
+  const inputs=Object.fromEntries(RULE_AGENTS.map(agent=>[agent,fs.readFileSync(new URL(`../electron/screen-rules/${agent}.json`,import.meta.url))]));
+  const a=parseScreenRules(inputs),before=hostBuildHash(dir,'pty-host.js');
+  const changed=JSON.parse(inputs.generic);changed.ruleSetVersion='2';changed.rules[0].pattern='new prompt';
+  fs.mkdirSync(path.join(dir,'screen-rules'));const raw=Buffer.from(JSON.stringify(changed));fs.writeFileSync(path.join(dir,'screen-rules/generic.json'),raw);
+  const b=parseScreenRules({...inputs,generic:raw});assert.notEqual(a.digest,b.digest);assert.match(b.version,/generic:2/);assert.equal(hostBuildHash(dir,'pty-host.js'),before);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 

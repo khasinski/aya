@@ -207,7 +207,7 @@ const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
 builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
 const builtinState = builtinScreenRules.get();
 const builtinRuleSet: ScreenRuleSet = builtinState.available ? builtinState.rules : {
-  version: "unavailable", digest: "unavailable",
+  version: "unavailable", digest: "unavailable", files: [],
   sets: { generic: [], claude: [], codex: [], opencode: [], grok: [], antigravity: [] },
 };
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);

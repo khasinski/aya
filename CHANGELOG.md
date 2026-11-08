@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Built-in screen rules are now one file per agent (`electron/screen-rules/<agent>.json`), each with its own
+  version, instead of one bundle; the bundle's version and digest still identify them together.
 - Experimental "Stacked" window layout (Settings > Window layout), after herdr: no tabs on top; projects and
   the project's terminals sit in two boxes on the left, each scrolling inside itself, and the active terminal's
   header takes the tabs' place in the top bar. Split panes are off, as in "Projects on left".

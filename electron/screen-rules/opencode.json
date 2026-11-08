@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "ruleSetVersion": "1",
+  "agent": "opencode",
+  "rules": [
+    {
+      "id": "opencode-dialog-buttons",
+      "kind": "dialog",
+      "region": "tail",
+      "pattern": "^\\s*Skip\\s+Confirm\\s*$",
+      "flags": "m"
+    },
+    {
+      "id": "opencode-question",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "enter submit\\s+esc dismiss",
+      "flags": "i"
+    },
+    {
+      "id": "opencode-permission",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Allow once\\s+Allow always\\s+Reject",
+      "flags": ""
+    },
+    {
+      "id": "opencode-composer-drawn",
+      "kind": "suppressor",
+      "region": "tail",
+      "pattern": "(?:^|\\n)\\s*┃\\s+[A-Z][\\w-]*\\s+·\\s+\\S[^\\n]*\\n\\s*╹▀{8,}[^\\n]*(?:\\n(?![^\\n]*(?:\\?|\\[y\\/n\\]|\\(y\\/N\\))\\s*$)[^\\n]*){0,1}$",
+      "flags": ""
+    },
+    {
+      "id": "opencode-busy",
+      "kind": "busy",
+      "region": "tail",
+      "pattern": "\\besc interrupt\\b",
+      "flags": "i"
+    }
+  ]
+}
