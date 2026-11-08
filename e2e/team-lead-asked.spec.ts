@@ -79,6 +79,8 @@ test.describe("a lead that asked the user, then shows a permission dialog", () =
     await expect(card().getByLabel("ux-review lead waiting")).toHaveText(/tester is waiting for you since \d\d:\d\d: need the staging password/);
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(dialog).toBeHidden();
+    // Closing the dialog hands focus back to the terminal a moment later; an Enter sent before that only focuses it.
+    await expect(window.locator(`[data-terminal-id="${seeded.tabIds.left}"] .xterm-helper-textarea`)).toBeFocused();
     await window.keyboard.press("Enter");
     await expect.poll(() => lead(), { timeout: TYPED_TIMEOUT_MS }).toContain("DIALOG-ANSWERED");
     await window.getByTestId("teams-toggle").click();
