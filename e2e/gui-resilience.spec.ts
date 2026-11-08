@@ -103,3 +103,41 @@ test('a React render failure retains the GUI process and unsaved draft before er
     await expect(gui.getByRole('status', { name: 'Turn status' })).toHaveText('Interrupted');
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
+
+test('a recovered GUI reports the running session approval mode, not an edited preset', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Codex GUI' }, presetList: [{ id: 'gui', name: 'Codex GUI', icon: '◆', color: '', command: 'codex', agent: 'codex', interfaceMode: 'gui', unsafeMode: true }] });
+  const bin = join(seed.root, 'bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'codex'), `#!/usr/bin/env node\nrequire(${JSON.stringify(resolve('tests/helpers/fake-codex-gui.cjs'))});\n`, { mode: 0o755 });
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, 'codex') };
+  const app = await launchApp(seed);
+  try {
+    const page = await app.firstWindow(), gui = page.locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(gui.locator('.aya-gui-unsafe-badge')).toBeVisible();
+    const file = join(seed.ayaHome, 'presets.json');
+    const stored = JSON.parse(readFileSync(file, 'utf8'));
+    stored.presets[0].name = 'Safe new preset'; stored.presets[0].unsafeMode = false;
+    writeFileSync(file, JSON.stringify(stored));
+    await expect(page.locator('.aya-launcher-btn', { hasText: 'Safe new preset' })).toBeVisible();
+    await expect(gui.locator('.aya-gui-unsafe-badge')).toBeVisible();
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = (async () => ({ response: 0, checkboxChecked: false })) as typeof dialog.showMessageBox;
+    });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+    const live = async <T,>(expression: string): Promise<T> => {
+      const cdp = await page.context().newCDPSession(page);
+      try {
+        await cdp.send('Runtime.runIfWaitingForDebugger');
+        const result = await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+        return result.result.value as T;
+      } finally { await cdp.detach().catch(() => {}); }
+    };
+    await expect.poll(() => live<string>(`document.querySelector('.aya-gui-header [role="status"]')?.textContent`).catch(() => 'recovering'), { timeout: 15000 }).toBe('Ready');
+    expect(await live<boolean>(`!!document.querySelector('.aya-gui-unsafe-badge')`)).toBe(true);
+    await live(`window.ayaGui.invoke('tab-left', 'send', { text: 'disconnect-approval' })`);
+    await expect.poll(() => live<string>(`document.querySelector('.aya-gui-header [role="status"]')?.textContent`)).toBe('Disconnected');
+    await live(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Reconnect').click()`);
+    await expect.poll(() => live<string>(`document.querySelector('.aya-gui-header [role="status"]')?.textContent`)).toBe('Ready');
+    expect(await live<boolean>(`!!document.querySelector('.aya-gui-unsafe-badge')`)).toBe(false);
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});

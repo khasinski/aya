@@ -11,7 +11,7 @@ export function matchesGuiBinding(snapshot: ConversationSnapshot | undefined | n
 export class GuiPanelState {
   readonly artifacts = new Map<string, Map<string, GuiArtifactEntry>>();
   readonly artifactVersions = new Map<string, Map<string, GuiArtifactEntry[]>>();
-  readonly sessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind; model?: string }>();
+  readonly sessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind; unsafeMode: boolean; model?: string }>();
   readonly snapshots = new Map<string, ConversationSnapshot>();
   readonly attachments = new Map<string, Map<string, GuiAttachment>>();
   readonly closing = new Set<string>();

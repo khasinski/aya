@@ -101,3 +101,31 @@ test("conversation GUI toggle stays beside its label and saves the chosen interf
   const presets = JSON.parse(readFileSync(join(seeded.ayaHome, "presets.json"), "utf8")).presets;
   expect(presets.find((p: { name: string }) => p.name === "GUI Codex").interfaceMode).toBe("gui");
 });
+
+for (const agent of ["pi", "antigravity"] as const) {
+  test(`unsafe approvals remain visible and editable for ${agent} GUI presets`, async ({ window, app, seeded }) => {
+    const settings = await openPresetsTab(window, app);
+    await settings.locator(".aya-settings-add", { hasText: "Add custom" }).click();
+    await settings.getByRole("combobox", { name: "Type", exact: true }).selectOption(agent);
+    await commandInput(settings).fill(agent === "pi" ? "pi" : "agy");
+    await nameInput(settings).fill(`${agent} GUI`);
+    await settings.getByRole("checkbox", { name: "Conversation GUI · Experimental", exact: true }).check();
+    const unsafe = settings.getByRole("checkbox", { name: /Unsafe approvals/ });
+    await expect(unsafe).toBeVisible();
+    await unsafe.check();
+    await settings.locator(".aya-modal-btn--primary", { hasText: "Save" }).click();
+    await expect(settings).toBeHidden();
+    const readPreset = () => JSON.parse(readFileSync(join(seeded.ayaHome, "presets.json"), "utf8")).presets.find((p: { name: string }) => p.name === `${agent} GUI`);
+    expect(readPreset()).toMatchObject({ agent, interfaceMode: "gui", unsafeMode: true });
+
+    const reopened = await openPresetsTab(window, app);
+    await reopened.getByRole("tab", { name: new RegExp(`${agent} GUI`) }).click();
+    const savedUnsafe = reopened.getByRole("checkbox", { name: /Unsafe approvals/ });
+    await expect(savedUnsafe).toBeChecked();
+    await savedUnsafe.uncheck();
+    await reopened.locator(".aya-modal-btn--primary", { hasText: "Save" }).click();
+    await expect(reopened).toBeHidden();
+    expect(readPreset().agent).toBe(agent);
+    expect(readPreset().unsafeMode).not.toBe(true);
+  });
+}
