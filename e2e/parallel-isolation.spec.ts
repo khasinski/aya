@@ -118,7 +118,20 @@ test("specs sharing clipboard, build files, process table or display focus run s
   expect(isolated.testIgnore).toBeInstanceOf(RegExp);
   expect(shared.testMatch).toBeInstanceOf(RegExp);
   const files = readdirSync(__dirname).filter((file) => file.endsWith(".spec.ts"));
-  const usesSharedResource = (file: string) => file === "a11y-pr2.spec.ts" || /clipboard\.(?:readText|readImage|writeText|writeImage)|appendFileSync\(hostScript,|writeFileSync\(packageFile,|execFileSync\(["']ps["'],/.test(readFileSync(join(__dirname, file), "utf8"));
+  // Replacing a method inside an isolated app does not access the OS clipboard.
+  // Keep calls and method references classified as shared, but exclude assignments.
+  const clipboardAccess = /clipboard\.(?:readText|readImage|writeText|writeImage)\b(?!\s*=(?!=))/;
+  for (const method of ["readText", "readImage", "writeText", "writeImage"]) {
+    const member = "clipboard." + method;
+    expect(clipboardAccess.test(`${member}()`)).toBe(true);
+    expect(clipboardAccess.test(`${member};`)).toBe(true);
+    expect(clipboardAccess.test(`${member} = () => image`)).toBe(false);
+    expect(clipboardAccess.test(`${member} === original`)).toBe(true);
+  }
+  const usesSharedResource = (file: string) => {
+    const source = readFileSync(join(__dirname, file), "utf8");
+    return file === "a11y-pr2.spec.ts" || clipboardAccess.test(source) || /appendFileSync\(hostScript,|writeFileSync\(packageFile,|execFileSync\(["']ps["'],/.test(source);
+  };
   const assignedToShared = files.filter((file) => (shared.testMatch as RegExp).test(join(__dirname, file)));
   expect(assignedToShared.sort()).toEqual(files.filter(usesSharedResource).sort());
   for (const file of files) {
