@@ -17,6 +17,20 @@ const PAST_FOCUS_RETRIES_MS = 300;
 const bufferOf = (window: Page, id: string) =>
   window.evaluate((tid) => window.aya.ptyBuffer(tid), id);
 
+/** The pane's output has not grown for QUIET_MS. */
+async function paneQuiet(window: Page, id: string) {
+  const QUIET_MS = 400;
+  let last = -1;
+  await expect
+    .poll(async () => {
+      const length = (await bufferOf(window, id)).length;
+      const quiet = length === last;
+      last = length;
+      return quiet;
+    }, { intervals: [QUIET_MS] })
+    .toBe(true);
+}
+
 async function readyIds(window: Page) {
   const ids: Record<string, string> = {};
   for (const name of ["shell 1", "shell 2"]) {
@@ -62,6 +76,9 @@ async function closeThenPick(window: Page, app: ElectronApplication, pick: () =>
   await expect
     .poll(() => window.evaluate(() => !!document.activeElement?.closest('[data-terminal-name="shell 2"]')))
     .toBe(true);
+  // A pick that brings the pane back (another project and back) makes the shell repaint its prompt; keys typed into
+  // that repaint can be lost, so let the output go quiet first.
+  await paneQuiet(window, ids["shell 2"]);
   await window.keyboard.type("zqpickedmark");
   await expect.poll(() => bufferOf(window, ids["shell 2"])).toContain("zqpickedmark");
   expect(await bufferOf(window, ids["shell 2"])).not.toContain("zqtailmark");
