@@ -90,6 +90,13 @@ Usage:
                                      lead's round digest instead)
   aya debug on|off|status            Turn on/off writing every team decision
                                      to the team's debug log
+  aya present --title <t> <--html f|--image f|--table f|--metric v> [--id <a>] [--no-open]
+                                     Show a rich artifact in a window: --html
+                                     <file|-> (widget), --image <file>, --table
+                                     <json file|-> or --metric <value> with
+                                     --description; --id updates in place
+  aya artifact list [--json]         List this pane's artifacts
+  aya artifact open <id>             Open an artifact's window again
   aya rules fetch <https-url> --agent <name> [--replace]
                                      Bring a user screen-rule file in from the
                                      web, once, on request; checked like a hand-
@@ -297,6 +304,58 @@ function requestFromArgs() {
     return { type: "team-send", role: process.argv[4], text: process.argv[5] };
   }
   if (kind === "team-pause") return { type: kind, text: process.argv[4] || undefined };
+  if (kind === "artifact-list") return { type: kind, json: process.argv[4] === "json" };
+  if (kind === "artifact-open") return { type: kind, artifactId: process.argv[4] };
+  if (kind === "artifact-present") {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const argv = process.argv.slice(4);
+    const input = {};
+    let open = true;
+    const readSource = (name) => {
+      if (name !== "-") return fs.readFileSync(name, "utf8");
+      // Node's source is stdin (heredoc); fd 3 is the caller's original stdin.
+      const chunks = [];
+      const buffer = Buffer.alloc(65536);
+      let size = 0;
+      for (;;) {
+        const n = fs.readSync(3, buffer, 0, buffer.length, null);
+        if (!n) break;
+        size += n;
+        if (size > 2 * 1024 * 1024) throw new Error("input exceeds 2 MiB");
+        chunks.push(Buffer.from(buffer.subarray(0, n)));
+      }
+      return Buffer.concat(chunks).toString("utf8");
+    };
+    const take = (i) => {
+      if (i + 1 >= argv.length) throw new Error(`${argv[i]} needs a value`);
+      return argv[i + 1];
+    };
+    const setKind = (kind) => {
+      if (input.kind && input.kind !== kind) throw new Error("give only one of --html, --image, --table, --metric");
+      input.kind = kind;
+    };
+    for (let i = 0; i < argv.length; i += 1) {
+      const arg = argv[i];
+      if (arg === "--title") input.title = take(i++);
+      else if (arg === "--id") input.artifactId = take(i++);
+      else if (arg === "--no-open") open = false;
+      else if (arg === "--description") input.description = take(i++);
+      else if (arg === "--html") { setKind("html"); input.html = readSource(take(i++)); }
+      else if (arg === "--image") { setKind("image"); input.imagePath = path.resolve(take(i++)); }
+      else if (arg === "--metric") { setKind("metric"); input.value = take(i++); }
+      else if (arg === "--table") {
+        setKind("table");
+        let parsed;
+        try { parsed = JSON.parse(readSource(take(i++))); } catch (error) { throw new Error(`--table is not valid JSON: ${error.message}`); }
+        input.columns = parsed.columns;
+        input.rows = parsed.rows;
+      } else throw new Error(`unknown option ${arg}`);
+    }
+    if (!input.kind) throw new Error("give one of --html <file|->, --image <file>, --table <json file|->, --metric <value>");
+    if (!input.title) throw new Error("--title is required");
+    return { type: kind, input, open };
+  }
   if (kind === "rules-fetch") return { type: kind, url: process.argv[4], agent: process.argv[5], replace: process.argv[6] === "replace" };
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
   if (kind === "machines") {
@@ -344,8 +403,15 @@ function requestFromArgs() {
 
 // Which pane is calling, on every request: Aya counts per harness how many
 // panes ever use this CLI (#117). Absent outside Aya.
+let built;
+try {
+  built = requestFromArgs();
+} catch (error) {
+  console.error(`aya: ${error instanceof Error ? error.message : error}`);
+  process.exit(1);
+}
 const request = {
-  ...requestFromArgs(),
+  ...built,
   caller: {
     terminalId: optionalEnv("AYA_TERMINAL_ID"),
     presetId: optionalEnv("AYA_PRESET_ID"),
@@ -766,6 +832,17 @@ case "$command" in
   machines)
     shift
     send_control machines "$@" 3<&0
+    ;;
+  present)
+    shift
+    send_control artifact-present "$@" 3<&0
+    ;;
+  artifact)
+    case "${2:-}" in
+      list) [ "$#" -eq 2 ] && send_control artifact-list "" || { [ "$#" -eq 3 ] && [ "$3" = --json ] && send_control artifact-list json || usage_fail; } ;;
+      open) [ "$#" -eq 3 ] || usage_fail; send_control artifact-open "$3" ;;
+      *) usage_fail ;;
+    esac
     ;;
   rules)
     [ "${2:-}" = fetch ] || usage_fail

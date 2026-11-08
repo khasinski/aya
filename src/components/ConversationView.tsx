@@ -3,6 +3,7 @@ import { conversationSaveDelay } from '../conversation-save-delay';
 import { useModalFocus } from './useModalFocus';
 import { appendMessageDeltas, createTextDeltaBuffer, scheduleConversationFrame } from '../conversation-deltas';
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type SetStateAction } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { guiSupportedAgent } from '../agentPreset';
@@ -83,6 +84,8 @@ function stripQuestionBulletsFromText(textValue: string, questions: GuiQuestion[
   return result.trim();
 }
 type ConversationProps = {
+  /** The stacked layout's top-bar slot: the conversation's header is drawn there instead of above the messages. */
+  headerSlot?: HTMLElement | null;
   terminal: TerminalState;
   preset: Preset;
   paneStyle?: CSSProperties;
@@ -101,7 +104,7 @@ export const ConversationView = memo(function ConversationView(props: Conversati
   const [generation, setGeneration] = useState(0);
   return <ConversationSession key={`${props.terminal.id}:${generation}`} {...props} onSwitch={() => setGeneration(n => n + 1)} />;
 });
-function ConversationSession({ terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, listSiblingTerminals, onSwitch }: ConversationProps & { onSwitch: () => void }) {
+function ConversationSession({ headerSlot = null, terminal, preset, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, listSiblingTerminals, onSwitch }: ConversationProps & { onSwitch: () => void }) {
   const api = window.ayaGui;
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
   const agentLabel = guiAgent === 'pi' ? 'Pi' : guiAgent === 'claude' ? 'Claude' : guiAgent === 'antigravity' ? 'Antigravity' : 'Codex';
@@ -603,6 +606,15 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
     ...Object.entries(activityCounts).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`),
   ].join(' · ');
   const closeArtifacts = () => { setDrawer(false); artifactButton.current?.focus(); };
+  const guiHeader = (
+    <header className="aya-gui-header">
+      <div className="aya-gui-heading"><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></div>
+      <span className="aya-sr-only" role="status">{connecting ? 'Connecting…' : switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
+      {!ready && restored && <button type="button" disabled={connecting} onClick={() => void reconnect()}>{connecting ? 'Connecting…' : 'Reconnect'}</button>}
+      <button className="aya-gui-icon-button" disabled={!ready || switching} aria-label="Resume a saved conversation" title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button>
+      <button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>
+    </header>
+  );
   return <section
     className={`aya-pane aya-conversation${isActivePane ? ' aya-pane--active-split' : ''}`}
     style={{ ...paneStyle, ...(hidden ? { display: 'none' } : {}) }}
@@ -635,13 +647,7 @@ function ConversationSession({ terminal, preset, paneStyle, hidden = false, isAc
       }
     }}
   >
-    <header className="aya-gui-header">
-      <div className="aya-gui-heading"><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></div>
-      <span className="aya-sr-only" role="status">{connecting ? 'Connecting…' : switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
-      {!ready && restored && <button type="button" disabled={connecting} onClick={() => void reconnect()}>{connecting ? 'Connecting…' : 'Reconnect'}</button>}
-      <button className="aya-gui-icon-button" disabled={!ready || switching} aria-label="Resume a saved conversation" title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button>
-      <button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>
-    </header>
+    {headerSlot && !hidden ? createPortal(guiHeader, headerSlot) : guiHeader}
     {restored && <div className="aya-gui-save-state" data-state={saveStatus}><span role="status" aria-label="Conversation save status">{saveStatus === 'saved' ? 'Saved locally' : saveStatus === 'error' ? 'Not saved' : 'Saving…'}</span>{saveError && <><span>{saveError}</span><button type="button" disabled={saveStatus === 'saving'} onClick={() => void persistLatest()}>Retry save</button></>}</div>}
     {history !== null && <div ref={historyDialog} className="aya-session-picker" role="dialog" aria-modal="true" aria-label="Resume conversation" onKeyDown={e => {
       if (e.key === 'Escape') { e.preventDefault(); setHistory(null); composer.current?.focus(); }

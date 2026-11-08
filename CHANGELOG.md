@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Artifacts for TUI panes: `aya present --title <t> (--html|--image|--table|--metric ...)` opens an HTML widget,
+  image, table or metric card in its own window, `--id` updates it in place, and `aya artifact list|open` finds it
+  again. See `docs/tui-artifacts.md`.
+- In the Stacked layout a Conversation pane's header (history, artifacts) now sits in the top bar like a terminal's.
 - `aya rules fetch <https-url> --agent <name> [--replace]` brings a user screen-rule file in from the web, only on
   request: https, 64 KiB, validated like a hand-written file, additive-only, 0600, never overwrites without `--replace`.
 - Built-in screen rules are now one file per agent (`electron/screen-rules/<agent>.json`), each with its own

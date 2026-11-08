@@ -37,6 +37,8 @@ Use **Previous/Next** (or Alt+Left/Right), title/content search, and the artifac
 - **Open window** creates a separate isolated Aya preview window. Widget suggestions still return to the conversation.
 - **Open in browser** writes a standalone local preview and opens the system browser. In that standalone preview, widget actions show follow-up text to copy into Aya.
 
+Panes that run as a terminal (TUI) can present the same kinds with `aya present`; see `tui-artifacts.md`.
+
 ## Commands
 
 Goal changes are also recorded as conversation entries; the goal bar shows a separate Active/Paused/Complete status and icon actions. Repeated token accounting updates do not duplicate goal entries.

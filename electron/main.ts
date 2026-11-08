@@ -6,6 +6,8 @@ import { builtinScreenRules } from "./screen-rule-provider";
 import type { ScreenRuleSet } from "./screen-rule-data";
 import { UserRuleProvider } from "./screen-user-rule-provider";
 import { fetchUserRuleFile } from "./screen-rule-fetch";
+import { TuiArtifactStore } from "./tui-artifacts";
+import { showTuiArtifact } from "./tui-artifact-window";
 import { GuardedRuleInput } from "./screen-user-rule-input";
 import { UserRulePanePolicy } from "./screen-user-rule-pane";
 import { isUserOnlyHold } from "./pane-holds";
@@ -215,6 +217,7 @@ const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
 let remotePtySessions: RemotePtySessions | null = null;
 const userRulePolicyInstance=crypto.randomBytes(16).toString("hex");
 const hostRuleEpoch=(epoch:number)=>`${userRulePolicyInstance}:${epoch}`;
+const tuiArtifactStore = new TuiArtifactStore();
 const userRuleProvider = new UserRuleProvider(path.join(AYA_HOME, "screen-rules"), builtinRuleSet, {
   log: (reason, digest) => diagnosticsLog.append("user-screen-rules-unavailable", { reason, digest }),
   changed: (state) => { void ptyHost.setUserRulePolicyEpoch(hostRuleEpoch(state.epoch)); ptyHost.setUserRuleStatusObserver(!state.available || state.manifest
@@ -1124,6 +1127,7 @@ app.whenReady().then(async () => {
   startControlServer({
     getWindow: () => focusedAyaWindow(),
     // The user's own request, one https GET; the file joins the user rule files and is picked up like a hand-written one.
+    tuiArtifacts: { store: tuiArtifactStore, show: (artifact) => showTuiArtifact(artifact, createGuardedWindow) },
     fetchUserRules: async ({ url, agent, replace }) => {
       const done = await fetchUserRuleFile({ url, agent, replace, directory: path.join(AYA_HOME, "screen-rules"), builtin: builtinRuleSet });
       return `${done.replaced ? "replaced" : "added"} ${done.path}: ${done.ruleCount} rule${done.ruleCount === 1 ? "" : "s"}, version ${done.version}`;

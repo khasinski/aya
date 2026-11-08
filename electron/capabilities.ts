@@ -258,6 +258,28 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: ["The user's switch: do not turn it on or off unless the user asks."],
   },
   {
+    command: "present",
+    usage: "aya present --title <t> <--html f|--image f|--table f|--metric v> [--id <a>] [--no-open]",
+    summary: "Show a rich artifact in an Aya window: a self-contained HTML widget (SVG/canvas/inline JS, no network, up to 2 MiB), a PNG/JPEG/WebP/SVG image (up to 8 MiB), a table ({\"columns\":[...],\"rows\":[[...]]}, up to 12 columns and 200 rows) or a metric card.",
+    notes: [
+      "Use it for comparisons, charts and anything better seen than printed; do not paste the artifact's markup into the chat. Pass - to read the HTML or table JSON from stdin.",
+      "It prints the artifact id; pass it back with --id to update that artifact in place (revision bumps) instead of opening another window. --no-open stores it without opening a window.",
+      "A widget's window.ayaWidget.suggest(text) copies the text to the user's clipboard. Artifacts live until Aya quits.",
+    ],
+  },
+  {
+    command: "artifact list",
+    usage: "aya artifact list [--json]",
+    summary: "List this pane's artifacts made with aya present: id, kind, revision, title.",
+    notes: ["Shows only this pane's own artifacts."],
+  },
+  {
+    command: "artifact open",
+    usage: "aya artifact open <id>",
+    summary: "Open an artifact's window again.",
+    notes: ["Opens only this pane's own artifacts."],
+  },
+  {
     command: "rules fetch",
     usage: "aya rules fetch <https-url> --agent <name> [--replace]",
     summary: "Download one user screen-rule file (<=64 KiB, https only) into ~/.aya/screen-rules/<name>.json, once, on request.",

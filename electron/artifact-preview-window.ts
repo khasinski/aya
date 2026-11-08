@@ -4,17 +4,28 @@ import * as path from 'node:path';
 import type { GuiArtifact } from '../shared/codex-gui';
 import { isWidgetPreviewUrl } from './gui-artifact-documents';
 const previews = new Map<number, { owner: Electron.WebContents; panel: string }>();
+const suggestSinks = new Map<number, (text: string) => void>();
 let registered = false;
 const escape = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+/** A preview window that has no conversation to answer to (aya present) takes a widget's suggestion here instead. */
+export function registerPreviewSuggestSink(contentsId: number, sink: ((text: string) => void) | null) {
+  ensurePreviewIpc();
+  if (sink) suggestSinks.set(contentsId, sink); else suggestSinks.delete(contentsId);
+}
+function ensurePreviewIpc() {
+  if (registered) return;
+  registered = true;
+  ipcMain.on('artifact-preview:suggest', (event, text: unknown) => {
+    if (event.senderFrame !== event.sender.mainFrame || typeof text !== 'string' || !text.trim() || text.length > 4000) return;
+    const sink = suggestSinks.get(event.sender.id);
+    if (sink) { sink(text); return; }
+    const preview = previews.get(event.sender.id);
+    if (!preview || preview.owner.isDestroyed()) return;
+    preview.owner.send('codex-gui:event', preview.panel, { method: 'aya/widgetSuggestion', params: { text } });
+  });
+}
 export function openArtifactWindow(artifact: GuiArtifact, owner: Electron.WebContents, panel: string, createWindow: (options: Electron.BrowserWindowConstructorOptions) => Electron.BrowserWindow) {
-  if (!registered) {
-    registered = true;
-    ipcMain.on('artifact-preview:suggest', (event, text: unknown) => {
-      const preview = previews.get(event.sender.id);
-      if (!preview || event.senderFrame !== event.sender.mainFrame || typeof text !== 'string' || !text.trim() || text.length > 4000 || preview.owner.isDestroyed()) return;
-      preview.owner.send('codex-gui:event', preview.panel, { method: 'aya/widgetSuggestion', params: { text } });
-    });
-  }
+  ensurePreviewIpc();
   const win = createWindow({ width: 1100, height: 800, acceptFirstMouse: true, minWidth: 480, minHeight: 360, title: artifact.title, show: process.env.AYA_E2E_HEADLESS !== '1', backgroundColor: '#10151e', webPreferences: { preload: path.join(__dirname, 'artifact-preview-preload.bundle.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
   previews.set(win.webContents.id, { owner, panel });
   if (artifact.kind === 'image') installArtifactImageMenu(win.webContents, url => url === artifact.dataUrl ? artifact : undefined);

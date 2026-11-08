@@ -1,4 +1,5 @@
 import type { PanePick } from "./types";
+import type { TuiArtifactInput } from "./tui-artifacts";
 
 export type TeamRequest =
   | { type: "team-whoami" }
@@ -26,6 +27,10 @@ export type TeamPanesRequest =
 
 export type ControlRequest =
   // Bring a user screen-rule file in from an https address, on request (electron/screen-rule-fetch.ts).
+  // aya present / aya artifact: artifacts for a TUI pane (electron/tui-artifacts.ts).
+  | { type: "artifact-present"; input: TuiArtifactInput; open: boolean }
+  | { type: "artifact-list"; json: boolean }
+  | { type: "artifact-open"; artifactId: string }
   | { type: "rules-fetch"; url: string; agent: string; replace: boolean }
   | { type: "open"; path: string }
   | { type: "focus" }
@@ -121,6 +126,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function parseArtifactInput(value: unknown): TuiArtifactInput {
+  if (!isRecord(value)) throw new Error("artifact-present requires input");
+  const kind = value.kind;
+  if (kind !== "html" && kind !== "image" && kind !== "table" && kind !== "metric") throw new Error("artifact kind must be html, image, table or metric");
+  const title = optionalString(value.title);
+  if (!title) throw new Error("artifact-present requires a title");
+  const strings = (v: unknown) => (Array.isArray(v) && v.every((s) => typeof s === "string") ? (v as string[]) : undefined);
+  const rows = Array.isArray(value.rows) && value.rows.every((r) => strings(r)) ? (value.rows as string[][]) : undefined;
+  return {
+    kind, title,
+    ...(typeof value.html === "string" ? { html: value.html } : {}),
+    ...(optionalString(value.imagePath) ? { imagePath: optionalString(value.imagePath) } : {}),
+    ...(strings(value.columns) ? { columns: strings(value.columns) } : {}),
+    ...(rows ? { rows } : {}),
+    ...(typeof value.value === "string" ? { value: value.value } : {}),
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    ...(optionalString(value.artifactId) ? { artifactId: optionalString(value.artifactId) } : {}),
+  };
+}
+
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
@@ -187,6 +212,13 @@ export function parseControlRequest(value: unknown): ControlRequest {
   if (type === "team-show") {
     const team = optionalString(value.team);
     return { type, ...(team ? { team } : {}), json: value.json === true, ...scope };
+  }
+  if (type === "artifact-present") return { type, input: parseArtifactInput(value.input), open: value.open !== false };
+  if (type === "artifact-list") return { type, json: value.json === true };
+  if (type === "artifact-open") {
+    const artifactId = optionalString(value.artifactId);
+    if (!artifactId) throw new Error("artifact-open requires artifactId");
+    return { type, artifactId };
   }
   if (type === "rules-fetch") {
     const url = optionalString(value.url), agent = optionalString(value.agent);

@@ -279,3 +279,9 @@
 .aya-gui-context-menu button { text-align: left; }
 .aya-gui-context-menu small { color: var(--fg-tertiary); }
 .aya-gui-compose-footer .aya-gui-context-empty { flex: none; max-width: 260px; padding: 4px 6px; }
+
+/* In the stacked layout the header sits in the top bar, outside .aya-conversation. */
+.aya-stacked-headerslot .aya-gui-header { display: flex; align-items: center; gap: 6px; padding: 0 8px; min-width: 0; flex: 1; }
+.aya-stacked-headerslot .aya-gui-header button { -webkit-app-region: no-drag; }
+.aya-stacked-headerslot .aya-gui-icon-button { box-sizing: border-box; width: 28px; height: 28px; padding: 0; }
+.aya-stacked-headerslot .aya-gui-header { overflow: hidden; white-space: nowrap; }

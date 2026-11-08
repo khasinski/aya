@@ -1,6 +1,9 @@
 // "Stacked" layout: no tabs on top; projects and the project's terminals in two boxes on the left (each scrolling
 // inside itself); the active terminal's header sits in the top bar.
-import { test, expect } from "./fixtures";
+import { test, expect, launchApp, closeAndWait } from "./fixtures";
+import { seedEnv } from "./helpers/seed";
+import { mkdirSync, copyFileSync, chmodSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fireShortcut } from "./helpers/shortcut";
 
 test("stacked layout: terminals under projects, header in the top bar, scrolling inside the box", async ({ window, app }) => {
@@ -43,4 +46,26 @@ test("stacked layout: terminals under projects, header in the top bar, scrolling
   expect(metrics).toEqual({ scrollable: true, overflowY: "auto" });
   expect(await window.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1)).toBe(true);
   await expect(terminals.getByRole("button", { name: "New terminal" })).toBeVisible();
+});
+
+test("stacked layout: a conversation pane's header takes the top bar too", async () => {
+  const seed = seedEnv({ singleTab: { presetId: "gui", name: "Codex GUI" }, presetList: [{ id: "gui", name: "Codex GUI", icon: "◆", color: "", command: "codex", agent: "codex", interfaceMode: "gui" }] });
+  const bin = join(seed.root, "gui-bin"); mkdirSync(bin);
+  copyFileSync(resolve("tests/helpers/fake-codex-gui.cjs"), join(bin, "codex")); chmodSync(join(bin, "codex"), 0o755);
+  seed.launchEnv = { AYA_E2E_CODEX_BIN: join(bin, "codex") };
+  const app = await launchApp(seed);
+  try {
+    const window = await app.firstWindow();
+    await expect(window.locator(".aya-conversation header").getByRole("status")).toHaveText("Ready");
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await expect(settings).toBeVisible();
+    await settings.locator('.aya-settings-segmented[aria-label="Window layout"] button', { hasText: "Stacked" }).click();
+    await window.keyboard.press("Escape");
+    await expect(settings).toBeHidden();
+    const slotHeader = window.locator(".aya-topbar .aya-stacked-headerslot .aya-gui-header");
+    await expect(slotHeader.getByText("Conversation")).toBeVisible();
+    await expect(slotHeader.getByRole("button", { name: "Resume a saved conversation" })).toBeVisible();
+    await expect(window.locator(".aya-conversation > .aya-gui-header")).toHaveCount(0);
+  } finally { await closeAndWait(app); }
 });

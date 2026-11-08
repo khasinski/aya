@@ -312,6 +312,7 @@ export const PaneGrid = memo(function PaneGrid({
             listSiblingTerminals={listSiblingTerminals}
             findOpen={findInPaneFor === terminal.id}
             onCloseFind={closeFindPane}
+            headerSlot={headerSlot}
           />
         );
       })}

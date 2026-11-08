@@ -11,6 +11,8 @@ import * as path from "node:path";
 import { flushAgentStatuses, recordAgentStatus } from "./agent-status";
 import { STATUS_TABLE_SHARE_MS, daemonIdentity, foreignPaneIdentity, paneAbove, processTable, unprovenIdentity } from "./caller-proof";
 import { capabilitiesDocument } from "./capabilities";
+import { describeArtifact, type TuiArtifactStore } from "./tui-artifacts";
+import type { GuiArtifact } from "../shared/codex-gui";
 import {
   parseControlCaller,
   parseControlRequest,
@@ -129,6 +131,8 @@ export interface ControlServerOptions {
   panePid?: (terminalId: string) => Promise<number | null | undefined>;
   /** Where aya machines keeps its registry, finds ~/.ssh/config and asks the user; by default the Aya config home, the user's home and Aya's dialog. */
   machines?: MachinesDeps;
+  /** What aya present / aya artifact run on: a store for TUI artifacts and the window that shows one; off without it. */
+  tuiArtifacts?: { store: TuiArtifactStore; show: (artifact: GuiArtifact) => void };
   /** Brings a user screen-rule file in from an https address (aya rules fetch); off without it. */
   fetchUserRules?: (request: { url: string; agent: string; replace: boolean }) => Promise<string>;
   /** Test-only override of the process table read for the ancestry check. */
@@ -542,6 +546,24 @@ async function handleRequest(
       clearTimeout(timer);
     }
     return;
+  }
+  if (request.type === "artifact-present" || request.type === "artifact-list" || request.type === "artifact-open") {
+    const art = options.tuiArtifacts;
+    if (!art) throw new Error("artifacts are not available");
+    if (request.type === "artifact-present") {
+      const { stored, updated } = await art.store.present(request.input, caller.terminalId);
+      if (request.open) art.show(stored.artifact);
+      return { output: `${updated ? "updated" : "created"} artifact ${stored.artifact.id} (r${stored.artifact.revision ?? 1})${request.open ? ", opened in a window" : "; open it with aya artifact open " + stored.artifact.id}\n` };
+    }
+    if (request.type === "artifact-open") {
+      const item = art.store.get(request.artifactId);
+      if (!item || (caller.terminalId && item.terminalId !== caller.terminalId)) throw new Error(`no artifact "${request.artifactId}"; list them with aya artifact list`);
+      art.show(item.artifact);
+      return { output: `opened ${item.artifact.id}\n` };
+    }
+    const items = art.store.list(caller.terminalId);
+    if (request.json) return { output: `${JSON.stringify(items.map((i) => ({ id: i.artifact.id, kind: i.artifact.kind, title: i.artifact.title, revision: i.artifact.revision ?? 1, updatedAt: i.updatedAt })), null, 2)}\n` };
+    return { output: items.length ? `${items.map(describeArtifact).join("\n")}\n` : "no artifacts\n" };
   }
   if (request.type === "rules-fetch") {
     if (!options.fetchUserRules) throw new Error("fetching rules is not available");
