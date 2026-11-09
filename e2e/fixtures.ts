@@ -5,7 +5,7 @@ import {
   type Page,
 } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
 import { headlessUiEventMismatch, type HeadlessUiEventExpectation, type HeadlessUiEventRecord } from "../dist-electron/e2e-headless-ui.js";
@@ -200,6 +200,42 @@ export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
   return launchE2eElectron({ args: launchArgs, cwd: APP_ROOT, env });
 }
 
+
+let uiElementElectron: string | undefined;
+/** On macOS a stock Electron.app gets a Dock tile the moment its process starts, before any JS can hide it, and the
+ *  Dock keeps the tile after the process exits (2026-11-09: a few hundred runs left 558 "Electron" tiles). A copy with
+ *  LSUIElement set never gets one. The copy is built once per Electron version and cloned (APFS) rather than copied. */
+export function headlessElectronBinary(): string {
+  const stock = require("electron") as string;
+  if (process.platform !== "darwin") return stock;
+  // require("electron") is dist/Electron.app/Contents/MacOS/Electron
+  const stockDist = join(stock, "..", "..", "..", "..");
+  if (uiElementElectron) return uiElementElectron;
+  const version = readFileSync(join(stockDist, "version"), "utf8").trim();
+  const cacheDir = join(APP_ROOT, "node_modules", ".cache", "aya-e2e-electron");
+  const app = join(cacheDir, version, "Electron.app");
+  const binary = join(app, "Contents", "MacOS", "Electron");
+  if (!existsSync(binary)) {
+    mkdirSync(cacheDir, { recursive: true });
+    const staging = mkdtempSync(join(cacheDir, "build-"));
+    const stagedApp = join(staging, "Electron.app");
+    const steps: [string, string[]][] = [
+      ["cp", ["-c", "-R", join(stockDist, "Electron.app"), stagedApp]],
+      ["plutil", ["-replace", "LSUIElement", "-bool", "true", join(stagedApp, "Contents", "Info.plist")]],
+      ["codesign", ["--force", "--deep", "--sign", "-", stagedApp]],
+    ];
+    for (const [command, args] of steps) {
+      const result = spawnSync(command, args, { encoding: "utf8" });
+      if (result.status !== 0) throw new Error(`${command} failed building the Dock-less Electron: ${result.stderr}`);
+    }
+    mkdirSync(join(cacheDir, version), { recursive: true });
+    try { renameSync(stagedApp, app); } catch { /* another worker finished first */ }
+    rmSync(staging, { recursive: true, force: true });
+  }
+  uiElementElectron = binary;
+  return binary;
+}
+
 /** Every Electron e2e launch, including wrapper-main launches, shares this local headless gate. */
 export function launchE2eElectron(options: Parameters<typeof electron.launch>[0]): Promise<ElectronApplication> {
   const env = { ...(options.env as NodeJS.ProcessEnv | undefined) };
@@ -216,7 +252,7 @@ export function launchE2eElectron(options: Parameters<typeof electron.launch>[0]
     env.AYA_E2E_REAL_MAIN = originalMain;
     env.AYA_E2E_HEADLESS_UI_MODULE = join(APP_ROOT, "dist-electron", "e2e-headless-ui.js");
     args[0] = join(APP_ROOT, "e2e", "helpers", "headless-main.cjs");
-    return electron.launch({ ...options, args, env });
+    return electron.launch({ executablePath: headlessElectronBinary(), ...options, args, env });
   }
   return electron.launch({ ...options, env });
 }
@@ -250,7 +286,8 @@ export function spawnE2eElectron(
     env.AYA_E2E_HEADLESS_UI_MODULE = join(APP_ROOT, "dist-electron", "e2e-headless-ui.js");
     args[0] = join(APP_ROOT, "e2e", "helpers", "headless-main.cjs");
   }
-  return spawn(binary, args, { ...options, env });
+  const stock = require("electron") as string;
+  return spawn(env.AYA_E2E_HEADLESS === "1" && binary === stock ? headlessElectronBinary() : binary, args, { ...options, env });
 }
 
 /** Declare the native UI requests a test intentionally exercises in headless mode. */
