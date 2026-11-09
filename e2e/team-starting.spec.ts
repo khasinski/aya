@@ -1,9 +1,8 @@
 // `aya team open` in the gap after the window loaded but before its project list did (held by a test delay) is refused
 // as retryable, and a pane's CLI asks again until the project is there.
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { test, expect } from "./fixtures";
 import { askControl } from "./helpers/control";
 import { AYA, agentPreset, readAssignments, TWO_ROLE_TEAM } from "./helpers/team";
@@ -34,7 +33,19 @@ test("aya team open from a pane waits out the gap and opens the pane", async ({ 
   test.setTimeout(AGENT_TEST_TIMEOUT_MS);
   await (await app.firstWindow()).waitForLoadState("domcontentloaded");
   const env = { ...process.env, AYA_SOCKET: join(seeded.ayaHome, "aya.sock"), AYA_HOME: seeded.ayaHome, AYA_TERMINAL_ID: "tab-left", AYA_OPEN_WAIT_SECONDS: "60" };
-  const { stdout } = await promisify(execFile)(AYA, OPEN, { env });
+  // Its own process group, with the CLI as leader. The CLI carries a pane's AYA_TERMINAL_ID and AYA_HOME, and Aya's
+  // startup sweep SIGKILLs such a process when its group's leader is gone - which it is when the suite was started
+  // from a shell that has since exited (2026-11-09: "Killed: 9", 12/12 runs from a detached shell, 0/48 from a live one).
+  // (execFile ignores `detached`; spawn gives the new group.)
+  const stdout = await new Promise<string>((resolve, reject) => {
+    const child = spawn(AYA, OPEN, { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.stderr.on("data", (chunk) => { err += chunk; });
+    child.on("error", reject);
+    child.on("close", (code, signal) => (code === 0 ? resolve(out) : reject(new Error(`aya ${OPEN.join(" ")} exited ${code ?? signal}: ${err || out}`))));
+  });
   expect(stdout).toMatch(/gave 1 role a pane, 1 new/);
   expect(readAssignments(seeded.ayaHome).tester).not.toBe("tab-left");
 });
