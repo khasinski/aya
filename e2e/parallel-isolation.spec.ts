@@ -118,7 +118,9 @@ test("specs sharing clipboard, build files, process table or display focus run s
   expect(isolated.testIgnore).toBeInstanceOf(RegExp);
   expect(shared.testMatch).toBeInstanceOf(RegExp);
   const files = readdirSync(__dirname).filter((file) => file.endsWith(".spec.ts"));
-  const usesSharedResource = (file: string) => file === "a11y-pr2.spec.ts" || /clipboard\.(?:readText|readImage|writeText|writeImage)|appendFileSync\(hostScript,|writeFileSync\(packageFile,|execFileSync\(["']ps["'],/.test(readFileSync(join(__dirname, file), "utf8"));
+  // Specs that assert a latency budget share the CPU itself: seven other Electron instances would be in their numbers.
+  const assertsLatency = ["doherty-latency.spec.ts", "gui-workload.spec.ts"];
+  const usesSharedResource = (file: string) => file === "a11y-pr2.spec.ts" || assertsLatency.includes(file) || /clipboard\.(?:readText|readImage|writeText|writeImage)|appendFileSync\(hostScript,|writeFileSync\(packageFile,|execFileSync\(["']ps["'],/.test(readFileSync(join(__dirname, file), "utf8"));
   const assignedToShared = files.filter((file) => (shared.testMatch as RegExp).test(join(__dirname, file)));
   expect(assignedToShared.sort()).toEqual(files.filter(usesSharedResource).sort());
   for (const file of files) {
