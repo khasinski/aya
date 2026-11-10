@@ -8,6 +8,8 @@ import { paneTeamRole, runnableTeamNames, teamFile } from "./team-files";
 import { ID_RE, parseTeamFile } from "./team-definition";
 import { openTeamStore, readText, savedTeamNames } from "./team-store";
 import type { ProjectConfig, TeamDefinition } from "./types";
+import type { TeamRunStatus } from "./team-records";
+import { teamLiveGuidance } from "./team-live-guidance";
 
 /** How the repo's .aya/teams/<team>.md compares with the saved copy shown. */
 export type RepoFileState = "same" | "differs" | "missing";
@@ -15,6 +17,7 @@ export type RepoFileState = "same" | "differs" | "missing";
 export interface TeamShow {
   team: string;
   project: string;
+  status: TeamRunStatus;
   /** The caller's role in this team, when it runs in one of its panes. */
   you: string | null;
   lead: string | null;
@@ -50,7 +53,8 @@ export async function teamShow(request: TeamShowRequest, callerId: string | unde
   const inPane = Boolean(callerId && project.tabs.some((t) => t.id === callerId));
   const plays = inPane ? await paneTeamRole(deps.teamHome, project, callerId!) : null;
   const name = await whichTeam(request, project, plays?.team ?? null, deps);
-  const saved = await openTeamStore(deps.teamHome, project.slug, name).savedDefinition();
+  const store = openTeamStore(deps.teamHome, project.slug, name);
+  const saved = await store.savedDefinition();
   const repo = await readText(teamFile(project, name));
   if (saved === null) {
     if (repo !== null) throw new Error(`team ${name} is not started yet, so it does not run; start it from the Teams window`);
@@ -61,6 +65,7 @@ export async function teamShow(request: TeamShowRequest, callerId: string | unde
   return {
     team: name,
     project: project.slug,
+    status: await store.status(),
     you: plays?.team === name ? plays.role : null,
     lead: team.lead,
     cadenceMinutes: team.cadenceMinutes,
@@ -75,6 +80,7 @@ const indent = (text: string) => text.split("\n").map((line) => (line ? `  ${lin
 
 export function formatTeamShow(show: TeamShow): string {
   const lines = [`team      ${show.team}`, `project   ${show.project}`, `lead      ${show.lead ?? "(none)"}`];
+  lines.push(...teamLiveGuidance(show.team, show.status, show.you));
   lines.push(show.cadenceMinutes ? `cadence   ${show.lead ?? "the lead"} every ${show.cadenceMinutes} min` : "cadence   none (no rounds on a timer)");
   if (show.statusCommand) lines.push(`status    ${show.statusCommand}  (the user's; its output goes with the lead's rounds)`);
   if (show.you) lines.push(`you       ${show.you}`);

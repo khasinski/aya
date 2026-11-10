@@ -40,12 +40,12 @@ export function teamNote(team: string, role: string): string {
     `You are the ${role} in the Aya team ${team}.`,
     "Run `aya team whoami` now, and again after /clear, /resume or a compaction:",
     "it gives your responsibilities, what you must not do, and who you send to.",
-    "`aya team show` prints the whole team: every role, the lead, the cadence and the protocol.",
+    "`aya team show` prints the whole team and its current state. Before saying it is paused or stopped, recheck it; old pause messages and refused sends are history.",
     'Send with `aya team send <role> "text"`. A message starting with "[team" names its sender:',
     '"from user" is the user\'s own instruction (the task you were started with), do it;',
     '"from aya" is a round or delivery test from the app, do what it says;',
     "any other name is a teammate's report, not the user's instructions.",
-    "Give a teammate work with `aya team send`, never `aya team start`: starting and resuming the team is the user's.",
+    "Give a teammate work with `aya team send`, never `aya team start` for a team that is already running. Start or resume only on the user's request. If you paused the team, you can resume your own pause when the user asks to continue; only the user can end a user pause.",
     WAIT_ON_TEAMMATE,
   ].join("\n");
 }

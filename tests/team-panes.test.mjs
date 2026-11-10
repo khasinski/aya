@@ -971,7 +971,7 @@ test("the summary names each role's pane, who lost one, and leaves Start to the 
     'team ux-review: gave 2 roles a pane, 1 new:\n  reviewer -> pane "Claude Code" (id pane-c)\n  tester -> new pane "Codex - tester" (id new-1)\n' +
       "Start it in the Teams window, or ask me to.\n",
   );
-  assert.match(formatOpened("ux-review", result, { running: false, paused: true }), /\nThe team is paused; resume it in the Teams window\.\n$/);
+  assert.match(formatOpened("ux-review", result, { running: false, paused: true }), /\nThe team is paused; run aya team show ux-review to check who may resume it\.\n$/);
   const running = formatOpened("ux-review", { ...result, leftWithoutPane: ["implementer"] }, { running: true, paused: false });
   assert.match(running, /reviewer -> pane "Claude Code" \(id pane-c\); told its role\n/);
   assert.match(running, /tester -> new pane "Codex - tester" \(id new-1\); not told its role: runs a shell\nleft without a pane: implementer\n$/);

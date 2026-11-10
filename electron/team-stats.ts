@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseTeamFile, savedStatusCommand } from "./team-definition";
-import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, debugTurns, deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
+import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, debugTurns, deliveryState, goesStale, TEAM_FILES, unreadIn, teamRunStatus, type TeamRunStatus, type DeliveryNote } from "./team-records";
 import { betweenRoles, pendingWaits, roleLoad, type RoleWait } from "./team-supervision";
 import { digestLines, duration, parseRefused, roundDigest, type Digest } from "./team-digest";
 import { formatStatusForStats, statusForStats } from "./team-status-command";
@@ -33,7 +33,7 @@ export type Count = { key: string; count: number };
 
 export interface TeamStats {
   team: string;
-  status: { state: "running" | "paused" | "not started"; pausedBy: string | null };
+  status: TeamRunStatus;
   /** First to last entry of log.jsonl; it keeps messages #firstId..#lastId (older ones are trimmed). */
   runTime: { from: string; to: string; minutes: number; firstId: number; lastId: number } | null;
   /** First to last entry of the debug log, null without one. */
@@ -176,7 +176,6 @@ export function teamStats(team: string, files: TeamFiles, nowMs: number): TeamSt
 
   const logTimes = times(log);
   const debugTimes = times(events);
-  const paused = state.paused === true;
   const pairs = tally(log.map((m) => `${m.from}\0${m.to}`)).map(({ key, count }) => {
     const [from, to] = key.split("\0");
     return { from, to, count };
@@ -192,10 +191,7 @@ export function teamStats(team: string, files: TeamFiles, nowMs: number): TeamSt
 
   return {
     team,
-    status: {
-      state: paused ? "paused" : state.started === true ? "running" : "not started",
-      pausedBy: paused ? (typeof state.pausedBy === "string" && state.pausedBy ? state.pausedBy : "user") : null,
-    },
+    status: teamRunStatus(state),
     runTime: logTimes.length
       ? { from: logTimes[0], to: logTimes.at(-1)!, minutes: minutesBetween(Date.parse(logTimes[0]), Date.parse(logTimes.at(-1)!)), firstId: log[0].id, lastId: log.at(-1)!.id }
       : null,

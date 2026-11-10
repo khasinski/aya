@@ -167,6 +167,13 @@ A 22-round reviewer/implementer UX session hit:
   only. Closing a pane frees its role; restarting it keeps the role.
 - **Identity**: `aya team whoami` prints the pane's role, each route with
   what it carries, and the protocol; every team pane is reminded to run it.
+  It also reads the current team state and who paused it. `aya team show` includes
+  the same live state in text and in its JSON `status` field, matching `aya team stats`.
+  Before claiming the team is stopped or paused, recheck it; old pause messages and
+  refused sends describe history. If it is running, continue assigned work with
+  `aya team send`, without starting or resuming it again. Starting or resuming needs
+  the user's request: the role that paused the team can resume its own pause, while
+  only the user can end a user pause. Reading these commands does not change state.
 - **The whole team**: `aya team show [<team>] [--json]` prints every role with
   its responsibilities, must-not and routes, which role leads, the cadence, the
   protocol and the status command line, read-only. It shows the copy saved in
