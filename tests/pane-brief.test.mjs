@@ -210,7 +210,12 @@ for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
           const gap = await gapOf({ team: "ux-review", role: now });
           if (!takesNote) assert.equal(gap, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
           else if (startedAs === now) assert.equal(gap, null);
-          else if (startedAs === null) assert.match(gap, /^This agent started before it had this role and can lose it in a long session\. To keep it, (click Restart|pick a new session for this role in its pane list)\.$/);
+          else if (startedAs === null) {
+            if (agent === "codex") {
+              assert.match(gap, /It can run `aya team whoami`/);
+              assert.match(gap, /Restart resumes this Codex session and does not remove this notice/);
+            } else assert.match(gap, /^This agent started before it had this role and can lose it in a long session\. To keep it, click Restart\.$/);
+          }
           // Aya tells a pane its role at Start and when it is given one; the agent reads it with whoami.
           else assert.equal(gap, null, `a pane that started as ${startedAs} needs nothing to play ${now}`);
         }));
@@ -231,6 +236,27 @@ for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
       assert.deepEqual(report.restartable, takesNote && agent !== "codex" ? ["tester"] : []);
     }));
 }
+
+test("a Codex session started without a role becomes informational after this pane reads its current role", () =>
+  withRig(presetOf("codex"), null, async ({ deps, start }) => {
+    await start("p1");
+    const original = await deps.records.get("p1");
+    const project = { slug: "g", tabs: [{ id: "p1", presetId: "p", name: "Codex" }] };
+    const report = (read) => roleNoteReport(project, "ux-review", { tester: "p1" }, deps, { running: true, read });
+    for (const read of [{}, { p1: "implementer" }, { other: "tester" }]) {
+      const before = await report(read);
+      assert.equal(before.roleNotes.tester.severity, "action");
+      assert.match(before.roleNotes.tester.text, /It can run `aya team whoami`/);
+      assert.deepEqual(before.restartable, []);
+    }
+    const after = await report({ p1: "tester" });
+    assert.equal(after.roleNotes.tester.severity, "info");
+    assert.match(after.roleNotes.tester.text, /has read the current role and can continue/);
+    assert.match(after.roleNotes.tester.text, /whoami` again after \/compact or \/resume/);
+    assert.match(after.roleNotes.tester.text, /\/compact shortens history; it does not add startup instructions/);
+    assert.deepEqual(after.restartable, []);
+    assert.deepEqual(await deps.records.get("p1"), original, "reading the role does not rewrite the historical launch record");
+  }));
 
 // A pane that started as another role and has not read this one: in a running team Restart is offered (a held
 // delivery test is not typed again); in a stopped or paused team the next Start tells it, so nothing is offered.

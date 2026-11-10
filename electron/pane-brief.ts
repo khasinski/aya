@@ -296,6 +296,19 @@ async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefD
     if (!context.running) return { text: `This agent started as ${launch.role.role}. Aya tells it this role at the next Start.`, severity: "info", restartFixes: false };
     return fix(`This agent started as ${launch.role.role} and has not read this role yet. If that stays, ${how}.`);
   }
+  if (codex) {
+    const blocked = cannot(await capabilityGap(tab, preset, deps));
+    if (blocked) return blocked;
+    const read = context?.read === current.role;
+    const guidance = read
+      ? 'It has read the current role and can continue. It should run `aya team whoami` again after /compact or /resume.'
+      : 'It can run `aya team whoami` to read the role now and again after /compact or /resume.';
+    return {
+      text: `This agent started before it had this role. ${guidance} Restart resumes this Codex session and does not remove this notice. /compact shortens history; it does not add startup instructions.`,
+      severity: read ? "info" : "action",
+      restartFixes: false,
+    };
+  }
   return cannot(await capabilityGap(tab, preset, deps)) ?? fix(`This agent started before it had this role and can lose it in a long session. To keep it, ${how}.`);
 }
 

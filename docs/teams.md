@@ -194,7 +194,16 @@ A 22-round reviewer/implementer UX session hit:
   Reloading the window or
   reconnecting to a running pane changes nothing: what a pane was told is
   recorded only when a process starts. A resumed Codex session keeps its first
-  note, so a changed role needs a new Codex session. A running pane with no
+  note. A Codex pane that started without a role can run `aya team whoami` itself
+  to read its current role and continue working. Once that pane has read the current
+  role, its notice is informational rather than an action warning. Run whoami again
+  after `/compact` or `/resume`. Restart resumes the same session and does not clear
+  this notice; `/compact` shortens history and does not add startup instructions.
+  A new session starts with the role, but is not required just to continue working.
+  Follow-up: have Aya arrange and verify role refresh after resume or compaction,
+  so recovery does not depend on the user starting another session. This automatic
+  lifecycle refresh is not implemented yet.
+  A running pane with no
   record of its start (one from before Aya kept records) shows "started before
   Aya recorded what it was told", whichever CLI it runs. A
   CLI with no channel, a command that is not a single simple command (`cd x && claude`),
