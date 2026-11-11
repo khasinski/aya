@@ -95,6 +95,7 @@ import {
   calculateVisibleTerminalIds,
 } from "./terminal-visibility";
 import {
+  BUILTIN_BOARD,
   WAITING_ON,
   type Snippet,
   type Preset,
@@ -105,6 +106,7 @@ import {
   type Theme,
   type UpdateStatus,
 } from "./types";
+import { PRESET_ID_BOARD } from "./preset-ids";
 
 // Cap on preset suggestions offered during repo preset import.
 const MAX_SUGGESTED_PRESETS = 8;
@@ -220,6 +222,8 @@ export function App() {
     setLayoutMode,
     harnessSearchEnabled,
     setHarnessSearchEnabled,
+    kanbanEnabled,
+    setKanbanEnabled,
     terminalSoundsEnabled,
     setTerminalSoundsEnabled,
     statusRailCollapsed,
@@ -632,6 +636,7 @@ export function App() {
     forceRestartTerminal,
     openShellTab,
     openMachineTerminal,
+    toggleProjectBoard,
   } = useTerminalActions({
     projectFallbacks,
     activeProjectId,
@@ -1193,6 +1198,9 @@ export function App() {
   const startWorktrees = useCallback<NonNullable<React.ComponentProps<typeof Sidebar>['onStartWorktrees']>>((projectId, preset, checkouts, prompt) => {
     for (const checkout of checkouts) launchTerminal(preset, checkout.path, undefined, prompt, projectId);
   }, [launchTerminal]);
+  const startCardInNewPane = useCallback((preset: Preset, prompt: string, projectSlug: string) => {
+    launchTerminal(preset, undefined, undefined, prompt, projectSlug);
+  }, [launchTerminal]);
   const statusRailNode = useMemo(() => <StatusRail projects={projects} terminals={terminals} collapsed={statusRailCollapsed} onCollapsedChange={setStatusRailCollapsed} onSelectTerminal={focusTerminalFromNotification} />, [projects, terminals, statusRailCollapsed, setStatusRailCollapsed, focusTerminalFromNotification]);
   return (
     <div
@@ -1268,6 +1276,7 @@ export function App() {
             headerSlot={layoutMode === "stacked" ? paneHeaderSlot : null}
             resizeSplit={resizeSplit}
             projectTerminals={projectTerminals}
+            onStartCardInNewPane={startCardInNewPane}
           />
         );
         const sidebarNode = (
@@ -1306,6 +1315,7 @@ export function App() {
             onSplitBelow={splitTerminalBelow}
             onRemoveFromSplit={removeTerminalFromSplit}
             onWorktreeDialogOpenChange={setWorktreeDialogOpen}
+            kanbanEnabled={kanbanEnabled}
             statusRail={statusRailNode}
           />
         );
@@ -1334,6 +1344,8 @@ export function App() {
               onNewProject={showNewProjectModal}
               onCloseProject={closeProject}
               onMoveProjectToWindow={moveProjectToWindow}
+              onToggleProjectBoard={kanbanEnabled ? toggleProjectBoard : undefined}
+              kanbanEnabled={kanbanEnabled}
               onRenameProject={renameProject}
               onReorderProjects={reorderProjects}
               onOpenSearch={openSearch}
@@ -1382,6 +1394,7 @@ export function App() {
               onNewProject={showNewProjectModal}
               onCloseProject={closeProject}
               onMoveProjectToWindow={moveProjectToWindow}
+              onToggleProjectBoard={kanbanEnabled ? toggleProjectBoard : undefined}
               onRenameProject={renameProject}
               onReorderProjects={reorderProjects}
               onOpenSearch={openSearch}
@@ -1505,10 +1518,14 @@ export function App() {
           }}
           onRunPreset={(presetId) => {
             if (updatePreparing) return;
-            const preset = presets.find((p) => p.id === presetId);
+            const preset =
+              presetId === PRESET_ID_BOARD
+                ? BUILTIN_BOARD
+                : presets.find((p) => p.id === presetId);
             if (preset) launchTerminal(preset);
           }}
           launchDisabled={updatePreparing}
+          kanbanEnabled={kanbanEnabled}
           onClose={() => setShowSearch(false)}
         />
       )}
@@ -1589,6 +1606,8 @@ export function App() {
           onLayoutModeChange={setLayoutMode}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
+          kanbanEnabled={kanbanEnabled}
+          onKanbanEnabledChange={setKanbanEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}
           onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
           terminalSoundOverrides={terminalSoundOverrides}

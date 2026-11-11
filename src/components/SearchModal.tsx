@@ -1,6 +1,7 @@
 import { useModalFocus } from './useModalFocus';
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BUILTIN_BOARD,
   type BufferSearchHit,
   getPreset,
   type Preset,
@@ -28,6 +29,7 @@ interface Props {
   onSelectTerminal: (slug: string, terminalId: string) => void;
   onRunPreset: (presetId: string) => void;
   launchDisabled?: boolean;
+  kanbanEnabled?: boolean;
   onClose: () => void;
 }
 
@@ -200,6 +202,7 @@ function buildResults(
   presets: Preset[],
   lastActivity: Record<string, number>,
   contentHits: BufferSearchHit[],
+  kanbanEnabled: boolean,
 ): SearchResult[] {
   const q = query.trim().toLowerCase();
   const out: SearchResult[] = [];
@@ -259,7 +262,11 @@ function buildResults(
   const tokens = q.split(/\s+/).filter((t) => t.length > 0);
 
   if (activeProject) {
-    for (const preset of presets) {
+    const candidatePresets =
+      !kanbanEnabled || activeProject.remote
+        ? presets
+        : [...presets, BUILTIN_BOARD];
+    for (const preset of candidatePresets) {
       const s = launcherAllTokens(preset, tokens);
       if (s > 0) {
         out.push({
@@ -376,6 +383,7 @@ export function SearchModal({
   onSelectTerminal,
   onRunPreset,
   launchDisabled = false,
+  kanbanEnabled = false,
   onClose,
 }: Props) {
   // Input value drives the field; query is the debounced version used for
@@ -426,6 +434,7 @@ export function SearchModal({
         presets,
         lastActivity,
         contentHits,
+        kanbanEnabled,
       ),
     [
       query,
@@ -437,6 +446,7 @@ export function SearchModal({
       presets,
       lastActivity,
       contentHits,
+      kanbanEnabled,
     ],
   );
 
@@ -500,6 +510,7 @@ export function SearchModal({
               presets,
               lastActivity,
               contentHits,
+              kanbanEnabled,
             )
           : results;
       const chosen = activeResults[selectedIndex] ?? activeResults[0];

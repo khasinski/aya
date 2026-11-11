@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
+  BUILTIN_BOARD,
   getPreset,
   type Preset,
   type TeamSummary,
@@ -9,6 +10,7 @@ import {
 import { useDragReorder } from "../hooks/useDragReorder";
 import { handleMenuNavigation, handleRovingItemKeyDown, isContextMenuKey, moveItem } from "../keyboard-navigation";
 import { paneRoles } from "../team-view";
+import { PRESET_ID_BOARD } from "../preset-ids";
 import { TerminalStatusDot } from "./TerminalStatusDot";
 import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
 import { WorktreeCreateDialog, WorktreeRemoveDialog } from "./WorktreeDialogs";
@@ -62,6 +64,7 @@ interface Props {
   teams?: TeamSummary[];
   onAssignTeamRole?: (team: string, role: string, paneId: string | null) => void;
   onWorktreeDialogOpenChange?: (open: boolean) => void;
+  kanbanEnabled?: boolean;
 }
 
 const NO_TEAMS: TeamSummary[] = [];
@@ -106,6 +109,7 @@ function SidebarImpl({
   teams = NO_TEAMS,
   onAssignTeamRole,
   onWorktreeDialogOpenChange,
+  kanbanEnabled = false,
 }: Props) {
   const roles = paneRoles(teams);
   // Right-click context menu state. Positioned at the cursor; closes on
@@ -402,8 +406,35 @@ function SidebarImpl({
 
   return (
     <nav aria-label="Terminals" className="aya-sidebar" style={{ width: sidebarWidth }}>
-      <div className="aya-sidebar-header">
+      <div className="aya-sidebar-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span>{terminals.length} terminals</span>
+        {kanbanEnabled && !projectRemote && (() => {
+          const boardTab = terminals.find((t) => t.presetId === PRESET_ID_BOARD);
+          return (
+            <button
+              type="button"
+              className="aya-kanban-sidebar-toggle"
+              title={
+                boardTab
+                  ? boardTab.id === activeId
+                    ? "Hide Kanban board"
+                    : "Show Kanban board"
+                  : "Open Kanban board for this project"
+              }
+              onClick={() => {
+                if (boardTab) {
+                  if (boardTab.id === activeId) onClose(boardTab.id);
+                  else onSelect(boardTab.id);
+                } else {
+                  onLaunch(BUILTIN_BOARD);
+                }
+              }}
+            >
+              <span style={{ color: "#58a6ff" }}>▦</span>
+              <span>Kanban</span>
+            </button>
+          );
+        })()}
       </div>
       <div className="aya-sidebar-list">
         {groups
@@ -494,6 +525,23 @@ function SidebarImpl({
                   <span className="aya-recent-menu-name">{preset.name}</span>
                 </button>
               ))}
+              {kanbanEnabled && !projectRemote && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="aya-recent-menu-item"
+                  disabled={updatePreparing}
+                  onClick={() => {
+                    setShowMobileLauncher(false);
+                    onLaunch(BUILTIN_BOARD);
+                  }}
+                >
+                  <span className="aya-launcher-btn-icon" style={{ color: BUILTIN_BOARD.color }}>
+                    {BUILTIN_BOARD.icon}
+                  </span>
+                  <span className="aya-recent-menu-name">{BUILTIN_BOARD.name}</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -530,6 +578,22 @@ function SidebarImpl({
               <span className="aya-launcher-btn-name">{p.name}</span>
             </button>
           ))}
+          {kanbanEnabled && !projectRemote && (
+            <button
+              className="aya-launcher-btn"
+              disabled={updatePreparing}
+              onClick={() => onLaunch(BUILTIN_BOARD)}
+              title="Open project Kanban board"
+            >
+              <span
+                className="aya-launcher-btn-icon"
+                style={{ color: BUILTIN_BOARD.color }}
+              >
+                {BUILTIN_BOARD.icon}
+              </span>
+              <span className="aya-launcher-btn-name">{BUILTIN_BOARD.name}</span>
+            </button>
+          )}
         </div>
         {statusRail}
       </div>
@@ -597,20 +661,22 @@ function SidebarImpl({
           >
             Rename terminal
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            className="aya-context-menu-item"
-            disabled={!!terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked}
-            title={terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? terminals.find(t=>t.id===menu.terminalId)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
-            onClick={() => {
-              onRestart(menu.terminalId);
-              closeMenu();
-            }}
-          >
-            Restart terminal{terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? " - host recovering" : ""}
-          </button>
+          {terminals.find((t) => t.id === menu.terminalId)?.presetId !== PRESET_ID_BOARD && (
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              className="aya-context-menu-item"
+              disabled={!!terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked}
+              title={terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? terminals.find(t=>t.id===menu.terminalId)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
+              onClick={() => {
+                onRestart(menu.terminalId);
+                closeMenu();
+              }}
+            >
+              Restart terminal{terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? " - host recovering" : ""}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

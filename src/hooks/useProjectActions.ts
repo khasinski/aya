@@ -1,4 +1,5 @@
 import { releaseSpawn } from "../spawnSession";
+import { PRESET_ID_BOARD } from "../preset-ids";
 import {
   useCallback,
   type Dispatch,
@@ -158,8 +159,11 @@ export function useProjectActions({
       (t) => t.projectSlug === slug,
     );
     const releaseAttachCloses = owned.map(t => cancelPendingTerminalAttach(t.id));
-    const kills = await Promise.allSettled(owned.map(async t => window.aya.ptyKill(t.id)))
-      .finally(() => releaseAttachCloses.forEach(release => release()));
+    const kills = await Promise.allSettled(
+      owned.map(async (t) =>
+        t.presetId === PRESET_ID_BOARD ? undefined : window.aya.ptyKill(t.id),
+      ),
+    ).finally(() => releaseAttachCloses.forEach(release => release()));
     const refused = kills.flatMap((result, i) => result.status === "rejected" ? [`${owned[i].name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`] : []);
     if (refused.length) {
       const stopped = new Set(owned.filter((_t, i) => kills[i].status === "fulfilled").map(t => t.id));

@@ -13,10 +13,10 @@ import {
   projectSplitTree,
   resolveActiveLeafId,
 } from "../split-tree";
-import { PRESET_ID_SHELL } from "../preset-ids";
+import { PRESET_ID_BOARD, PRESET_ID_SHELL } from "../preset-ids";
 import { nextActiveTerminalId, projectLaunchCwd, shellPresetForTab } from "../terminal-actions";
 import { uuid } from "../uuid";
-import { getPreset, type Preset, type ProjectConfig, type ProjectEvent, type TerminalState, type WorkingTab } from "../types";
+import { BUILTIN_BOARD, getPreset, type Preset, type ProjectConfig, type ProjectEvent, type TerminalState, type WorkingTab } from "../types";
 
 interface TerminalActionsOptions {
   projectFallbacks: Record<string, string>;
@@ -78,6 +78,19 @@ export function useTerminalActions({
       if (!slug) return;
       const project = findProject(projectsRef.current, slug);
       if (!project) return;
+      if (preset.id === PRESET_ID_BOARD) {
+        const existing = Object.values(terminalsRef.current).find(
+          (t) => t.projectSlug === slug && t.presetId === PRESET_ID_BOARD,
+        );
+        if (existing) {
+          setActiveTabByProject((prev) => ({ ...prev, [slug]: existing.id }));
+          setSingleViewByProject((prev) => ({
+            ...prev,
+            [slug]: projectSplitTree(project) && prev[slug] ? existing.id : null,
+          }));
+          return;
+        }
+      }
       const id = uuid();
       const command = remoteTerminalCommand(project, preset);
       // Default the new tab's display name to the preset's current name (not
@@ -90,7 +103,7 @@ export function useTerminalActions({
         cwd:
           cwd ??
           (project.remote ? project.remote.directory : effectiveCwd(project)),
-        status: "running",
+        status: preset.id === PRESET_ID_BOARD ? "idle" : "running",
         bell: false,
         exitCode: null,
         ...(project.remote ? { remoteHost: project.remote.label } : {}),
@@ -153,7 +166,7 @@ export function useTerminalActions({
         detail: command,
       });
     },
-    [activeTabByProject, activeLeafByProject, appendProjectEvent, effectiveCwd, activeProjectIdRef, projectsRef, splitEnabledRef, setTerminals, setAllProjects, setProjects, setActiveTabByProject, setSingleViewByProject],
+    [activeTabByProject, activeLeafByProject, appendProjectEvent, effectiveCwd, activeProjectIdRef, projectsRef, terminalsRef, splitEnabledRef, setTerminals, setAllProjects, setProjects, setActiveTabByProject, setSingleViewByProject],
   );
 
   // aya team open / Apply panes: main picked the ids and assigns the roles
@@ -166,14 +179,14 @@ export function useTerminalActions({
           if (!project) throw new Error(`project ${projectSlug} is not open in this window`);
           const added: Record<string, TerminalState> = {};
           for (const pane of panes) {
-            if (!presetsRef.current.some((p) => p.id === pane.presetId)) throw new Error(`no preset "${pane.presetId}" in this window`);
+            if (pane.presetId !== PRESET_ID_BOARD && !presetsRef.current.some((p) => p.id === pane.presetId)) throw new Error(`no preset "${pane.presetId}" in this window`);
             added[pane.id] = {
               id: pane.id,
               projectSlug,
               presetId: pane.presetId,
               name: pane.name,
               cwd: effectiveCwd(project),
-              status: "running",
+              status: pane.presetId === PRESET_ID_BOARD ? "idle" : "running",
               bell: false,
               exitCode: null,
               ...(pane.teamLaunch ? { teamLaunch: true } : {}),
@@ -221,7 +234,11 @@ export function useTerminalActions({
       if (!t || closingTerminals.current.has(id)) return;
       closingTerminals.current.add(id);
       const releaseAttachClose = cancelPendingTerminalAttach(id);
-      try { await window.aya.ptyKill(id); }
+      try {
+        if (t.presetId !== PRESET_ID_BOARD) {
+          await window.aya.ptyKill(id);
+        }
+      }
       catch (error) { window.alert(terminalKillRefusal("close", t.name, error)); return; }
       finally { closingTerminals.current.delete(id); releaseAttachClose(); }
     // A closed tab plays no team role; a restart keeps it (same tab).
@@ -542,6 +559,21 @@ export function useTerminalActions({
     [launchTerminal, presetsRef],
   );
 
+  /** Show or hide the built-in Kanban board tab for a project. */
+  const toggleProjectBoard = useCallback(
+    (slug: string) => {
+      const existing = Object.values(terminalsRef.current).find(
+        (t) => t.projectSlug === slug && t.presetId === PRESET_ID_BOARD,
+      );
+      if (existing) {
+        void closeTerminal(existing.id);
+      } else {
+        launchTerminal(BUILTIN_BOARD, undefined, undefined, undefined, slug);
+      }
+    },
+    [closeTerminal, launchTerminal, terminalsRef],
+  );
+
   return {
     launchTerminal,
     closeTerminal,
@@ -552,5 +584,6 @@ export function useTerminalActions({
     forceRestartTerminal,
     openShellTab,
     openMachineTerminal,
+    toggleProjectBoard,
   };
 }

@@ -8,3 +8,5 @@ export const PRESET_ID_CODEX = "codex";
 export const PRESET_ID_GEMINI = "gemini";
 /** The plain shell: Cmd+T's fallback, and a clean exit is not a failure. */
 export const PRESET_ID_SHELL = "shell";
+/** Built-in per-project Kanban board pane. */
+export const PRESET_ID_BOARD = "board";

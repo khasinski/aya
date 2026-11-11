@@ -6,6 +6,7 @@ import {
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR, GROK_BRAND_COLOR } from "../colors";
 import {
+  BUILTIN_BOARD,
   getPreset,
   type GrokUsage,
   type Preset,
@@ -23,6 +24,7 @@ import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { paneRoles, unreadTotal } from "../team-view";
 import { TeamRoleChip, TeamRoleMenuItems, TeamUnread } from "./TeamRole";
 import { compactDir } from "../project-path";
+import { PRESET_ID_BOARD } from "../preset-ids";
 import { RecentProjectsMenu } from "./RecentProjectsMenu";
 import { ProjectContextMenu } from "./ProjectContextMenu";
 
@@ -56,6 +58,7 @@ interface Props {
     target: number | "new",
     at?: { x: number; y: number },
   ) => void;
+  onToggleProjectBoard?: (slug: string) => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   projectBadges?: Record<string, ProjectAttention>;
@@ -72,6 +75,7 @@ interface Props {
   onRenameTerminal: (id: string, name: string) => void;
   onLaunchTerminal: (preset: Preset) => void;
   updatePreparing?: boolean;
+  kanbanEnabled?: boolean;
   onReorderTerminals: (orderedIds: string[]) => void;
   onRestartTerminal: (id: string) => void;
   /** Teams per project slug: role chips, rail unread sums, Team role items. */
@@ -120,6 +124,7 @@ function ProjectsLeftLayoutImpl({
   onNewProject,
   onCloseProject,
   onMoveProjectToWindow,
+  onToggleProjectBoard,
   onRenameProject,
   onReorderProjects,
   projectBadges = {},
@@ -134,6 +139,7 @@ function ProjectsLeftLayoutImpl({
   onRenameTerminal,
   onLaunchTerminal,
   updatePreparing = false,
+  kanbanEnabled = false,
   onReorderTerminals,
   onRestartTerminal,
   teamsByProject = NO_TEAMS_BY_PROJECT,
@@ -536,6 +542,26 @@ function ProjectsLeftLayoutImpl({
                     <span className="aya-recent-menu-name">{p.name}</span>
                   </button>
                 ))}
+                {kanbanEnabled && !projects.find((pr) => pr.slug === activeProjectId)?.remote && (
+                  <button
+                    className="aya-recent-menu-item"
+                    role="menuitem"
+                    disabled={updatePreparing}
+                    onClick={() => {
+                      setShowLauncher(false);
+                      onLaunchTerminal(BUILTIN_BOARD);
+                    }}
+                    title="Open project Kanban board"
+                  >
+                    <span
+                      className="aya-launcher-btn-icon"
+                      style={{ color: BUILTIN_BOARD.color }}
+                    >
+                      {BUILTIN_BOARD.icon}
+                    </span>
+                    <span className="aya-recent-menu-name">{BUILTIN_BOARD.name}</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -939,6 +965,8 @@ function ProjectsLeftLayoutImpl({
     <>
       {projectMenu && (() => {
         const index = projects.findIndex((project) => project.slug === projectMenu.slug);
+        const menuProject = index >= 0 ? projects[index] : null;
+        const boardOpen = Boolean(menuProject?.tabs.some((t) => t.presetId === PRESET_ID_BOARD));
         return (
           <ProjectContextMenu
             menuRef={projectMenuRef}
@@ -948,6 +976,16 @@ function ProjectsLeftLayoutImpl({
             projectCount={projects.length}
             windows={projectMenu.windows}
             canMoveToWindow={!!onMoveProjectToWindow}
+            boardOpen={boardOpen}
+            canToggleBoard={Boolean(onToggleProjectBoard && menuProject && !menuProject.remote)}
+            onToggleBoard={
+              onToggleProjectBoard
+                ? () => {
+                    onToggleProjectBoard(projectMenu.slug);
+                    closeProjectMenu();
+                  }
+                : undefined
+            }
             onMove={(delta) => {
               setFocusProjectAfterMove({ slug: projectMenu.slug, index: index + delta });
               onReorderProjects(moveItem(projects.map((project) => project.slug), index, delta));
@@ -1002,20 +1040,22 @@ function ProjectsLeftLayoutImpl({
           >
             Rename terminal
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            className="aya-context-menu-item"
-            disabled={!!terminals.find(t=>t.id===menu.id)?.recoveryBlocked}
-            title={terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? terminals.find(t=>t.id===menu.id)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
-            onClick={() => {
-              onRestartTerminal(menu.id);
-              closeTerminalMenu();
-            }}
-          >
-            Restart terminal{terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? " - host recovering" : ""}
-          </button>
+          {terminals.find((t) => t.id === menu.id)?.presetId !== PRESET_ID_BOARD && (
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              className="aya-context-menu-item"
+              disabled={!!terminals.find(t=>t.id===menu.id)?.recoveryBlocked}
+              title={terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? terminals.find(t=>t.id===menu.id)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
+              onClick={() => {
+                onRestartTerminal(menu.id);
+                closeTerminalMenu();
+              }}
+            >
+              Restart terminal{terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? " - host recovering" : ""}
+            </button>
+          )}
           {/* Split actions are intentionally absent: this layout does not
               support split panes (see App's layoutMode gating). */}
           {onAssignTeamRole && (

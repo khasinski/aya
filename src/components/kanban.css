@@ -1,0 +1,617 @@
+.aya-kanban-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--aya-pane-bg);
+  color: var(--aya-pane-fg);
+  overflow: hidden;
+}
+
+.aya-kanban-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-bg);
+  color: var(--aya-pane-fg);
+  cursor: pointer;
+  line-height: 1.3;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.aya-kanban-sidebar-toggle:hover {
+  border-color: var(--aya-pane-subtle);
+  color: var(--aya-pane-strong);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.aya-kanban-toolbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.aya-kanban-source-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--aya-pane-header-border);
+  color: var(--aya-pane-subtle);
+  background: var(--aya-pane-bg);
+}
+
+.aya-kanban-source-badge--repo {
+  color: var(--aya-term-green);
+  border-color: rgba(86, 211, 100, 0.35);
+}
+
+.aya-kanban-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-family: inherit;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-bg);
+  color: var(--aya-pane-fg);
+  cursor: pointer;
+  line-height: 1.3;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.aya-kanban-btn:hover:not(:disabled) {
+  border-color: var(--aya-pane-subtle);
+  color: var(--aya-pane-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.aya-kanban-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.aya-kanban-btn--primary {
+  background: var(--accent, #40c463);
+  border-color: transparent;
+  color: #0b0d12;
+  font-weight: 600;
+}
+
+.aya-kanban-btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover, #34a853);
+  color: #0b0d12;
+}
+
+.aya-kanban-btn--danger:hover:not(:disabled) {
+  color: var(--status-error);
+  border-color: var(--status-error);
+}
+
+.aya-kanban-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--aya-diff-del-bg);
+  color: var(--aya-diff-del-fg);
+  border-bottom: 1px solid var(--aya-pane-header-border);
+  font-size: 12px;
+}
+
+.aya-kanban-columns {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  padding: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: stretch;
+}
+
+.aya-kanban-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  max-width: 340px;
+  flex: 1 0 270px;
+  background: var(--aya-pane-header-bg);
+  border: 1px solid var(--aya-pane-header-border);
+  border-radius: 10px;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.aya-kanban-column--drop-target {
+  border-color: var(--accent, #40c463);
+  box-shadow: 0 0 0 1px var(--accent, #40c463);
+}
+
+.aya-kanban-column-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--aya-pane-header-border);
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-column-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--aya-pane-subtle);
+}
+
+.aya-kanban-column-dot--todo {
+  background: #8b949e;
+}
+
+.aya-kanban-column-dot--in-progress {
+  background: #58a6ff;
+}
+
+.aya-kanban-column-dot--review {
+  background: #d29922;
+}
+
+.aya-kanban-column-dot--done {
+  background: #3fb950;
+}
+
+.aya-kanban-column-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.aya-kanban-column-count {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--aya-pane-bg);
+  color: var(--aya-pane-subtle);
+  border: 1px solid var(--aya-pane-header-border);
+}
+
+.aya-kanban-col-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--aya-pane-subtle);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.aya-kanban-col-iconbtn:hover {
+  background: var(--aya-pane-bg);
+  border-color: var(--aya-pane-header-border);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-col-iconbtn--danger:hover {
+  color: var(--status-error);
+  border-color: rgba(248, 81, 73, 0.35);
+}
+
+.aya-kanban-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.aya-kanban-empty-col {
+  color: var(--aya-pane-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 20px 8px;
+  border: 1px dashed var(--aya-pane-header-border);
+  border-radius: 8px;
+}
+
+.aya-kanban-col-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px 8px;
+  margin-top: 2px;
+  border-radius: 6px;
+  border: 1px dashed transparent;
+  background: transparent;
+  color: var(--aya-pane-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.aya-kanban-col-add-btn:hover {
+  color: var(--aya-pane-strong);
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--aya-pane-header-border);
+}
+
+/* ---- Card UI ---- */
+
+.aya-kanban-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px;
+  background: var(--aya-pane-bg);
+  border: 1px solid var(--aya-pane-header-border);
+  border-radius: 8px;
+  cursor: grab;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.12s ease;
+}
+
+.aya-kanban-card:hover {
+  border-color: rgba(139, 148, 158, 0.45);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18);
+}
+
+.aya-kanban-card--claimed {
+  border-left: 2.5px solid #58a6ff;
+}
+
+.aya-kanban-card--dragging {
+  opacity: 0.45;
+  transform: scale(0.98);
+}
+
+/* Card top meta row: ID on left, quick hover toolbar on right */
+.aya-kanban-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.aya-kanban-card-id {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--aya-pane-subtle);
+  letter-spacing: 0.01em;
+}
+
+.aya-kanban-card-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.aya-kanban-card:hover .aya-kanban-card-quick,
+.aya-kanban-card:focus-within .aya-kanban-card-quick {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.aya-kanban-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--aya-pane-subtle);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+
+.aya-kanban-iconbtn:hover {
+  background: var(--aya-pane-header-bg);
+  border-color: var(--aya-pane-header-border);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-iconbtn--danger:hover {
+  color: var(--status-error);
+  border-color: rgba(248, 81, 73, 0.35);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.aya-kanban-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--aya-pane-strong);
+  line-height: 1.38;
+  word-break: break-word;
+}
+
+.aya-kanban-card-desc {
+  font-size: 12px;
+  color: var(--aya-pane-subtle);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.42;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Card footer: claim/assignee badge on left + compact terminal menu trigger on right */
+.aya-kanban-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 3px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(139, 148, 158, 0.12);
+}
+
+.aya-kanban-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.aya-kanban-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aya-kanban-pill--claimed {
+  background: rgba(88, 166, 255, 0.12);
+  color: #79c0ff;
+  border: 1px solid rgba(88, 166, 255, 0.28);
+}
+
+.aya-kanban-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #58a6ff;
+  box-shadow: 0 0 6px rgba(88, 166, 255, 0.8);
+  flex-shrink: 0;
+}
+
+.aya-kanban-pill-release {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 1px;
+  margin-right: -3px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.aya-kanban-pill-release:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.aya-kanban-pill--assignee {
+  background: var(--aya-pane-header-bg);
+  color: var(--aya-pane-subtle);
+  border: 1px solid var(--aya-pane-header-border);
+  cursor: pointer;
+}
+
+.aya-kanban-pill--assignee:hover {
+  border-color: var(--aya-pane-subtle);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-pill--unassigned {
+  color: var(--aya-pane-muted);
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.aya-kanban-pill--unassigned:hover {
+  color: var(--aya-pane-subtle);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Terminal action trigger button & popover menu */
+.aya-kanban-menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.aya-kanban-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-header-bg);
+  color: var(--aya-pane-subtle);
+  cursor: pointer;
+  line-height: 1.35;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.aya-kanban-run-btn:hover,
+.aya-kanban-run-btn[aria-expanded="true"] {
+  border-color: var(--aya-pane-subtle);
+  color: var(--aya-pane-strong);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.aya-kanban-popover {
+  position: fixed;
+  z-index: 1200;
+  min-width: 210px;
+  max-width: 260px;
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--aya-pane-header-bg);
+  border: 1px solid var(--aya-pane-header-border);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.aya-kanban-popover-section {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--aya-pane-muted);
+  padding: 5px 8px 3px;
+}
+
+.aya-kanban-popover-divider {
+  height: 1px;
+  background: var(--aya-pane-header-border);
+  margin: 4px 2px;
+}
+
+.aya-kanban-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--aya-pane-fg);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aya-kanban-popover-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-popover-item--danger {
+  color: var(--status-error);
+}
+
+.aya-kanban-popover-item--danger:hover {
+  background: rgba(248, 81, 73, 0.12);
+  color: var(--status-error);
+}
+
+.aya-kanban-popover-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  font-size: 12px;
+  flex-shrink: 0;
+  color: var(--aya-pane-subtle);
+}
+
+/* Inline add/edit form */
+.aya-kanban-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--aya-pane-bg);
+  border: 1px solid var(--accent, #40c463);
+  border-radius: 8px;
+}
+
+.aya-kanban-input,
+.aya-kanban-textarea,
+.aya-kanban-select {
+  width: 100%;
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-header-bg);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-input:focus,
+.aya-kanban-textarea:focus {
+  outline: none;
+  border-color: var(--aya-pane-subtle);
+}
+
+.aya-kanban-textarea {
+  resize: vertical;
+  min-height: 54px;
+}
+
+.aya-kanban-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}

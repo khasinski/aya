@@ -349,6 +349,61 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary: "Clear a machine's claim when your work on it ends.",
   },
   {
+    command: "board",
+    usage: "aya board [--json] [--project slug]",
+    summary: "Show the project's Kanban board: columns, cards, assignees and terminal claims.",
+    notes: [
+      "Reads .aya/board.json in the project repository when present, else ~/.aya/boards/<slug>.json.",
+    ],
+  },
+  {
+    command: "board add",
+    usage: "aya board add title [--column col] [--description text] [--assignee name] [--project slug]",
+    summary: "Add a card to the project's Kanban board (defaults to the first column, Todo).",
+    example: 'aya board add "Fix race in reconnect" --column todo --description "Check pty-host retry"',
+  },
+  {
+    command: "board move",
+    usage: "aya board move id column [--project slug]",
+    summary: "Move a card to another column (by column id or title, e.g. in-progress, review, done).",
+    example: "aya board move t-1 in-progress",
+  },
+  {
+    command: "board edit",
+    usage: "aya board edit id [--title title] [--description text] [--assignee name] [--project slug]",
+    summary: "Update a card's title, description or assignee (--assignee none clears it).",
+  },
+  {
+    command: "board remove",
+    usage: "aya board remove id [--project slug]",
+    summary: "Remove a card from the project's Kanban board.",
+  },
+  {
+    command: "board claim",
+    usage: "aya board claim id [--replace] [--project slug]",
+    summary: "Claim a card for this terminal (AYA_TERMINAL_ID) and move it from Todo to In Progress.",
+    example: "aya board claim t-1",
+    notes: [
+      "Refused while another terminal holds the claim unless --replace is passed.",
+    ],
+  },
+  {
+    command: "board release",
+    usage: "aya board release id [--force] [--project slug]",
+    summary: "Release this terminal's claim on a card when work on it stops or finishes.",
+    example: "aya board release t-1",
+  },
+  {
+    command: "board column",
+    usage: "aya board column add|rename|remove ... [--project slug]",
+    summary: "Add, rename or remove a column on the project's Kanban board.",
+  },
+  {
+    command: "board export-repo",
+    usage: "aya board export-repo [--project slug]",
+    summary: "Save the project's Kanban board to .aya/board.json in the repository so the repo file takes priority.",
+  },
+  {
     command: "capabilities",
     usage: "aya capabilities",
     summary: "Print this list as JSON.",

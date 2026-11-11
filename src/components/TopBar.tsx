@@ -22,6 +22,7 @@ import type { SettingsTab } from "../settings-tabs";
 import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { compactDir } from "../project-path";
+import { PRESET_ID_BOARD } from "../preset-ids";
 import { RecentProjectsMenu } from "./RecentProjectsMenu";
 import { ProjectContextMenu } from "./ProjectContextMenu";
 
@@ -61,6 +62,7 @@ interface Props {
     target: number | "new",
     at?: { x: number; y: number },
   ) => void;
+  onToggleProjectBoard?: (slug: string) => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSearch: () => void;
@@ -97,6 +99,7 @@ function TopBarImpl({
   onNewProject,
   onCloseProject,
   onMoveProjectToWindow,
+  onToggleProjectBoard,
   onRenameProject,
   onReorderProjects,
   onOpenSearch,
@@ -567,6 +570,8 @@ function TopBarImpl({
       </div>
       {tabMenu && (() => {
         const index = projects.findIndex((project) => project.slug === tabMenu.slug);
+        const menuProject = index >= 0 ? projects[index] : null;
+        const boardOpen = Boolean(menuProject?.tabs.some((t) => t.presetId === PRESET_ID_BOARD));
         return (
           <ProjectContextMenu
             menuRef={tabMenuRef}
@@ -576,6 +581,16 @@ function TopBarImpl({
             projectCount={projects.length}
             windows={tabMenu.windows}
             canMoveToWindow={!!onMoveProjectToWindow}
+            boardOpen={boardOpen}
+            canToggleBoard={Boolean(onToggleProjectBoard && menuProject && !menuProject.remote)}
+            onToggleBoard={
+              onToggleProjectBoard
+                ? () => {
+                    onToggleProjectBoard(tabMenu.slug);
+                    closeTabMenu();
+                  }
+                : undefined
+            }
             onMove={(delta) => {
               setFocusProjectAfterMove({ slug: tabMenu.slug, index: index + delta });
               onReorderProjects(moveItem(projects.map((project) => project.slug), index, delta));

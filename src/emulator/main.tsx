@@ -20,6 +20,7 @@ import { pickScenario } from "./scenarios";
 import type { EmScenario } from "./scenario";
 import {
   APP_THEME_STORAGE_KEY,
+  KANBAN_STORAGE_KEY,
   LOCAL_SUMMARIES_STORAGE_KEY,
   LOCAL_SUMMARY_CACHE_STORAGE_KEY,
 } from "../storage-keys";
@@ -43,6 +44,10 @@ function seedPreferences(scenario: EmScenario, themeOverride: string | null) {
   // App chrome appearance. Emulator defaults to dark.
   const theme = themeOverride || scenario.theme || "dark";
   set(APP_THEME_STORAGE_KEY, theme);
+  set(
+    KANBAN_STORAGE_KEY,
+    scenario.projects.some((p) => p.board) ? "1" : "0",
+  );
 
   // Apple Intelligence: pre-seed the local-summary cache from the scenario so
   // tab/project summaries render exactly as if a provider had labelled them.

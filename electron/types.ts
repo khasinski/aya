@@ -37,6 +37,9 @@ export type {
 import type { SplitNode } from "./split-tree";
 import type { KnownHost, MachineSetup, MachineView } from "./machines";
 import type { ApiDiscovery } from "./machines-discovery";
+import type { BoardSnapshot, KanbanCard, KanbanClaim, KanbanColumn } from "./board";
+
+export type { BoardSnapshot, KanbanCard, KanbanClaim, KanbanColumn };
 
 export interface WorkingTab {
   id: string;
@@ -845,6 +848,21 @@ export interface AyaApi {
   deleteDiffComment(projectSlug: string, id: string): Promise<DiffComment[]>;
   clearSentDiffComments(projectSlug: string): Promise<DiffComment[]>;
   sendDiffComments(req: { projectSlug: string; targetId: string; checkout: string; commentIds: string[] }): Promise<DiffComment[]>;
+
+  // Kanban board (per project)
+  getBoard(projectSlug: string): Promise<BoardSnapshot>;
+  addBoardCard(req: { projectSlug: string; title: string; description?: string; columnId?: string; assignee?: string }): Promise<BoardSnapshot>;
+  updateBoardCard(req: { projectSlug: string; cardId: string; title?: string; description?: string; columnId?: string; assignee?: string | null }): Promise<BoardSnapshot>;
+  moveBoardCard(req: { projectSlug: string; cardId: string; columnId: string; index?: number }): Promise<BoardSnapshot>;
+  deleteBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
+  claimBoardCard(req: { projectSlug: string; cardId: string; paneId?: string; paneName: string; replace?: boolean }): Promise<BoardSnapshot>;
+  releaseBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
+  addBoardColumn(req: { projectSlug: string; title: string }): Promise<BoardSnapshot>;
+  renameBoardColumn(req: { projectSlug: string; columnId: string; title: string }): Promise<BoardSnapshot>;
+  deleteBoardColumn(req: { projectSlug: string; columnId: string }): Promise<BoardSnapshot>;
+  exportBoardToRepo(projectSlug: string): Promise<BoardSnapshot>;
+  sendBoardCardToPane(req: { projectSlug: string; cardId: string; targetId: string }): Promise<BoardSnapshot>;
+  onBoardChange(handler: (projectSlug: string) => void): () => void;
   /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
    *  git's own message (e.g. "a branch named 'x' already exists"). */
   createWorktree(req: {

@@ -12,6 +12,7 @@
 
 import type {
   AyaApi,
+  BoardSnapshot,
   ControlStatusUpdate,
   ProjectCollectionState,
   ProjectConfig,
@@ -30,6 +31,7 @@ interface Derived {
   state: ProjectCollectionState;
   gitBySlug: Map<string, ProjectGitInfo>;
   teamsBySlug: Map<string, TeamSummary[]>;
+  boardsBySlug: Map<string, BoardSnapshot>;
   tabsById: Map<string, { tab: EmTab; projectSlug: string; cwd: string }>;
   /** Rendered lines of each tab's content -> its Apple-Intelligence summary.
    *  Used by summarizeLocal to re-apply a terminal summary after App's prune
@@ -59,6 +61,7 @@ function derive(scenario: EmScenario): Derived {
   const homeDir = scenario.homeDir ?? "/Users/you";
   const gitBySlug = new Map<string, ProjectGitInfo>();
   const teamsBySlug = new Map<string, TeamSummary[]>();
+  const boardsBySlug = new Map<string, BoardSnapshot>();
   const tabsById = new Map<
     string,
     { tab: EmTab; projectSlug: string; cwd: string }
@@ -68,6 +71,7 @@ function derive(scenario: EmScenario): Derived {
   const projects: ProjectConfig[] = scenario.projects.map((p) => {
     if (p.git) gitBySlug.set(p.slug, p.git);
     if (p.teams) teamsBySlug.set(p.slug, p.teams);
+    if (p.board) boardsBySlug.set(p.slug, p.board);
     for (const tab of p.tabs) {
       tabsById.set(tab.id, {
         tab,
@@ -114,7 +118,7 @@ function derive(scenario: EmScenario): Derived {
   };
 
   void homeDir;
-  return { projects, state, gitBySlug, teamsBySlug, tabsById, termSummaries };
+  return { projects, state, gitBySlug, teamsBySlug, boardsBySlug, tabsById, termSummaries };
 }
 
 export function createEmulatorAya(scenario: EmScenario): AyaApi {
@@ -214,6 +218,192 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     deleteDiffComment: async () => { throw new Error("Saved comments are not available in the preview."); },
     clearSentDiffComments: async () => { throw new Error("Saved comments are not available in the preview."); },
     sendDiffComments: async () => { throw new Error("Sending comments is not available in the preview."); },
+    getBoard: async (projectSlug: string) => {
+      let b = d.boardsBySlug.get(projectSlug);
+      if (!b) {
+        b = {
+          version: 1,
+          projectSlug,
+          source: "user",
+          filePath: `~/.aya/boards/${projectSlug}.json`,
+          columns: [
+            { id: "todo", title: "Todo" },
+            { id: "in-progress", title: "In Progress" },
+            { id: "review", title: "Review" },
+            { id: "done", title: "Done" },
+          ],
+          cards: [],
+        };
+        d.boardsBySlug.set(projectSlug, b);
+      }
+      return b as never;
+    },
+    addBoardCard: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const nextNum =
+        b.cards.reduce((m, c) => {
+          const match = /^t-(\d+)$/.exec(c.id);
+          return match ? Math.max(m, Number(match[1])) : m;
+        }, 0) + 1;
+      const nowIso = new Date().toISOString();
+      const next: BoardSnapshot = {
+        ...b,
+        cards: [
+          ...b.cards,
+          {
+            id: `t-${nextNum}`,
+            columnId: req.columnId ?? b.columns[0]?.id ?? "todo",
+            title: req.title.trim(),
+            ...(req.description?.trim() ? { description: req.description.trim() } : {}),
+            ...(req.assignee?.trim() ? { assignee: req.assignee.trim() } : {}),
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          },
+        ],
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    updateBoardCard: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const nowIso = new Date().toISOString();
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.map((c) => {
+          if (c.id !== req.cardId) return c;
+          const updated = {
+            ...c,
+            ...(req.title !== undefined ? { title: req.title.trim() } : {}),
+            ...(req.columnId !== undefined ? { columnId: req.columnId } : {}),
+            updatedAt: nowIso,
+          };
+          if (req.description !== undefined) {
+            if (req.description.trim()) updated.description = req.description.trim();
+            else delete updated.description;
+          }
+          if (req.assignee !== undefined) {
+            if (req.assignee && req.assignee.trim()) updated.assignee = req.assignee.trim();
+            else delete updated.assignee;
+          }
+          return updated;
+        }),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    moveBoardCard: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const target = b.cards.find((c) => c.id === req.cardId);
+      if (!target) return b as never;
+      const updated = { ...target, columnId: req.columnId, updatedAt: new Date().toISOString() };
+      const next: BoardSnapshot = {
+        ...b,
+        cards: [...b.cards.filter((c) => c.id !== req.cardId), updated],
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    deleteBoardCard: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.filter((c) => c.id !== req.cardId),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    claimBoardCard: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const nowIso = new Date().toISOString();
+      const hasInProgress = b.columns.some((col) => col.id === "in-progress");
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.map((c) =>
+          c.id === req.cardId
+            ? {
+                ...c,
+                columnId: c.columnId === "todo" && hasInProgress ? "in-progress" : c.columnId,
+                assignee: req.paneName,
+                claim: { paneId: req.paneId, paneName: req.paneName, since: nowIso },
+                updatedAt: nowIso,
+              }
+            : c,
+        ),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    releaseBoardCard: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.map((c) => {
+          if (c.id !== req.cardId) return c;
+          const copy = { ...c, updatedAt: new Date().toISOString() };
+          delete copy.claim;
+          return copy;
+        }),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    addBoardColumn: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const id =
+        req.title
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || `col-${b.columns.length + 1}`;
+      const next: BoardSnapshot = {
+        ...b,
+        columns: [...b.columns, { id, title: req.title.trim() }],
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    renameBoardColumn: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        columns: b.columns.map((col) =>
+          col.id === req.columnId ? { ...col, title: req.title.trim() } : col,
+        ),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    deleteBoardColumn: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        columns: b.columns.filter((col) => col.id !== req.columnId),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    exportBoardToRepo: async (projectSlug) => {
+      const b = await api.getBoard(projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        source: "repo",
+        filePath: `/Users/you/Projects/${projectSlug}/.aya/board.json`,
+      };
+      d.boardsBySlug.set(projectSlug, next);
+      return next as never;
+    },
+    sendBoardCardToPane: async (req) => {
+      const target = d.tabsById.get(req.targetId);
+      const paneName = target?.tab.name ?? req.targetId;
+      return api.claimBoardCard({
+        projectSlug: req.projectSlug,
+        cardId: req.cardId,
+        paneId: req.targetId,
+        paneName,
+        replace: true,
+      });
+    },
+    onBoardChange: noopSubscription,
     listOtherWindows: async () => [] as never,
     adoptProjectInWindow: async () => {
       throw new Error("Multi-window is not available in the emulator");

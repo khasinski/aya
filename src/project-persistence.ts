@@ -1,3 +1,4 @@
+import { PRESET_ID_BOARD } from "./preset-ids";
 import type { ProjectConfig, TerminalState } from "./types";
 
 export function hydrateProjectTerminalStates(
@@ -14,7 +15,7 @@ export function hydrateProjectTerminalStates(
       name: tab.name,
       // Restore the tab's worktree cwd if it had one, else the project dir.
       cwd: tab.cwd ?? effectiveCwd,
-      status: "running",
+      status: tab.presetId === PRESET_ID_BOARD ? "idle" : "running",
       bell: false,
       exitCode: null,
       restored: true,

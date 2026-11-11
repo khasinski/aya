@@ -116,6 +116,24 @@ Usage:
                                      Say you use a machine (advisory; refused while
                                      someone else holds it, unless --replace)
   aya machines release id            Clear a machine's claim
+  aya board [--json] [--project slug]
+                                     Show the project's Kanban board
+  aya board add title [--column col] [--description text] [--assignee name] [--project slug]
+                                     Add a card to the project's Kanban board
+  aya board move id column [--project slug]
+                                     Move a card to another column
+  aya board edit id [--title title] [--description text] [--assignee name] [--project slug]
+                                     Edit a card's title, description or assignee
+  aya board remove id [--project slug]
+                                     Remove a card from the Kanban board
+  aya board claim id [--replace] [--project slug]
+                                     Claim a card for this terminal
+  aya board release id [--force] [--project slug]
+                                     Release a card's terminal claim
+  aya board column add|rename|remove ... [--project slug]
+                                     Add, rename or remove a Kanban column
+  aya board export-repo [--project slug]
+                                     Save the project's board to .aya/board.json
   aya capabilities                   Print these commands as JSON, for agents
 EOF
 }
@@ -358,6 +376,14 @@ function requestFromArgs() {
   }
   if (kind === "rules-fetch") return { type: kind, url: process.argv[4], agent: process.argv[5], replace: process.argv[6] === "replace" };
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
+  if (kind === "board") {
+    return {
+      type: "board",
+      argv: process.argv.slice(4),
+      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      cwd: process.cwd(),
+    };
+  }
   if (kind === "machines") {
     const argv = process.argv.slice(4);
     let token;
@@ -832,6 +858,11 @@ case "$command" in
   machines)
     shift
     send_control machines "$@" 3<&0
+    ;;
+  board)
+    shift
+    [ -z "${AYA_TERMINAL_ID:-}" ] || wait_for_socket
+    send_control board "$@"
     ;;
   present)
     shift

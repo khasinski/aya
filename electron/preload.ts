@@ -209,6 +209,23 @@ const api: AyaApi = {
   deleteDiffComment: (projectSlug, id) => ipcRenderer.invoke("diff-comments:delete", projectSlug, id),
   clearSentDiffComments: (projectSlug) => ipcRenderer.invoke("diff-comments:clear-sent", projectSlug),
   sendDiffComments: (req) => ipcRenderer.invoke("diff-comments:send", req),
+  getBoard: (projectSlug) => ipcRenderer.invoke("board:get", projectSlug),
+  addBoardCard: (req) => ipcRenderer.invoke("board:add-card", req),
+  updateBoardCard: (req) => ipcRenderer.invoke("board:update-card", req),
+  moveBoardCard: (req) => ipcRenderer.invoke("board:move-card", req),
+  deleteBoardCard: (req) => ipcRenderer.invoke("board:delete-card", req),
+  claimBoardCard: (req) => ipcRenderer.invoke("board:claim-card", req),
+  releaseBoardCard: (req) => ipcRenderer.invoke("board:release-card", req),
+  addBoardColumn: (req) => ipcRenderer.invoke("board:add-column", req),
+  renameBoardColumn: (req) => ipcRenderer.invoke("board:rename-column", req),
+  deleteBoardColumn: (req) => ipcRenderer.invoke("board:delete-column", req),
+  exportBoardToRepo: (projectSlug) => ipcRenderer.invoke("board:export-repo", projectSlug),
+  sendBoardCardToPane: (req) => ipcRenderer.invoke("board:send-to-pane", req),
+  onBoardChange: (handler) => {
+    const listener = (_e: unknown, projectSlug: string) => handler(projectSlug);
+    ipcRenderer.on("board:changed", listener);
+    return () => ipcRenderer.removeListener("board:changed", listener);
+  },
   getGitRoot: (directory) => ipcRenderer.invoke("env:git-root", directory),
   getGitWorktreeStatus: (directory) =>
     ipcRenderer.invoke("env:git-worktree-status", directory),

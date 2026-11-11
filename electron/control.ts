@@ -29,6 +29,7 @@ import { AYA_HOME, CONTROL_SOCKET_PATH, IS_E2E_HEADLESS } from "./paths";
 import { quietWhenTesting } from "./native-ui-text";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
+import { handleBoardRequest } from "./board";
 import { callerProject, handleTeamAuthorRequest } from "./team-author";
 import { paneTeamRole } from "./team-files";
 import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
@@ -131,6 +132,8 @@ export interface ControlServerOptions {
   panePid?: (terminalId: string) => Promise<number | null | undefined>;
   /** Where aya machines keeps its registry, finds ~/.ssh/config and asks the user; by default the Aya config home, the user's home and Aya's dialog. */
   machines?: MachinesDeps;
+  /** Where aya board keeps user-level boards; defaults to AYA_HOME. */
+  boardHome?: string;
   /** What aya present / aya artifact run on: a store for TUI artifacts and the window that shows one; off without it. */
   tuiArtifacts?: { store: TuiArtifactStore; show: (artifact: GuiArtifact) => void };
   /** Brings a user screen-rule file in from an https address (aya rules fetch); off without it. */
@@ -574,6 +577,13 @@ async function handleRequest(
     const deps = options.machines ?? ayaMachinesDeps(AYA_HOME, os.homedir(), options.getWindow, options.listProjects);
     return { ...(await handleMachinesRequest(request, deps, pane, callerGone)) };
   }
+  if (request.type === "board") {
+    if (!options.listProjects) throw new Error("board control is not available");
+    return handleBoardRequest(request, caller.terminalId, {
+      ayaHome: options.boardHome ?? AYA_HOME,
+      listProjects: options.listProjects,
+    });
+  }
   if (request.type === "pane-list") {
     if (!options.listProjects) throw new Error("pane control is not available");
     const projects = await options.listProjects();
@@ -599,6 +609,12 @@ async function handleRequest(
     }
     // The presets and the install check below are this machine's, not the remote host's, as for aya team open.
     if (project.remote) throw new Error(`project ${project.slug} is remote; aya pane new works only on local projects; nothing was opened`);
+    if (request.presetId === "board") {
+      const name = (request.name && oneLine(request.name)) || "Kanban";
+      const pane = { id: host.newPaneId(), presetId: "board", name, teamLaunch: false };
+      await host.openPanes(project.slug, [pane]);
+      return { output: `${pane.id}\n` };
+    }
     const presets = await host.listPresets();
     const preset = presets.find((p) => p.id === request.presetId);
     if (!preset) throw new Error(`no preset "${request.presetId}"; presets: ${presets.map((p) => p.id).join(", ")}; nothing was opened`);

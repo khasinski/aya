@@ -11,6 +11,9 @@ export function ProjectContextMenu({
   projectCount,
   windows,
   canMoveToWindow,
+  boardOpen,
+  canToggleBoard,
+  onToggleBoard,
   onMove,
   onClose,
   onMoveToWindow,
@@ -24,6 +27,9 @@ export function ProjectContextMenu({
   windows: Array<{ id: number; activeProject: string | null }>;
   /** False when moving to another window is unavailable (no handler, or a remote project). */
   canMoveToWindow: boolean;
+  boardOpen?: boolean;
+  canToggleBoard?: boolean;
+  onToggleBoard?: () => void;
   onMove: (delta: -1 | 1) => void;
   onClose: () => void;
   onMoveToWindow: (target: "new" | number) => void;
@@ -39,6 +45,17 @@ export function ProjectContextMenu({
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={handleMenuNavigation}
     >
+      {canToggleBoard && onToggleBoard && (
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          className="aya-context-menu-item"
+          onClick={onToggleBoard}
+        >
+          {boardOpen ? "Hide Kanban board" : "Show Kanban board"}
+        </button>
+      )}
       <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => onMove(-1)}>Move left</button>
       <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= projectCount - 1} className="aya-context-menu-item" onClick={() => onMove(1)}>Move right</button>
       <button type="button" role="menuitem" tabIndex={-1} className="aya-context-menu-item aya-context-menu-item--danger" onClick={onClose}>Close project</button>

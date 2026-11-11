@@ -6,7 +6,7 @@
 // the local-summary cache so the sidebar shows a one-line label under each tab
 // and the top-bar tab shows the project label in place of its path.
 
-import type { TeamSummary, UsageAccount } from "../types";
+import type { BoardSnapshot, TeamSummary, UsageAccount } from "../types";
 import type { EmScenario } from "./scenario";
 
 const now = () => new Date().toISOString();
@@ -557,6 +557,184 @@ const focusScenario: EmScenario = {
   ],
 };
 
+const SAMPLE_KANBAN_BOARD: BoardSnapshot = {
+  version: 1,
+  projectSlug: "aya",
+  source: "user",
+  filePath: "~/.aya/boards/aya.json",
+  columns: [
+    { id: "todo", title: "Todo" },
+    { id: "in-progress", title: "In Progress" },
+    { id: "review", title: "Review" },
+    { id: "done", title: "Done" },
+  ],
+  cards: [
+    {
+      id: "t-1",
+      columnId: "done",
+      title: "Store board in ~/.aya/boards with .aya/board.json priority",
+      description: "Fallback to user config when no repo board file exists.",
+      assignee: "Claude",
+      createdAt: "2026-11-11T17:00:00.000Z",
+      updatedAt: "2026-11-11T17:30:00.000Z",
+    },
+    {
+      id: "t-2",
+      columnId: "in-progress",
+      title: "Add aya board CLI (list, add, move, claim, release)",
+      description: "Allow terminals to claim and release tasks directly from the shell.",
+      assignee: "Claude",
+      claim: {
+        paneId: "claude",
+        paneName: "Claude",
+        since: "2026-11-11T18:10:00.000Z",
+      },
+      createdAt: "2026-11-11T17:15:00.000Z",
+      updatedAt: "2026-11-11T18:10:00.000Z",
+    },
+    {
+      id: "t-3",
+      columnId: "in-progress",
+      title: "Rate-limit public API endpoints",
+      description: "Sliding-window limiter in src/web/rate-limit.ts.",
+      assignee: "Codex",
+      claim: {
+        paneId: "codex",
+        paneName: "Codex",
+        since: "2026-11-11T18:22:00.000Z",
+      },
+      createdAt: "2026-11-11T17:20:00.000Z",
+      updatedAt: "2026-11-11T18:22:00.000Z",
+    },
+    {
+      id: "t-4",
+      columnId: "review",
+      title: "Extract token verification into TokenService",
+      description: "All 24 auth tests passing on feat/token-service.",
+      assignee: "Claude",
+      createdAt: "2026-11-11T17:05:00.000Z",
+      updatedAt: "2026-11-11T18:05:00.000Z",
+    },
+    {
+      id: "t-5",
+      columnId: "todo",
+      title: "Add e2e test for repo board promotion",
+      description: "Verify Save to .aya/board.json switches badge to repo.",
+      createdAt: "2026-11-11T18:30:00.000Z",
+      updatedAt: "2026-11-11T18:30:00.000Z",
+    },
+    {
+      id: "t-6",
+      columnId: "todo",
+      title: "Support keyboard shortcuts for moving cards",
+      createdAt: "2026-11-11T18:35:00.000Z",
+      updatedAt: "2026-11-11T18:35:00.000Z",
+    },
+  ],
+};
+
+const kanbanScenario: EmScenario = {
+  name: "kanban",
+  platform: "darwin",
+  homeDir: "/Users/you",
+  usage: claudeAccounts,
+  codexUsage: codexAccounts,
+  activeProjectSlug: "aya",
+  projects: [
+    {
+      slug: "aya",
+      name: "aya",
+      directory: "/Users/you/Projects/aya",
+      git: { branch: "feat/kanban-board", dirty: 2 },
+      summary: "Built-in per-project Kanban board",
+      board: SAMPLE_KANBAN_BOARD,
+      activeTabId: "board",
+      singleViewTabId: "board",
+      tabs: [
+        {
+          id: "board",
+          presetId: "board",
+          name: "Kanban",
+        },
+        {
+          id: "claude",
+          presetId: "claude",
+          name: "Claude",
+          content: CLAUDE_DEFAULT_OUTPUT,
+          summary: "Working on t-2 (aya board CLI)",
+        },
+        {
+          id: "codex",
+          presetId: "codex",
+          name: "Codex",
+          content: CODEX_OUTPUT,
+          summary: "Claimed t-3 · sliding-window limiter",
+          status: "active",
+          statusText: "Running rate-limit tests",
+        },
+        {
+          id: "shell",
+          presetId: "shell",
+          name: "Shell",
+          content: SHELL_OUTPUT,
+          summary: "Auth test suite — 24 passed",
+        },
+      ],
+    },
+    {
+      slug: "webapp",
+      name: "webapp",
+      directory: "/Users/you/Projects/webapp",
+      git: { branch: "main", dirty: 0 },
+      summary: "Public API rate limiting",
+      tabs: [{ id: "web-shell", presetId: "shell", name: "Shell", content: "\x1b[2m$\x1b[0m " }],
+    },
+  ],
+};
+
+const kanbanSplitScenario: EmScenario = {
+  name: "kanban-split",
+  platform: "darwin",
+  homeDir: "/Users/you",
+  usage: claudeAccounts,
+  codexUsage: codexAccounts,
+  activeProjectSlug: "aya",
+  projects: [
+    {
+      slug: "aya",
+      name: "aya",
+      directory: "/Users/you/Projects/aya",
+      git: { branch: "feat/kanban-board", dirty: 2 },
+      summary: "Built-in per-project Kanban board",
+      board: {
+        ...SAMPLE_KANBAN_BOARD,
+        source: "repo",
+        filePath: "/Users/you/Projects/aya/.aya/board.json",
+      },
+      activeTabId: "board",
+      tabs: [
+        {
+          id: "board",
+          presetId: "board",
+          name: "Kanban",
+        },
+        {
+          id: "claude",
+          presetId: "claude",
+          name: "Claude",
+          content: [
+            CLAUDE_DEFAULT_OUTPUT,
+            "",
+            "\x1b[2m$\x1b[0m aya board claim t-2",
+            "claimed t-2 (in-progress) for Claude: Add aya board CLI (list, add, move, claim, release)",
+          ].join("\r\n"),
+          summary: "Claimed t-2 · aya board CLI",
+        },
+      ],
+    },
+  ],
+};
+
 export const SCENARIOS: Record<string, EmScenario> = {
   default: defaultScenario,
   busy: busyScenario,
@@ -564,6 +742,8 @@ export const SCENARIOS: Record<string, EmScenario> = {
   attention: attentionScenario,
   orchestration: orchestrationScenario,
   focus: focusScenario,
+  kanban: kanbanScenario,
+  "kanban-split": kanbanSplitScenario,
 };
 
 export function pickScenario(name: string | null): EmScenario {

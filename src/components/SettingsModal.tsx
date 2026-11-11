@@ -46,6 +46,8 @@ interface Props {
   onLayoutModeChange: (mode: LayoutMode) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
+  kanbanEnabled: boolean;
+  onKanbanEnabledChange: (enabled: boolean) => void;
   terminalSoundsEnabled: boolean;
   onTerminalSoundsEnabledChange: (enabled: boolean) => void;
   terminalSoundOverrides: Record<string, boolean>;
@@ -98,6 +100,8 @@ export function SettingsModal({
   onLayoutModeChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
+  kanbanEnabled,
+  onKanbanEnabledChange,
   terminalSoundsEnabled,
   onTerminalSoundsEnabledChange,
   terminalSoundOverrides,
@@ -315,6 +319,8 @@ export function SettingsModal({
                 onLayoutModeChange={onLayoutModeChange}
                 harnessSearchEnabled={harnessSearchEnabled}
                 onHarnessSearchEnabledChange={onHarnessSearchEnabledChange}
+                kanbanEnabled={kanbanEnabled}
+                onKanbanEnabledChange={onKanbanEnabledChange}
                 usageHook={usageHook}
                 disableUsageHook={disableUsageHook}
                 consentOpenerRef={consentOpenerRef}

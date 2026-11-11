@@ -131,6 +131,8 @@ import { captureIpcHandlers } from "./ipc/web-capture";
 import { registerEnvIpc } from "./ipc/env-ipc";
 import { registerGitStatusQuitGuard } from "./git-status-quit";
 import { registerDiffCommentsIpc } from "./ipc/diff-comments-ipc";
+import { registerBoardIpc } from "./ipc/board-ipc";
+import { onBoardChanged } from "./board";
 import { registerCiChecksIpc } from "./ipc/ci-checks-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
 import { registerSystemIpc } from "./ipc/system-ipc";
@@ -879,6 +881,22 @@ function registerIpc(): TeamRunner {
       },
     }, projectSlug, terminalId, text),
   });
+  registerBoardIpc({
+    ipcMain,
+    ayaHome: AYA_HOME,
+    listProjects: () => listProjects(),
+    sendToPane: (projectSlug, terminalId, text) => sendPaneTextThroughControl({
+      listProjects: () => listProjects(),
+      writePane: (id, data) => ptyHost.write(id, data),
+      writePaneChecked: (id, data, context) => userRuleInput.write("direct", id, data, context, context.cancelled),
+      paneHold: (id) => userRulePanes.holdReason(id),
+      paneInputProtection: async (id, pasted, cancelled) => {
+        if (userRuleInput.configured()) return userRuleInput.protection(id, pasted, cancelled);
+        const hold = await userRulePanes.holdReason(id, pasted);
+        return isUserOnlyHold(hold) ? hold : null;
+      },
+    }, projectSlug, terminalId, text),
+  });
   registerCiChecksIpc({
     ipcMain,
     listProjects: () => listProjects(),
@@ -1131,6 +1149,10 @@ app.whenReady().then(async () => {
     eachAyaWindow((win) => win.webContents.send("omarchy:changed"));
   });
   app.once("before-quit", stopOmarchyWatch);
+  const stopBoardWatch = onBoardChanged((projectSlug) => {
+    eachAyaWindow((win) => win.webContents.send("board:changed", projectSlug));
+  });
+  app.once("before-quit", stopBoardWatch);
   if (updates.getUpdateStatus().supported) {
     setTimeout(() => {
       void updates.checkForUpdates();

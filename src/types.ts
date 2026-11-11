@@ -223,7 +223,38 @@ export interface ThemesFile {
 }
 
 import type { SplitNode } from "./split-tree";
-import { PRESET_ID_SHELL } from "./preset-ids";
+import { PRESET_ID_BOARD, PRESET_ID_SHELL } from "./preset-ids";
+
+export interface KanbanColumn {
+  id: string;
+  title: string;
+}
+
+export interface KanbanClaim {
+  paneId?: string;
+  paneName: string;
+  since: string;
+}
+
+export interface KanbanCard {
+  id: string;
+  columnId: string;
+  title: string;
+  description?: string;
+  assignee?: string;
+  claim?: KanbanClaim;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BoardSnapshot {
+  version: 1;
+  projectSlug: string;
+  source: "repo" | "user";
+  filePath: string;
+  columns: KanbanColumn[];
+  cards: KanbanCard[];
+}
 
 export interface WorkingTab {
   id: string;
@@ -1007,6 +1038,21 @@ export interface AyaApi {
   deleteDiffComment(projectSlug: string, id: string): Promise<DiffComment[]>;
   clearSentDiffComments(projectSlug: string): Promise<DiffComment[]>;
   sendDiffComments(req: { projectSlug: string; targetId: string; checkout: string; commentIds: string[] }): Promise<DiffComment[]>;
+
+  // Kanban board (per project)
+  getBoard(projectSlug: string): Promise<BoardSnapshot>;
+  addBoardCard(req: { projectSlug: string; title: string; description?: string; columnId?: string; assignee?: string }): Promise<BoardSnapshot>;
+  updateBoardCard(req: { projectSlug: string; cardId: string; title?: string; description?: string; columnId?: string; assignee?: string | null }): Promise<BoardSnapshot>;
+  moveBoardCard(req: { projectSlug: string; cardId: string; columnId: string; index?: number }): Promise<BoardSnapshot>;
+  deleteBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
+  claimBoardCard(req: { projectSlug: string; cardId: string; paneId?: string; paneName: string; replace?: boolean }): Promise<BoardSnapshot>;
+  releaseBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
+  addBoardColumn(req: { projectSlug: string; title: string }): Promise<BoardSnapshot>;
+  renameBoardColumn(req: { projectSlug: string; columnId: string; title: string }): Promise<BoardSnapshot>;
+  deleteBoardColumn(req: { projectSlug: string; columnId: string }): Promise<BoardSnapshot>;
+  exportBoardToRepo(projectSlug: string): Promise<BoardSnapshot>;
+  sendBoardCardToPane(req: { projectSlug: string; cardId: string; targetId: string }): Promise<BoardSnapshot>;
+  onBoardChange(handler: (projectSlug: string) => void): () => void;
   /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
    *  git's own message (e.g. "a branch named 'x' already exists"). */
   createWorktree(req: {
@@ -1229,12 +1275,21 @@ export const BUILTIN_SHELL: Preset = {
   command: "$SHELL",
 };
 
+export const BUILTIN_BOARD: Preset = {
+  id: PRESET_ID_BOARD,
+  name: "Kanban",
+  icon: "▦",
+  color: "#58a6ff",
+  command: "",
+};
+
 export function getPreset(presets: Preset[], id: string): Preset {
   const found = presets.find((p) => p.id === id);
   if (found) return found;
   // Special-case "shell" so terminals created via Cmd+T always render with a
   // sensible icon/name even if the user deleted their shell preset.
   if (id === PRESET_ID_SHELL) return BUILTIN_SHELL;
+  if (id === PRESET_ID_BOARD) return BUILTIN_BOARD;
   return MISSING_PRESET;
 }
 

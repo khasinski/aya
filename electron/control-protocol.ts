@@ -106,6 +106,8 @@ export type ControlRequest =
   | { type: "capabilities" }
   // aya machines: argv as typed after "machines".
   | { type: "machines"; argv: string[]; user?: string; token?: string }
+  // aya board: argv as typed after "board".
+  | { type: "board"; argv: string[]; projectSlug?: string; cwd?: string }
   | TeamRequest
   | TeamAuthorRequest
   | TeamShowRequest
@@ -247,6 +249,11 @@ export function parseControlRequest(value: unknown): ControlRequest {
     if (!argv.every((a): a is string => typeof a === "string")) throw new Error("machines.argv must be strings");
     if (value.token !== undefined && typeof value.token !== "string") throw new Error("machines token input must be text");
     return { type, argv, user: optionalString(value.user), ...(typeof value.token === "string" ? { token: value.token } : {}) };
+  }
+  if (type === "board") {
+    const argv = Array.isArray(value.argv) ? value.argv : [];
+    if (!argv.every((a): a is string => typeof a === "string")) throw new Error("board.argv must be strings");
+    return { type, argv, ...scope };
   }
   if (type === "notify") {
     const body = optionalString(value.body);

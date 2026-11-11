@@ -1,6 +1,7 @@
 import { memo, useCallback, useRef, type RefObject } from "react";
 import { guiSupportedAgent } from "../agentPreset";
 import { emptyProjectPaneTitle, paneStyleFromRect } from "../pane-grid";
+import { PRESET_ID_BOARD } from "../preset-ids";
 import { findProject, terminalSpawn } from "../project-helpers";
 import type { SettingsTab } from "../settings-tabs";
 import type { DividerRect, LeafRect } from "../split-tree";
@@ -16,6 +17,7 @@ import {
 } from "../types";
 import { SplitResizeHandle } from "./SplitResizeHandle";
 import { ConversationView } from "./ConversationView";
+import { KanbanView } from "./KanbanView";
 import type { GuiPaneStatus } from "../gui-status";
 import { TerminalView } from "./TerminalView";
 
@@ -65,6 +67,7 @@ interface Props {
   headerSlot?: HTMLElement | null;
   resizeSplit: (slug: string, splitId: string, ratio: number) => void;
   projectTerminals: TerminalState[];
+  onStartCardInNewPane?: (preset: Preset, prompt: string, projectSlug: string) => void;
 }
 
 export const PaneGrid = memo(function PaneGrid({
@@ -111,13 +114,14 @@ export const PaneGrid = memo(function PaneGrid({
   headerSlot = null,
   resizeSplit,
   projectTerminals,
+  onStartCardInNewPane,
 }: Props) {
   // A stable lookup, so a GUI pane (memoised) does not re-render whenever another terminal's status changes.
   const terminalsRef = useRef(terminals);
   terminalsRef.current = terminals;
   const listSiblingTerminals = useCallback((self: { id: string; projectSlug: string }) =>
     Object.values(terminalsRef.current)
-      .filter((t) => t.projectSlug === self.projectSlug && t.id !== self.id)
+      .filter((t) => t.projectSlug === self.projectSlug && t.id !== self.id && t.presetId !== PRESET_ID_BOARD)
       .map((t) => ({ id: t.id, name: t.name })), []);
   return (
     <div className={`aya-panes ${isSplit ? "aya-panes--split" : ""}`}>
@@ -210,6 +214,23 @@ export const PaneGrid = memo(function PaneGrid({
           : null;
         const colorsForTerminal: ThemeColors =
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
+        if (terminal.presetId === PRESET_ID_BOARD) {
+          return (
+            <KanbanView
+              key={terminal.id}
+              terminal={terminal}
+              paneStyle={paneStyle}
+              isActivePane={isSplit && activeLeafId === leafId}
+              onActivatePane={() =>
+                activeProjectId && setActiveSplitCell(activeProjectId, leafId)
+              }
+              listSiblingTerminals={listSiblingTerminals}
+              presets={activePresets}
+              onStartCardInNewPane={onStartCardInNewPane}
+              headerSlot={headerSlot}
+            />
+          );
+        }
         return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !activeProject?.remote ? null : (
           <TerminalView
             key={terminal.id}
@@ -265,6 +286,7 @@ export const PaneGrid = memo(function PaneGrid({
           : null;
         const colorsForTerminal: ThemeColors =
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
+        if (t.presetId === PRESET_ID_BOARD) return null;
         return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !project?.remote ? null : (
           <TerminalView
             key={t.id}

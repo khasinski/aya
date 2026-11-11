@@ -12,6 +12,7 @@
 import type { SplitNode } from "../split-tree";
 import { leaf } from "../split-tree";
 import type {
+  BoardSnapshot,
   ControlStatusLevel,
   GrokUsage,
   ProjectGitInfo,
@@ -59,6 +60,8 @@ export interface EmProject {
   split?: SplitNode;
   /** Optional team summaries for the project (drives role chips + status bar). */
   teams?: TeamSummary[];
+  /** Optional Kanban board snapshot for the project. */
+  board?: BoardSnapshot;
 }
 
 export interface EmScenario {

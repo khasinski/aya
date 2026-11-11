@@ -24,6 +24,8 @@ interface GeneralTabProps {
   onLayoutModeChange: (mode: LayoutMode) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
+  kanbanEnabled: boolean;
+  onKanbanEnabledChange: (enabled: boolean) => void;
   usageHook: UsageHookStatus | null;
   disableUsageHook: () => Promise<void>;
   consentOpenerRef: RefObject<HTMLElement | null>;
@@ -60,6 +62,8 @@ export function GeneralTab({
   onLayoutModeChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
+  kanbanEnabled,
+  onKanbanEnabledChange,
   usageHook,
   disableUsageHook,
   consentOpenerRef,
@@ -328,6 +332,43 @@ export function GeneralTab({
     Codex tabs: searches the session transcripts those agents already
     keep on disk for the tab's directory, so hits survive TUI redraws
     and restarts. Local files only; nothing is indexed or uploaded.
+    </SettingsRow>
+    <SettingsRow
+    icon="view_kanban"
+    title={
+    <>
+      Kanban board{" "}
+      <span className="aya-settings-experimental">Experimental</span>
+    </>
+    }
+    control={(
+    <div
+      className="aya-settings-segmented"
+      aria-label="Kanban board"
+    >
+      {([
+        [true, "On"],
+        [false, "Off"],
+      ] as const).map(([enabled, label]) => (
+        <button
+          key={String(enabled)}
+          type="button"
+          className={`aya-settings-segment ${
+            kanbanEnabled === enabled
+              ? "aya-settings-segment--active"
+              : ""
+          }`}
+          onClick={() => onKanbanEnabledChange(enabled)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+    )}
+    >
+    Built-in per-project Kanban board alongside your terminals and in
+    split view, stored in ~/.aya/boards/&lt;project&gt;.json (with
+    .aya/board.json repository priority) and controllable via aya board.
     </SettingsRow>
     <AyaWebRow isWeb={isWeb} />
     <SettingsRow
