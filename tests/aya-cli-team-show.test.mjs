@@ -167,6 +167,7 @@ test("team show --json: the same team as data, repo state included", async () =>
         assert.deepEqual(JSON.parse(stdout), {
           team: "ux-review",
           project: "game",
+          status: { state: "not started", pausedBy: null },
           you: "tester",
           lead: "tester",
           cadenceMinutes: 30,

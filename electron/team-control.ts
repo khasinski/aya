@@ -13,6 +13,7 @@ import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 import { clock, WALL_MINUTE_MS } from "./team-times";
 import { whoamiText } from "./team-whoami";
+import { teamLiveGuidance } from "./team-live-guidance";
 import { oneLine } from "./printable";
 
 export interface TeamControlDeps {
@@ -372,14 +373,15 @@ async function pauseByLead(m: Membership, reason: string | undefined, pause: ((s
   const { team, role, store } = m;
   if (team.lead === null) throw new Error(`team ${team.name} has no lead; pause it in the Teams window`);
   if (team.lead !== role.id) throw new Error(`only the lead (${team.lead}) can pause the team; ${role.id} reports to the lead`);
-  const state = await store.state();
-  if (state.paused) return `team ${team.name} is already paused\n`;
-  if (!state.running) throw new Error(`team ${team.name} is not running; nothing to pause`);
+  const state = await store.status();
+  if (state.state === "paused") return `team ${team.name} is already paused\n${teamLiveGuidance(team.name, state, role.id).join("\n")}\n`;
+  if (state.state !== "running") throw new Error(`team ${team.name} is not running; nothing to pause`);
   if (!pause) throw new Error(TEAMS_UNAVAILABLE);
   await pause(m.project.slug, team.name, role.id);
   const why = reason ? `: ${oneLine(reason)}` : ".";
   await systemLine(store, role.id, `${role.id} (the lead) paused the team${why}`);
-  return `team ${team.name} is paused; the user can resume it in the Teams window\n`;
+  const current = await store.status();
+  return `team ${team.name} is ${current.state}\n${teamLiveGuidance(team.name, current, role.id).join("\n")}\n`;
 }
 
 export async function handleTeamRequest(
@@ -393,7 +395,7 @@ export async function handleTeamRequest(
   const m = await membership(callerId, deps);
   if (request.type === "team-whoami") {
     await m.store.noteWhoami(m.role.id, askedAt, callerId).catch((err: unknown) => console.warn("[aya] team whoami time not recorded:", err));
-    return { output: whoamiText(m.team, m.role) };
+    return { output: whoamiText(m.team, m.role, await m.store.status()) };
   }
   if (request.type === "team-pause") return { output: await pauseByLead(m, request.text, pause) };
   if (request.type === "team-send") return { output: await send(m, request.role, request.text, deps) };

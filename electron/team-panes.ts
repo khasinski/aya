@@ -480,7 +480,7 @@ export function formatOpened(team: string, result: RolePanes, state: { running: 
   });
   const roles = result.panes.length === 1 ? "1 role" : `${result.panes.length} roles`;
   const left = result.leftWithoutPane.length ? [`left without a pane: ${result.leftWithoutPane.join(", ")}`] : [];
-  const tail = state.running ? [] : [state.paused ? "The team is paused; resume it in the Teams window." : "Start it in the Teams window, or ask me to."];
+  const tail = state.running ? [] : [state.paused ? `The team is paused; run aya team show ${team} to check who may resume it.` : "Start it in the Teams window, or ask me to."];
   return [`team ${team}: gave ${roles} a pane, ${fresh} new:`, ...lines, ...left, ...tail, ""].join("\n");
 }
 
