@@ -1,7 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.16.0 - 2026-11-11
 
+- Experimental per-project Kanban board (Settings > Kanban board): opens as a pane alongside terminals and in split
+  view, stores cards in `~/.aya/boards/<project>.json` with automatic priority for `.aya/board.json` when present in
+  the repository (plus one-click promotion to `.aya/board.json`), and is controllable from terminals via `aya board`
+  (`list`, `add`, `move`, `edit`, `remove`, `claim`, `release`, `column`, `export-repo`).
+- Teams: `aya team whoami`, `aya team show` (including `--json`) and `aya team pause` now report the live team state
+  (`running`, `paused`, `not started`) and pause ownership (`user` vs lead role), and Codex panes assigned a role after
+  session start explain how to refresh their role with `aya team whoami` (#321, #322).
+- Conversation GUI: fix turn-state races across subagent events and delayed start acknowledgements, preserve drafts and
+  attachments on rejected sends, and enable the Snippets drawer in GUI panes (#320).
 - A remote pane no longer shows output twice when two attaches overlap (a remount racing a reconnect): the manager
   delivers each byte by absolute offset once.
 - Artifacts for TUI panes: `aya present --title <t> (--html|--image|--table|--metric ...)` opens an HTML widget,
