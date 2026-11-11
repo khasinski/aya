@@ -10,7 +10,7 @@ import { debugLog, flushDebugLogs, MESSAGE_CHARS } from "./team-debug";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
 import { ID_RE, TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
 import { FRESH_PROGRESS, parseProgress, type TeamProgress } from "./team-progress";
-import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, debugTurns, deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
+import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, debugTurns, deliveryState, goesStale, TEAM_FILES, unreadIn, teamRunStatus, type TeamRunStatus, type DeliveryNote } from "./team-records";
 import type { TeamMessage } from "./types";
 import { parseRefused, type RefusedSend } from "./team-digest";
 
@@ -220,9 +220,12 @@ export class TeamStore {
 
   /** Who paused the team: "user" or a role; null when it is not paused. A pause from before this was kept is the user's. */
   async pausedBy(): Promise<string | null> {
-    const { paused, pausedBy } = await this.readState();
-    if (paused !== true) return null;
-    return typeof pausedBy === "string" && pausedBy ? pausedBy : TEAM_USER_SENDER;
+    return (await this.status()).pausedBy;
+  }
+
+  /** One current snapshot for agent-facing status and pause ownership. */
+  async status(): Promise<TeamRunStatus> {
+    return teamRunStatus(await this.readState());
   }
 
   /** running: started with Start team and not paused since. */

@@ -167,6 +167,13 @@ A 22-round reviewer/implementer UX session hit:
   only. Closing a pane frees its role; restarting it keeps the role.
 - **Identity**: `aya team whoami` prints the pane's role, each route with
   what it carries, and the protocol; every team pane is reminded to run it.
+  It also reads the current team state and who paused it. `aya team show` includes
+  the same live state in text and in its JSON `status` field, matching `aya team stats`.
+  Before claiming the team is stopped or paused, recheck it; old pause messages and
+  refused sends describe history. If it is running, continue assigned work with
+  `aya team send`, without starting or resuming it again. Starting or resuming needs
+  the user's request: the role that paused the team can resume its own pause, while
+  only the user can end a user pause. Reading these commands does not change state.
 - **The whole team**: `aya team show [<team>] [--json]` prints every role with
   its responsibilities, must-not and routes, which role leads, the cadence, the
   protocol and the status command line, read-only. It shows the copy saved in
@@ -189,10 +196,21 @@ A 22-round reviewer/implementer UX session hit:
   ..."; a pane that lost its role is listed as still carrying the note), and
   restarting the pane gives it the current note. What a pane got is kept as a
   digest of the exact text (brief and note), so an Aya update that rewords
-  either, or a brief toggled since, shows "started with an older brief". Reloading the window or
+  either, or a brief toggled since, shows that Aya's startup instructions changed; even a wording-only
+  change is enough. `aya team whoami` refreshes the role, but cannot replace the startup instructions.
+  Reloading the window or
   reconnecting to a running pane changes nothing: what a pane was told is
   recorded only when a process starts. A resumed Codex session keeps its first
-  note, so a changed role needs a new Codex session. A running pane with no
+  note. A Codex pane that started without a role can run `aya team whoami` itself
+  to read its current role and continue working. Once that pane has read the current
+  role, its notice is informational rather than an action warning. Run whoami again
+  after `/compact` or `/resume`. Restart resumes the same session and does not clear
+  this notice; `/compact` shortens history and does not add startup instructions.
+  A new session starts with the role, but is not required just to continue working.
+  Follow-up: have Aya arrange and verify role refresh after resume or compaction,
+  so recovery does not depend on the user starting another session. This automatic
+  lifecycle refresh is not implemented yet.
+  A running pane with no
   record of its start (one from before Aya kept records) shows "started before
   Aya recorded what it was told", whichever CLI it runs. A
   CLI with no channel, a command that is not a single simple command (`cd x && claude`),

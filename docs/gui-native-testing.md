@@ -50,3 +50,18 @@ report, rather than being simulated by fixtures.
 The ordinary Electron e2e tests cover the UI with controlled agent fixtures:
 reconnect preserving drafts/queues/artifacts, save failure and retry, command
 availability, and large widget collections surviving cache eviction and reload.
+
+For an end-to-end check of the actual Codex GUI, streaming, scrolling and the
+message queue, run the following locally. It makes real model calls using a copy
+of the account's `auth.json` in a temporary Codex home and an isolated project.
+The 120 earlier messages are seeded in Aya's view; they are not native Codex
+conversation history. The test captures frames and checks that reading an older
+message is not interrupted while steering and queued messages are sent. It also
+inserts a held snippet and sends an auto-run snippet through the queue.
+
+```sh
+npm run build && npm run build:test-src
+env -u CI AYA_REAL_GUI_TEST=1 AYA_GUI_USE_TOOLS=1 AYA_GUI_HISTORY_COUNT=120 \
+  AYA_GUI_SCROLL_HISTORY=1 AYA_GUI_STEER=1 AYA_GUI_SNIPPET=1 \
+  npx playwright test e2e/gui-live-flicker.spec.ts --project=isolated --workers=1
+```

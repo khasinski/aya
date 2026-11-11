@@ -287,7 +287,7 @@ async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefD
   if (launch.unknown) return cannot(await capabilityGap(tab, preset, deps)) ?? fix(unknown);
   if (launch.carried && sameRole(launch.role, current)) {
     const now = digest(carriedText(briefOn(preset, presetAgent(preset), current), current));
-    return launch.told && launch.told !== now ? fix(`This agent started with older instructions from Aya. To give it the current ones, ${how}.`) : null;
+    return launch.told && launch.told !== now ? fix(`Aya's startup instructions have changed since this agent started; even small wording changes count. To start with the current instructions, ${how}.`) : null;
   }
   if (launch.carried && launch.role) {
     if (!context || context.read === current.role) return null;
@@ -295,6 +295,19 @@ async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefD
     // says what to do if the pane never reads the role.
     if (!context.running) return { text: `This agent started as ${launch.role.role}. Aya tells it this role at the next Start.`, severity: "info", restartFixes: false };
     return fix(`This agent started as ${launch.role.role} and has not read this role yet. If that stays, ${how}.`);
+  }
+  if (codex) {
+    const blocked = cannot(await capabilityGap(tab, preset, deps));
+    if (blocked) return blocked;
+    const read = context?.read === current.role;
+    const guidance = read
+      ? 'It has read the current role and can continue. It should run `aya team whoami` again after /compact or /resume.'
+      : 'It can run `aya team whoami` to read the role now and again after /compact or /resume.';
+    return {
+      text: `This agent started before it had this role. ${guidance} Restart resumes this Codex session and does not remove this notice. /compact shortens history; it does not add startup instructions.`,
+      severity: read ? "info" : "action",
+      restartFixes: false,
+    };
   }
   return cannot(await capabilityGap(tab, preset, deps)) ?? fix(`This agent started before it had this role and can lose it in a long session. To keep it, ${how}.`);
 }

@@ -145,6 +145,76 @@ const RUNNING_ROLE = /the team is running; use aya team send/;
 const USER_PAUSED = /the user paused this team; only the user can resume it/;
 const LEAD_PAUSED = /the lead \(leader\) paused this team; only leader or the user can resume it/;
 
+ownerTest("the lead's pause reply explains that it can resume its own pause on the user's request", "none", async (w) => {
+  const reply = await w.call(CALLERS["the lead's pane"], { type: "team-pause", text: "The assigned task is complete" });
+  assert.equal(reply.error, undefined);
+  assert.match(reply.output, /^state\s+paused.*paused by leader/m);
+  assert.match(reply.output, /you can resume.*user.*asks/i);
+  assert.doesNotMatch(reply.output, /only the user can resume|resume it in the Teams window/i);
+  assert.deepEqual(await w.store.state(), { paused: true, running: false });
+});
+
+for (const command of ["team-whoami", "team-show"]) {
+  ownerTest(`${command} distinguishes a never-started team without starting it`, "never", async (w) => {
+    const reply = await w.call(CALLERS["the lead's pane"], { type: command, ...(command === "team-show" ? { json: false } : {}) });
+    assert.equal(reply.error, undefined);
+    assert.match(reply.output, /^state\s+not started\b/m);
+    assert.match(reply.output, /only on the user's request/);
+    assert.deepEqual(await w.store.state(), { paused: false, running: false });
+    assert.deepEqual(w.typed, []);
+  });
+
+  ownerTest(`${command} reports the current running state after resume, despite an old paused send refusal`, "lead", async (w) => {
+    const refused = await w.call(CALLERS["the lead's pane"], { type: "team-send", role: "implementer", text: "Continue the assigned task" });
+    assert.match(refused.error, /is paused/);
+    assert.equal((await w.start(null, "Continue the assigned task")).error, undefined);
+    assert.deepEqual(await w.store.state(), { paused: false, running: true });
+    assert.ok((await w.store.refusals()).some((r) => r.reason === "team paused"), "the stale refusal is still in history");
+    const before = { messages: (await w.store.log()).length, typed: w.typed.length };
+    const text = await w.call(CALLERS["the lead's pane"], { type: command, ...(command === "team-show" ? { json: false } : {}) });
+    assert.equal(text.error, undefined);
+    assert.match(text.output, /^state\s+running\b/m, "the agent must see live state instead of inferring it from historical pause messages");
+    assert.match(text.output, /already running|do not (?:start|resume)/i);
+    if (command === "team-show") {
+      const data = await w.call(CALLERS["the lead's pane"], { type: command, json: true });
+      assert.deepEqual(JSON.parse(data.output).status, { state: "running", pausedBy: null });
+    }
+    assert.deepEqual({ messages: (await w.store.log()).length, typed: w.typed.length }, before, "reading status cannot restart the team or send work");
+  });
+}
+
+ownerTest("a teammate reading a lead pause is not told it can resume that pause", "lead", async (w) => {
+  const reply = await w.call(CALLERS["another role's pane"], { type: "team-whoami" });
+  assert.equal(reply.error, undefined);
+  assert.match(reply.output, /Only leader or the user can resume/);
+  assert.doesNotMatch(reply.output, /you can resume/i);
+  assert.deepEqual(await w.store.state(), { paused: true, running: false });
+});
+
+for (const pausedBy of ["lead", "user"]) {
+  ownerTest(`whoami explains who can resume a current ${pausedBy} pause`, pausedBy, async (w) => {
+    const reply = await w.call(CALLERS["the lead's pane"], { type: "team-whoami" });
+    assert.equal(reply.error, undefined);
+    assert.match(reply.output, /^state\s+paused\b/m);
+    assert.match(reply.output, new RegExp(`paused by ${pausedBy === "lead" ? "leader" : "user"}`));
+    if (pausedBy === "lead") assert.match(reply.output, /you can resume.*user.*(?:asks|request)/i);
+    else assert.match(reply.output, /only the user can resume/i);
+    assert.deepEqual(await w.store.state(), { paused: true, running: false }, "reading guidance does not resume a paused team");
+    // The next user request may be handled by the same lead that paused the team.
+    const resumed = await w.start(CALLERS["the lead's pane"], "The user asks to continue with the next task");
+    if (pausedBy === "lead") {
+      assert.equal(resumed.error, undefined, "the lead can act on the user's request without asking for a Teams-window click");
+      assert.deepEqual(await w.store.state(), { paused: false, running: true });
+      const now = await w.call(CALLERS["the lead's pane"], { type: "team-whoami" });
+      assert.match(now.output, /^state\s+running\b/m);
+      assert.match(now.output, /already running/);
+    } else {
+      assert.match(resumed.error, USER_PAUSED, "a task request through a role cannot bypass a user pause");
+      assert.deepEqual(await w.store.state(), { paused: true, running: false });
+    }
+  });
+}
+
 /** What `aya team start <team> <task> --to implementer` ends as. */
 function expectedStart(pausedBy, caller) {
   if (SPOOFED.has(caller)) return UNPROVEN;

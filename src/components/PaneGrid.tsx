@@ -324,6 +324,10 @@ export const PaneGrid = memo(function PaneGrid({
             key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`}
             terminal={terminal}
             preset={preset}
+            snippets={snippets}
+            snippetsOpen={snippetDrawerTerminalId === terminal.id}
+            onSnippetsOpenChange={(open) => setSnippetDrawerTerminalId(open ? terminal.id : null)}
+            onOpenSettings={openSettings}
             hidden={!pane}
             paneStyle={pane ? paneStyleFromRect(isSplit, pane.rect) : undefined}
             isActivePane={Boolean(isSplit && pane && activeLeafId === pane.leafId)}

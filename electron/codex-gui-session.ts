@@ -79,6 +79,9 @@ export class CodexGuiSession {
     try {
       await this.rpc('initialize', { clientInfo: { name: 'aya_gui_poc', title: 'Aya GUI PoC', version: '0.1.0' }, capabilities: { experimentalApi: true } });
       this.write({ method: 'initialized', params: {} });
+      // Resume can stream notifications before its RPC response. The saved ID
+      // is already known, so filter other threads from the start of the resume.
+      if (resumeThreadId) this.threadId = resumeThreadId;
       const result = await this.rpc(resumeThreadId ? 'thread/resume' : 'thread/start', {
         ...(resumeThreadId ? { threadId: resumeThreadId, excludeTurns: true } : {}),
         cwd: this.cwd, ...(model ? { model } : {}), sandbox: unsafeMode ? 'danger-full-access' : 'workspace-write', approvalPolicy: unsafeMode ? 'never' : 'on-request', approvalsReviewer: 'user',
@@ -187,13 +190,14 @@ export class CodexGuiSession {
     if (this.busy) throw Error('Codex is working; stop the current turn first');
     if (!prompt.trim() || prompt.length > 100000) throw Error('Prompt must contain 1–100000 characters');
     this.busy = true;
+    const startedAtEpoch = this.samplingEpoch;
     const mode = options.plan === undefined ? null : { mode: options.plan ? 'plan' : 'default', settings: { model: options.model || this.model, reasoning_effort: null, developer_instructions: null } };
     const starting = this.rpc('turn/start', { threadId: this.threadId, ...(mode ? { collaborationMode: mode } : {}), ...(options.model ? { model: options.model } : {}), ...(options.effort ? { effort: options.effort } : {}), input: [{ type: 'text', text: prompt, text_elements: [] }, ...(options.images || []).map(file => ({ type: 'localImage', path: file }))] });
     this.startingTurn = starting;
     try {
       const result = await starting;
       if (this.busy && !this.turnId) this.turnId = text(object(result.turn).id) || this.turnId;
-    } catch (error) { this.busy = false; throw error; }
+    } catch (error) { if (this.samplingEpoch === startedAtEpoch) this.busy = false; throw error; }
     finally { if (this.startingTurn === starting) this.startingTurn = null; }
   }
   /** Answers a side question while a turn runs: fork the thread through its last finished turn into an ephemeral,
@@ -309,10 +313,15 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
       this.emit({ method: 'aya/notice', params: { message: `Unsupported Codex request: ${method}` } });
       return;
     }
+    // App-server can also publish notifications for a spawned agent's thread.
+    // Those turns must not change this pane's active turn or its conversation.
+    // Server requests above still need their own replies regardless of origin.
+    if (/^(?:turn\/|item\/|thread\/goal\/)/.test(method) && this.threadId && typeof params.threadId === 'string' && params.threadId !== this.threadId) return;
     if (method === 'turn/started') { this.samplingEpoch++; this.turnId = text(object(params.turn).id); this.busy = true; }
-    if (method === 'turn/completed') { this.samplingEpoch++;
-      for (const wake of this.samplingWaiters) wake();
+    if (method === 'turn/completed') {
       if (this.turnId && text(object(params.turn).id) && object(params.turn).id !== this.turnId) return;
+      this.samplingEpoch++;
+      for (const wake of this.samplingWaiters) wake();
       for (const [id, previous] of this.progresses) if (previous.status === 'running') {
         const progress: GuiProgress = { ...previous, status: object(params.turn).status === 'failed' ? 'failed' : 'paused', detail: previous.detail || 'Turn ended before this task was marked complete' };
         this.progresses.set(id, progress); this.emit({ method: 'aya/progress', params: { progress } });

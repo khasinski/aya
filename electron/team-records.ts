@@ -4,6 +4,20 @@
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import type { TeamMessage } from "./types";
 
+export interface TeamRunStatus {
+  state: "running" | "paused" | "not started";
+  pausedBy: string | null;
+}
+
+/** The live lifecycle state, never inferred from old messages or refused sends. */
+export function teamRunStatus(state: { paused?: unknown; started?: unknown; pausedBy?: unknown }): TeamRunStatus {
+  const paused = state.paused === true;
+  return {
+    state: paused ? "paused" : state.started === true ? "running" : "not started",
+    pausedBy: paused ? (typeof state.pausedBy === "string" && state.pausedBy ? state.pausedBy : "user") : null,
+  };
+}
+
 export const TEAM_FILES = {
   assignments: "assignments.json",
   state: "state.json",

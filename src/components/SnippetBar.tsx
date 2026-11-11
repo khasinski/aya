@@ -6,11 +6,10 @@ interface Props {
   snippets: Snippet[];
   open: boolean;
   onClose: () => void;
-  /** Called with the snippet to send. The caller writes its text to the PTY
-   *  (appending a carriage return for autoRun) and returns focus to the
-   *  terminal. */
+  /** The active pane inserts the snippet and submits it when autoRun is set. */
   onSend: (snippet: Snippet) => void;
   onOpenSettings: (tab?: SettingsTab) => void;
+  target?: "terminal" | "conversation";
 }
 
 function MaterialIcon({ name, className }: { name: string; className?: string }) {
@@ -25,7 +24,7 @@ function MaterialIcon({ name, className }: { name: string; className?: string })
   );
 }
 
-/** Slide-up drawer of saved snippets for the active terminal. Each row shows
+/** Slide-up drawer of saved snippets for the active pane. Each row shows
  *  the snippet's full text (not just its label) so the user can verify what a
  *  prompt does before sending it. */
 export function SnippetBar({
@@ -34,6 +33,7 @@ export function SnippetBar({
   onClose,
   onSend,
   onOpenSettings,
+  target = "terminal",
 }: Props) {
   useEffect(() => {
     if (!open || typeof window === "undefined") return;
@@ -101,7 +101,7 @@ export function SnippetBar({
           >
             Add some in Settings
           </button>{" "}
-          — saved text you can type into this terminal on demand.
+          — saved text you can {target === "conversation" ? "add to this conversation" : "type into this terminal"} on demand.
         </div>
       ) : (
         <div className="aya-snippetbar-list">
@@ -113,9 +113,9 @@ export function SnippetBar({
               className={`aya-snippet aya-snippet--${snippet.autoRun ? "run" : "hold"}`}
               onClick={() => onSend(snippet)}
               title={
-                snippet.autoRun
-                  ? "Type into terminal and run (Enter)"
-                  : "Type into terminal without running"
+                target === "conversation"
+                  ? snippet.autoRun ? "Add to message and send" : "Add to message without sending"
+                  : snippet.autoRun ? "Type into terminal and run (Enter)" : "Type into terminal without running"
               }
             >
               <span
