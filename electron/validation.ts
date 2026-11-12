@@ -18,6 +18,7 @@ import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, type SplitNode } f
 import { SESSION_ID_RE } from "./osc-extractor";
 import { assertSnippetCount, isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
 import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "./team-definition";
+import { normalizeBoardStart } from "./board-start";
 
 /** Persisted schema version for projects-state.json. */
 export const PROJECT_STATE_VERSION = 1;
@@ -133,6 +134,8 @@ function validateWorkingTab(value: unknown, name: string): WorkingTab {
   // precise `--resume <id>` to "whatever was latest".
   const cwd = optionalString(value.cwd, `${name}.cwd`);
   const sessionId = optionalString(value.sessionId, `${name}.sessionId`);
+  const initialBoardCard = normalizeBoardStart(value.initialBoardCard);
+  if (value.initialBoardCard !== undefined && !initialBoardCard) fail(`${name}.initialBoardCard`, "board startup intent");
   // Substituted into a spawn command on restore: re-check, don't trust the renderer.
   if (sessionId !== undefined && !SESSION_ID_RE.test(sessionId)) {
     fail(`${name}.sessionId`, "shell-safe session id");
@@ -143,6 +146,7 @@ function validateWorkingTab(value: unknown, name: string): WorkingTab {
     name: requireString(value.name, `${name}.name`),
     ...(cwd ? { cwd } : {}),
     ...(sessionId ? { sessionId } : {}),
+    ...(initialBoardCard ? { initialBoardCard } : {}),
     ...(value.sharedDir === true ? { sharedDir: true as const } : {}),
     ...(optionalFlag(value.teamLaunch, `${name}.teamLaunch`) ? { teamLaunch: true } : {}),
   };

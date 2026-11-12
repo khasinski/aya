@@ -132,6 +132,8 @@ Usage:
                                      Release a card's terminal claim
   aya board column add|rename|remove ... [--project slug]
                                      Add, rename or remove a Kanban column
+  aya board column move column --before|--after other-column [--project slug]
+                                     Change the order of Kanban columns
   aya board export-repo [--project slug]
                                      Save the project's board to .aya/board.json
   aya capabilities                   Print these commands as JSON, for agents

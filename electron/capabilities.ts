@@ -359,7 +359,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "board add",
     usage: "aya board add title [--column col] [--description text] [--assignee name] [--project slug]",
-    summary: "Add a card to the project's Kanban board (defaults to the first column, Todo).",
+    summary: "Add a card to the project's Kanban board (defaults to its current first column).",
     example: 'aya board add "Fix race in reconnect" --column todo --description "Check pty-host retry"',
   },
   {
@@ -367,6 +367,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     usage: "aya board move id column [--project slug]",
     summary: "Move a card to another column (by column id or title, e.g. in-progress, review, done).",
     example: "aya board move t-1 in-progress",
+    notes: ["Returning a claimed card to Todo or Backlog releases its claim and queues a stop message for its pane. Aya retries held deliveries; pending messages are visible on the board. An agent moving its own task is not sent a redundant stop message."],
   },
   {
     command: "board edit",
@@ -381,7 +382,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "board claim",
     usage: "aya board claim id [--replace] [--project slug]",
-    summary: "Claim a card for this terminal (AYA_TERMINAL_ID) and move it from Todo to In Progress.",
+    summary: "Claim a card for this terminal (AYA_TERMINAL_ID) and move it from Todo or Backlog to In Progress.",
     example: "aya board claim t-1",
     notes: [
       "Refused while another terminal holds the claim unless --replace is passed.",
@@ -397,6 +398,13 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     command: "board column",
     usage: "aya board column add|rename|remove ... [--project slug]",
     summary: "Add, rename or remove a column on the project's Kanban board.",
+  },
+  {
+    command: "board column move",
+    usage: "aya board column move column --before|--after other-column [--project slug]",
+    summary: "Reorder a column on the project's Kanban board.",
+    example: "aya board column move backlog --before todo",
+    notes: ["Column moves change only column order; card positions, claims and contents stay intact. Use column ids or quoted titles."],
   },
   {
     command: "board export-repo",

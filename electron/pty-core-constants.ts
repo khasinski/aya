@@ -6,6 +6,7 @@ export const MIN_PTY_COLS = 4;
 export const MIN_PTY_ROWS = 2;
 /** Exact legacy protocol error: clients use it to detect unsupported requests. */
 export const PTY_HOST_UNKNOWN_REQUEST = "unknown request";
+export const PTY_HOST_INPUT_UNCERTAIN = "PTY_HOST_INPUT_UNCERTAIN";
 export const CONTROL_SOCKET_NAME = "aya.sock";
 export const PTY_HOST_SOCKET_NAME = "pty-host.sock";
 export const REMOTE_SOCKET_NAME = "aya-remote.sock";

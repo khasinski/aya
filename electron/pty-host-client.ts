@@ -4,6 +4,7 @@ import { explainPaneSnapshot, unavailablePaneState, type PaneStateResult } from 
 import { prepareSpawn, watchAgentSession } from "./pty-prepare";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
+import { PTY_HOST_INPUT_UNCERTAIN } from "./pty-core-constants";
 import { getProcessCwd } from "./process-cwd";
 import type {VtSnapshot} from "./vt-mirror";
 import {validVtSnapshotFence, type VtSnapshotFence} from "./vt-snapshot-fence";
@@ -1152,7 +1153,7 @@ export class PtyHostClient {
     if(await this.sendRequest(socket,{id:0,type:"rule-policy-epoch",epoch:policyEpoch}).catch(()=>false)!==true)throw new Error("Screen rules could not be checked. This input was not sent.");
     const result = await this.sendRequest(socket,{id:0,type:"write-fenced",ptyId,data,fence,policyEpoch});
     if (result === true || result === false) return result;
-    throw new Error("Terminal input outcome is unknown. Check the pane before retrying; Aya did not resend it.");
+    throw Object.assign(new Error("Terminal input outcome is unknown. Check the pane before retrying; Aya did not resend it."), { code: PTY_HOST_INPUT_UNCERTAIN });
   }
   async checkSnapshot(ptyId: string, fence: VtSnapshotFence): Promise<boolean> {
     if (!validVtSnapshotFence(fence)) return false;
@@ -1700,7 +1701,8 @@ export class PtyHostClient {
       : {type:"no-session",ptyId}));
     for (const [, pending] of this.pending) {
       if((pending.type==="write"||pending.type==="write-fenced")&&pending.ptyId)this.uncertainInput.add(pending.ptyId);
-      pending.reject(new Error(pending.type==="write"||pending.type==="write-fenced"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));
+      const writing = pending.type === "write" || pending.type === "write-fenced";
+      pending.reject(Object.assign(new Error(writing ? "Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it." : "PTY host disconnected"), writing ? { code: PTY_HOST_INPUT_UNCERTAIN } : {}));
     }
     this.pending.clear();
     if(this.crashTask){this.crashAgain=true;return;}

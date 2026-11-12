@@ -2,12 +2,15 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { PRESET_ID_BOARD } from "../preset-ids";
+import { guiSupportedAgent } from "../agentPreset";
 import type {
   BoardSnapshot,
   KanbanCard,
@@ -31,21 +34,9 @@ interface Props {
   presets: Preset[];
   onStartCardInNewPane?: (
     preset: Preset,
-    prompt: string,
+    cardId: string,
     projectSlug: string,
-  ) => void;
-}
-
-function formatCardPrompt(card: KanbanCard, columnTitle: string): string {
-  const lines = [
-    `Kanban task ${card.id}: ${card.title}`,
-    `Status: ${columnTitle}`,
-  ];
-  if (card.assignee) lines.push(`Assignee: ${card.assignee}`);
-  if (card.description?.trim()) {
-    lines.push("", card.description.trim());
-  }
-  return lines.join("\n");
+  ) => Promise<BoardSnapshot>;
 }
 
 function cleanIpcError(err: unknown): string {
@@ -77,6 +68,17 @@ export const KanbanView = memo(function KanbanView({
   // Add column form state
   const [addingColumn, setAddingColumn] = useState(false);
   const [newColumnName, setNewColumnName] = useState("");
+  const [movingColumn, setMovingColumn] = useState(false);
+  const columnMovePending = useRef(false);
+  const columnsRef = useRef<HTMLDivElement>(null);
+  const columnToReveal = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (!columnToReveal.current) return;
+    columnsRef.current?.querySelector<HTMLElement>(`[data-testid="kanban-column-${CSS.escape(columnToReveal.current)}"]`)
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    columnToReveal.current = null;
+  }, [board]);
 
   // Rename column state
   const [renamingColId, setRenamingColId] = useState<string | null>(null);
@@ -97,9 +99,35 @@ export const KanbanView = memo(function KanbanView({
   // Card action popover state
   const [cardMenu, setCardMenu] = useState<{
     cardId: string;
-    x: number;
-    y: number;
   } | null>(null);
+  const cardMenuRef = useRef<HTMLDivElement>(null);
+  const cardMenuAnchor = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!cardMenu) return;
+    const menu = cardMenuRef.current;
+    const anchor = cardMenuAnchor.current;
+    if (!menu || !anchor) return;
+    const position = () => {
+      const trigger = anchor.getBoundingClientRect();
+      const { width, height } = menu.getBoundingClientRect();
+      const left = Math.max(8, Math.min(trigger.right - width, window.innerWidth - width - 8));
+      const below = trigger.bottom + 4;
+      const preferredTop = below + height <= window.innerHeight - 8 ? below : trigger.top - height - 4;
+      menu.style.left = `${left}px`;
+      menu.style.top = `${Math.max(8, Math.min(preferredTop, window.innerHeight - height - 8))}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(menu);
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, true);
+    };
+  }, [cardMenu]);
 
   // Drag state
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
@@ -162,6 +190,22 @@ export const KanbanView = memo(function KanbanView({
         title: trimmed,
       }),
     );
+  };
+
+  const handleMoveColumn = async (columnId: string, anchor: string, direction: "before" | "after") => {
+    if (columnMovePending.current) return;
+    columnMovePending.current = true;
+    setMovingColumn(true);
+    try {
+      await runAction(async () => {
+        const next = await window.aya.moveBoardColumn({ projectSlug: terminal.projectSlug, columnId, [direction]: anchor });
+        columnToReveal.current = columnId;
+        return next;
+      });
+    } finally {
+      columnMovePending.current = false;
+      setMovingColumn(false);
+    }
   };
 
   const handleRenameColumn = async (columnId: string) => {
@@ -267,14 +311,12 @@ export const KanbanView = memo(function KanbanView({
       setCardMenu(null);
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = Math.max(8, Math.min(rect.right - 220, window.innerWidth - 236));
-    const y = Math.min(rect.bottom + 4, window.innerHeight - 280);
-    setCardMenu({ cardId, x, y });
+    cardMenuAnchor.current = e.currentTarget;
+    setCardMenu({ cardId });
   };
 
   const siblings = listSiblingTerminals(terminal);
-  const launchablePresets = presets.filter((p) => p.id !== PRESET_ID_BOARD);
+  const launchablePresets = presets.filter(p => p.id !== PRESET_ID_BOARD && !(p.interfaceMode === "gui" && guiSupportedAgent(p)));
 
   const headerNode = (
     <div className="aya-pane-header">
@@ -368,10 +410,6 @@ export const KanbanView = memo(function KanbanView({
     cardMenu && board
       ? board.cards.find((c) => c.id === cardMenu.cardId) ?? null
       : null;
-  const activeMenuCol =
-    activeMenuCard && board
-      ? board.columns.find((c) => c.id === activeMenuCard.columnId) ?? null
-      : null;
 
   return (
     <section
@@ -396,12 +434,25 @@ export const KanbanView = memo(function KanbanView({
           </button>
         </div>
       )}
+      {!!board?.notices?.length && (
+        <div className="aya-kanban-notices" role="status">
+          {board.notices.map(notice => <div key={notice.id}>
+            Task {notice.cardId}: {notice.state !== "pending"
+              ? `withdrawal delivery started in ${notice.paneName}; check that panel. Automatic retries are paused to avoid sending it twice.`
+              : `withdrawal message is waiting for ${notice.paneName}. Aya will retry when the panel can receive it.`}
+            {notice.state !== "pending" && <button type="button" className="aya-kanban-btn"
+              onClick={() => void runAction(() => window.aya.acknowledgeBoardNotice({ projectSlug: terminal.projectSlug, noticeId: notice.id }))}>
+              Clear checked notice
+            </button>}
+          </div>)}
+        </div>
+      )}
       {!board ? (
         <div style={{ padding: 16, fontSize: 12.5, color: "var(--aya-pane-subtle)" }}>
           Loading board…
         </div>
       ) : (
-        <div className="aya-kanban-columns">
+        <div className="aya-kanban-columns" ref={columnsRef}>
           {board.columns.map((col, colIndex) => {
             const colCards = board.cards.filter((c) => c.columnId === col.id);
             const isDropTarget = dropTargetColId === col.id;
@@ -474,6 +525,26 @@ export const KanbanView = memo(function KanbanView({
                     </span>
                   )}
                   <span className="aya-kanban-column-count">{colCards.length}</span>
+                  <button
+                    type="button"
+                    className="aya-kanban-col-iconbtn"
+                    title={`Move column ${col.title} left`}
+                    aria-label={`Move column ${col.title} left`}
+                    disabled={movingColumn || !prevCol}
+                    onClick={() => { if (prevCol) void handleMoveColumn(col.id, prevCol.id, "before"); }}
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    className="aya-kanban-col-iconbtn"
+                    title={`Move column ${col.title} right`}
+                    aria-label={`Move column ${col.title} right`}
+                    disabled={movingColumn || !nextCol}
+                    onClick={() => { if (nextCol) void handleMoveColumn(col.id, nextCol.id, "after"); }}
+                  >
+                    →
+                  </button>
                   <button
                     type="button"
                     className="aya-kanban-col-iconbtn"
@@ -673,6 +744,11 @@ export const KanbanView = memo(function KanbanView({
                         </div>
 
                         <div className="aya-kanban-card-title">{card.title}</div>
+                        {card.claim?.startup && card.claim.startup !== "sent" && (
+                          <span className="aya-kanban-pill" title="Check the assigned pane before retrying an unconfirmed task delivery">
+                            {card.claim.startup === "reserved" ? "Waiting to start" : "Task delivery unconfirmed"}
+                          </span>
+                        )}
 
                         {card.description && (
                           <div className="aya-kanban-card-desc">
@@ -767,11 +843,11 @@ export const KanbanView = memo(function KanbanView({
         </div>
       )}
 
-      {cardMenu && activeMenuCard && board && (
+      {cardMenu && activeMenuCard && board && createPortal(
         <div
+          ref={cardMenuRef}
           className="aya-kanban-popover"
           role="menu"
-          style={{ left: cardMenu.x, top: cardMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           {siblings.length > 0 && (
@@ -846,14 +922,7 @@ export const KanbanView = memo(function KanbanView({
                   className="aya-kanban-popover-item"
                   onClick={() => {
                     setCardMenu(null);
-                    onStartCardInNewPane(
-                      p,
-                      formatCardPrompt(
-                        activeMenuCard,
-                        activeMenuCol?.title ?? activeMenuCard.columnId,
-                      ),
-                      terminal.projectSlug,
-                    );
+                    void runAction(() => onStartCardInNewPane(p, activeMenuCard.id, terminal.projectSlug));
                   }}
                 >
                   <span
@@ -887,7 +956,7 @@ export const KanbanView = memo(function KanbanView({
             <span className="aya-kanban-popover-icon">×</span>
             <span>Delete card</span>
           </button>
-        </div>
+        </div>, document.body
       )}
     </section>
   );
