@@ -122,6 +122,17 @@
   align-items: stretch;
 }
 
+.aya-kanban-notices {
+  flex-shrink: 0;
+  max-height: 96px;
+  overflow: auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--aya-pane-fg);
+  background: var(--aya-pane-header-bg);
+  border-bottom: 1px solid var(--aya-pane-header-border);
+}
+
 .aya-kanban-column {
   display: flex;
   flex-direction: column;
@@ -210,7 +221,12 @@
   padding: 0;
 }
 
-.aya-kanban-col-iconbtn:hover {
+.aya-kanban-col-iconbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.aya-kanban-col-iconbtn:hover:not(:disabled) {
   background: var(--aya-pane-bg);
   border-color: var(--aya-pane-header-border);
   color: var(--aya-pane-strong);
@@ -507,8 +523,13 @@
 .aya-kanban-popover {
   position: fixed;
   z-index: 1200;
-  min-width: 210px;
-  max-width: 260px;
+  min-width: min(210px, calc(100vw - 16px));
+  max-width: min(260px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 5px;
   border-radius: 8px;
   background: var(--aya-pane-header-bg);
@@ -517,6 +538,10 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+.aya-kanban-popover > * {
+  flex-shrink: 0;
 }
 
 .aya-kanban-popover-section {

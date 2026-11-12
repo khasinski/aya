@@ -11,6 +11,8 @@ import { oneAtATime } from "./keyed-queue";
 import { PROJECT_AYA_DIRNAME } from "./paths";
 import { slugifyName } from "./text";
 import { callerProject } from "./team-author";
+import { displayBoardNotices, type BoardNotice } from "./board-notices";
+import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import type { ProjectConfig } from "./types";
 
 export const BOARDS_DIR_NAME = "boards";
@@ -38,6 +40,7 @@ export interface KanbanClaim {
   paneId?: string;
   paneName: string;
   since: string;
+  startup?: "reserved" | "sending" | "sent";
 }
 
 export interface KanbanCard {
@@ -58,6 +61,7 @@ export interface BoardSnapshot {
   filePath: string;
   columns: KanbanColumn[];
   cards: KanbanCard[];
+  notices?: BoardNotice[];
 }
 
 interface StoredBoard {
@@ -76,6 +80,38 @@ export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = [
 type BoardChangeListener = (projectSlug: string) => void;
 const listeners = new Set<BoardChangeListener>();
 
+interface BoardTaskWithdrawal {
+  ayaHome: string;
+  projectSlug: string;
+  card: KanbanCard;
+  claim: KanbanClaim;
+  reason: string;
+}
+const withdrawalListeners = new Set<(event: BoardTaskWithdrawal) => Promise<void>>();
+
+/** Persist the notice before changing the claim; delivery rechecks the committed board. */
+export function onBoardTaskWithdrawal(listener: (event: BoardTaskWithdrawal) => Promise<void>): () => void {
+  withdrawalListeners.add(listener);
+  return () => { withdrawalListeners.delete(listener); };
+}
+
+async function notifyTaskWithdrawal(ayaHome: string, projectSlug: string, card: KanbanCard, reason: string, actorPaneId?: string): Promise<void> {
+  if (!card.claim || card.claim.startup === "reserved" || actorPaneId && actorPaneId === card.claim.paneId) return;
+  for (const listener of withdrawalListeners) {
+    await listener({ ayaHome, projectSlug, card, claim: card.claim, reason });
+  }
+}
+
+function isPendingColumn(id: string): boolean {
+  return id === "todo" || id === "backlog";
+}
+
+async function withdrawToPendingColumn(ayaHome: string, projectSlug: string, target: KanbanCard, updated: KanbanCard, column: KanbanColumn, actorPaneId?: string): Promise<void> {
+  if (!target.claim || target.columnId === column.id || !isPendingColumn(column.id)) return;
+  await notifyTaskWithdrawal(ayaHome, projectSlug, target, `returned to ${column.title}`, actorPaneId);
+  delete updated.claim;
+}
+
 export function onBoardChanged(listener: BoardChangeListener): () => void {
   listeners.add(listener);
   return () => {
@@ -83,7 +119,7 @@ export function onBoardChanged(listener: BoardChangeListener): () => void {
   };
 }
 
-function notifyBoardChanged(projectSlug: string): void {
+export function notifyBoardChanged(projectSlug: string): void {
   for (const listener of listeners) {
     try {
       listener(projectSlug);
@@ -139,7 +175,8 @@ function isClaim(value: unknown): value is KanbanClaim {
     claim.paneName.length <= MAX_ASSIGNEE_CHARS &&
     !CONTROL_CHARS.test(claim.paneName) &&
     typeof claim.since === "string" &&
-    Number.isFinite(Date.parse(claim.since))
+    Number.isFinite(Date.parse(claim.since)) &&
+    (claim.startup === undefined || ["reserved", "sending", "sent"].includes(claim.startup as string))
   );
 }
 
@@ -223,6 +260,7 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
             ...(c.claim.paneId ? { paneId: c.claim.paneId } : {}),
             paneName: c.claim.paneName.trim(),
             since: c.claim.since,
+            ...(c.claim.startup ? { startup: c.claim.startup } : {}),
           },
         }
       : {}),
@@ -271,6 +309,7 @@ async function loadBoardUnlocked(
   ayaHome: string,
   project: Pick<ProjectConfig, "slug" | "directory">,
 ): Promise<BoardSnapshot> {
+  const notices = await displayBoardNotices(ayaHome, project.slug);
   if (await hasRepoBoardFile(project.directory)) {
     const filePath = repoBoardFile(project.directory);
     const raw = await readBoundedRegularFile(filePath);
@@ -282,6 +321,7 @@ async function loadBoardUnlocked(
       filePath,
       columns: stored.columns,
       cards: stored.cards,
+      ...(notices.length ? { notices } : {}),
     };
   }
   const filePath = userBoardFile(ayaHome, project.slug);
@@ -294,6 +334,7 @@ async function loadBoardUnlocked(
     filePath,
     columns: stored.columns,
     cards: stored.cards,
+    ...(notices.length ? { notices } : {}),
   };
 }
 
@@ -316,6 +357,7 @@ async function saveBoardUnlocked(
     throw new Error("The Kanban board is too large to save.");
   }
   await writeFileAtomic(filePath, text, useRepo ? 0o644 : 0o600);
+  const notices = await displayBoardNotices(ayaHome, project.slug);
   return {
     version: BOARD_FORMAT_VERSION,
     projectSlug: project.slug,
@@ -323,6 +365,7 @@ async function saveBoardUnlocked(
     filePath,
     columns: stored.columns,
     cards: stored.cards,
+    ...(notices.length ? { notices } : {}),
   };
 }
 
@@ -473,6 +516,7 @@ export function updateBoardCard(
     description?: string;
     columnId?: string;
     assignee?: string | null;
+    actorPaneId?: string;
     now?: Date;
   },
 ): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
@@ -499,6 +543,7 @@ export function updateBoardCard(
     else delete updated.description;
     if (assignee) updated.assignee = assignee;
     else delete updated.assignee;
+    if (column) await withdrawToPendingColumn(ayaHome, project.slug, target, updated, column, patch.actorPaneId);
     const cards = current.cards.map((c) => (c.id === target.id ? updated : c));
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
@@ -517,6 +562,7 @@ export function moveBoardCard(
   columnQuery: string,
   targetIndex?: number,
   now?: Date,
+  actorPaneId?: string,
 ): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
@@ -527,6 +573,7 @@ export function moveBoardCard(
       columnId: column.id,
       updatedAt: (now ?? new Date()).toISOString(),
     };
+    await withdrawToPendingColumn(ayaHome, project.slug, target, updated, column, actorPaneId);
     const remaining = current.cards.filter((c) => c.id !== target.id);
     let cards: KanbanCard[];
     if (typeof targetIndex === "number" && Number.isInteger(targetIndex) && targetIndex >= 0) {
@@ -556,10 +603,12 @@ export function deleteBoardCard(
   ayaHome: string,
   project: Pick<ProjectConfig, "slug" | "directory">,
   cardId: string,
+  actorPaneId?: string,
 ): Promise<{ board: BoardSnapshot; deleted: KanbanCard }> {
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
     const target = resolveCard(current.cards, cardId);
+    await notifyTaskWithdrawal(ayaHome, project.slug, target, "removed from the board", actorPaneId);
     const cards = current.cards.filter((c) => c.id !== target.id);
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
@@ -585,9 +634,10 @@ export function claimBoardCard(
     paneId?: string;
     paneName: string;
     replace?: boolean;
+    pendingStart?: boolean;
     now?: Date;
   },
-): Promise<{ board: BoardSnapshot; card: KanbanCard; tookOver?: KanbanClaim }> {
+): Promise<{ board: BoardSnapshot; card: KanbanCard; previous: KanbanCard; tookOver?: KanbanClaim }> {
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
     const target = resolveCard(current.cards, cardId);
@@ -604,10 +654,11 @@ export function claimBoardCard(
       );
     }
     const iso = (claimant.now ?? new Date()).toISOString();
-    // If the card sits in "todo" and the board has an "in-progress" column, advance it automatically.
+    if (held && !isOwn) await notifyTaskWithdrawal(ayaHome, project.slug, target, `reassigned to ${paneName}`);
+    // Starting a pending task advances it regardless of the visual column order.
     const inProgress = current.columns.find((c) => c.id === "in-progress");
     const nextColumnId =
-      target.columnId === "todo" && inProgress ? inProgress.id : target.columnId;
+      isPendingColumn(target.columnId) && inProgress ? inProgress.id : target.columnId;
     const updated: KanbanCard = {
       ...target,
       columnId: nextColumnId,
@@ -616,6 +667,7 @@ export function claimBoardCard(
         ...(claimant.paneId ? { paneId: claimant.paneId } : {}),
         paneName,
         since: iso,
+        ...(claimant.pendingStart ? { startup: "reserved" as const } : {}),
       },
       updatedAt: iso,
     };
@@ -629,8 +681,63 @@ export function claimBoardCard(
     return {
       board,
       card: updated,
+      previous: target,
       ...(held && !isOwn ? { tookOver: held } : {}),
     };
+  });
+}
+
+/** A delayed startup must recheck ownership under the same lock as withdrawals. */
+export function dispatchBoardCard(ayaHome: string, project: Pick<ProjectConfig, "slug" | "directory">,
+  cardId: string, paneId: string, claimSince: string, deliver: (text: string) => Promise<unknown>): Promise<BoardSnapshot> {
+  return serial(project.slug, async () => {
+    const board = await loadBoardUnlocked(ayaHome, project);
+    const card = board.cards.find(c => c.id === cardId);
+    if (card?.claim?.paneId !== paneId || card.claim.since !== claimSince || card.claim.startup !== "reserved") return board;
+    const save = (startup: "reserved" | "sending" | "sent") => saveBoardUnlocked(ayaHome, project, {
+      version: BOARD_FORMAT_VERSION, columns: board.columns,
+      cards: board.cards.map(c => c.id === cardId ? { ...c, claim: { ...card.claim!, startup } } : c),
+    });
+    // Persist before typing so a remount or crash cannot resend an uncertain prompt.
+    await save("sending");
+    try { await deliver(formatBoardPrompt(card)); }
+    catch (error) {
+      if (!inputMayHaveBeenWritten(error)) await save("reserved");
+      notifyBoardChanged(project.slug);
+      throw error;
+    }
+    let delivered;
+    try { delivered = await save("sent"); }
+    catch { throw new Error("Task was submitted, but its confirmation could not be saved. Check the pane before retrying."); }
+    notifyBoardChanged(project.slug);
+    return delivered;
+  });
+}
+
+export function deliverBoardWithdrawal(ayaHome: string, project: Pick<ProjectConfig, "slug" | "directory">,
+  cardId: string, paneId: string, deliver: () => Promise<unknown>): Promise<unknown> {
+  return serial(project.slug, async () => {
+    const board = await loadBoardUnlocked(ayaHome, project);
+    if (board.cards.find(c => c.id === cardId)?.claim?.paneId === paneId) return;
+    return deliver();
+  });
+}
+
+export function cancelBoardCardStart(ayaHome: string, project: Pick<ProjectConfig, "slug" | "directory">,
+  cardId: string, paneId: string, claimSince: string, previousColumn: string, previousAssignee?: string): Promise<BoardSnapshot> {
+  return serial(project.slug, async () => {
+    const current = await loadBoardUnlocked(ayaHome, project);
+    const target = current.cards.find(c => c.id === cardId);
+    if (target?.claim?.paneId !== paneId || target.claim.since !== claimSince || target.claim.startup !== "reserved") return current;
+    const updated = { ...target, updatedAt: new Date().toISOString() };
+    delete updated.claim;
+    if (previousAssignee) updated.assignee = previousAssignee;
+    else delete updated.assignee;
+    if (current.columns.some(c => c.id === previousColumn)) updated.columnId = previousColumn;
+    const board = await saveBoardUnlocked(ayaHome, project, { version: BOARD_FORMAT_VERSION, columns: current.columns,
+      cards: current.cards.map(c => c.id === cardId ? updated : c) });
+    notifyBoardChanged(project.slug);
+    return board;
   });
 }
 
@@ -661,6 +768,9 @@ export function releaseBoardCard(
       throw new Error(
         `${target.id} is claimed by ${previous.paneName}, not this pane; pass --force to release it anyway.`,
       );
+    }
+    if (!caller.paneId || caller.paneId !== previous.paneId) {
+      await notifyTaskWithdrawal(ayaHome, project.slug, target, "released from your pane");
     }
     const updated: KanbanCard = {
       ...target,
@@ -701,6 +811,35 @@ export function addBoardColumn(
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
       columns: [...current.columns, column],
+      cards: current.cards,
+    });
+    notifyBoardChanged(project.slug);
+    return { board, column };
+  });
+}
+
+/** Resolve relative placement against the latest board inside the mutation queue. */
+export function moveBoardColumn(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  columnQuery: string,
+  placement: { before?: string; after?: string },
+): Promise<{ board: BoardSnapshot; column: KanbanColumn }> {
+  return serial(project.slug, async () => {
+    if ((placement.before !== undefined) === (placement.after !== undefined)) {
+      throw new Error("Choose exactly one column to move before or after.");
+    }
+    const current = await loadBoardUnlocked(ayaHome, project);
+    const column = resolveColumn(current.columns, columnQuery);
+    const anchor = resolveColumn(current.columns, placement.before ?? placement.after!);
+    if (column.id === anchor.id) throw new Error("A column cannot be moved relative to itself.");
+    const columns = current.columns.filter(c => c.id !== column.id);
+    const index = columns.findIndex(c => c.id === anchor.id) + (placement.after !== undefined ? 1 : 0);
+    columns.splice(index, 0, column);
+    if (columns.every((c, i) => c.id === current.columns[i].id)) return { board: current, column };
+    const board = await saveBoardUnlocked(ayaHome, project, {
+      version: BOARD_FORMAT_VERSION,
+      columns,
       cards: current.cards,
     });
     notifyBoardChanged(project.slug);
@@ -820,7 +959,7 @@ export function formatBoardText(board: BoardSnapshot): string {
 // ---- CLI (`aya board ...`) ----
 
 const BOARD_USAGE =
-  "usage: aya board [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--project slug] | remove <id> [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | export-repo [--project slug]";
+  "usage: aya board [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--project slug] | remove <id> [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
 
 export interface BoardControlRequest {
   argv: string[];
@@ -931,7 +1070,7 @@ export async function handleBoardRequest(
     const [cardId, ...colWords] = rest;
     const columnQuery = colWords.join(" ").trim();
     if (!cardId || !columnQuery) throw new Error(BOARD_USAGE);
-    const { card } = await moveBoardCard(deps.ayaHome, project, cardId, columnQuery, undefined, now());
+    const { card } = await moveBoardCard(deps.ayaHome, project, cardId, columnQuery, undefined, now(), callerId);
     return { output: `moved ${card.id} to ${card.columnId}\n` };
   }
 
@@ -965,13 +1104,14 @@ export async function handleBoardRequest(
       description,
       assignee,
       now: now(),
+      actorPaneId: callerId,
     });
     return { output: `updated ${card.id}: ${card.title}\n` };
   }
 
   if (sub === "remove" || sub === "rm" || sub === "delete") {
     if (rest.length !== 1 || !rest[0]) throw new Error(BOARD_USAGE);
-    const { deleted } = await deleteBoardCard(deps.ayaHome, project, rest[0]);
+    const { deleted } = await deleteBoardCard(deps.ayaHome, project, rest[0], callerId);
     return { output: `removed ${deleted.id}: ${deleted.title}\n` };
   }
 
@@ -1010,6 +1150,12 @@ export async function handleBoardRequest(
 
   if (sub === "column") {
     const [colAction, ...colRest] = rest;
+    if (colAction === "move" || colAction === "mv") {
+      if (colRest.length !== 3 || !["--before", "--after"].includes(colRest[1])) throw new Error(BOARD_USAGE);
+      const [columnId, direction, anchor] = colRest;
+      const { column } = await moveBoardColumn(deps.ayaHome, project, columnId, direction === "--before" ? { before: anchor } : { after: anchor });
+      return { output: `moved column ${column.id} ${direction.slice(2)} ${anchor}\n` };
+    }
     if (colAction === "add") {
       const title = colRest.join(" ").trim();
       if (!title) throw new Error(BOARD_USAGE);

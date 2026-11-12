@@ -234,6 +234,7 @@ export interface KanbanClaim {
   paneId?: string;
   paneName: string;
   since: string;
+  startup?: "reserved" | "sending" | "sent";
 }
 
 export interface KanbanCard {
@@ -254,6 +255,7 @@ export interface BoardSnapshot {
   filePath: string;
   columns: KanbanColumn[];
   cards: KanbanCard[];
+  notices?: Array<{ id: string; cardId: string; paneName: string; state: "pending" | "sending" | "typed" }>;
 }
 
 export interface WorkingTab {
@@ -276,6 +278,7 @@ export interface WorkingTab {
   remoteTerminal?: true;
   /** A tab opened on a machine from the machines popover: it runs `ssh -- <sshTarget>` instead of its preset's command. */
   sshTarget?: string;
+  initialBoardCard?: { cardId: string; since: string; previousColumn: string; previousAssignee?: string };
 }
 
 export interface SplitLayout {
@@ -1041,6 +1044,10 @@ export interface AyaApi {
 
   // Kanban board (per project)
   getBoard(projectSlug: string): Promise<BoardSnapshot>;
+  acknowledgeBoardNotice(req: { projectSlug: string; noticeId: string }): Promise<BoardSnapshot>;
+  reserveBoardCardStart(req: { projectSlug: string; cardId: string; paneId: string; paneName: string }): Promise<{ board: BoardSnapshot; previous: KanbanCard }>;
+  dispatchBoardCard(req: { projectSlug: string; cardId: string; paneId: string; claimSince: string }): Promise<BoardSnapshot>;
+  cancelBoardCardStart(req: { projectSlug: string; cardId: string; paneId: string; claimSince: string; previousColumn: string; previousAssignee?: string }): Promise<BoardSnapshot>;
   addBoardCard(req: { projectSlug: string; title: string; description?: string; columnId?: string; assignee?: string }): Promise<BoardSnapshot>;
   updateBoardCard(req: { projectSlug: string; cardId: string; title?: string; description?: string; columnId?: string; assignee?: string | null }): Promise<BoardSnapshot>;
   moveBoardCard(req: { projectSlug: string; cardId: string; columnId: string; index?: number }): Promise<BoardSnapshot>;
@@ -1048,6 +1055,7 @@ export interface AyaApi {
   claimBoardCard(req: { projectSlug: string; cardId: string; paneId?: string; paneName: string; replace?: boolean }): Promise<BoardSnapshot>;
   releaseBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
   addBoardColumn(req: { projectSlug: string; title: string }): Promise<BoardSnapshot>;
+  moveBoardColumn(req: { projectSlug: string; columnId: string; before?: string; after?: string }): Promise<BoardSnapshot>;
   renameBoardColumn(req: { projectSlug: string; columnId: string; title: string }): Promise<BoardSnapshot>;
   deleteBoardColumn(req: { projectSlug: string; columnId: string }): Promise<BoardSnapshot>;
   exportBoardToRepo(projectSlug: string): Promise<BoardSnapshot>;
@@ -1240,6 +1248,7 @@ export interface TerminalState {
   sharedDir?: true;
   /** One-time prompt for a newly-created worktree pane; never persisted. */
   initialPrompt?: string;
+  initialBoardCard?: WorkingTab["initialBoardCard"];
 }
 
 export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";

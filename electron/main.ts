@@ -11,6 +11,7 @@ import { showTuiArtifact } from "./tui-artifact-window";
 import { GuardedRuleInput } from "./screen-user-rule-input";
 import { UserRulePanePolicy } from "./screen-user-rule-pane";
 import { isUserOnlyHold } from "./pane-holds";
+import { createBoardInputProtection } from "./board-notices";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
@@ -881,22 +882,25 @@ function registerIpc(): TeamRunner {
       },
     }, projectSlug, terminalId, text),
   });
-  registerBoardIpc({
+  const stopBoardTaskNotifications = registerBoardIpc({
     ipcMain,
     ayaHome: AYA_HOME,
     listProjects: () => listProjects(),
-    sendToPane: (projectSlug, terminalId, text) => sendPaneTextThroughControl({
+    paneHold: id => userRulePanes.holdReason(id),
+    deliveryAllowed: () => !appQuitting,
+    sendToPane: (projectSlug, terminalId, text, automatic = false) => sendPaneTextThroughControl({
       listProjects: () => listProjects(),
       writePane: (id, data) => ptyHost.write(id, data),
       writePaneChecked: (id, data, context) => userRuleInput.write("direct", id, data, context, context.cancelled),
       paneHold: (id) => userRulePanes.holdReason(id),
-      paneInputProtection: async (id, pasted, cancelled) => {
+      paneInputProtection: createBoardInputProtection(automatic, (id, pasted) => userRulePanes.holdReason(id, pasted), async (id, pasted, cancelled) => {
         if (userRuleInput.configured()) return userRuleInput.protection(id, pasted, cancelled);
         const hold = await userRulePanes.holdReason(id, pasted);
         return isUserOnlyHold(hold) ? hold : null;
-      },
+      }),
     }, projectSlug, terminalId, text),
   });
+  app.once("will-quit", () => stopBoardTaskNotifications.stop());
   registerCiChecksIpc({
     ipcMain,
     listProjects: () => listProjects(),
@@ -1152,7 +1156,7 @@ app.whenReady().then(async () => {
   const stopBoardWatch = onBoardChanged((projectSlug) => {
     eachAyaWindow((win) => win.webContents.send("board:changed", projectSlug));
   });
-  app.once("before-quit", stopBoardWatch);
+  app.once("will-quit", stopBoardWatch);
   if (updates.getUpdateStatus().supported) {
     setTimeout(() => {
       void updates.checkForUpdates();

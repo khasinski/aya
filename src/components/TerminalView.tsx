@@ -923,6 +923,13 @@ function TerminalViewComponent({
     let releaseDeferred:(()=>void)|null=null;
     let disposed=false,awaitingReplay=typeof window.aya.handoverDisplay==='function';
     let initialPromptTimer: number | null = null;
+    const cancelBoardStart = async () => {
+      const start = terminal.initialBoardCard;
+      if (!start) return;
+      await window.aya.cancelBoardCardStart({ projectSlug: terminal.projectSlug, paneId: terminal.id,
+        cardId: start.cardId, claimSince: start.since, previousColumn: start.previousColumn,
+        previousAssignee: start.previousAssignee });
+    };
     let attachCancelled=false,attachRetiredByRestart=false;
     const unregisterPendingAttach=registerPendingTerminalAttach(terminal.id,()=>{attachCancelled=true;releaseDeferred?.();});
     const attachmentWasCancelled=()=>{
@@ -1257,15 +1264,25 @@ function TerminalViewComponent({
       // launcher hand control to its interactive agent before the prompt is
       // entered. This is deliberately one-shot and only exists on the fresh
       // pane state; restored tabs never replay it.
-      if (terminal.initialPrompt) {
+      if (terminal.initialPrompt || terminal.initialBoardCard) {
         initialPromptTimer = window.setTimeout(() => {
           if (disposed || attachCancelled) return;
-          void window.aya.ptyWrite(terminal.id, `${terminal.initialPrompt}\r`).catch(() => {});
+          if (terminal.initialBoardCard) {
+            void window.aya.dispatchBoardCard({ projectSlug: terminal.projectSlug, cardId: terminal.initialBoardCard.cardId,
+              paneId: terminal.id, claimSince: terminal.initialBoardCard.since })
+              .catch(async error => {
+                await cancelBoardStart().catch(() => {});
+                if (!disposed) setHistoryNotice(`Board task: ${displayIpcError(error)}`);
+              });
+          } else {
+            void window.aya.ptyWrite(terminal.id, `${terminal.initialPrompt}\r`).catch(() => {});
+          }
         }, 1200);
       }
       })().catch(error=>{
         if(disposed||attachCancelled)return;
         awaitingReplay=false;handleAttachmentFailure(term,error);
+      void cancelBoardStart().catch(() => {});
       });
     }
 

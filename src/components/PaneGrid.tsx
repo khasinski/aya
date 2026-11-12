@@ -8,6 +8,7 @@ import type { DividerRect, LeafRect } from "../split-tree";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import {
   getPreset,
+  type BoardSnapshot,
   type Preset,
   type ProjectConfig,
   type Snippet,
@@ -67,7 +68,7 @@ interface Props {
   headerSlot?: HTMLElement | null;
   resizeSplit: (slug: string, splitId: string, ratio: number) => void;
   projectTerminals: TerminalState[];
-  onStartCardInNewPane?: (preset: Preset, prompt: string, projectSlug: string) => void;
+  onStartCardInNewPane?: (preset: Preset, cardId: string, projectSlug: string) => Promise<BoardSnapshot>;
 }
 
 export const PaneGrid = memo(function PaneGrid({

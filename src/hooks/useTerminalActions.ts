@@ -73,7 +73,7 @@ export function useTerminalActions({
   );
 
   const launchTerminal = useCallback(
-    (preset: Preset, cwd?: string, sshTarget?: string, initialPrompt?: string, targetProjectId?: string) => {
+    (preset: Preset, cwd?: string, sshTarget?: string, initialPrompt?: string, targetProjectId?: string, terminalId?: string, initialBoardCard?: TerminalState["initialBoardCard"]) => {
       const slug = targetProjectId ?? activeProjectIdRef.current;
       if (!slug) return;
       const project = findProject(projectsRef.current, slug);
@@ -91,7 +91,7 @@ export function useTerminalActions({
           return;
         }
       }
-      const id = uuid();
+      const id = terminalId ?? uuid();
       const command = remoteTerminalCommand(project, preset);
       // Default the new tab's display name to the preset's current name (not
       // its id, which stays the same when the user renames a preset).
@@ -108,6 +108,7 @@ export function useTerminalActions({
         exitCode: null,
         ...(project.remote ? { remoteHost: project.remote.label } : {}),
         ...(initialPrompt ? { initialPrompt } : {}),
+        ...(initialBoardCard ? { initialBoardCard } : {}),
         ...(sshTarget ? { sshTarget } : {}),
       };
       setTerminals((prev) => {
@@ -165,6 +166,7 @@ export function useTerminalActions({
         title: `${term.name} started`,
         detail: command,
       });
+      return term;
     },
     [activeTabByProject, activeLeafByProject, appendProjectEvent, effectiveCwd, activeProjectIdRef, projectsRef, terminalsRef, splitEnabledRef, setTerminals, setAllProjects, setProjects, setActiveTabByProject, setSingleViewByProject],
   );

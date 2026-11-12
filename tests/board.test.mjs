@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { envWithoutAya } from "./helpers/env.mjs";
 
 const { startControlServerOn } = await import("../dist-electron/control.js");
+const { registerBoardIpc } = await import("../dist-electron/ipc/board-ipc.js");
+const { TextPastedError } = await import("../dist-electron/team-control.js");
+const { HOLD_NOT_RUNNING } = await import("../dist-electron/pane-holds.js");
 const {
   getBoard,
   addBoardCard,
@@ -16,9 +19,11 @@ const {
   claimBoardCard,
   releaseBoardCard,
   addBoardColumn,
+  moveBoardColumn,
   renameBoardColumn,
   deleteBoardColumn,
   exportBoardToRepo,
+  handleBoardRequest,
 } = await import("../dist-electron/board.js");
 
 const cli = resolve("bin/aya");
@@ -46,6 +51,41 @@ function makeFixture() {
     cleanup() {
       rmSync(dir, { recursive: true, force: true });
     },
+  };
+}
+
+function makeDispatchFixture() {
+  const fx = makeFixture();
+  const handlers = new Map();
+  const sent = [];
+  let deliveryError;
+  let hold = null;
+  let attempts = 0;
+  const start = () => registerBoardIpc({
+    ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
+    ayaHome: fx.home,
+    listProjects: async () => [fx.project],
+    paneHold: async () => hold,
+    sendToPane: async (projectSlug, paneId, text) => {
+      attempts++;
+      if (deliveryError) throw deliveryError;
+      sent.push({ projectSlug, paneId, text });
+    },
+  });
+  let notices = start();
+  return {
+    ...fx, sent,
+    failDelivery(error) { deliveryError = error; },
+    setHold(value) { hold = value; },
+    attempts() { return attempts; },
+    flush() { return notices.flush(); },
+    restart() { notices.stop(); notices = start(); },
+    async call(channel, request) {
+      const result = await handlers.get(channel)({}, { projectSlug: fx.project.slug, ...request });
+      await notices.flush();
+      return result;
+    },
+    cleanup() { notices.stop(); fx.cleanup(); },
   };
 }
 
@@ -204,6 +244,251 @@ test("card and column CRUD plus terminal claim and release rules", async () => {
   }
 });
 
+test("returning a dispatched card to Todo tells its agent to stop that task", async () => {
+  const fx = makeDispatchFixture();
+  const { call, sent } = fx;
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    const dispatched = await call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    assert.equal(dispatched.cards[0].columnId, "in-progress");
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].text, /Task t-1: Existing task/);
+    const returned = await call("board:move-card", { cardId: "t-1", columnId: "todo" });
+    assert.equal(returned.cards[0].claim, undefined);
+    assert.equal(sent.length, 2, "returning a dispatched task must notify its agent");
+    assert.equal(sent[1].paneId, "pane-1");
+    assert.match(sent[1].text, /t-1/);
+    assert.match(sent[1].text, /stop|withdraw|cancel|wstrzym/i);
+  } finally { fx.cleanup(); }
+});
+
+for (const action of ["backlog", "edit-column", "release", "delete", "reassign"]) {
+  test(`withdrawing a dispatched card through ${action} notifies the original pane`, async () => {
+    const fx = makeDispatchFixture();
+    try {
+      await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+      await addBoardColumn(fx.home, fx.project, "Backlog");
+      await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+      if (action === "backlog") {
+        await moveBoardCard(fx.home, fx.project, "t-1", "backlog");
+        const { card } = await claimBoardCard(fx.home, fx.project, "t-1", { paneId: "pane-2", paneName: "Codex 2" });
+        assert.equal(card.columnId, "in-progress", "starting a Backlog task also advances it");
+      } else if (action === "edit-column") {
+        await fx.call("board:update-card", { cardId: "t-1", columnId: "todo" });
+      } else if (action === "release") {
+        await fx.call("board:release-card", { cardId: "t-1" });
+        await fx.call("board:release-card", { cardId: "t-1" });
+      } else if (action === "delete") {
+        await fx.call("board:delete-card", { cardId: "t-1" });
+      } else {
+        await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-2" });
+      }
+      await fx.flush();
+      assert.equal(fx.sent.length, action === "reassign" ? 3 : 2);
+      const withdrawal = fx.sent.find(message => message.text.includes("Stop work on this task"));
+      assert.equal(withdrawal.paneId, "pane-1");
+      if (action === "reassign") assert.ok(fx.sent.some(message => message.paneId === "pane-2" && message.text.startsWith("Task t-1")));
+    } finally { fx.cleanup(); }
+  });
+}
+
+test("a held recipient does not block withdrawal; its notice survives restart and is retried", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    fx.failDelivery(new Error("pane is waiting for user approval"));
+    const after = await fx.call("board:move-card", { cardId: "t-1", columnId: "todo" });
+    assert.equal(after.cards[0].columnId, "todo");
+    assert.equal(after.cards[0].claim, undefined);
+    assert.equal((await getBoard(fx.home, fx.project)).notices[0].state, "pending");
+    fx.restart();
+    fx.failDelivery(undefined);
+    await fx.flush();
+    assert.equal((await getBoard(fx.home, fx.project)).notices, undefined);
+    assert.equal(fx.sent.length, 2);
+  } finally { fx.cleanup(); }
+});
+
+test("a stopped pane can release a task while its notice waits for a future attachment", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Stopped task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    fx.setHold(HOLD_NOT_RUNNING);
+    await fx.call("board:release-card", { cardId: "t-1" });
+    assert.equal((await getBoard(fx.home, fx.project)).cards[0].claim, undefined);
+    assert.equal((await getBoard(fx.home, fx.project)).notices[0].state, "pending");
+    assert.equal(fx.attempts(), 1);
+  } finally { fx.cleanup(); }
+});
+
+test("a partially typed withdrawal is retained for the user and never pasted twice", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Partial task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    fx.failDelivery(new TextPastedError("text is in the composer"));
+    await fx.call("board:move-card", { cardId: "t-1", columnId: "todo" });
+    assert.equal((await getBoard(fx.home, fx.project)).notices[0].state, "typed");
+    await fx.flush();
+    fx.restart();
+    await fx.flush();
+    assert.equal(fx.attempts(), 2, "only the task and one withdrawal attempt");
+  } finally { fx.cleanup(); }
+});
+
+test("an agent moving or deleting its own card through CLI is not sent a stop message", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Self-owned task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    await handleBoardRequest({ argv: ["move", "t-1", "todo"] }, "pane-1", deps);
+    await fx.flush();
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    await handleBoardRequest({ argv: ["remove", "t-1"] }, "pane-1", deps);
+    await fx.flush();
+    assert.equal(fx.sent.length, 2);
+    assert.ok(fx.sent.every(message => message.text.startsWith("Task")));
+  } finally { fx.cleanup(); }
+});
+
+test("withdrawal before delayed startup prevents the initial prompt; rollback does not overwrite a newer claim", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Delayed startup", assignee: "Planned owner" });
+    const { board, previous } = await fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" });
+    assert.equal(previous.columnId, "todo");
+    const since = board.cards[0].claim.since;
+    await fx.call("board:cancel-start", { cardId: "t-1", paneId: "pane-1", claimSince: since,
+      previousColumn: previous.columnId, previousAssignee: previous.assignee });
+    const restored = (await getBoard(fx.home, fx.project)).cards[0];
+    assert.equal(restored.columnId, "todo");
+    assert.equal(restored.assignee, "Planned owner");
+    assert.equal(restored.claim, undefined);
+    await fx.call("board:dispatch-card", { cardId: "t-1", paneId: "pane-1", claimSince: since });
+    assert.equal(fx.sent.length, 0);
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-2" });
+    await fx.call("board:cancel-start", { cardId: "t-1", paneId: "pane-1", claimSince: since, previousColumn: "todo" });
+    assert.equal((await getBoard(fx.home, fx.project)).cards[0].claim.paneId, "pane-2");
+    await assert.rejects(fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" }), /already claimed/);
+  } finally { fx.cleanup(); }
+});
+
+test("remounting a newly started pane cannot submit its task prompt twice", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Exactly one startup" });
+    const { board } = await fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" });
+    const request = { cardId: "t-1", paneId: "pane-1", claimSince: board.cards[0].claim.since };
+    await fx.call("board:dispatch-card", request);
+    await fx.call("board:dispatch-card", request);
+    assert.equal(fx.sent.length, 1);
+  } finally { fx.cleanup(); }
+});
+
+test("withdrawing an unstarted reservation never sends an unrelated Stop prompt", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Never started" });
+    await fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" });
+    await fx.call("board:move-card", { cardId: "t-1", columnId: "todo" });
+    assert.equal(fx.sent.length, 0);
+  } finally { fx.cleanup(); }
+});
+
+test("an uncertain startup write is never changed back to a retryable reservation", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Uncertain startup" });
+    const { board } = await fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" });
+    const request = { cardId: "t-1", paneId: "pane-1", claimSince: board.cards[0].claim.since };
+    fx.failDelivery(Object.assign(new Error("input acknowledgement was lost"), { code: "PTY_HOST_INPUT_UNCERTAIN" }));
+    await assert.rejects(fx.call("board:dispatch-card", request), /acknowledgement/);
+    assert.equal((await getBoard(fx.home, fx.project)).cards[0].claim.startup, "sending");
+    await fx.call("board:dispatch-card", request);
+    assert.equal(fx.attempts(), 1);
+  } finally { fx.cleanup(); }
+});
+
+test("a damaged notification display file does not block reading or editing an unclaimed board", async t => {
+  const fx = makeFixture();
+  t.mock.method(console, "warn", () => {});
+  try {
+    writeFileSync(join(fx.home, "board-notices.json"), "broken JSON");
+    assert.equal((await getBoard(fx.home, fx.project)).cards.length, 0);
+    await addBoardCard(fx.home, fx.project, { title: "Board still works" });
+    assert.equal((await getBoard(fx.home, fx.project)).cards[0].title, "Board still works");
+  } finally { fx.cleanup(); }
+});
+
+test("normal workflow moves, column reordering and an agent releasing its own task do not withdraw it", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    await moveBoardCard(fx.home, fx.project, "t-1", "review");
+    await moveBoardCard(fx.home, fx.project, "t-1", "done");
+    await addBoardColumn(fx.home, fx.project, "Backlog");
+    await moveBoardColumn(fx.home, fx.project, "backlog", { before: "todo" });
+    assert.equal((await getBoard(fx.home, fx.project)).cards[0].claim.paneId, "pane-1");
+    await releaseBoardCard(fx.home, fx.project, "t-1", { paneId: "pane-1" });
+    assert.equal(fx.sent.length, 1);
+  } finally { fx.cleanup(); }
+});
+
+test("reordering a claimed card within Todo on a board without In Progress does not cancel it", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await deleteBoardColumn(fx.home, fx.project, "in-progress");
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    const moved = await fx.call("board:move-card", { cardId: "t-1", columnId: "todo", index: 0 });
+    assert.equal(fx.sent.length, 1);
+    assert.equal(moved.cards[0].claim?.paneId, "pane-1");
+  } finally { fx.cleanup(); }
+});
+
+for (const repo of [false, true]) {
+  test(`column order persists in ${repo ? "repo" : "user"} storage without changing cards or claims`, async () => {
+    const fx = makeFixture();
+    try {
+      if (repo) await exportBoardToRepo(fx.home, fx.project);
+      const { card } = await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+      await claimBoardCard(fx.home, fx.project, card.id, { paneId: "pane-1", paneName: "Claude 1" });
+      await addBoardColumn(fx.home, fx.project, "Backlog");
+      const before = await getBoard(fx.home, fx.project);
+      const first = await moveBoardColumn(fx.home, fx.project, "Backlog", { before: "Todo" });
+      assert.deepEqual(first.board.columns.map(c => c.id), ["backlog", "todo", "in-progress", "review", "done"]);
+      assert.deepEqual(first.board.cards, before.cards);
+      assert.equal(first.board.source, repo ? "repo" : "user");
+      assert.deepEqual((await getBoard(fx.home, fx.project)).columns, first.board.columns);
+      const last = await moveBoardColumn(fx.home, fx.project, "backlog", { after: "done" });
+      assert.equal(last.board.columns.at(-1).id, "backlog");
+      assert.deepEqual(last.board.cards, before.cards);
+      const raw = readFileSync(last.board.filePath, "utf8");
+      for (const placement of [{}, { before: "todo", after: "done" }, { before: "missing" }, { after: "backlog" }]) {
+        await assert.rejects(moveBoardColumn(fx.home, fx.project, "backlog", placement));
+        assert.equal(readFileSync(last.board.filePath, "utf8"), raw, "invalid moves cannot change the board");
+      }
+      await moveBoardColumn(fx.home, fx.project, "backlog", { after: "done" });
+      assert.equal(readFileSync(last.board.filePath, "utf8"), raw, "an unchanged order is a no-op");
+      await Promise.all([
+        addBoardColumn(fx.home, fx.project, "Blocked"),
+        moveBoardColumn(fx.home, fx.project, "backlog", { before: "todo" }),
+        addBoardCard(fx.home, fx.project, { title: "New task" }),
+      ]);
+      const current = await getBoard(fx.home, fx.project);
+      assert.equal(current.columns[0].id, "backlog");
+      assert.ok(current.columns.some(c => c.id === "blocked"));
+      assert.equal(current.cards.length, 2);
+      assert.deepEqual(current.cards.find(c => c.id === card.id), before.cards.find(c => c.id === card.id));
+      assert.equal(current.cards.find(c => c.title === "New task").columnId, "backlog", "new cards default to the reordered first column");
+    } finally { fx.cleanup(); }
+  });
+}
+
 test("aya board CLI end-to-end over control socket", async () => {
   const fx = makeFixture();
   const socket = join(fx.dir, "aya.sock");
@@ -263,6 +548,27 @@ test("aya board CLI end-to-end over control socket", async () => {
     const released = await runCli(["board", "release", "t-1"]);
     assert.equal(released.status, 0, released.stderr);
     assert.match(released.stdout, /released t-1/);
+
+    const addedColumn = await runCli(["board", "column", "add", "Backlog"]);
+    assert.equal(addedColumn.status, 0, addedColumn.stderr);
+    const beforeColumnsMove = await getBoard(fx.home, fx.project);
+    assert.equal(beforeColumnsMove.columns.at(-1).id, "backlog");
+    const reordered = await runCli(["board", "column", "move", "Backlog", "--before", "Todo"]);
+    assert.equal(reordered.status, 0, reordered.stderr);
+    const afterColumnsMove = await getBoard(fx.home, fx.project);
+    assert.deepEqual(afterColumnsMove.columns.map(c => c.id), ["backlog", "todo", "in-progress", "review", "done"]);
+    assert.deepEqual(afterColumnsMove.cards, beforeColumnsMove.cards, "moving a column preserves cards, claims and timestamps");
+    const rawBoard = readFileSync(afterColumnsMove.filePath, "utf8");
+    for (const args of [
+      ["backlog"],
+      ["backlog", "--before", "todo", "--after", "done"],
+      ["backlog", "--before", "missing"],
+      ["backlog", "--after", "backlog"],
+    ]) {
+      const invalid = await runCli(["board", "column", "move", ...args]);
+      assert.notEqual(invalid.status, 0);
+      assert.equal(readFileSync(afterColumnsMove.filePath, "utf8"), rawBoard);
+    }
 
     const exported = await runCli(["board", "export-repo"]);
     assert.equal(exported.status, 0, exported.stderr);

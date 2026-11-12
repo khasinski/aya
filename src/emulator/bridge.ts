@@ -285,6 +285,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
             if (req.assignee && req.assignee.trim()) updated.assignee = req.assignee.trim();
             else delete updated.assignee;
           }
+          if (req.columnId !== undefined && req.columnId !== c.columnId && ["todo", "backlog"].includes(req.columnId)) delete updated.claim;
           return updated;
         }),
       };
@@ -296,6 +297,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       const target = b.cards.find((c) => c.id === req.cardId);
       if (!target) return b as never;
       const updated = { ...target, columnId: req.columnId, updatedAt: new Date().toISOString() };
+      if (req.columnId !== target.columnId && ["todo", "backlog"].includes(req.columnId)) delete updated.claim;
       const next: BoardSnapshot = {
         ...b,
         cards: [...b.cards.filter((c) => c.id !== req.cardId), updated],
@@ -322,7 +324,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
           c.id === req.cardId
             ? {
                 ...c,
-                columnId: c.columnId === "todo" && hasInProgress ? "in-progress" : c.columnId,
+                columnId: ["todo", "backlog"].includes(c.columnId) && hasInProgress ? "in-progress" : c.columnId,
                 assignee: req.paneName,
                 claim: { paneId: req.paneId, paneName: req.paneName, since: nowIso },
                 updatedAt: nowIso,
@@ -359,6 +361,18 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
         ...b,
         columns: [...b.columns, { id, title: req.title.trim() }],
       };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    moveBoardColumn: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      if ((req.before !== undefined) === (req.after !== undefined)) throw Error("Choose exactly one column to move before or after.");
+      const column = b.columns.find(c => c.id === req.columnId);
+      const anchor = b.columns.find(c => c.id === (req.before ?? req.after));
+      if (!column || !anchor || column.id === anchor.id) throw Error("Choose two different existing columns.");
+      const columns = b.columns.filter(c => c.id !== column.id);
+      columns.splice(columns.findIndex(c => c.id === anchor.id) + (req.after !== undefined ? 1 : 0), 0, column);
+      const next = { ...b, columns };
       d.boardsBySlug.set(req.projectSlug, next);
       return next as never;
     },
@@ -402,6 +416,26 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
         paneName,
         replace: true,
       });
+    },
+    reserveBoardCardStart: async req => {
+      const b = await api.getBoard(req.projectSlug);
+      const previous = b.cards.find(c => c.id === req.cardId);
+      if (!previous || previous.claim) throw new Error("Choose an unclaimed card.");
+      return { board: await api.claimBoardCard({ ...req, replace: false }), previous };
+    },
+    acknowledgeBoardNotice: async req => {
+      const board = await api.getBoard(req.projectSlug);
+      const next = { ...board, notices: board.notices?.filter(n => n.id !== req.noticeId) };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next;
+    },
+    dispatchBoardCard: req => api.getBoard(req.projectSlug),
+    cancelBoardCardStart: async req => {
+      const b = await api.getBoard(req.projectSlug);
+      const card = b.cards.find(c => c.id === req.cardId);
+      if (card?.claim?.paneId !== req.paneId || card.claim.since !== req.claimSince) return b;
+      await api.releaseBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId });
+      return api.updateBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId, columnId: req.previousColumn, assignee: req.previousAssignee ?? null });
     },
     onBoardChange: noopSubscription,
     listOtherWindows: async () => [] as never,

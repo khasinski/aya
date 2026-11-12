@@ -24,6 +24,7 @@ export function hydrateProjectTerminalStates(
       ...(tab.sharedDir ? { sharedDir: true as const } : {}),
       ...(tab.teamLaunch ? { teamLaunch: true } : {}),
       ...(tab.sshTarget ? { sshTarget: tab.sshTarget } : {}),
+      ...(tab.initialBoardCard ? { initialBoardCard: tab.initialBoardCard } : {}),
     };
   }
   return next;

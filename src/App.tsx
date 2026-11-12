@@ -14,6 +14,7 @@ import {
   mergeProjectsFromDisk,
 } from "./project-reload";
 import {
+  defaultTabName,
   findProject,
   findProjectSlugForSession,
   mergeGitInfo,
@@ -77,6 +78,7 @@ import {
 } from "./storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { uuid } from "./uuid";
+import { guiSupportedAgent } from "./agentPreset";
 import type { ReviewTarget } from "./diff-review";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
@@ -1198,8 +1200,20 @@ export function App() {
   const startWorktrees = useCallback<NonNullable<React.ComponentProps<typeof Sidebar>['onStartWorktrees']>>((projectId, preset, checkouts, prompt) => {
     for (const checkout of checkouts) launchTerminal(preset, checkout.path, undefined, prompt, projectId);
   }, [launchTerminal]);
-  const startCardInNewPane = useCallback((preset: Preset, prompt: string, projectSlug: string) => {
-    launchTerminal(preset, undefined, undefined, prompt, projectSlug);
+  const startCardInNewPane = useCallback(async (preset: Preset, cardId: string, projectSlug: string) => {
+    if (preset.interfaceMode === "gui" && guiSupportedAgent(preset)) throw new Error("Board task startup is available for terminal presets.");
+    const paneId = uuid();
+    const { board, previous } = await window.aya.reserveBoardCardStart({ projectSlug, cardId, paneId, paneName: defaultTabName(preset) });
+    const card = board.cards.find(c => c.id === cardId)!;
+    const launched = launchTerminal(preset, undefined, undefined, undefined, projectSlug, paneId, {
+      cardId, since: card.claim!.since, previousColumn: previous.columnId, previousAssignee: previous.assignee,
+    });
+    if (!launched) {
+      await window.aya.cancelBoardCardStart({ projectSlug, cardId, paneId, claimSince: card.claim!.since,
+        previousColumn: previous.columnId, previousAssignee: previous.assignee });
+      throw new Error("The project closed before the task could start.");
+    }
+    return board;
   }, [launchTerminal]);
   const statusRailNode = useMemo(() => <StatusRail projects={projects} terminals={terminals} collapsed={statusRailCollapsed} onCollapsedChange={setStatusRailCollapsed} onSelectTerminal={focusTerminalFromNotification} />, [projects, terminals, statusRailCollapsed, setStatusRailCollapsed, focusTerminalFromNotification]);
   return (

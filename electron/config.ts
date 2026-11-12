@@ -21,6 +21,7 @@ import type {
 import { PROJECT_STATE_VERSION, sanitizeStringRecord } from "./validation";
 import { slugifyName } from "./text";
 import { isSshTarget } from "./ssh";
+import { normalizeBoardStart } from "./board-start";
 
 const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);
 
@@ -53,12 +54,14 @@ export function normalizeTab(raw: unknown): WorkingTab | null {
     typeof r.sessionId === "string" && r.sessionId.trim()
       ? r.sessionId
       : undefined;
+  const initialBoardCard = normalizeBoardStart(r.initialBoardCard);
   return {
     id: r.id,
     presetId,
     name,
     ...(cwd ? { cwd } : {}),
     ...(sessionId ? { sessionId } : {}),
+    ...(initialBoardCard ? { initialBoardCard } : {}),
     ...(r.sharedDir === true ? { sharedDir: true as const } : {}),
     ...(r.teamLaunch === true ? { teamLaunch: true } : {}),
     ...(r.remoteTerminal === true ? { remoteTerminal: true as const } : {}),
