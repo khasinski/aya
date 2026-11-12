@@ -171,12 +171,17 @@ function ProjectsLeftLayoutImpl({
   const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
   const pendingRovingProjectFocus = useRef<HTMLElement | null>(null);
   const pendingRovingTerminalFocus = useRef<HTMLElement | null>(null);
+  const visibleTerminals = terminals.filter((t) => t.presetId !== PRESET_ID_BOARD);
+  const boardTab = terminals.find((t) => t.presetId === PRESET_ID_BOARD);
+  const activeProjectRemote = Boolean(projects.find((pr) => pr.slug === activeProjectId)?.remote);
   const rovingProjectSlug = projects.some((project) => project.slug === focusedProjectSlug)
     ? focusedProjectSlug
     : activeProjectId;
-  const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
+  const rovingTerminalId = visibleTerminals.some((terminal) => terminal.id === focusedTerminalId)
     ? focusedTerminalId
-    : activeTerminalId;
+    : visibleTerminals.some((terminal) => terminal.id === activeTerminalId)
+      ? activeTerminalId
+      : (visibleTerminals[0]?.id ?? null);
   useLayoutEffect(() => {
     const target = pendingRovingProjectFocus.current;
     if (!target) return;
@@ -232,11 +237,20 @@ function ProjectsLeftLayoutImpl({
   useLayoutEffect(() => {
     if (renamingId) termInputRef.current?.select();
   }, [renamingId]);
+  const reorderVisibleTerminals = useCallback(
+    (orderedVisibleIds: string[]) => {
+      const boardIds = terminals
+        .filter((t) => t.presetId === PRESET_ID_BOARD)
+        .map((t) => t.id);
+      onReorderTerminals([...orderedVisibleIds, ...boardIds]);
+    },
+    [onReorderTerminals, terminals],
+  );
   const {
     dragId,
     dropTarget: termDrop,
     itemHandlers: termDragHandlers,
-  } = useDragReorder(stacked ? "y" : "x", terminals.map((t) => t.id), onReorderTerminals);
+  } = useDragReorder(stacked ? "y" : "x", visibleTerminals.map((t) => t.id), reorderVisibleTerminals);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(
     null,
   );
@@ -265,12 +279,12 @@ function ProjectsLeftLayoutImpl({
     setFocusProjectAfterMove(null);
   }, [focusProjectAfterMove, projects]);
   useLayoutEffect(() => {
-    if (!focusTerminalAfterMove || terminals.findIndex((terminal) => terminal.id === focusTerminalAfterMove.id) !== focusTerminalAfterMove.index) return;
+    if (!focusTerminalAfterMove || visibleTerminals.findIndex((terminal) => terminal.id === focusTerminalAfterMove.id) !== focusTerminalAfterMove.index) return;
     const id = focusTerminalAfterMove.id;
     window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>('.aya-termtab-list [role="tab"][data-terminal-id]')]
       .find((item) => item.dataset.terminalId === id)?.focus());
     setFocusTerminalAfterMove(null);
-  }, [focusTerminalAfterMove, terminals]);
+  }, [focusTerminalAfterMove, visibleTerminals]);
   useLayoutEffect(() => {
     if (menu || !restoreTerminalFocusId) return;
     const id = restoreTerminalFocusId;
@@ -542,35 +556,36 @@ function ProjectsLeftLayoutImpl({
                     <span className="aya-recent-menu-name">{p.name}</span>
                   </button>
                 ))}
-                {kanbanEnabled && !projects.find((pr) => pr.slug === activeProjectId)?.remote && (
-                  <button
-                    className="aya-recent-menu-item"
-                    role="menuitem"
-                    disabled={updatePreparing}
-                    onClick={() => {
-                      setShowLauncher(false);
-                      onLaunchTerminal(BUILTIN_BOARD);
-                    }}
-                    title="Open project Kanban board"
-                  >
-                    <span
-                      className="aya-launcher-btn-icon"
-                      style={{ color: BUILTIN_BOARD.color }}
-                    >
-                      {BUILTIN_BOARD.icon}
-                    </span>
-                    <span className="aya-recent-menu-name">{BUILTIN_BOARD.name}</span>
-                  </button>
-                )}
               </div>
             )}
           </div>
   );
 
+  const kanbanToggleNode = kanbanEnabled && !activeProjectRemote ? (
+    <button
+      type="button"
+      className={`aya-kanban-sidebar-toggle${
+        boardTab && boardTab.id === activeTerminalId ? " aya-kanban-sidebar-toggle--active" : ""
+      }`}
+      aria-current={boardTab && boardTab.id === activeTerminalId ? "true" : undefined}
+      title="Open Kanban board for this project"
+      onClick={() => {
+        if (boardTab) {
+          onSelectTerminal(boardTab.id);
+        } else {
+          onLaunchTerminal(BUILTIN_BOARD);
+        }
+      }}
+    >
+      <span style={{ color: "#58a6ff" }}>▦</span>
+      <span>Kanban</span>
+    </button>
+  ) : null;
+
   const termTabsNode = (
         <div className={`aya-tabs aya-termtabs${stacked ? " aya-termtabs--stacked" : ""}`} ref={tabsRef}>
           <div className="aya-termtab-list" role="tablist" aria-label="Terminals">
-          {terminals.map((t) => {
+          {visibleTerminals.map((t) => {
             const isActive = t.id === activeTerminalId;
             const preset = getPreset(presets, t.presetId);
             const remoteHost = t.remoteHost ?? projects.find((project) => project.slug === t.projectSlug)?.remote?.label;
@@ -694,6 +709,7 @@ function ProjectsLeftLayoutImpl({
             );
           })}
           </div>
+          {!stacked && kanbanToggleNode}
           {!stacked && launcherNode}
         </div>
   );
@@ -945,8 +961,11 @@ function ProjectsLeftLayoutImpl({
           {stacked && (
             <div className="aya-stacked-terminals">
               <div className="aya-stacked-boxtitle">
-                <span>Terminals</span>
-                {launcherNode}
+                <span>{visibleTerminals.length} terminals</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {kanbanToggleNode}
+                  {launcherNode}
+                </span>
               </div>
               {termTabsNode}
             </div>
@@ -1009,18 +1028,18 @@ function ProjectsLeftLayoutImpl({
           onKeyDown={handleMenuNavigation}
         >
           {(() => {
-            const index = terminals.findIndex((terminal) => terminal.id === menu.id);
+            const index = visibleTerminals.findIndex((terminal) => terminal.id === menu.id);
             return <>
               <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
                 const id = menu.id;
                 setFocusTerminalAfterMove({ id, index: index - 1 });
-                onReorderTerminals(moveItem(terminals.map((terminal) => terminal.id), index, -1));
+                reorderVisibleTerminals(moveItem(visibleTerminals.map((terminal) => terminal.id), index, -1));
                 closeTerminalMenu(false);
               }}>Move left</button>
-              <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= terminals.length - 1} className="aya-context-menu-item" onClick={() => {
+              <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= visibleTerminals.length - 1} className="aya-context-menu-item" onClick={() => {
                 const id = menu.id;
                 setFocusTerminalAfterMove({ id, index: index + 1 });
-                onReorderTerminals(moveItem(terminals.map((terminal) => terminal.id), index, 1));
+                reorderVisibleTerminals(moveItem(visibleTerminals.map((terminal) => terminal.id), index, 1));
                 closeTerminalMenu(false);
               }}>Move right</button>
             </>;

@@ -3,6 +3,7 @@ import { guiSupportedAgent } from "../agentPreset";
 import { emptyProjectPaneTitle, paneStyleFromRect } from "../pane-grid";
 import { PRESET_ID_BOARD } from "../preset-ids";
 import { findProject, terminalSpawn } from "../project-helpers";
+import { projectBaseCwd } from "../worktree";
 import type { SettingsTab } from "../settings-tabs";
 import type { DividerRect, LeafRect } from "../split-tree";
 import type { MacOptionKeyMode } from "../terminal-option-key";
@@ -68,7 +69,10 @@ interface Props {
   headerSlot?: HTMLElement | null;
   resizeSplit: (slug: string, splitId: string, ratio: number) => void;
   projectTerminals: TerminalState[];
-  onStartCardInNewPane?: (preset: Preset, cardId: string, projectSlug: string) => Promise<BoardSnapshot>;
+  onStartCardInNewPane?: (preset: Preset, cardId: string, projectSlug: string, cwd?: string) => Promise<BoardSnapshot>;
+  onCreateWorktrees?: (req: { directory: string; slug: string; count: number; base: string }) => Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
+  onFocusTerminal?: (terminalId: string) => void;
+  onSplitBesideTerminal?: (anchorId: string, targetId: string) => void;
 }
 
 export const PaneGrid = memo(function PaneGrid({
@@ -116,6 +120,9 @@ export const PaneGrid = memo(function PaneGrid({
   resizeSplit,
   projectTerminals,
   onStartCardInNewPane,
+  onCreateWorktrees,
+  onFocusTerminal,
+  onSplitBesideTerminal,
 }: Props) {
   // A stable lookup, so a GUI pane (memoised) does not re-render whenever another terminal's status changes.
   const terminalsRef = useRef(terminals);
@@ -226,8 +233,23 @@ export const PaneGrid = memo(function PaneGrid({
                 activeProjectId && setActiveSplitCell(activeProjectId, leafId)
               }
               listSiblingTerminals={listSiblingTerminals}
+              siblingTerminals={projectTerminals.filter(
+                (t) => t.id !== terminal.id && t.presetId !== PRESET_ID_BOARD,
+              )}
               presets={activePresets}
+              projectDir={
+                activeProject && !activeProject.remote
+                  ? projectBaseCwd(activeProject)
+                  : undefined
+              }
               onStartCardInNewPane={onStartCardInNewPane}
+              onCreateWorktrees={onCreateWorktrees}
+              onFocusTerminal={onFocusTerminal}
+              onSplitRight={
+                onSplitBesideTerminal
+                  ? (targetId) => onSplitBesideTerminal(terminal.id, targetId)
+                  : undefined
+              }
               headerSlot={headerSlot}
             />
           );

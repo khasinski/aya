@@ -225,6 +225,8 @@ export interface ThemesFile {
 import type { SplitNode } from "./split-tree";
 import { PRESET_ID_BOARD, PRESET_ID_SHELL } from "./preset-ids";
 
+export type KanbanPriority = "low" | "medium" | "high" | "urgent";
+
 export interface KanbanColumn {
   id: string;
   title: string;
@@ -243,7 +245,10 @@ export interface KanbanCard {
   title: string;
   description?: string;
   assignee?: string;
+  priority?: KanbanPriority;
+  labels?: string[];
   claim?: KanbanClaim;
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -255,6 +260,7 @@ export interface BoardSnapshot {
   filePath: string;
   columns: KanbanColumn[];
   cards: KanbanCard[];
+  archivedCards?: KanbanCard[];
   notices?: Array<{ id: string; cardId: string; paneName: string; state: "pending" | "sending" | "typed" }>;
 }
 
@@ -1048,10 +1054,12 @@ export interface AyaApi {
   reserveBoardCardStart(req: { projectSlug: string; cardId: string; paneId: string; paneName: string }): Promise<{ board: BoardSnapshot; previous: KanbanCard }>;
   dispatchBoardCard(req: { projectSlug: string; cardId: string; paneId: string; claimSince: string }): Promise<BoardSnapshot>;
   cancelBoardCardStart(req: { projectSlug: string; cardId: string; paneId: string; claimSince: string; previousColumn: string; previousAssignee?: string }): Promise<BoardSnapshot>;
-  addBoardCard(req: { projectSlug: string; title: string; description?: string; columnId?: string; assignee?: string }): Promise<BoardSnapshot>;
-  updateBoardCard(req: { projectSlug: string; cardId: string; title?: string; description?: string; columnId?: string; assignee?: string | null }): Promise<BoardSnapshot>;
+  addBoardCard(req: { projectSlug: string; id?: string; title: string; description?: string; columnId?: string; assignee?: string; priority?: KanbanPriority; labels?: string[]; index?: number }): Promise<BoardSnapshot>;
+  updateBoardCard(req: { projectSlug: string; cardId: string; title?: string; description?: string; columnId?: string; assignee?: string | null; priority?: KanbanPriority | null; labels?: string[] | null }): Promise<BoardSnapshot>;
   moveBoardCard(req: { projectSlug: string; cardId: string; columnId: string; index?: number }): Promise<BoardSnapshot>;
-  deleteBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
+  deleteBoardCard(req: { projectSlug: string; cardId: string; archive?: boolean }): Promise<BoardSnapshot>;
+  clearBoardColumn(req: { projectSlug: string; columnId: string; archive?: boolean }): Promise<BoardSnapshot>;
+  restoreBoardCards(req: { projectSlug: string; entries: Array<{ card: KanbanCard; index?: number }> }): Promise<BoardSnapshot>;
   claimBoardCard(req: { projectSlug: string; cardId: string; paneId?: string; paneName: string; replace?: boolean }): Promise<BoardSnapshot>;
   releaseBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
   addBoardColumn(req: { projectSlug: string; title: string }): Promise<BoardSnapshot>;
@@ -1060,6 +1068,10 @@ export interface AyaApi {
   deleteBoardColumn(req: { projectSlug: string; columnId: string }): Promise<BoardSnapshot>;
   exportBoardToRepo(projectSlug: string): Promise<BoardSnapshot>;
   sendBoardCardToPane(req: { projectSlug: string; cardId: string; targetId: string }): Promise<BoardSnapshot>;
+  releaseBoardPane(req: { projectSlug: string; paneId: string }): Promise<BoardSnapshot | null>;
+  syncBoardPaneName(req: { projectSlug: string; paneId: string; paneName: string }): Promise<BoardSnapshot | null>;
+  saveBoardImage(req: { projectSlug: string; dataBase64: string; name?: string }): Promise<{ path: string; markdown: string }>;
+  readBoardImage(req: { projectSlug: string; src: string }): Promise<string>;
   onBoardChange(handler: (projectSlug: string) => void): () => void;
   /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
    *  git's own message (e.g. "a branch named 'x' already exists"). */

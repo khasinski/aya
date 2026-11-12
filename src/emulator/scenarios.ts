@@ -582,7 +582,8 @@ const SAMPLE_KANBAN_BOARD: BoardSnapshot = {
       id: "t-2",
       columnId: "in-progress",
       title: "Add aya board CLI (list, add, move, claim, release)",
-      description: "Allow terminals to claim and release tasks directly from the shell.",
+      description:
+        "Allow terminals to claim and release tasks directly from the shell.\n- [x] `aya board list` & `add`\n- [x] `aya board claim` / `release`\n- [ ] Update [CLI docs](https://github.com/khasinski/aya)",
       assignee: "Claude",
       claim: {
         paneId: "claude",
@@ -596,7 +597,8 @@ const SAMPLE_KANBAN_BOARD: BoardSnapshot = {
       id: "t-3",
       columnId: "in-progress",
       title: "Rate-limit public API endpoints",
-      description: "Sliding-window limiter in src/web/rate-limit.ts.",
+      description:
+        "Sliding-window limiter in `src/web/rate-limit.ts` ([RFC #42](https://github.com/khasinski/aya/issues/42)).",
       assignee: "Codex",
       claim: {
         paneId: "codex",

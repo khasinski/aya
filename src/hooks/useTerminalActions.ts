@@ -73,11 +73,19 @@ export function useTerminalActions({
   );
 
   const launchTerminal = useCallback(
-    (preset: Preset, cwd?: string, sshTarget?: string, initialPrompt?: string, targetProjectId?: string, terminalId?: string, initialBoardCard?: TerminalState["initialBoardCard"]) => {
+    (
+      preset: Preset,
+      cwd?: string,
+      sshTarget?: string,
+      initialPrompt?: string,
+      targetProjectId?: string,
+      terminalId?: string,
+      initialBoardCard?: TerminalState["initialBoardCard"],
+    ): TerminalState | null => {
       const slug = targetProjectId ?? activeProjectIdRef.current;
-      if (!slug) return;
+      if (!slug) return null;
       const project = findProject(projectsRef.current, slug);
-      if (!project) return;
+      if (!project) return null;
       if (preset.id === PRESET_ID_BOARD) {
         const existing = Object.values(terminalsRef.current).find(
           (t) => t.projectSlug === slug && t.presetId === PRESET_ID_BOARD,
@@ -88,7 +96,7 @@ export function useTerminalActions({
             ...prev,
             [slug]: projectSplitTree(project) && prev[slug] ? existing.id : null,
           }));
-          return;
+          return existing;
         }
       }
       const id = terminalId ?? uuid();
@@ -111,6 +119,8 @@ export function useTerminalActions({
         ...(initialBoardCard ? { initialBoardCard } : {}),
         ...(sshTarget ? { sshTarget } : {}),
       };
+      const nextTerminals = { ...terminalsRef.current, [id]: term };
+      terminalsRef.current = nextTerminals;
       setTerminals((prev) => {
         const next = { ...prev, [id]: term };
         const tabs: WorkingTab[] = Object.values(next)
@@ -149,6 +159,7 @@ export function useTerminalActions({
             ? { splitLayout: undefined, ...(splitTree ? { splitTree } : { splitTree: undefined }) }
             : {}),
         };
+        projectsRef.current = projectsRef.current.map((p) => (p.slug === slug ? updated : p));
         setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
         setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
         void window.aya.updateProject(updated);
@@ -245,6 +256,9 @@ export function useTerminalActions({
       finally { closingTerminals.current.delete(id); releaseAttachClose(); }
     // A closed tab plays no team role; a restart keeps it (same tab).
     void window.aya.teamReleasePane(t.projectSlug, id).catch(() => {});
+    if (typeof window.aya.releaseBoardPane === "function") {
+      void window.aya.releaseBoardPane({ projectSlug: t.projectSlug, paneId: id }).catch(() => {});
+    }
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
     // mistaken for a re-mount if the id were ever reused).
     releaseSpawn(id);
@@ -357,6 +371,9 @@ export function useTerminalActions({
         if (!t) return prev;
         const next = { ...prev, [id]: { ...t, name } };
         persistProject(t.projectSlug, next);
+        if (typeof window.aya.syncBoardPaneName === "function") {
+          void window.aya.syncBoardPaneName({ projectSlug: t.projectSlug, paneId: id, paneName: name }).catch(() => {});
+        }
         return next;
       });
     },

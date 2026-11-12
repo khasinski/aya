@@ -5,7 +5,7 @@ import {
   projectLaunchCwd,
   shellPresetForTab,
 } from "../dist-test/terminal-actions.js";
-import { PRESET_ID_SHELL } from "../dist-test/preset-ids.js";
+import { PRESET_ID_BOARD, PRESET_ID_SHELL } from "../dist-test/preset-ids.js";
 import { BUILTIN_SHELL } from "../dist-test/types.js";
 
 const project = { slug: "aya", directory: "/src/aya", name: "Aya", tabs: [] };
@@ -74,4 +74,14 @@ test("successive closes advance selection through the current terminal record", 
   assert.equal(nextActiveTerminalId(remaining, "aya"), "first");
   delete remaining.first;
   assert.equal(nextActiveTerminalId(remaining, "aya"), null);
+});
+
+test("closing a terminal prefers remaining non-board terminals over the hidden Kanban tab", () => {
+  const remaining = {
+    first: terminal("first"),
+    board: { ...terminal("board"), presetId: PRESET_ID_BOARD },
+  };
+  assert.equal(nextActiveTerminalId(remaining, "aya"), "first");
+  delete remaining.first;
+  assert.equal(nextActiveTerminalId(remaining, "aya"), "board");
 });

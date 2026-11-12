@@ -334,6 +334,42 @@ export function useSplitLayout({
     [addTerminalSplit],
   );
 
+  /** Keep `anchorId` visible in its pane and open `targetId` in a split beside it. */
+  const splitBesideTerminal = useCallback(
+    (anchorId: string, targetId: string) => {
+      const anchor = terminalsRef.current[anchorId];
+      if (!anchor || anchorId === targetId) return;
+      const slug = anchor.projectSlug;
+      setSingleViewByProject((prev) => ({ ...prev, [slug]: null }));
+      setActiveTabByProject((prev) => ({ ...prev, [slug]: targetId }));
+      updateProjectSplitTree(slug, (tree, activeLeafId) => {
+        const anchorLeafId =
+          leaves(tree).find((l) => l.terminalId === anchorId)?.id ?? activeLeafId;
+        const withAnchor = assignTerminal(tree, anchorLeafId, anchorId);
+        const existingTarget = leaves(withAnchor).find(
+          (l) => l.terminalId === targetId && l.id !== anchorLeafId,
+        );
+        if (existingTarget) {
+          return { tree: withAnchor, activeLeafId: existingTarget.id };
+        }
+        const otherLeaf = leaves(withAnchor).find((l) => l.id !== anchorLeafId);
+        if (otherLeaf) {
+          return {
+            tree: assignTerminal(withAnchor, otherLeaf.id, targetId),
+            activeLeafId: otherLeaf.id,
+          };
+        }
+        const newLeafId = uuid();
+        const split = splitLeaf(withAnchor, anchorLeafId, "row", uuid(), newLeafId);
+        return {
+          tree: assignTerminal(split, newLeafId, targetId),
+          activeLeafId: newLeafId,
+        };
+      });
+    },
+    [updateProjectSplitTree, setActiveTabByProject, setSingleViewByProject, terminalsRef],
+  );
+
   return {
     updateProjectSplitTree,
     assignTerminalToActiveSplitCell,
@@ -347,6 +383,7 @@ export function useSplitLayout({
     splitActivePane,
     splitTerminalRight,
     splitTerminalBelow,
+    splitBesideTerminal,
   };
 }
 

@@ -218,6 +218,8 @@ const api: AyaApi = {
   updateBoardCard: (req) => ipcRenderer.invoke("board:update-card", req),
   moveBoardCard: (req) => ipcRenderer.invoke("board:move-card", req),
   deleteBoardCard: (req) => ipcRenderer.invoke("board:delete-card", req),
+  clearBoardColumn: (req) => ipcRenderer.invoke("board:clear-column", req),
+  restoreBoardCards: (req) => ipcRenderer.invoke("board:restore-cards", req),
   claimBoardCard: (req) => ipcRenderer.invoke("board:claim-card", req),
   releaseBoardCard: (req) => ipcRenderer.invoke("board:release-card", req),
   addBoardColumn: (req) => ipcRenderer.invoke("board:add-column", req),
@@ -226,6 +228,10 @@ const api: AyaApi = {
   deleteBoardColumn: (req) => ipcRenderer.invoke("board:delete-column", req),
   exportBoardToRepo: (projectSlug) => ipcRenderer.invoke("board:export-repo", projectSlug),
   sendBoardCardToPane: (req) => ipcRenderer.invoke("board:send-to-pane", req),
+  releaseBoardPane: (req) => ipcRenderer.invoke("board:release-pane", req),
+  syncBoardPaneName: (req) => ipcRenderer.invoke("board:sync-pane-name", req),
+  saveBoardImage: (req) => ipcRenderer.invoke("board:save-image", req),
+  readBoardImage: (req) => ipcRenderer.invoke("board:read-image", req),
   onBoardChange: (handler) => {
     const listener = (_e: unknown, projectSlug: string) => handler(projectSlug);
     ipcRenderer.on("board:changed", listener);

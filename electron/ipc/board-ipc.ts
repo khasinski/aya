@@ -2,22 +2,29 @@ import type { IpcMain } from "electron";
 import {
   addBoardCard,
   addBoardColumn,
-  claimBoardCard,
-  dispatchBoardCard,
-  deliverBoardWithdrawal,
   cancelBoardCardStart,
+  claimBoardCard,
+  clearBoardColumn,
   deleteBoardCard,
   deleteBoardColumn,
+  deliverBoardWithdrawal,
+  dispatchBoardCard,
   exportBoardToRepo,
   formatBoardPrompt,
   getBoard,
   moveBoardCard,
   moveBoardColumn,
-  onBoardTaskWithdrawal,
   notifyBoardChanged,
+  onBoardTaskWithdrawal,
+  readBoardImageDataUrl,
   releaseBoardCard,
+  releaseBoardClaimsForPane,
   renameBoardColumn,
+  restoreBoardCards,
+  saveBoardImage,
+  syncBoardPaneName,
   updateBoardCard,
+  type KanbanCard,
 } from "../board";
 import { createBoardNotices, acknowledgeBoardNotice } from "../board-notices";
 import type { ProjectConfig } from "../types";
@@ -51,11 +58,31 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
   ipcMain.handle("board:add-card", async (_event, rawReq: unknown) => {
     const req = requireRecord(rawReq, "board:add-card");
     const project = await localProject(deps, req.projectSlug);
+    const id = typeof req.id === "string" && req.id ? req.id : undefined;
     const title = requireString(req.title, "board:add-card.title");
     const description = typeof req.description === "string" ? req.description : undefined;
     const columnId = typeof req.columnId === "string" && req.columnId ? req.columnId : undefined;
     const assignee = typeof req.assignee === "string" && req.assignee ? req.assignee : undefined;
-    const { board } = await addBoardCard(ayaHome, project, { title, description, columnId, assignee });
+    const priority = typeof req.priority === "string" && req.priority ? req.priority : undefined;
+    const labels = Array.isArray(req.labels)
+      ? req.labels.filter((item): item is string => typeof item === "string")
+      : typeof req.labels === "string"
+        ? req.labels
+        : undefined;
+    const index =
+      typeof req.index === "number" && Number.isInteger(req.index) && req.index >= 0
+        ? req.index
+        : undefined;
+    const { board } = await addBoardCard(ayaHome, project, {
+      id,
+      title,
+      description,
+      columnId,
+      assignee,
+      priority,
+      labels,
+      index,
+    });
     return board;
   });
 
@@ -68,11 +95,23 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
     const columnId = typeof req.columnId === "string" ? req.columnId : undefined;
     const assignee =
       req.assignee === null ? null : typeof req.assignee === "string" ? req.assignee : undefined;
+    const priority =
+      req.priority === null ? null : typeof req.priority === "string" ? req.priority : undefined;
+    const labels =
+      req.labels === null
+        ? null
+        : Array.isArray(req.labels)
+          ? req.labels.filter((item): item is string => typeof item === "string")
+          : typeof req.labels === "string"
+            ? req.labels
+            : undefined;
     const { board } = await updateBoardCard(ayaHome, project, cardId, {
       title,
       description,
       columnId,
       assignee,
+      priority,
+      labels,
     });
     return board;
   });
@@ -94,8 +133,39 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
     const req = requireRecord(rawReq, "board:delete-card");
     const project = await localProject(deps, req.projectSlug);
     const cardId = requireString(req.cardId, "board:delete-card.cardId");
-    const { board } = await deleteBoardCard(ayaHome, project, cardId);
+    const archive = req.archive === true;
+    const { board } = await deleteBoardCard(ayaHome, project, cardId, { archive });
     return board;
+  });
+
+  ipcMain.handle("board:clear-column", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:clear-column");
+    const project = await localProject(deps, req.projectSlug);
+    const columnId = requireString(req.columnId, "board:clear-column.columnId");
+    const archive = req.archive !== false;
+    const { board } = await clearBoardColumn(ayaHome, project, columnId, { archive });
+    return board;
+  });
+
+  ipcMain.handle("board:restore-cards", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:restore-cards");
+    const project = await localProject(deps, req.projectSlug);
+    if (!Array.isArray(req.entries)) {
+      throw new Error("board:restore-cards.entries must be an array");
+    }
+    const entries: Array<{ card: KanbanCard; index?: number }> = [];
+    for (const item of req.entries) {
+      if (typeof item === "object" && item !== null && "card" in item) {
+        const entry = item as { card: KanbanCard; index?: unknown };
+        entries.push({
+          card: entry.card,
+          ...(typeof entry.index === "number" && Number.isInteger(entry.index) && entry.index >= 0
+            ? { index: entry.index }
+            : {}),
+        });
+      }
+    }
+    return restoreBoardCards(ayaHome, project, entries);
   });
 
   ipcMain.handle("board:claim-card", async (_event, rawReq: unknown) => {
@@ -209,6 +279,36 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
     const prompt = formatBoardPrompt(card);
     await deps.sendToPane(project.slug, target.id, prompt);
     return board;
+  });
+
+  ipcMain.handle("board:release-pane", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:release-pane");
+    const project = await localProject(deps, req.projectSlug);
+    const paneId = requireString(req.paneId, "board:release-pane.paneId");
+    return releaseBoardClaimsForPane(ayaHome, project, paneId);
+  });
+
+  ipcMain.handle("board:sync-pane-name", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:sync-pane-name");
+    const project = await localProject(deps, req.projectSlug);
+    const paneId = requireString(req.paneId, "board:sync-pane-name.paneId");
+    const paneName = requireString(req.paneName, "board:sync-pane-name.paneName");
+    return syncBoardPaneName(ayaHome, project, paneId, paneName);
+  });
+
+  ipcMain.handle("board:save-image", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:save-image");
+    const project = await localProject(deps, req.projectSlug);
+    const dataBase64 = requireString(req.dataBase64, "board:save-image.dataBase64");
+    const name = typeof req.name === "string" && req.name ? req.name : undefined;
+    return saveBoardImage(ayaHome, project, { dataBase64, name });
+  });
+
+  ipcMain.handle("board:read-image", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:read-image");
+    const project = await localProject(deps, req.projectSlug);
+    const src = requireString(req.src, "board:read-image.src");
+    return readBoardImageDataUrl(ayaHome, project, src);
   });
 
   const notices = createBoardNotices({

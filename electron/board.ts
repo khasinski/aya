@@ -4,6 +4,7 @@
 // 1. `<project.directory>/.aya/board.json` when present in the repository.
 // 2. `<ayaHome>/boards/<project.slug>.json` in the user's Aya config directory.
 
+import { randomBytes } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
@@ -16,20 +17,33 @@ import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import type { ProjectConfig } from "./types";
 
 export const BOARDS_DIR_NAME = "boards";
+export const BOARD_ASSETS_DIR_NAME = "board-assets";
 export const REPO_BOARD_FILE_NAME = "board.json";
 export const BOARD_FORMAT_VERSION = 1;
 export const MAX_BOARD_FILE_BYTES = 2 * 1024 * 1024;
+export const MAX_BOARD_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_BOARD_COLUMNS = 24;
 export const MAX_BOARD_CARDS = 500;
 export const MAX_COLUMN_TITLE_CHARS = 80;
 export const MAX_CARD_TITLE_CHARS = 200;
-export const MAX_CARD_DESCRIPTION_CHARS = 4_000;
+export const MAX_CARD_DESCRIPTION_CHARS = 16_000;
 export const MAX_ASSIGNEE_CHARS = 120;
+export const MAX_CARD_LABELS = 12;
+export const MAX_CARD_LABEL_CHARS = 32;
 
 const SLUG_RE = /^[a-z0-9_-]{1,80}$/;
 const ID_RE = /^[a-z0-9_-]{1,64}$/i;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const serial = oneAtATime();
+
+export type KanbanPriority = "low" | "medium" | "high" | "urgent";
+
+export const VALID_KANBAN_PRIORITIES: readonly KanbanPriority[] = [
+  "low",
+  "medium",
+  "high",
+  "urgent",
+];
 
 export interface KanbanColumn {
   id: string;
@@ -49,7 +63,10 @@ export interface KanbanCard {
   title: string;
   description?: string;
   assignee?: string;
+  priority?: KanbanPriority;
+  labels?: string[];
   claim?: KanbanClaim;
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -62,12 +79,14 @@ export interface BoardSnapshot {
   columns: KanbanColumn[];
   cards: KanbanCard[];
   notices?: BoardNotice[];
+  archivedCards?: KanbanCard[];
 }
 
 interface StoredBoard {
   version: 1;
   columns: KanbanColumn[];
   cards: KanbanCard[];
+  archivedCards?: KanbanCard[];
 }
 
 export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = [
@@ -180,14 +199,14 @@ function isClaim(value: unknown): value is KanbanClaim {
   );
 }
 
-function isCard(value: unknown, columnIds: ReadonlySet<string>): value is KanbanCard {
+function isCard(value: unknown, columnIds?: ReadonlySet<string>): value is KanbanCard {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const card = value as Record<string, unknown>;
   if (
     typeof card.id !== "string" ||
     !ID_RE.test(card.id) ||
     typeof card.columnId !== "string" ||
-    !columnIds.has(card.columnId) ||
+    (columnIds ? !columnIds.has(card.columnId) : !ID_RE.test(card.columnId)) ||
     typeof card.title !== "string" ||
     card.title.trim().length === 0 ||
     card.title.length > MAX_CARD_TITLE_CHARS ||
@@ -196,6 +215,12 @@ function isCard(value: unknown, columnIds: ReadonlySet<string>): value is Kanban
     !Number.isFinite(Date.parse(card.createdAt)) ||
     typeof card.updatedAt !== "string" ||
     !Number.isFinite(Date.parse(card.updatedAt))
+  ) {
+    return false;
+  }
+  if (
+    card.archivedAt !== undefined &&
+    (typeof card.archivedAt !== "string" || !Number.isFinite(Date.parse(card.archivedAt)))
   ) {
     return false;
   }
@@ -211,10 +236,57 @@ function isCard(value: unknown, columnIds: ReadonlySet<string>): value is Kanban
   ) {
     return false;
   }
+  if (
+    card.priority !== undefined &&
+    (typeof card.priority !== "string" || !VALID_KANBAN_PRIORITIES.includes(card.priority as KanbanPriority))
+  ) {
+    return false;
+  }
+  if (card.labels !== undefined) {
+    if (
+      !Array.isArray(card.labels) ||
+      card.labels.length > MAX_CARD_LABELS ||
+      !card.labels.every(
+        (label) =>
+          typeof label === "string" &&
+          label.trim().length > 0 &&
+          label.length <= MAX_CARD_LABEL_CHARS &&
+          !CONTROL_CHARS.test(label),
+      )
+    ) {
+      return false;
+    }
+  }
   if (card.claim !== undefined && !isClaim(card.claim)) {
     return false;
   }
   return true;
+}
+
+function normalizeStoredCard(c: KanbanCard, includeArchivedAt: boolean): KanbanCard {
+  const cleanedLabels = cleanLabels(c.labels);
+  return {
+    id: c.id,
+    columnId: c.columnId,
+    title: c.title.trim(),
+    ...(c.description && c.description.trim() ? { description: c.description.trim() } : {}),
+    ...(c.assignee && c.assignee.trim() ? { assignee: c.assignee.trim() } : {}),
+    ...(c.priority ? { priority: c.priority } : {}),
+    ...(cleanedLabels ? { labels: cleanedLabels } : {}),
+    ...(c.claim
+      ? {
+          claim: {
+            ...(c.claim.paneId ? { paneId: c.claim.paneId } : {}),
+            paneName: c.claim.paneName.trim(),
+            since: c.claim.since,
+            ...(c.claim.startup ? { startup: c.claim.startup } : {}),
+          },
+        }
+      : {}),
+    ...(includeArchivedAt ? { archivedAt: c.archivedAt ?? c.updatedAt } : {}),
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+  };
 }
 
 function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
@@ -248,29 +320,34 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
   if (!record.cards.every((c) => isCard(c, colIds))) {
     throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
   }
-  const cards = (record.cards as KanbanCard[]).map((c) => ({
-    id: c.id,
-    columnId: c.columnId,
-    title: c.title.trim(),
-    ...(c.description && c.description.trim() ? { description: c.description.trim() } : {}),
-    ...(c.assignee && c.assignee.trim() ? { assignee: c.assignee.trim() } : {}),
-    ...(c.claim
-      ? {
-          claim: {
-            ...(c.claim.paneId ? { paneId: c.claim.paneId } : {}),
-            paneName: c.claim.paneName.trim(),
-            since: c.claim.since,
-            ...(c.claim.startup ? { startup: c.claim.startup } : {}),
-          },
-        }
-      : {}),
-    createdAt: c.createdAt,
-    updatedAt: c.updatedAt,
-  }));
-  if (new Set(cards.map((c) => c.id.toLowerCase())).size !== cards.length) {
+  const cards = (record.cards as KanbanCard[]).map((c) => normalizeStoredCard(c, false));
+  const activeCardIds = new Set(cards.map((c) => c.id.toLowerCase()));
+  if (activeCardIds.size !== cards.length) {
     throw new Error(`${fileLabel} has duplicate card ids; nothing was changed.`);
   }
-  return { version: BOARD_FORMAT_VERSION, columns, cards };
+  let archivedCards: KanbanCard[] | undefined;
+  if (record.archivedCards !== undefined) {
+    if (!Array.isArray(record.archivedCards) || record.archivedCards.length > MAX_BOARD_CARDS) {
+      throw new Error(`${fileLabel} has an invalid archivedCards list; nothing was changed.`);
+    }
+    if (!record.archivedCards.every((c) => isCard(c))) {
+      throw new Error(`${fileLabel} has invalid archived card entries; nothing was changed.`);
+    }
+    const seenArchived = new Set<string>(activeCardIds);
+    archivedCards = [];
+    for (const rawArch of record.archivedCards as KanbanCard[]) {
+      const lower = rawArch.id.toLowerCase();
+      if (seenArchived.has(lower)) continue;
+      seenArchived.add(lower);
+      archivedCards.push(normalizeStoredCard(rawArch, true));
+    }
+  }
+  return {
+    version: BOARD_FORMAT_VERSION,
+    columns,
+    cards,
+    ...(archivedCards && archivedCards.length > 0 ? { archivedCards } : {}),
+  };
 }
 
 async function readBoundedRegularFile(filePath: string): Promise<string | null> {
@@ -322,6 +399,7 @@ async function loadBoardUnlocked(
       columns: stored.columns,
       cards: stored.cards,
       ...(notices.length ? { notices } : {}),
+      archivedCards: stored.archivedCards ?? [],
     };
   }
   const filePath = userBoardFile(ayaHome, project.slug);
@@ -335,6 +413,7 @@ async function loadBoardUnlocked(
     columns: stored.columns,
     cards: stored.cards,
     ...(notices.length ? { notices } : {}),
+    archivedCards: stored.archivedCards ?? [],
   };
 }
 
@@ -352,7 +431,18 @@ async function saveBoardUnlocked(
   if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
     throw new Error(`${dir} is not a regular directory; nothing was saved.`);
   }
-  const text = `${JSON.stringify({ version: BOARD_FORMAT_VERSION, columns: stored.columns, cards: stored.cards }, null, 2)}\n`;
+  const archivedCards =
+    stored.archivedCards && stored.archivedCards.length > 0 ? stored.archivedCards : undefined;
+  const text = `${JSON.stringify(
+    {
+      version: BOARD_FORMAT_VERSION,
+      columns: stored.columns,
+      cards: stored.cards,
+      ...(archivedCards ? { archivedCards } : {}),
+    },
+    null,
+    2,
+  )}\n`;
   if (Buffer.byteLength(text, "utf8") > MAX_BOARD_FILE_BYTES) {
     throw new Error("The Kanban board is too large to save.");
   }
@@ -366,12 +456,17 @@ async function saveBoardUnlocked(
     columns: stored.columns,
     cards: stored.cards,
     ...(notices.length ? { notices } : {}),
+    archivedCards: archivedCards ?? [],
   };
 }
 
-function nextCardId(cards: readonly KanbanCard[]): string {
+function nextCardId(
+  cards: readonly KanbanCard[],
+  archivedCards: readonly KanbanCard[] = [],
+): string {
+  const all = [...cards, ...archivedCards];
   let max = 0;
-  for (const card of cards) {
+  for (const card of all) {
     const match = /^t-(\d+)$/i.exec(card.id);
     if (match) {
       const n = Number(match[1]);
@@ -379,7 +474,7 @@ function nextCardId(cards: readonly KanbanCard[]): string {
     }
   }
   let candidate = max + 1;
-  const existing = new Set(cards.map((c) => c.id.toLowerCase()));
+  const existing = new Set(all.map((c) => c.id.toLowerCase()));
   while (existing.has(`t-${candidate}`)) candidate += 1;
   return `t-${candidate}`;
 }
@@ -457,6 +552,40 @@ function cleanAssignee(assignee: string | undefined): string | undefined {
   return trimmed;
 }
 
+function cleanPriority(priority: string | undefined | null): KanbanPriority | undefined {
+  if (priority === undefined || priority === null) return undefined;
+  const trimmed = priority.trim().toLowerCase();
+  if (!trimmed || trimmed === "none") return undefined;
+  if (!VALID_KANBAN_PRIORITIES.includes(trimmed as KanbanPriority)) {
+    throw new Error(`Invalid priority "${priority}"; choose one of: ${VALID_KANBAN_PRIORITIES.join(", ")}.`);
+  }
+  return trimmed as KanbanPriority;
+}
+
+function cleanLabels(labels: readonly string[] | string | undefined | null): string[] | undefined {
+  if (labels === undefined || labels === null) return undefined;
+  const rawList = typeof labels === "string" ? labels.split(",") : labels;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of rawList) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.replace(/\s+/g, " ").trim().replace(/^#+/, "").trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") continue;
+    if (CONTROL_CHARS.test(trimmed)) throw new Error("Card label must be plain text.");
+    if (trimmed.length > MAX_CARD_LABEL_CHARS) {
+      throw new Error(`Card label "${trimmed}" exceeds maximum length of ${MAX_CARD_LABEL_CHARS}.`);
+    }
+    const lower = trimmed.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(trimmed);
+  }
+  if (out.length > MAX_CARD_LABELS) {
+    throw new Error(`Card has ${out.length} labels; the maximum is ${MAX_CARD_LABELS}.`);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 export function getBoard(
   ayaHome: string,
   project: Pick<ProjectConfig, "slug" | "directory">,
@@ -468,10 +597,14 @@ export function addBoardCard(
   ayaHome: string,
   project: Pick<ProjectConfig, "slug" | "directory">,
   input: {
+    id?: string;
     title: string;
     description?: string;
     columnId?: string;
     assignee?: string;
+    priority?: KanbanPriority | string;
+    labels?: string[] | string;
+    index?: number;
     now?: Date;
   },
 ): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
@@ -483,24 +616,50 @@ export function addBoardCard(
     const title = cleanCardTitle(input.title);
     const description = cleanDescription(input.description);
     const assignee = cleanAssignee(input.assignee);
+    const priority = cleanPriority(input.priority);
+    const labels = cleanLabels(input.labels);
     const column = input.columnId
       ? resolveColumn(current.columns, input.columnId)
       : current.columns[0];
     if (!column) throw new Error("The board has no columns.");
     const iso = (input.now ?? new Date()).toISOString();
+    const existingIds = new Set(
+      [...current.cards, ...(current.archivedCards ?? [])].map((c) => c.id.toLowerCase()),
+    );
+    const customId =
+      input.id && ID_RE.test(input.id.trim()) && !existingIds.has(input.id.trim().toLowerCase())
+        ? input.id.trim()
+        : undefined;
     const card: KanbanCard = {
-      id: nextCardId(current.cards),
+      id: customId ?? nextCardId(current.cards, current.archivedCards),
       columnId: column.id,
       title,
       ...(description ? { description } : {}),
       ...(assignee ? { assignee } : {}),
+      ...(priority ? { priority } : {}),
+      ...(labels ? { labels } : {}),
       createdAt: iso,
       updatedAt: iso,
     };
+    let cards: KanbanCard[];
+    if (typeof input.index === "number" && Number.isInteger(input.index) && input.index >= 0) {
+      const inCol = current.cards.filter((c) => c.columnId === column.id);
+      const clamped = Math.min(input.index, inCol.length);
+      if (clamped === inCol.length) {
+        cards = [...current.cards, card];
+      } else {
+        const beforeCard = inCol[clamped];
+        const insertAt = current.cards.findIndex((c) => c.id === beforeCard.id);
+        cards = [...current.cards.slice(0, insertAt), card, ...current.cards.slice(insertAt)];
+      }
+    } else {
+      cards = [...current.cards, card];
+    }
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
       columns: current.columns,
-      cards: [...current.cards, card],
+      cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return { board, card };
@@ -517,6 +676,8 @@ export function updateBoardCard(
     columnId?: string;
     assignee?: string | null;
     actorPaneId?: string;
+    priority?: KanbanPriority | string | null;
+    labels?: string[] | string | null;
     now?: Date;
   },
 ): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
@@ -533,6 +694,18 @@ export function updateBoardCard(
         : patch.assignee !== undefined
           ? cleanAssignee(patch.assignee)
           : target.assignee;
+    const priority =
+      patch.priority === null
+        ? undefined
+        : patch.priority !== undefined
+          ? cleanPriority(patch.priority)
+          : target.priority;
+    const labels =
+      patch.labels === null
+        ? undefined
+        : patch.labels !== undefined
+          ? cleanLabels(patch.labels)
+          : target.labels;
     const updated: KanbanCard = {
       ...target,
       columnId: column ? column.id : target.columnId,
@@ -543,12 +716,17 @@ export function updateBoardCard(
     else delete updated.description;
     if (assignee) updated.assignee = assignee;
     else delete updated.assignee;
+    if (priority) updated.priority = priority;
+    else delete updated.priority;
+    if (labels && labels.length > 0) updated.labels = labels;
+    else delete updated.labels;
     if (column) await withdrawToPendingColumn(ayaHome, project.slug, target, updated, column, patch.actorPaneId);
     const cards = current.cards.map((c) => (c.id === target.id ? updated : c));
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
       columns: current.columns,
       cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return { board, card: updated };
@@ -593,9 +771,83 @@ export function moveBoardCard(
       version: BOARD_FORMAT_VERSION,
       columns: current.columns,
       cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return { board, card: updated };
+  });
+}
+
+export function archiveBoardCard(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  cardId: string,
+  now?: Date,
+  actorPaneId?: string,
+): Promise<{ board: BoardSnapshot; archived: KanbanCard }> {
+  return serial(project.slug, async () => {
+    const current = await loadBoardUnlocked(ayaHome, project);
+    const target = resolveCard(current.cards, cardId);
+    await notifyTaskWithdrawal(ayaHome, project.slug, target, "removed from the board", actorPaneId);
+    const nowIso = (now ?? new Date()).toISOString();
+    const archived: KanbanCard = {
+      ...target,
+      updatedAt: nowIso,
+      archivedAt: nowIso,
+    };
+    delete archived.claim;
+    const cards = current.cards.filter((c) => c.id !== target.id);
+    const existingArchived = (current.archivedCards ?? []).filter(
+      (c) => c.id.toLowerCase() !== target.id.toLowerCase(),
+    );
+    const archivedCards = [archived, ...existingArchived].slice(0, MAX_BOARD_CARDS);
+    const board = await saveBoardUnlocked(ayaHome, project, {
+      version: BOARD_FORMAT_VERSION,
+      columns: current.columns,
+      cards,
+      archivedCards,
+    });
+    notifyBoardChanged(project.slug);
+    return { board, archived };
+  });
+}
+
+export function unarchiveBoardCard(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  cardId: string,
+  columnQuery?: string,
+  now?: Date,
+): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
+  return serial(project.slug, async () => {
+    const current = await loadBoardUnlocked(ayaHome, project);
+    const archivedList = current.archivedCards ?? [];
+    const target = resolveCard(archivedList, cardId);
+    if (current.cards.length >= MAX_BOARD_CARDS) {
+      throw new Error(`The board already has the maximum of ${MAX_BOARD_CARDS} cards.`);
+    }
+    const col = columnQuery
+      ? resolveColumn(current.columns, columnQuery)
+      : current.columns.find((c) => c.id === target.columnId) ?? current.columns[0];
+    if (!col) throw new Error("The board has no columns.");
+    const nowIso = (now ?? new Date()).toISOString();
+    const restored: KanbanCard = {
+      ...target,
+      columnId: col.id,
+      updatedAt: nowIso,
+    };
+    delete restored.archivedAt;
+    delete restored.claim;
+    const archivedCards = archivedList.filter((c) => c.id !== target.id);
+    const cards = [...current.cards, restored];
+    const board = await saveBoardUnlocked(ayaHome, project, {
+      version: BOARD_FORMAT_VERSION,
+      columns: current.columns,
+      cards,
+      archivedCards,
+    });
+    notifyBoardChanged(project.slug);
+    return { board, card: restored };
   });
 }
 
@@ -603,20 +855,201 @@ export function deleteBoardCard(
   ayaHome: string,
   project: Pick<ProjectConfig, "slug" | "directory">,
   cardId: string,
-  actorPaneId?: string,
+  optionsOrActorPaneId?: string | { archive?: boolean; now?: Date; actorPaneId?: string },
 ): Promise<{ board: BoardSnapshot; deleted: KanbanCard }> {
+  const options =
+    typeof optionsOrActorPaneId === "string"
+      ? { actorPaneId: optionsOrActorPaneId }
+      : optionsOrActorPaneId;
+  if (options?.archive) {
+    return archiveBoardCard(ayaHome, project, cardId, options.now, options.actorPaneId).then(
+      ({ board, archived }) => ({
+        board,
+        deleted: archived,
+      }),
+    );
+  }
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
+    const trimmed = cardId.trim();
+    const lower = trimmed.toLowerCase();
+    const activeTarget =
+      current.cards.find((c) => c.id.toLowerCase() === lower) ??
+      (/^\d+$/.test(trimmed)
+        ? current.cards.find((c) => c.id.toLowerCase() === `t-${trimmed}`)
+        : undefined);
+    if (activeTarget) {
+      await notifyTaskWithdrawal(
+        ayaHome,
+        project.slug,
+        activeTarget,
+        "removed from the board",
+        options?.actorPaneId,
+      );
+      const cards = current.cards.filter((c) => c.id !== activeTarget.id);
+      const board = await saveBoardUnlocked(ayaHome, project, {
+        version: BOARD_FORMAT_VERSION,
+        columns: current.columns,
+        cards,
+        archivedCards: current.archivedCards,
+      });
+      notifyBoardChanged(project.slug);
+      return { board, deleted: activeTarget };
+    }
+    const archivedList = current.archivedCards ?? [];
+    const archivedTarget =
+      archivedList.find((c) => c.id.toLowerCase() === lower) ??
+      (/^\d+$/.test(trimmed)
+        ? archivedList.find((c) => c.id.toLowerCase() === `t-${trimmed}`)
+        : undefined);
+    if (archivedTarget) {
+      const archivedCards = archivedList.filter((c) => c.id !== archivedTarget.id);
+      const board = await saveBoardUnlocked(ayaHome, project, {
+        version: BOARD_FORMAT_VERSION,
+        columns: current.columns,
+        cards: current.cards,
+        archivedCards,
+      });
+      notifyBoardChanged(project.slug);
+      return { board, deleted: archivedTarget };
+    }
     const target = resolveCard(current.cards, cardId);
-    await notifyTaskWithdrawal(ayaHome, project.slug, target, "removed from the board", actorPaneId);
-    const cards = current.cards.filter((c) => c.id !== target.id);
+    return { board: current, deleted: target };
+  });
+}
+
+export function clearBoardColumn(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  columnQuery: string,
+  options?: { archive?: boolean; now?: Date; actorPaneId?: string },
+): Promise<{ board: BoardSnapshot; deleted: KanbanCard[] }> {
+  return serial(project.slug, async () => {
+    const current = await loadBoardUnlocked(ayaHome, project);
+    if (columnQuery.trim() === "__archive__") {
+      const deleted = current.archivedCards ?? [];
+      if (deleted.length === 0) {
+        return { board: current, deleted: [] };
+      }
+      const board = await saveBoardUnlocked(ayaHome, project, {
+        version: BOARD_FORMAT_VERSION,
+        columns: current.columns,
+        cards: current.cards,
+        archivedCards: [],
+      });
+      notifyBoardChanged(project.slug);
+      return { board, deleted };
+    }
+    const targetCol = resolveColumn(current.columns, columnQuery);
+    const deleted = current.cards.filter((c) => c.columnId === targetCol.id);
+    if (deleted.length === 0) {
+      return { board: current, deleted: [] };
+    }
+    for (const card of deleted) {
+      await notifyTaskWithdrawal(
+        ayaHome,
+        project.slug,
+        card,
+        "removed from the board",
+        options?.actorPaneId,
+      );
+    }
+    const cards = current.cards.filter((c) => c.columnId !== targetCol.id);
+    const shouldArchive = options?.archive !== false;
+    let archivedCards = current.archivedCards ?? [];
+    if (shouldArchive) {
+      const nowIso = (options?.now ?? new Date()).toISOString();
+      const newlyArchived: KanbanCard[] = deleted.map((c) => {
+        const item: KanbanCard = {
+          ...c,
+          updatedAt: nowIso,
+          archivedAt: nowIso,
+        };
+        delete item.claim;
+        return item;
+      });
+      const newlyIds = new Set(newlyArchived.map((c) => c.id.toLowerCase()));
+      archivedCards = [
+        ...newlyArchived,
+        ...archivedCards.filter((c) => !newlyIds.has(c.id.toLowerCase())),
+      ].slice(0, MAX_BOARD_CARDS);
+    }
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
       columns: current.columns,
       cards,
+      archivedCards,
     });
     notifyBoardChanged(project.slug);
-    return { board, deleted: target };
+    return { board, deleted };
+  });
+}
+
+export function restoreBoardCards(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  entries: ReadonlyArray<{ card: KanbanCard; index?: number }>,
+): Promise<BoardSnapshot> {
+  return serial(project.slug, async () => {
+    const current = await loadBoardUnlocked(ayaHome, project);
+    if (entries.length === 0) return current;
+    const colIds = new Set(current.columns.map((c) => c.id));
+    const fallbackColId = current.columns[0]?.id;
+    if (!fallbackColId) return current;
+    const nextCards = [...current.cards];
+    const existingIds = new Set(nextCards.map((c) => c.id.toLowerCase()));
+    const restoredIds = new Set<string>();
+    const sorted = [...entries].sort((a, b) => (a.index ?? 999999) - (b.index ?? 999999));
+    for (const entry of sorted) {
+      if (nextCards.length >= MAX_BOARD_CARDS) break;
+      const raw = entry.card;
+      if (!raw || typeof raw.title !== "string" || !raw.title.trim()) continue;
+      const colId = colIds.has(raw.columnId) ? raw.columnId : fallbackColId;
+      const id =
+        typeof raw.id === "string" && ID_RE.test(raw.id) && !existingIds.has(raw.id.toLowerCase())
+          ? raw.id
+          : nextCardId(nextCards, current.archivedCards);
+      existingIds.add(id.toLowerCase());
+      restoredIds.add(id.toLowerCase());
+      if (typeof raw.id === "string") restoredIds.add(raw.id.toLowerCase());
+      const nowIso = new Date().toISOString();
+      const restored: KanbanCard = {
+        id,
+        columnId: colId,
+        title: cleanCardTitle(raw.title),
+        ...(raw.description ? { description: cleanDescription(raw.description) } : {}),
+        ...(raw.assignee ? { assignee: cleanAssignee(raw.assignee) } : {}),
+        ...(raw.priority ? { priority: cleanPriority(raw.priority) } : {}),
+        ...(raw.labels ? { labels: cleanLabels(raw.labels) } : {}),
+        ...(raw.claim && isClaim(raw.claim) ? { claim: raw.claim } : {}),
+        createdAt: typeof raw.createdAt === "string" && Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : nowIso,
+        updatedAt: nowIso,
+      };
+      if (typeof entry.index === "number" && Number.isInteger(entry.index) && entry.index >= 0) {
+        const inCol = nextCards.filter((c) => c.columnId === colId);
+        const clamped = Math.min(entry.index, inCol.length);
+        if (clamped === inCol.length) {
+          nextCards.push(restored);
+        } else {
+          const beforeCard = inCol[clamped];
+          const insertAt = nextCards.findIndex((c) => c.id === beforeCard.id);
+          nextCards.splice(insertAt, 0, restored);
+        }
+      } else {
+        nextCards.push(restored);
+      }
+    }
+    const archivedCards = (current.archivedCards ?? []).filter(
+      (c) => !restoredIds.has(c.id.toLowerCase()),
+    );
+    const board = await saveBoardUnlocked(ayaHome, project, {
+      version: BOARD_FORMAT_VERSION,
+      columns: current.columns,
+      cards: nextCards,
+      archivedCards,
+    });
+    notifyBoardChanged(project.slug);
+    return board;
   });
 }
 
@@ -676,6 +1109,7 @@ export function claimBoardCard(
       version: BOARD_FORMAT_VERSION,
       columns: current.columns,
       cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return {
@@ -697,6 +1131,7 @@ export function dispatchBoardCard(ayaHome: string, project: Pick<ProjectConfig, 
     const save = (startup: "reserved" | "sending" | "sent") => saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION, columns: board.columns,
       cards: board.cards.map(c => c.id === cardId ? { ...c, claim: { ...card.claim!, startup } } : c),
+      archivedCards: board.archivedCards,
     });
     // Persist before typing so a remount or crash cannot resend an uncertain prompt.
     await save("sending");
@@ -735,7 +1170,7 @@ export function cancelBoardCardStart(ayaHome: string, project: Pick<ProjectConfi
     else delete updated.assignee;
     if (current.columns.some(c => c.id === previousColumn)) updated.columnId = previousColumn;
     const board = await saveBoardUnlocked(ayaHome, project, { version: BOARD_FORMAT_VERSION, columns: current.columns,
-      cards: current.cards.map(c => c.id === cardId ? updated : c) });
+      cards: current.cards.map(c => c.id === cardId ? updated : c), archivedCards: current.archivedCards });
     notifyBoardChanged(project.slug);
     return board;
   });
@@ -782,10 +1217,198 @@ export function releaseBoardCard(
       version: BOARD_FORMAT_VERSION,
       columns: current.columns,
       cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return { board, card: updated, previous };
   });
+}
+
+async function hasExistingBoardFile(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+): Promise<boolean> {
+  if (await hasRepoBoardFile(project.directory)) return true;
+  try {
+    const stat = await fs.lstat(userBoardFile(ayaHome, project.slug));
+    return stat.isFile() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+export function releaseBoardClaimsForPane(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  paneId: string,
+): Promise<BoardSnapshot | null> {
+  return serial(project.slug, async () => {
+    if (!(await hasExistingBoardFile(ayaHome, project))) return null;
+    const current = await loadBoardUnlocked(ayaHome, project);
+    if (!current.cards.some((c) => c.claim?.paneId === paneId)) return current;
+    const iso = new Date().toISOString();
+    const cards = current.cards.map((c) => {
+      if (c.claim?.paneId !== paneId) return c;
+      const updated: KanbanCard = { ...c, updatedAt: iso };
+      delete updated.claim;
+      return updated;
+    });
+    const board = await saveBoardUnlocked(ayaHome, project, {
+      version: BOARD_FORMAT_VERSION,
+      columns: current.columns,
+      cards,
+      archivedCards: current.archivedCards,
+    });
+    notifyBoardChanged(project.slug);
+    return board;
+  });
+}
+
+export function syncBoardPaneName(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  paneId: string,
+  paneName: string,
+): Promise<BoardSnapshot | null> {
+  return serial(project.slug, async () => {
+    const clean = cleanAssignee(paneName);
+    if (!clean) return null;
+    if (!(await hasExistingBoardFile(ayaHome, project))) return null;
+    const current = await loadBoardUnlocked(ayaHome, project);
+    if (!current.cards.some((c) => c.claim?.paneId === paneId && c.claim.paneName !== clean)) {
+      return current;
+    }
+    const iso = new Date().toISOString();
+    const cards = current.cards.map((c) => {
+      if (c.claim?.paneId !== paneId || c.claim.paneName === clean) return c;
+      const oldName = c.claim.paneName;
+      return {
+        ...c,
+        ...(c.assignee === oldName ? { assignee: clean } : {}),
+        claim: { ...c.claim, paneName: clean },
+        updatedAt: iso,
+      };
+    });
+    const board = await saveBoardUnlocked(ayaHome, project, {
+      version: BOARD_FORMAT_VERSION,
+      columns: current.columns,
+      cards,
+      archivedCards: current.archivedCards,
+    });
+    notifyBoardChanged(project.slug);
+    return board;
+  });
+}
+
+function detectImageType(bytes: Buffer): { ext: string; mime: string } | null {
+  if (
+    bytes.length >= 8 &&
+    bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  ) {
+    return { ext: ".png", mime: "image/png" };
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { ext: ".jpg", mime: "image/jpeg" };
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return { ext: ".webp", mime: "image/webp" };
+  }
+  if (
+    bytes.length >= 6 &&
+    (bytes.toString("ascii", 0, 6) === "GIF87a" || bytes.toString("ascii", 0, 6) === "GIF89a")
+  ) {
+    return { ext: ".gif", mime: "image/gif" };
+  }
+  return null;
+}
+
+export async function saveBoardImage(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  input: { dataBase64: string; name?: string },
+): Promise<{ path: string; markdown: string }> {
+  const stripped = input.dataBase64.replace(/^data:[^;]+;base64,/, "").trim();
+  if (!stripped) throw new Error("Image data is empty.");
+  const bytes = Buffer.from(stripped, "base64");
+  if (bytes.length === 0 || bytes.length > MAX_BOARD_IMAGE_BYTES) {
+    throw new Error("Image must be between 1 byte and 8 MB.");
+  }
+  const detected = detectImageType(bytes);
+  if (!detected) {
+    throw new Error("Only PNG, JPEG, WebP, and GIF images are supported.");
+  }
+  const useRepo = await hasRepoBoardFile(project.directory);
+  const baseName = input.name
+    ? slugifyName(input.name.replace(/\.[a-z0-9]+$/i, ""), "image").slice(0, 32)
+    : "image";
+  const fileName = `${baseName}-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}${detected.ext}`;
+  const dir = useRepo
+    ? path.join(project.directory, PROJECT_AYA_DIRNAME, BOARD_ASSETS_DIR_NAME)
+    : path.join(ayaHome, BOARDS_DIR_NAME, BOARD_ASSETS_DIR_NAME, project.slug);
+  await fs.mkdir(dir, { recursive: true, mode: useRepo ? 0o755 : 0o700 });
+  const dirStat = await fs.lstat(dir);
+  if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
+    throw new Error("Board assets directory is not a regular folder.");
+  }
+  const fullPath = path.join(dir, fileName);
+  const handle = await fs.open(
+    fullPath,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    useRepo ? 0o644 : 0o600,
+  );
+  try {
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  const displayPath = useRepo
+    ? path.posix.join(PROJECT_AYA_DIRNAME, BOARD_ASSETS_DIR_NAME, fileName)
+    : fullPath;
+  const alt = input.name ? input.name.replace(/[\[\]\r\n]/g, "").trim() || "screenshot" : "screenshot";
+  return {
+    path: displayPath,
+    markdown: `![${alt}](${displayPath})`,
+  };
+}
+
+export async function readBoardImageDataUrl(
+  _ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  rawSrc: string,
+): Promise<string> {
+  const trimmed = rawSrc.trim();
+  if (!trimmed || CONTROL_CHARS.test(trimmed)) {
+    throw new Error("Invalid image path.");
+  }
+  if (/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(trimmed)) {
+    return trimmed;
+  }
+  const filePart = trimmed.startsWith("file://") ? decodeURIComponent(trimmed.slice(7)) : trimmed;
+  const candidate = path.isAbsolute(filePart)
+    ? path.resolve(filePart)
+    : path.resolve(project.directory, filePart);
+  const handle = await fs.open(candidate, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_BOARD_IMAGE_BYTES) {
+      throw new Error("Image must be a regular file under 8 MB.");
+    }
+    const buffer = Buffer.alloc(stat.size);
+    const { bytesRead } = await handle.read(buffer, 0, stat.size, 0);
+    const bytes = buffer.subarray(0, bytesRead);
+    const detected = detectImageType(bytes);
+    if (!detected) {
+      throw new Error("Unsupported image format (use PNG, JPEG, WebP, or GIF).");
+    }
+    return `data:${detected.mime};base64,${bytes.toString("base64")}`;
+  } finally {
+    await handle.close();
+  }
 }
 
 export function addBoardColumn(
@@ -812,6 +1435,7 @@ export function addBoardColumn(
       version: BOARD_FORMAT_VERSION,
       columns: [...current.columns, column],
       cards: current.cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return { board, column };
@@ -841,6 +1465,7 @@ export function moveBoardColumn(
       version: BOARD_FORMAT_VERSION,
       columns,
       cards: current.cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return { board, column };
@@ -863,6 +1488,7 @@ export function renameBoardColumn(
       version: BOARD_FORMAT_VERSION,
       columns,
       cards: current.cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return { board, column: updated };
@@ -891,6 +1517,7 @@ export function deleteBoardColumn(
       version: BOARD_FORMAT_VERSION,
       columns,
       cards: current.cards,
+      archivedCards: current.archivedCards,
     });
     notifyBoardChanged(project.slug);
     return board;
@@ -903,13 +1530,60 @@ export function exportBoardToRepo(
 ): Promise<BoardSnapshot> {
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
+    const userAssetsDir = path.join(
+      ayaHome,
+      BOARDS_DIR_NAME,
+      BOARD_ASSETS_DIR_NAME,
+      project.slug,
+    );
+    const repoAssetsDir = path.join(
+      project.directory,
+      PROJECT_AYA_DIRNAME,
+      BOARD_ASSETS_DIR_NAME,
+    );
+    const migrateCardAssets = async (list: readonly KanbanCard[]): Promise<KanbanCard[]> => {
+      const out: KanbanCard[] = [];
+      for (const card of list) {
+        if (!card.description || !card.description.includes(userAssetsDir)) {
+          out.push(card);
+          continue;
+        }
+        let nextDesc = card.description;
+        const escapedPrefix = userAssetsDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const assetRe = new RegExp(`${escapedPrefix}[/\\\\]([a-z0-9_.-]+\\.(?:png|jpg|webp|gif))`, "gi");
+        const matches = Array.from(card.description.matchAll(assetRe));
+        for (const m of matches) {
+          const fullMatch = m[0];
+          const fileName = m[1];
+          const srcFile = path.join(userAssetsDir, fileName);
+          const dstFile = path.join(repoAssetsDir, fileName);
+          try {
+            await fs.mkdir(repoAssetsDir, { recursive: true, mode: 0o755 });
+            await fs.copyFile(srcFile, dstFile);
+            const relPath = path.posix.join(
+              PROJECT_AYA_DIRNAME,
+              BOARD_ASSETS_DIR_NAME,
+              fileName,
+            );
+            nextDesc = nextDesc.split(fullMatch).join(relPath);
+          } catch {
+            // Keep original reference if asset file could not be copied.
+          }
+        }
+        out.push(nextDesc === card.description ? card : { ...card, description: nextDesc });
+      }
+      return out;
+    };
+    const cards = await migrateCardAssets(current.cards);
+    const archivedCards = await migrateCardAssets(current.archivedCards ?? []);
     const board = await saveBoardUnlocked(
       ayaHome,
       project,
       {
         version: BOARD_FORMAT_VERSION,
         columns: current.columns,
-        cards: current.cards,
+        cards,
+        archivedCards,
       },
       "repo",
     );
@@ -919,10 +1593,18 @@ export function exportBoardToRepo(
 }
 
 export function formatBoardPrompt(card: KanbanCard): string {
-  const lines = [`Task ${card.id}: ${card.title}`];
+  const metaParts: string[] = [];
+  if (card.priority) metaParts.push(`priority: ${card.priority}`);
+  if (card.labels && card.labels.length > 0) metaParts.push(`labels: ${card.labels.join(", ")}`);
+  const metaSuffix = metaParts.length > 0 ? ` (${metaParts.join(" · ")})` : "";
+  const lines = [`Task ${card.id}: ${card.title}${metaSuffix}`];
   if (card.description) {
     lines.push("", card.description);
   }
+  lines.push(
+    "",
+    `Use \`aya board\` to inspect or update the board (e.g. \`aya board move ${card.id} review\` or \`aya board move ${card.id} done\` when finished).`,
+  );
   return lines.join("\n");
 }
 
@@ -939,6 +1621,8 @@ export function formatBoardText(board: BoardSnapshot): string {
     }
     for (const card of cards) {
       const meta: string[] = [];
+      if (card.priority) meta.push(`priority: ${card.priority}`);
+      if (card.labels && card.labels.length > 0) meta.push(`labels: ${card.labels.join(", ")}`);
       if (card.claim) {
         meta.push(`claimed by ${card.claim.paneName}`);
       } else if (card.assignee) {
@@ -953,13 +1637,152 @@ export function formatBoardText(board: BoardSnapshot): string {
       }
     }
   }
+  if (board.archivedCards && board.archivedCards.length > 0) {
+    lines.push(`\n## Archive [${board.archivedCards.length} archived — run "aya board archive" to view]`);
+  }
   return `${lines.join("\n")}\n`;
+}
+
+const PRIORITY_TOKEN_MAP: Record<string, KanbanPriority> = {
+  p0: "urgent",
+  urgent: "urgent",
+  p1: "high",
+  high: "high",
+  p2: "medium",
+  medium: "medium",
+  p3: "low",
+  low: "low",
+};
+
+export function matchesBoardQuery(
+  card: KanbanCard,
+  rawQuery: string,
+  options?: { isArchived?: boolean },
+): boolean {
+  const trimmed = rawQuery.trim().toLowerCase();
+  if (!trimmed) return true;
+  const isArchived = options?.isArchived ?? Boolean(card.archivedAt);
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  for (const token of tokens) {
+    if (token.startsWith("#") && token.length > 1) {
+      const needle = token.slice(1);
+      if (!card.labels?.some((l) => l.toLowerCase().includes(needle))) return false;
+      continue;
+    }
+    if ((token.startsWith("label:") || token.startsWith("tag:")) && token.includes(":")) {
+      const needle = token.slice(token.indexOf(":") + 1);
+      if (!needle) continue;
+      if (!card.labels?.some((l) => l.toLowerCase().includes(needle))) return false;
+      continue;
+    }
+    if (token.startsWith("@") && token.length > 1) {
+      const needle = token.slice(1);
+      const assigneeMatch = card.assignee?.toLowerCase().includes(needle) ?? false;
+      const claimMatch = card.claim?.paneName.toLowerCase().includes(needle) ?? false;
+      if (!assigneeMatch && !claimMatch) return false;
+      continue;
+    }
+    if (token.startsWith("assignee:") || token.startsWith("owner:")) {
+      const needle = token.slice(token.indexOf(":") + 1);
+      if (!needle) continue;
+      const assigneeMatch = card.assignee?.toLowerCase().includes(needle) ?? false;
+      const claimMatch = card.claim?.paneName.toLowerCase().includes(needle) ?? false;
+      if (!assigneeMatch && !claimMatch) return false;
+      continue;
+    }
+    if (token in PRIORITY_TOKEN_MAP && (token === "p0" || token === "p1" || token === "p2" || token === "p3")) {
+      if (card.priority !== PRIORITY_TOKEN_MAP[token]) return false;
+      continue;
+    }
+    if (token.startsWith("p:") || token.startsWith("priority:")) {
+      const rawP = token.slice(token.indexOf(":") + 1);
+      const mapped = PRIORITY_TOKEN_MAP[rawP];
+      if (mapped) {
+        if (card.priority !== mapped) return false;
+        continue;
+      }
+      if ((card.priority?.toLowerCase() ?? "") !== rawP) return false;
+      continue;
+    }
+    if (token.startsWith("col:") || token.startsWith("column:")) {
+      const needle = token.slice(token.indexOf(":") + 1);
+      if (needle && !card.columnId.toLowerCase().includes(needle)) return false;
+      continue;
+    }
+    if (token === "is:archived" || token === "in:archive") {
+      if (!isArchived) return false;
+      continue;
+    }
+    if (token === "is:active" || token === "is:open") {
+      if (isArchived) return false;
+      continue;
+    }
+    if (token === "is:claimed") {
+      if (!card.claim) return false;
+      continue;
+    }
+    if (token === "is:unassigned") {
+      if (card.claim || card.assignee) return false;
+      continue;
+    }
+    const matchesFreeText =
+      card.id.toLowerCase().includes(token) ||
+      card.title.toLowerCase().includes(token) ||
+      (card.description?.toLowerCase().includes(token) ?? false) ||
+      card.columnId.toLowerCase().includes(token) ||
+      (card.assignee?.toLowerCase().includes(token) ?? false) ||
+      (card.claim?.paneName.toLowerCase().includes(token) ?? false) ||
+      (card.priority?.toLowerCase().includes(token) ?? false) ||
+      (card.labels?.some((l) => l.toLowerCase().includes(token)) ?? false);
+    if (!matchesFreeText) return false;
+  }
+  return true;
+}
+
+export async function searchBoard(
+  ayaHome: string,
+  project: ProjectConfig,
+  query: string,
+  options?: { scope?: "all" | "active" | "archive" },
+): Promise<{ board: BoardSnapshot; activeMatches: KanbanCard[]; archivedMatches: KanbanCard[] }> {
+  const board = await getBoard(ayaHome, project);
+  const scope = options?.scope ?? "all";
+  const activeMatches =
+    scope === "archive"
+      ? []
+      : board.cards.filter((c) => matchesBoardQuery(c, query, { isArchived: false }));
+  const archivedMatches =
+    scope === "active"
+      ? []
+      : (board.archivedCards ?? []).filter((c) => matchesBoardQuery(c, query, { isArchived: true }));
+  return { board, activeMatches, archivedMatches };
+}
+
+function formatSearchCardLine(card: KanbanCard, prefixLabel: string): string {
+  const meta: string[] = [prefixLabel];
+  if (card.priority) meta.push(`priority: ${card.priority}`);
+  if (card.labels && card.labels.length > 0) meta.push(`labels: ${card.labels.join(", ")}`);
+  if (card.claim) {
+    meta.push(`claimed by ${card.claim.paneName}`);
+  } else if (card.assignee) {
+    meta.push(`assigned: ${card.assignee}`);
+  }
+  if (card.archivedAt) {
+    meta.push(`archived: ${card.archivedAt.slice(0, 10)}`);
+  }
+  const lines = [`  ${card.id}  ${card.title}  [${meta.join(", ")}]`];
+  if (card.description) {
+    for (const descLine of card.description.split(/\r?\n/)) {
+      lines.push(`       ${descLine}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 // ---- CLI (`aya board ...`) ----
 
 const BOARD_USAGE =
-  "usage: aya board [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--project slug] | remove <id> [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
+  "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
 
 export interface BoardControlRequest {
   argv: string[];
@@ -1031,10 +1854,82 @@ export async function handleBoardRequest(
     };
   }
 
+  const runSearchCommand = async (
+    rawArgs: readonly string[],
+    defaultScope: "all" | "active" | "archive" = "all",
+  ): Promise<{ output: string }> => {
+    let scope: "all" | "active" | "archive" = defaultScope;
+    let jsonFlag = false;
+    const queryWords: string[] = [];
+    for (const a of rawArgs) {
+      if (a === "--archive" || a === "-a") {
+        scope = "archive";
+      } else if (a === "--active") {
+        scope = "active";
+      } else if (a === "--all") {
+        scope = "all";
+      } else if (a === "--json") {
+        jsonFlag = true;
+      } else if (a.startsWith("-")) {
+        throw new Error(BOARD_USAGE);
+      } else {
+        queryWords.push(a);
+      }
+    }
+    const query = queryWords.join(" ").trim();
+    if (!query) throw new Error(BOARD_USAGE);
+    const { board, activeMatches, archivedMatches } = await searchBoard(deps.ayaHome, project, query, { scope });
+    if (jsonFlag) {
+      return {
+        output: `${JSON.stringify(
+          {
+            projectSlug: board.projectSlug,
+            query,
+            scope,
+            active: activeMatches,
+            archived: archivedMatches,
+          },
+          null,
+          2,
+        )}\n`,
+      };
+    }
+    const total = activeMatches.length + archivedMatches.length;
+    if (total === 0) {
+      return {
+        output: `No cards matching "${query}" on ${board.projectSlug}.\n`,
+      };
+    }
+    const colTitleById = new Map(board.columns.map((c) => [c.id, c.title]));
+    const lines: string[] = [
+      `Search "${query}" on ${board.projectSlug} — ${total} match${total === 1 ? "" : "es"}:`,
+    ];
+    if (activeMatches.length > 0) {
+      lines.push(`\n## Active (${activeMatches.length})`);
+      for (const card of activeMatches) {
+        const colLabel = colTitleById.get(card.columnId) ?? card.columnId;
+        lines.push(formatSearchCardLine(card, `${colLabel} (${card.columnId})`));
+      }
+    }
+    if (archivedMatches.length > 0) {
+      lines.push(`\n## Archive (${archivedMatches.length})`);
+      for (const card of archivedMatches) {
+        lines.push(formatSearchCardLine(card, `archived from ${card.columnId}`));
+      }
+    }
+    return { output: `${lines.join("\n")}\n` };
+  };
+
+  if (sub === "search" || sub === "find") {
+    return runSearchCommand(rest, "all");
+  }
+
   if (sub === "add") {
     let columnId: string | undefined;
     let description: string | undefined;
     let assignee: string | undefined;
+    let priority: string | undefined;
+    const labels: string[] = [];
     const titleWords: string[] = [];
     for (let i = 0; i < rest.length; i += 1) {
       const a = rest[i];
@@ -1047,6 +1942,12 @@ export async function handleBoardRequest(
       } else if (a === "--assignee" || a === "-a") {
         if (i + 1 >= rest.length) throw new Error(BOARD_USAGE);
         assignee = rest[++i];
+      } else if (a === "--priority" || a === "-p") {
+        if (i + 1 >= rest.length) throw new Error(BOARD_USAGE);
+        priority = rest[++i];
+      } else if (a === "--labels" || a === "--label" || a === "-l") {
+        if (i + 1 >= rest.length) throw new Error(BOARD_USAGE);
+        labels.push(...rest[++i].split(","));
       } else if (a.startsWith("-")) {
         throw new Error(BOARD_USAGE);
       } else {
@@ -1060,6 +1961,8 @@ export async function handleBoardRequest(
       columnId,
       description,
       assignee,
+      priority,
+      ...(labels.length > 0 ? { labels } : {}),
       now: now(),
     });
     return { output: `added ${card.id} (${card.columnId}): ${card.title}\n` };
@@ -1080,6 +1983,8 @@ export async function handleBoardRequest(
     let title: string | undefined;
     let description: string | undefined;
     let assignee: string | null | undefined;
+    let priority: string | null | undefined;
+    let labels: string[] | null | undefined;
     for (let i = 0; i < flags.length; i += 1) {
       const a = flags[i];
       if (a === "--title" || a === "-t") {
@@ -1092,17 +1997,33 @@ export async function handleBoardRequest(
         if (i + 1 >= flags.length) throw new Error(BOARD_USAGE);
         const val = flags[++i];
         assignee = val.toLowerCase() === "none" || val === "" ? null : val;
+      } else if (a === "--priority" || a === "-p") {
+        if (i + 1 >= flags.length) throw new Error(BOARD_USAGE);
+        const val = flags[++i];
+        priority = val.toLowerCase() === "none" || val === "" ? null : val;
+      } else if (a === "--labels" || a === "--label" || a === "-l") {
+        if (i + 1 >= flags.length) throw new Error(BOARD_USAGE);
+        const val = flags[++i];
+        labels = val.toLowerCase() === "none" || val === "" ? null : val.split(",");
       } else {
         throw new Error(BOARD_USAGE);
       }
     }
-    if (title === undefined && description === undefined && assignee === undefined) {
+    if (
+      title === undefined &&
+      description === undefined &&
+      assignee === undefined &&
+      priority === undefined &&
+      labels === undefined
+    ) {
       throw new Error(BOARD_USAGE);
     }
     const { card } = await updateBoardCard(deps.ayaHome, project, cardId, {
       title,
       description,
       assignee,
+      priority,
+      labels,
       now: now(),
       actorPaneId: callerId,
     });
@@ -1113,6 +2034,63 @@ export async function handleBoardRequest(
     if (rest.length !== 1 || !rest[0]) throw new Error(BOARD_USAGE);
     const { deleted } = await deleteBoardCard(deps.ayaHome, project, rest[0], callerId);
     return { output: `removed ${deleted.id}: ${deleted.title}\n` };
+  }
+
+  if (sub === "clear") {
+    const colQuery = rest.join(" ").trim() || "done";
+    const { deleted } = await clearBoardColumn(deps.ayaHome, project, colQuery, {
+      archive: true,
+      now: now(),
+      actorPaneId: callerId,
+    });
+    return {
+      output: `archived ${deleted.length} card${deleted.length === 1 ? "" : "s"} from ${colQuery}\n`,
+    };
+  }
+
+  if (sub === "archive") {
+    const [archAction, ...archRest] = rest;
+    if (archAction === undefined || archAction === "list" || archAction === "ls" || archAction === "--json") {
+      const jsonFlag = archAction === "--json" || archRest.includes("--json");
+      const board = await getBoard(deps.ayaHome, project);
+      const archived = board.archivedCards ?? [];
+      if (jsonFlag) {
+        return { output: `${JSON.stringify(archived, null, 2)}\n` };
+      }
+      if (archived.length === 0) {
+        return { output: `Archive for ${board.projectSlug} is empty.\n` };
+      }
+      const lines = [`Archive for ${board.projectSlug} [${archived.length}]:`];
+      for (const c of archived) {
+        const meta = [`from: ${c.columnId}`];
+        if (c.priority) meta.push(`priority: ${c.priority}`);
+        if (c.labels && c.labels.length > 0) meta.push(`labels: ${c.labels.join(", ")}`);
+        if (c.archivedAt) meta.push(`archived: ${c.archivedAt.slice(0, 10)}`);
+        lines.push(`  ${c.id}  ${c.title}  [${meta.join(", ")}]`);
+      }
+      return { output: `${lines.join("\n")}\n` };
+    }
+    if (archAction === "restore" || archAction === "unarchive") {
+      const [cardId, ...colWords] = archRest;
+      if (!cardId) throw new Error(BOARD_USAGE);
+      const colQuery = colWords.join(" ").trim() || undefined;
+      const { card } = await unarchiveBoardCard(deps.ayaHome, project, cardId, colQuery, now());
+      return { output: `restored ${card.id} to ${card.columnId}: ${card.title}\n` };
+    }
+    if (archAction === "clear" || archAction === "empty") {
+      const { deleted } = await clearBoardColumn(deps.ayaHome, project, "__archive__");
+      return {
+        output: `permanently removed ${deleted.length} archived card${deleted.length === 1 ? "" : "s"}\n`,
+      };
+    }
+    if (archAction === "search" || archAction === "find") {
+      return runSearchCommand(archRest, "archive");
+    }
+    if (archRest.length === 0 && !archAction.startsWith("-")) {
+      const { archived } = await archiveBoardCard(deps.ayaHome, project, archAction, now(), callerId);
+      return { output: `archived ${archived.id}: ${archived.title}\n` };
+    }
+    throw new Error(BOARD_USAGE);
   }
 
   if (sub === "claim") {

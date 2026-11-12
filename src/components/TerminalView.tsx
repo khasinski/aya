@@ -49,6 +49,7 @@ import { snippetPtyPayload } from "../snippet-payload";
 import { DEBUG_TERMINAL_INPUT_STORAGE_KEY } from "../storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "../window-events";
 import {
+  claimInitialPrompt,
   hadNoSession,
   markNoSession,
   markMountDecided,
@@ -923,6 +924,7 @@ function TerminalViewComponent({
     let releaseDeferred:(()=>void)|null=null;
     let disposed=false,awaitingReplay=typeof window.aya.handoverDisplay==='function';
     let initialPromptTimer: number | null = null;
+    let initialPromptSubmitTimer: number | null = null;
     const cancelBoardStart = async () => {
       const start = terminal.initialBoardCard;
       if (!start) return;
@@ -1259,23 +1261,33 @@ function TerminalViewComponent({
       if (!awaitingReplay && !attachOnly && !attachIfReused && replayingOutputRef.current === 0 && isRestoringRef.current) {
         markRestoring(false);
       }
-      // Worktree batches start the same task in each new agent pane. The PTY
-      // process is already spawned here; a short startup grace lets the
-      // launcher hand control to its interactive agent before the prompt is
-      // entered. This is deliberately one-shot and only exists on the fresh
-      // pane state; restored tabs never replay it.
-      if (terminal.initialPrompt || terminal.initialBoardCard) {
+      // Worktree batches and Kanban "Start in new terminal" pass an initial
+      // task to a fresh agent pane. The PTY process is already spawned here; a
+      // short startup grace lets the launcher hand control to its interactive
+      // agent before the prompt is entered.
+      if (terminal.initialBoardCard) {
         initialPromptTimer = window.setTimeout(() => {
           if (disposed || attachCancelled) return;
-          if (terminal.initialBoardCard) {
-            void window.aya.dispatchBoardCard({ projectSlug: terminal.projectSlug, cardId: terminal.initialBoardCard.cardId,
-              paneId: terminal.id, claimSince: terminal.initialBoardCard.since })
-              .catch(async error => {
-                await cancelBoardStart().catch(() => {});
-                if (!disposed) setHistoryNotice(`Board task: ${displayIpcError(error)}`);
-              });
-          } else {
-            void window.aya.ptyWrite(terminal.id, `${terminal.initialPrompt}\r`).catch(() => {});
+          void window.aya.dispatchBoardCard({ projectSlug: terminal.projectSlug, cardId: terminal.initialBoardCard!.cardId,
+            paneId: terminal.id, claimSince: terminal.initialBoardCard!.since })
+            .catch(async error => {
+              await cancelBoardStart().catch(() => {});
+              if (!disposed) setHistoryNotice(`Board task: ${displayIpcError(error)}`);
+            });
+        }, 1200);
+      } else if (terminal.initialPrompt && !attachOnly && !attachIfReused && claimInitialPrompt(terminal.id)) {
+        const isMultiline = terminal.initialPrompt.includes("\n");
+        const promptText = isMultiline
+          ? `\x1b[200~${terminal.initialPrompt}\x1b[201~`
+          : `${terminal.initialPrompt}\r`;
+        initialPromptTimer = window.setTimeout(() => {
+          if (disposed || attachCancelled) return;
+          void window.aya.ptyWrite(terminal.id, promptText).catch(() => {});
+          if (isMultiline) {
+            initialPromptSubmitTimer = window.setTimeout(() => {
+              if (disposed || attachCancelled) return;
+              void window.aya.ptyWrite(terminal.id, "\r").catch(() => {});
+            }, 150);
           }
         }, 1200);
       }
@@ -1287,7 +1299,7 @@ function TerminalViewComponent({
     }
 
     return () => {
-      disposed=true;if(initialPromptTimer!==null)window.clearTimeout(initialPromptTimer);releaseDeferred?.();unregisterCheckpoint();unregisterPendingAttach();
+      disposed=true;if(initialPromptTimer!==null)window.clearTimeout(initialPromptTimer);if(initialPromptSubmitTimer!==null)window.clearTimeout(initialPromptSubmitTimer);releaseDeferred?.();unregisterCheckpoint();unregisterPendingAttach();
       if(retireHandoverForRestartRef.current===retireHandoverForRestart)retireHandoverForRestartRef.current=null;
       container.removeEventListener("click", onTerminalLinkClick, true);
       unsubscribe();
