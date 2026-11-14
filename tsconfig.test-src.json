@@ -16,6 +16,7 @@
   "include": [
     "src/agentPreset.ts",
     "src/app-preferences.ts",
+    "src/conversation-scroll.ts",
     "src/preference-codecs.ts",
     "src/project-timeline.ts",
     "src/attention.ts",
