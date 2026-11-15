@@ -123,13 +123,15 @@ function SidebarImpl({
   const [showMobileLauncher, setShowMobileLauncher] = useState(false);
   const [focusTerminalAfterMove, setFocusTerminalAfterMove] = useState<{ id: string; index: number } | null>(null);
   const [restoreMenuFocusId, setRestoreMenuFocusId] = useState<string | null>(null);
+  const visibleTerminals = terminals.filter((t) => t.presetId !== PRESET_ID_BOARD);
+  const boardTab = terminals.find((t) => t.presetId === PRESET_ID_BOARD);
   useLayoutEffect(() => {
-    if (!focusTerminalAfterMove || terminals.findIndex((terminal) => terminal.id === focusTerminalAfterMove.id) !== focusTerminalAfterMove.index) return;
+    if (!focusTerminalAfterMove || visibleTerminals.findIndex((terminal) => terminal.id === focusTerminalAfterMove.id) !== focusTerminalAfterMove.index) return;
     const id = focusTerminalAfterMove.id;
     window.requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>(".aya-sidebar-row[data-terminal-id]")]
       .find((row) => row.dataset.terminalId === id)?.focus());
     setFocusTerminalAfterMove(null);
-  }, [focusTerminalAfterMove, terminals]);
+  }, [focusTerminalAfterMove, visibleTerminals]);
   useLayoutEffect(() => {
     if (menu || !restoreMenuFocusId) return;
     const id = restoreMenuFocusId;
@@ -186,9 +188,11 @@ function SidebarImpl({
   useLayoutEffect(() => {
     if (renamingId) inputRef.current?.select();
   }, [renamingId]);
-  const rovingTerminalId = terminals.some((terminal) => terminal.id === focusedTerminalId)
+  const rovingTerminalId = visibleTerminals.some((terminal) => terminal.id === focusedTerminalId)
     ? focusedTerminalId
-    : activeId;
+    : visibleTerminals.some((terminal) => terminal.id === activeId)
+      ? activeId
+      : (visibleTerminals[0]?.id ?? null);
   useLayoutEffect(() => {
     const target = pendingRovingTerminalFocus.current;
     if (!target) return;
@@ -229,17 +233,27 @@ function SidebarImpl({
   const groups = showWorktrees
     ? worktrees.map((w) => ({
         worktree: w,
-        terminals: terminals.filter(
+        terminals: visibleTerminals.filter(
           (t) => t.cwd === w.path || (w.isMain && !wtPaths.has(t.cwd)),
         ),
       }))
     : null;
 
+  const reorderVisibleTerminals = useCallback(
+    (orderedVisibleIds: string[]) => {
+      const boardIds = terminals
+        .filter((t) => t.presetId === PRESET_ID_BOARD)
+        .map((t) => t.id);
+      onReorder([...orderedVisibleIds, ...boardIds]);
+    },
+    [onReorder, terminals],
+  );
+
   // Vertical drag-and-drop for reordering terminal rows.
   const { dragId, dropTarget, itemHandlers } = useDragReorder(
     "y",
-    terminals.map((t) => t.id),
-    onReorder,
+    visibleTerminals.map((t) => t.id),
+    reorderVisibleTerminals,
   );
 
   const startRename = (t: TerminalState) => {
@@ -407,34 +421,27 @@ function SidebarImpl({
   return (
     <nav aria-label="Terminals" className="aya-sidebar" style={{ width: sidebarWidth }}>
       <div className="aya-sidebar-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span>{terminals.length} terminals</span>
-        {kanbanEnabled && !projectRemote && (() => {
-          const boardTab = terminals.find((t) => t.presetId === PRESET_ID_BOARD);
-          return (
-            <button
-              type="button"
-              className="aya-kanban-sidebar-toggle"
-              title={
-                boardTab
-                  ? boardTab.id === activeId
-                    ? "Hide Kanban board"
-                    : "Show Kanban board"
-                  : "Open Kanban board for this project"
+        <span>{visibleTerminals.length} terminals</span>
+        {kanbanEnabled && !projectRemote && (
+          <button
+            type="button"
+            className={`aya-kanban-sidebar-toggle${
+              boardTab && boardTab.id === activeId ? " aya-kanban-sidebar-toggle--active" : ""
+            }`}
+            aria-current={boardTab && boardTab.id === activeId ? "true" : undefined}
+            title="Open Kanban board for this project"
+            onClick={() => {
+              if (boardTab) {
+                onSelect(boardTab.id);
+              } else {
+                onLaunch(BUILTIN_BOARD);
               }
-              onClick={() => {
-                if (boardTab) {
-                  if (boardTab.id === activeId) onClose(boardTab.id);
-                  else onSelect(boardTab.id);
-                } else {
-                  onLaunch(BUILTIN_BOARD);
-                }
-              }}
-            >
-              <span style={{ color: "#58a6ff" }}>▦</span>
-              <span>Kanban</span>
-            </button>
-          );
-        })()}
+            }}
+          >
+            <span style={{ color: "#58a6ff" }}>▦</span>
+            <span>Kanban</span>
+          </button>
+        )}
       </div>
       <div className="aya-sidebar-list">
         {groups
@@ -496,7 +503,7 @@ function SidebarImpl({
                 )}
               </div>
             ))
-          : <div role="list" aria-label="Terminals">{terminals.map(renderRow)}</div>}
+          : <div role="list" aria-label="Terminals">{visibleTerminals.map(renderRow)}</div>}
         {(groups || projectRemote || onCreateWorktrees) && (
           <button
             type="button"
@@ -525,23 +532,6 @@ function SidebarImpl({
                   <span className="aya-recent-menu-name">{preset.name}</span>
                 </button>
               ))}
-              {kanbanEnabled && !projectRemote && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="aya-recent-menu-item"
-                  disabled={updatePreparing}
-                  onClick={() => {
-                    setShowMobileLauncher(false);
-                    onLaunch(BUILTIN_BOARD);
-                  }}
-                >
-                  <span className="aya-launcher-btn-icon" style={{ color: BUILTIN_BOARD.color }}>
-                    {BUILTIN_BOARD.icon}
-                  </span>
-                  <span className="aya-recent-menu-name">{BUILTIN_BOARD.name}</span>
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -578,22 +568,6 @@ function SidebarImpl({
               <span className="aya-launcher-btn-name">{p.name}</span>
             </button>
           ))}
-          {kanbanEnabled && !projectRemote && (
-            <button
-              className="aya-launcher-btn"
-              disabled={updatePreparing}
-              onClick={() => onLaunch(BUILTIN_BOARD)}
-              title="Open project Kanban board"
-            >
-              <span
-                className="aya-launcher-btn-icon"
-                style={{ color: BUILTIN_BOARD.color }}
-              >
-                {BUILTIN_BOARD.icon}
-              </span>
-              <span className="aya-launcher-btn-name">{BUILTIN_BOARD.name}</span>
-            </button>
-          )}
         </div>
         {statusRail}
       </div>
@@ -690,19 +664,19 @@ function SidebarImpl({
             Show in active pane
           </button>
           {(() => {
-            const index = terminals.findIndex((terminal) => terminal.id === menu.terminalId);
+            const index = visibleTerminals.findIndex((terminal) => terminal.id === menu.terminalId);
             return (
               <>
                 <button type="button" role="menuitem" tabIndex={-1} disabled={index <= 0} className="aya-context-menu-item" onClick={() => {
                   const id = menu.terminalId;
                   setFocusTerminalAfterMove({ id, index: index - 1 });
-                  onReorder(moveItem(terminals.map((terminal) => terminal.id), index, -1));
+                  reorderVisibleTerminals(moveItem(visibleTerminals.map((terminal) => terminal.id), index, -1));
                   closeMenu(false);
                 }}>Move up</button>
-                <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= terminals.length - 1} className="aya-context-menu-item" onClick={() => {
+                <button type="button" role="menuitem" tabIndex={-1} disabled={index < 0 || index >= visibleTerminals.length - 1} className="aya-context-menu-item" onClick={() => {
                   const id = menu.terminalId;
                   setFocusTerminalAfterMove({ id, index: index + 1 });
-                  onReorder(moveItem(terminals.map((terminal) => terminal.id), index, 1));
+                  reorderVisibleTerminals(moveItem(visibleTerminals.map((terminal) => terminal.id), index, 1));
                   closeMenu(false);
                 }}>Move down</button>
               </>

@@ -1,68 +1,68 @@
-import {plannedContinuityReceipt} from "./pty-handover-continuity";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { listenOwnerOnly } from "./owner-socket";
-import { PTY_HOST_SOCKET_PATH, PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY } from "./pty-host-paths";
-import { hostBuildHash, hostRuntimeIdentity, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
-import {
-  writeHostRecord,
-  ownStartTime,
-  ownPgid,
-} from "./pty-host-registry";
-import {
-  type PtyHostEventMessage,
-  type PtyHostRequest,
-  type PtyHostMessage,
-  isPtyHostRequest,
-} from "./pty-host-protocol";
-import { createPtyDataCoalescer } from "./pty-event-coalescer";
-import {
-  acknowledgePtyExit,
-  acknowledgePtyRestoration,
-  activePtyCount,
-  hasUnattachedRestoredPanes,
-  restoredPtyLaunches,
-  ptyOwnerContinuityPanes,
-  restorePtyCorePane,
-  recoverPtyCorePane,
-  ptyRecoveryStates,
-  getBufferedOutput,
-  getBufferedRemoteOutput,
-  getPtyLaunch,
-  getPtySize,
-  getPtyPid,
-  isPtyStarting,
-  killPty,
-  shutdownPtyChildren,
-  resizePty,
-  searchPtyOutputs,
-  spawnPty,
-  writePty,
-  type PtyEventSink,
-  ptyCoreHandoverInProgress,
-} from "./pty-core";
-import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireRecoveryOwner, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential, ownerRuntimeIsAbsent } from "./pty-owner-runtime";
-import { HandoverWindow, handoverPeer } from "./pty-handover-window";
-import {readRecoveryBootstrap,MAX_RECOVERY_BOOTSTRAP_BYTES} from "./pty-recovery-bootstrap";
-import {MAX_PTY_PANES} from "./pty-pane-limits";
-import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
-import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
-import { HostHandover } from "./pty-host-handover";
-import { ownerProcessStartIdentity } from "./pty-owner-client";
-import { panes, vtSnapshot, markComposerSeen, markComposerSeenChecked, vtSnapshotMatches } from "./vt-mirror";
+import { acknowledgeCheckpoint } from "./pty-checkpoint-store";
 import type { PreparedSpawn } from "./pty-core";
-const LAUNCH_STARTING = "starting";
+import {
+	acknowledgePtyExit,
+	acknowledgePtyRestoration,
+	activePtyCount,
+	getBufferedOutput,
+	getBufferedRemoteOutput,
+	getPtyLaunch,
+	getPtyPid,
+	getPtySize,
+	hasUnattachedRestoredPanes,
+	isPtyStarting,
+	killPty,
+	ptyCoreHandoverInProgress,
+	ptyOwnerContinuityPanes,
+	ptyRecoveryStates,
+	recoverPtyCorePane,
+	resizePty,
+	restoredPtyLaunches,
+	restorePtyCorePane,
+	searchPtyOutputs,
+	shutdownPtyChildren,
+	spawnPty,
+	writePty,
+	type PtyEventSink,
+} from "./pty-core";
 import { PTY_HOST_UNKNOWN_REQUEST } from "./pty-core-constants";
+import { createPtyDataCoalescer } from "./pty-event-coalescer";
+import { preflightCoreHandover,readCoreHandover,readHandoverBootstrap } from "./pty-handover-bootstrap";
+import { plannedContinuityReceipt } from "./pty-handover-continuity";
+import { handoverPeer,HandoverWindow } from "./pty-handover-window";
+import { HostHandover } from "./pty-host-handover";
+import { PTY_HANDOVER_CORE_DIRECTORY,PTY_HANDOVER_DISPLAY_DIRECTORY,PTY_HOST_SOCKET_PATH } from "./pty-host-paths";
+import {
+	isPtyHostRequest,
+	type PtyHostEventMessage,
+	type PtyHostMessage,
+	type PtyHostRequest,
+} from "./pty-host-protocol";
+import {
+	ownPgid,
+	ownStartTime,
+	writeHostRecord,
+} from "./pty-host-registry";
+import { hostBuildHash,hostRuntimeIdentity,UNKNOWN_SCRIPT_HASH,type HostIdentity } from "./pty-host-staleness";
+import { ownerProcessStartIdentity } from "./pty-owner-client";
+import { currentOwnerRuntime,getOwnerRuntime,ownerHandoverCredential,ownerRuntimeIsAbsent,requireOwnerExitAcknowledgements,requireRecoveryOwner,setOwnerUnavailableListener,shutdownOwnerRuntime } from "./pty-owner-runtime";
+import { MAX_PTY_PANES } from "./pty-pane-limits";
+import { MAX_RECOVERY_BOOTSTRAP_BYTES,readRecoveryBootstrap } from "./pty-recovery-bootstrap";
+import { markComposerSeen,markComposerSeenChecked,panes,vtSnapshot,vtSnapshotMatches } from "./vt-mirror";
+const LAUNCH_STARTING = "starting";
 
-import type { PtyEvent } from "./types";
-import { ptyLog } from "./pty-log";
+import type { HostAuthPeer } from "./pty-host-auth";
+import { readInheritedHostAuthKey } from "./pty-host-auth-bootstrap";
+import { HostAuthTransfer } from "./pty-host-auth-transfer";
+import { HostAuthPrincipal,HostSocketAuthenticator } from "./pty-host-auth-transport";
 import { keepHostOnUncaught } from "./pty-host-guard";
-import {HostSocketAuthenticator,HostAuthPrincipal} from "./pty-host-auth-transport";
-import {readInheritedHostAuthKey} from "./pty-host-auth-bootstrap";
-import {HostAuthTransfer} from "./pty-host-auth-transfer";
-import type {HostAuthPeer} from "./pty-host-auth";
+import { ptyLog } from "./pty-log";
+import type { PtyEvent } from "./types";
 
 // Wait before shutting down the idle pty host with no clients or ptys (ms).
 // The env override lets a test see the exit without waiting 30 s.
@@ -95,7 +95,7 @@ let userRulePolicyEpoch: string | null = null;
 
 // Guards against overlapping shutdowns (a socket "shutdown" request racing a
 // SIGTERM): the SECOND shutdownPtyChildren call would find the ptys map already
-// drained by the first, take the empty-children fast path, and process.exit(0)
+// drained by the first, take the empty-children fast path, and void exitAfterLogFlush(0)
 // BEFORE the first call's 750ms SIGKILL escalation could fire - orphaning the
 // very stuck children the ladder exists to kill. First caller owns the exit.
 let hostShutdownStarted = false;
@@ -108,7 +108,7 @@ function beginShutdown(reason: string): void {
   if (hostHandover.committed) {
     // A quit/signal racing the committed cutover must only end this JS host.
     // The owner is already reserved for the successor, never shut it down.
-    hostShutdownStarted=true;clearIdleTimer();closeSocket();process.exit(0);
+    hostShutdownStarted=true;clearIdleTimer();closeSocket();void exitAfterLogFlush(0);return;
   }
   hostShutdownStarted = true;
   // The reason is the single most valuable line in the lifecycle log: it
@@ -118,7 +118,7 @@ function beginShutdown(reason: string): void {
   closeSocket();
   void hostHandover.abort().catch(error => {ptyLog.append("checkpoint-abort-failed", {error:String(error)});}).then(() => {
     shutdownPtyChildren(() => {
-      void shutdownOwnerRuntime().then(() => { process.exit(0); })
+      void shutdownOwnerRuntime().then(() => { void exitAfterLogFlush(0); })
         .catch(error => { ptyLog.append("owner-shutdown-failed", { error: String(error) }); });
     });
   });
@@ -536,8 +536,8 @@ function attachAuthenticatedClient(socket:net.Socket,initialBuffer:string):void 
               // The owner and pane processes stay alive. Exit after flushing
               // the commit response; never enter the destructive shutdown path.
               hostShutdownStarted = true;clearIdleTimer();closeSocket();
-              const timer=setTimeout(()=>process.exit(0),1000);timer.unref();
-              socket.end(()=>process.exit(0));
+              const timer=setTimeout(()=>void exitAfterLogFlush(0),1000);timer.unref();
+              socket.end(()=>void exitAfterLogFlush(0));
             }
           } catch (err) {
             sendLine(socket, {
@@ -674,5 +674,11 @@ void (async()=>{
   ptyLog.append("owner-start-failed", { error: String(error) });
   // A partial restore/failed ACK can already own live reader/control handles.
   // Exit JS promptly to release that lease; never shut down the stable owner.
-  process.exit(1);
+  void exitAfterLogFlush(1);
 });
+
+/** Give lifecycle diagnostics a bounded chance to reach disk on deliberate exit. */
+async function exitAfterLogFlush(code: number): Promise<never> {
+  await Promise.race([ptyLog.flush(), new Promise<void>(resolve => setTimeout(resolve, 500))]);
+  process.exit(code);
+}

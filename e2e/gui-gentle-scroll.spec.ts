@@ -56,7 +56,10 @@ async function readyHistory(window: Page) {
   const viewport = gui.getByLabel("Conversation with Codex", { exact: true });
   const gap = () => viewport.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop);
   await expect(gui.locator("header").getByRole("status")).toHaveText("Ready");
-  await expect(gui.locator("article.assistant")).toHaveCount(40);
+  // History keeps height anchors for all entries, but only mounts Markdown
+  // near the viewport. Counting articles would reject working virtualization.
+  await expect(gui.locator(".aya-message-window")).toHaveCount(40);
+  await expect(gui.locator(".aya-message-window").last()).not.toBeEmpty();
   await window.evaluate(() => document.fonts.ready);
   await painted(window);
   const jump = gui.getByRole("button", { name: "Jump to latest" });

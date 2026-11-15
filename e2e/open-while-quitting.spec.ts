@@ -39,12 +39,24 @@ for (const [open, { windows, said, run }] of Object.entries(OPENS)) {
       const before = await windowCount(app);
       const dir = join(seeded.root, "late-open");
       mkdirSync(dir);
-      await app.evaluate(({ app: a }) => void a.emit("before-quit", { preventDefault: () => {} }));
-      const refused = refusal(app, said);
-      await run(app, dir);
-      await refused;
-      expect(await windowCount(app)).toBe(before);
-      if (state === "a window open") await expect(tabs).toHaveText(["e2e"]);
+      // Async quit hooks may resume app.quit(); keep the synthetic lifecycle
+      // transition observable until the refusal assertions finish.
+      const keepAlive = await app.evaluateHandle(({ app: a }) => {
+        const block = (event: { preventDefault(): void }) => event.preventDefault();
+        a.on("before-quit", block);
+        return block;
+      });
+      try {
+        await app.evaluate(({ app: a }) => void a.emit("before-quit", { preventDefault: () => {} }));
+        const refused = refusal(app, said);
+        await run(app, dir);
+        await refused;
+        expect(await windowCount(app)).toBe(before);
+        if (state === "a window open") await expect(tabs).toHaveText(["e2e"]);
+      } finally {
+        await app.evaluate(({ app: a }, block) => { a.removeListener("before-quit", block); }, keepAlive);
+        await keepAlive.dispose();
+      }
     });
   }
 }

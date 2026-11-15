@@ -9,10 +9,12 @@ import {
   markSpawned,
   wasSpawned,
   forgetSpawn,
+  releaseSpawn,
   markNoSession,
   hadNoSession,
   markMountDecided,
   wasMountDecided,
+  claimInitialPrompt,
 } from "../dist-test/spawnSession.js";
 
 test("an unseen id was not spawned (first mount spawns normally)", () => {
@@ -60,4 +62,15 @@ test("forgetSpawn clears BOTH attach sources and closes the boot attach window",
   assert.equal(wasSpawned("ss-fg"), false);
   assert.equal(hadNoSession("ss-fg"), false);
   assert.equal(wasMountDecided("ss-fg"), true);
+});
+
+test("claimInitialPrompt fires once per terminal id so remounts do not re-paste initialPrompt", () => {
+  assert.equal(claimInitialPrompt("ss-ip"), true);
+  // Switching between Kanban and harness tabs remounts TerminalView between
+  // visible paneRects and hiddenTerminals; subsequent mounts must not re-send.
+  assert.equal(claimInitialPrompt("ss-ip"), false);
+  assert.equal(claimInitialPrompt("ss-ip"), false);
+  // Closing the tab releases state cleanly.
+  releaseSpawn("ss-ip");
+  assert.equal(claimInitialPrompt("ss-ip"), true);
 });

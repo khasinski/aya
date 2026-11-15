@@ -259,12 +259,13 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "present",
-    usage: "aya present --title <t> <--html f|--image f|--table f|--metric v> [--id <a>] [--no-open]",
+    usage: "aya present --title <t> <--html f|--image f|--table f|--metric v> [--id <a>] [--no-open] [--asset path]",
     summary: "Show a rich artifact in an Aya window: a self-contained HTML widget (SVG/canvas/inline JS, no network, up to 2 MiB), a PNG/JPEG/WebP/SVG image (up to 8 MiB), a table ({\"columns\":[...],\"rows\":[[...]]}, up to 12 columns and 200 rows) or a metric card.",
     notes: [
       "Use it for comparisons, charts and anything better seen than printed; do not paste the artifact's markup into the chat. Pass - to read the HTML or table JSON from stdin.",
       "It prints the artifact id; pass it back with --id to update that artifact in place (revision bumps) instead of opening another window. --no-open stores it without opening a window.",
       "A widget's window.ayaWidget.suggest(text) copies the text to the user's clipboard. Artifacts live until Aya quits.",
+      "Local video/audio sources, video posters and captions are attached automatically (up to 256 MiB per file). Paths resolve beside the HTML file, or from the working directory for stdin. Use --asset for JS-created players and window.ayaWidget.asset(path) for their URLs.",
     ],
   },
   {
@@ -358,7 +359,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "board add",
-    usage: "aya board add title [--column col] [--description text] [--assignee name] [--project slug]",
+    usage: "aya board add title [--column col] [--description text] [--assignee name] [--priority low|medium|high|urgent] [--labels a,b] [--project slug]",
     summary: "Add a card to the project's Kanban board (defaults to its current first column).",
     example: 'aya board add "Fix race in reconnect" --column todo --description "Check pty-host retry"',
   },
@@ -371,8 +372,23 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "board edit",
-    usage: "aya board edit id [--title title] [--description text] [--assignee name] [--project slug]",
-    summary: "Update a card's title, description or assignee (--assignee none clears it).",
+    usage: "aya board edit id [--title title] [--description text] [--assignee name] [--priority low|medium|high|urgent|none] [--labels a,b|none] [--project slug]",
+    summary: "Update a card's title, description, assignee, priority or labels; none clears an optional field.",
+  },
+  {
+    command: "board search",
+    usage: "aya board search query [--archive|--active] [--json] [--project slug]",
+    summary: "Search active or archived cards by text, priority, assignee and labels.",
+  },
+  {
+    command: "board archive",
+    usage: "aya board archive [list|id|restore id [col]|clear|search query] [--project slug]",
+    summary: "List, archive, restore or search archived cards, or permanently clear the archive.",
+  },
+  {
+    command: "board clear",
+    usage: "aya board clear [column] [--project slug]",
+    summary: "Archive every card on the board, or in the specified column.",
   },
   {
     command: "board remove",

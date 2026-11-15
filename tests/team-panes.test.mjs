@@ -567,11 +567,13 @@ test("a new pane's launch is pending while its host has no pane yet or is still 
   checks.push(s.test("a pane gone after its spawn (failed) is reported at once, not waited on for a window", async () => {
     let first = true;
     const t = setup({ slug: "launch-failed", launchOf: () => (first ? ((first = false), LAUNCH_STARTING) : null) });
+    let probes = 0;
+    const launchBlock = t.deps.launchBlock;
+    t.deps.launchBlock = async pane => { probes++; return launchBlock(pane); };
     try {
-      const started = Date.now();
       const result = await t.open(picks("tester=claude"));
       assert.match(result.panes[0].cantReach, /Aya could not check this pane's team access/);
-      assert.ok(Date.now() - started < 500, "a spawn that ended without a record is final");
+      assert.equal(probes, 2, "stop probing as soon as a started spawn loses its record");
     } finally {
       t.cleanup();
     }

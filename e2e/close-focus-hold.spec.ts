@@ -15,7 +15,9 @@ import { visiblePane } from "./helpers/terminal";
 const PAST_FOCUS_RETRIES_MS = 300;
 
 const bufferOf = (window: Page, id: string) =>
-  window.evaluate((tid) => window.aya.ptyBuffer(tid), id);
+  // Markers contain no whitespace; terminal row wrapping depends on the shell
+  // prompt (including the CI hostname), not on which pane received the keys.
+  window.evaluate((tid) => window.aya.ptyBuffer(tid), id).then(text => text.replace(/\s+/g, ""));
 
 /** The pane's output has not grown for QUIET_MS. */
 async function paneQuiet(window: Page, id: string) {

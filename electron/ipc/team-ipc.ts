@@ -1,17 +1,17 @@
 // The teams:* IPC handlers, the team round runner and held-message redelivery.
 
 import type { IpcMain } from "electron";
+import { assertTeamTextFits,panePick } from "../control-protocol";
 import type { ChatOptions } from "../intelligence-chat";
-import { adoptRepoTeamIfNew, forgetPickSave, listTeams, saveTeam } from "../team-admin";
+import { deliverRelaunchNotes,type RelaunchDeps } from "../relaunch-notes";
+import { adoptRepoTeamIfNew,forgetPickSave,listTeams,saveTeam } from "../team-admin";
 import type { TeamControlDeps } from "../team-control";
-import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "../team-draft";
+import { draftRole,ROLE_DRAFT_CHAT,type Chat } from "../team-draft";
 import { projectBySlug } from "../team-files";
-import { assignRoleLocked, openTeamPanes, presetChoices, releasePaneLocked, teamPaneDeps, type PaneHost } from "../team-panes";
-import { assertTeamTextFits, panePick } from "../control-protocol";
-import { deliverRelaunchNotes, type RelaunchDeps } from "../relaunch-notes";
+import { assignRoleLocked,openTeamPanes,presetChoices,releasePaneLocked,teamPaneDeps,type PaneHost } from "../team-panes";
 import { TeamRunner } from "../team-runner";
 import type { ProjectConfig } from "../types";
-import { requireString, validateTeamDefinition } from "../validation";
+import { requireString,validateTeamDefinition } from "../validation";
 
 // How often held team messages are retried; a pane frees up within seconds.
 export const TEAM_REDELIVERY_MS = 15_000;
@@ -53,7 +53,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   );
   deps.onBeforeQuit(() => {
     clearInterval(redelivery);
-    teamRunner.stopAll();
+    void teamRunner.stopAll()?.catch(error => console.warn("Could not finish team shutdown", error));
   });
   void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
   ipcMain.handle("teams:panes-opened", (_e, requestId: unknown, error: unknown) =>

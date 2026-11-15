@@ -1,20 +1,23 @@
-import { artifactSearchText, normalizeArtifactSearch } from '../shared/gui-artifact-search.cjs';
-import { GuiRecoveryJournal } from './gui-recovery-journal';
-import { GuiPanelState, matchesGuiBinding } from './gui-panel-state';
-import { openArtifactWindow } from './artifact-preview-window';
-import { pathToFileURL } from 'node:url';
-import { writeFileAtomic } from './atomic-write';
-import { AYA_HOME } from './paths';
+import { app,BrowserWindow,clipboard,dialog,ipcMain } from 'electron';
+import { createHash,randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import { randomUUID, createHash } from 'node:crypto';
-import { loadConversation, saveConversation, archiveConversation, listConversations, readArchivedConversation, hydrateConversationArtifact } from './gui-conversation-store';
-import { clearWidgetDocuments, registerWidgetProtocol, widgetDocument } from './gui-artifact-documents';
-import { installArtifactImageMenu, saveGuiArtifact } from './gui-artifact-image-menu';
-import type { GuiArtifact, GuiArtifactEntry, GuiEvent } from '../shared/codex-gui';
-import { app, ipcMain, dialog, BrowserWindow, clipboard } from 'electron';
 import { homedir } from 'node:os';
-import { CodexGuiSession, PiGuiSession, ClaudeGuiSession, AntigravityGuiSession, workspaceImage, type GuiAgentKind, type GuiSessionInstance } from './codex-gui-session';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { GuiArtifact,GuiArtifactEntry,GuiEvent } from '../shared/codex-gui';
+import { applyConversationPatch } from '../shared/conversation-patch.cjs';
+import { artifactSearchText,normalizeArtifactSearch } from '../shared/gui-artifact-search.cjs';
+import { openArtifactWindow } from './artifact-preview-window';
+import { writeFileAtomic } from './atomic-write';
+import { AntigravityGuiSession,ClaudeGuiSession,CodexGuiSession,PiGuiSession,workspaceImage,type GuiAgentKind,type GuiSessionInstance } from './codex-gui-session';
+import { clearWidgetDocuments,registerWidgetProtocol,widgetDocument } from './gui-artifact-documents';
+import { installArtifactImageMenu,saveGuiArtifact } from './gui-artifact-image-menu';
+import { exportArtifactMedia } from './gui-artifact-media';
+import { archiveConversation,hydrateConversationArtifact,listConversations,loadConversation,readArchivedConversation,saveConversation } from './gui-conversation-store';
+import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
+import { GuiRecoveryJournal } from './gui-recovery-journal';
+import { AYA_HOME } from './paths';
+import { readWorkspaceFile } from './workspace-file';
 function normalizeGuiAgent(raw: unknown): GuiAgentKind {
   return raw === 'pi' || raw === 'claude' || raw === 'antigravity' ? raw : 'codex';
 }
@@ -50,6 +53,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
   const panels = new GuiPanelState(async (id, snapshot) => { await saveConversation(id, snapshot); await archiveConversation(snapshot); }, clearWidgetDocuments);
   const { artifacts, artifactVersions, sessions, snapshots, attachments } = panels;
   activeGuiSessions = sessions;
+  const saveRevisions = new WeakMap<object, number>();
   const owners = new Set<number>();
   const recoveringOwners = new Set<number>();
   const recoverablePanels = new Set<string>();
@@ -167,14 +171,18 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'persist') {
       const snapshot = snapshots.get(key);
       if (!snapshot) throw Error('Conversation has not connected yet');
-      snapshot.view = withPanelArtifacts(key, value as Record<string, unknown>);
-      await saveConversation(id, snapshot);
-      journals.get(key)?.acknowledge(Number(snapshot.view?.eventSequence || 0));
-      return;
+      const revision = saveRevisions.get(snapshot) || 0;
+      const view: Record<string, unknown> = withPanelArtifacts(key, applyConversationPatch(snapshot.view, value as Record<string, unknown>, revision));
+      await saveConversation(id, { ...snapshot, view });
+      snapshot.view = view;
+      saveRevisions.set(snapshot, revision + 1);
+      journals.get(key)?.acknowledge(Number(view.eventSequence || 0));
+      return { revision: revision + 1 };
     }
-    if (action === 'close' || action === 'retain-for-recovery') {
+    if (action === 'close' || action === 'retain-for-recovery' || action === 'retain-pane') {
       searches.delete(key);
       if (action === 'retain-for-recovery') prepareGuiRendererRecovery(event.sender.id);
+      if (action === 'retain-pane') recoverablePanels.add(key);
       if (!snapshots.has(key)) return;
       if (recoverablePanels.has(key) && sessions.has(key)) {
         const snapshot = snapshots.get(key)!;
@@ -279,17 +287,18 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'artifact-preview') {
       const artifact = await requestedArtifact();
       if (artifact?.kind !== 'html') throw Error('This artifact has no widget preview');
-      return widgetDocument(key, artifact.html);
+      return widgetDocument(key, artifact.html, artifact.media);
     }
     if (action === 'open-artifact' || action === 'open-artifact-browser') {
       const artifact = await requestedArtifact();
       if (!artifact || (artifact.kind !== 'html' && artifact.kind !== 'image')) throw Error('This artifact has no browser preview');
-      if (action === 'open-artifact' && artifact.kind === 'html') artifact.previewUrl = widgetDocument(key, artifact.html);
+      if (action === 'open-artifact' && artifact.kind === 'html') artifact.previewUrl = widgetDocument(key, artifact.html, artifact.media);
       if (action === 'open-artifact') { openArtifactWindow(artifact, event.sender, id, createWindow); return; }
       const escape = (text: string) => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
-      const content = artifact.kind === 'html' ? artifact.html : `<img alt="${escape(artifact.title)}" src="${escape(artifact.dataUrl)}" style="max-width:100%;height:auto">`;
-      const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>${escape(artifact.title)}</title><style>body{margin:0;padding:24px;background:#10151e;color:#dce3ef;font:14px system-ui}#aya-follow-up{position:fixed;bottom:16px;left:16px;right:16px;padding:12px;background:#1b2231;color:#dce3ef;white-space:pre-wrap;border:1px solid #b9a6f7;border-radius:8px}</style><script>window.ayaWidget=Object.freeze({suggest(text){let node=document.getElementById('aya-follow-up');if(!node){node=document.createElement('div');node.id='aya-follow-up';document.body.append(node)}node.textContent='Copy this suggestion into Aya:\\n'+String(text).slice(0,4000);}});</script></head><body>${content}</body></html>`;
-      const file = path.join(AYA_HOME, 'artifact-previews', `${createHash('sha256').update(html).digest('hex')}.html`);
+      const previewFile = path.join(AYA_HOME, 'artifact-previews', createHash('sha256').update(JSON.stringify(artifact)).digest('hex') + '.html');
+      const content = artifact.kind === 'html' ? await exportArtifactMedia(artifact.html, artifact.media || [], previewFile) : `<img alt="${escape(artifact.title)}" src="${escape(artifact.dataUrl)}" style="max-width:100%;height:auto">`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self' data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>${escape(artifact.title)}</title><style>body{margin:0;padding:24px;background:#10151e;color:#dce3ef;font:14px system-ui}#aya-follow-up{position:fixed;bottom:16px;left:16px;right:16px;padding:12px;background:#1b2231;color:#dce3ef;white-space:pre-wrap;border:1px solid #b9a6f7;border-radius:8px}</style><script>window.ayaWidget=Object.freeze({suggest(text){let node=document.getElementById('aya-follow-up');if(!node){node=document.createElement('div');node.id='aya-follow-up';document.body.append(node)}node.textContent='Copy this suggestion into Aya:\\n'+String(text).slice(0,4000);}});</script></head><body>${content}</body></html>`;
+      const file = previewFile;
       await writeFileAtomic(file, html, 0o600);
       await openExternal(pathToFileURL(file).href);
       return;
@@ -349,12 +358,13 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) });
     }
     if (action === 'interrupt') return entry.session.interrupt();
+    if (action === 'read-linked-file') return readWorkspaceFile(entry.cwd, value);
     if (action === 'image') return workspaceImage(entry.cwd, String(value));
     if (action === 'command') { const p = value as { name: string; argument: string }; return entry.session.command(p.name, p.argument); }
     if (action === 'respond') { const p = value as { id: string | number; value: Parameters<CodexGuiSession['respond']>[1] }; return entry.session.respond(p.id, p.value); }
     throw Error('Unknown GUI action');
     };
-    return ['load', 'connect', 'reconnect', 'persist', 'close', 'retain-for-recovery', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
+    return ['load', 'connect', 'reconnect', 'persist', 'close', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
   });
   app.on('before-quit', () => { for (const { session } of sessions.values()) session.close(); });
 }

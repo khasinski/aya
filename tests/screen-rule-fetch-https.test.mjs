@@ -1,12 +1,15 @@
 // The real transport (fetchRuleBytes) against a real local HTTPS server: the default `fetch`, TLS, redirects and the
 // size cap, none of it stubbed. A child process trusts the server's throwaway certificate through NODE_EXTRA_CA_CERTS.
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as https from "node:https";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
+const execFileAsync = promisify(execFile);
+test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aya-https-"));
 const key = path.join(dir, "key.pem"), cert = path.join(dir, "cert.pem");
@@ -68,9 +71,9 @@ test("real HTTPS: an untrusted certificate is refused", { skip: !haveOpenssl }, 
   const { port } = server.address();
   try {
     const home = fs.mkdtempSync(path.join(dir, "home-"));
-    const script = `require(${JSON.stringify(path.resolve("dist-electron/screen-rule-fetch.js"))}).fetchRuleBytes(new URL("https://localhost:${port}/ok.json"), AbortSignal.timeout(5000)).then(() => console.log("fetched"), () => console.log("refused"));`;
-    const out = execFileSync(process.execPath, ["-e", script], { env: { ...process.env, NODE_EXTRA_CA_CERTS: "" } }).toString().trim();
-    assert.equal(out, "refused");
+    const script = `require(${JSON.stringify(path.resolve("dist-electron/screen-rule-fetch.js"))}).fetchRuleBytes(new URL("https://localhost:${port}/ok.json"), AbortSignal.timeout(5000)).then(() => console.log("fetched"), error => console.log(error.cause?.code ?? error.code));`;
+    const { stdout } = await execFileAsync(process.execPath, ["-e", script], { env: { ...process.env, NODE_EXTRA_CA_CERTS: "" }, timeout: 8000 });
+    assert.equal(stdout.trim(), "DEPTH_ZERO_SELF_SIGNED_CERT");
     void home;
   } finally { server.closeAllConnections(); await new Promise((done) => server.close(done)); }
 });

@@ -1,12 +1,11 @@
 // Engine-pinned private binding. No decoded field reaches xterm before the
 // closed DTO validator accepts it. Internal xterm types are intentionally
 // confined to this module; payloads never select a constructor or a method.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { parseVtSnapshot, validateVtSnapshot } from "./vt-checkpoint-schema";
+import { Terminal } from '@xterm/headless';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import baseline from "./vt-binding-baseline";
-import { createHash } from 'node:crypto';
-import { Terminal } from '@xterm/headless';
+import { parseVtSnapshot,validateVtSnapshot } from "./vt-checkpoint-schema";
 
 const SUPPORTED_ENGINE = '17a90b650cf6b77cce2b98c4063884d43545e4ce177a54b76ccfc906f1aacaed';
 const ENGINE = SUPPORTED_ENGINE;

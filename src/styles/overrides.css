@@ -3591,3 +3591,15 @@ select.aya-modal-input {
   overflow-y: auto !important;
   flex: 1 1 auto;
 }
+
+.aya-split-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; background: var(--accent); }
+.aya-local-error { padding: 20px; overflow: auto; color: var(--fg-secondary); background: var(--bg-secondary); }
+.aya-local-error pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.aya-file-preview-backdrop { position: fixed; inset: 0; z-index: 10000; background: #0008; display: grid; place-items: center; padding: 24px; }
+.aya-file-preview { width: min(1000px, 95vw); max-height: 85vh; display: flex; flex-direction: column; background: var(--bg-secondary); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.aya-file-preview header { display: flex; align-items: center; gap: 16px; overflow-wrap: anywhere; }
+.aya-file-preview header button { margin-left: auto; }
+.aya-file-preview pre { overflow: auto; font-family: var(--font-mono); }
+.aya-file-preview pre [data-selected=true] { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.aya-file-preview :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

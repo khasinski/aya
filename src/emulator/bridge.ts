@@ -251,11 +251,13 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
         cards: [
           ...b.cards,
           {
-            id: `t-${nextNum}`,
+            id: req.id ?? `t-${nextNum}`,
             columnId: req.columnId ?? b.columns[0]?.id ?? "todo",
             title: req.title.trim(),
             ...(req.description?.trim() ? { description: req.description.trim() } : {}),
             ...(req.assignee?.trim() ? { assignee: req.assignee.trim() } : {}),
+            ...(req.priority ? { priority: req.priority } : {}),
+            ...(req.labels && req.labels.length > 0 ? { labels: req.labels } : {}),
             createdAt: nowIso,
             updatedAt: nowIso,
           },
@@ -286,6 +288,14 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
             else delete updated.assignee;
           }
           if (req.columnId !== undefined && req.columnId !== c.columnId && ["todo", "backlog"].includes(req.columnId)) delete updated.claim;
+          if (req.priority !== undefined) {
+            if (req.priority) updated.priority = req.priority;
+            else delete updated.priority;
+          }
+          if (req.labels !== undefined) {
+            if (req.labels && req.labels.length > 0) updated.labels = req.labels;
+            else delete updated.labels;
+          }
           return updated;
         }),
       };
@@ -310,6 +320,24 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       const next: BoardSnapshot = {
         ...b,
         cards: b.cards.filter((c) => c.id !== req.cardId),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    clearBoardColumn: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.filter((c) => c.columnId !== req.columnId),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    restoreBoardCards: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        cards: [...b.cards, ...req.entries.map((e) => e.card)],
       };
       d.boardsBySlug.set(req.projectSlug, next);
       return next as never;
@@ -417,26 +445,71 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
         replace: true,
       });
     },
-    reserveBoardCardStart: async req => {
+    reserveBoardCardStart: async (req) => {
       const b = await api.getBoard(req.projectSlug);
-      const previous = b.cards.find(c => c.id === req.cardId);
+      const previous = b.cards.find((c) => c.id === req.cardId);
       if (!previous || previous.claim) throw new Error("Choose an unclaimed card.");
       return { board: await api.claimBoardCard({ ...req, replace: false }), previous };
     },
-    acknowledgeBoardNotice: async req => {
+    acknowledgeBoardNotice: async (req) => {
       const board = await api.getBoard(req.projectSlug);
-      const next = { ...board, notices: board.notices?.filter(n => n.id !== req.noticeId) };
+      const next = { ...board, notices: board.notices?.filter((n) => n.id !== req.noticeId) };
       d.boardsBySlug.set(req.projectSlug, next);
       return next;
     },
-    dispatchBoardCard: req => api.getBoard(req.projectSlug),
-    cancelBoardCardStart: async req => {
+    dispatchBoardCard: (req) => api.getBoard(req.projectSlug),
+    cancelBoardCardStart: async (req) => {
       const b = await api.getBoard(req.projectSlug);
-      const card = b.cards.find(c => c.id === req.cardId);
+      const card = b.cards.find((c) => c.id === req.cardId);
       if (card?.claim?.paneId !== req.paneId || card.claim.since !== req.claimSince) return b;
       await api.releaseBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId });
-      return api.updateBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId, columnId: req.previousColumn, assignee: req.previousAssignee ?? null });
+      return api.updateBoardCard({
+        projectSlug: req.projectSlug,
+        cardId: req.cardId,
+        columnId: req.previousColumn,
+        assignee: req.previousAssignee ?? null,
+      });
     },
+    releaseBoardPane: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.map((c) => {
+          if (c.claim?.paneId !== req.paneId) return c;
+          const rest = { ...c, updatedAt: new Date().toISOString() };
+          delete rest.claim;
+          return rest;
+        }),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    syncBoardPaneName: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.map((c) =>
+          c.claim?.paneId === req.paneId
+            ? {
+                ...c,
+                ...(c.assignee === c.claim.paneName ? { assignee: req.paneName } : {}),
+                claim: { ...c.claim, paneName: req.paneName },
+                updatedAt: new Date().toISOString(),
+              }
+            : c,
+        ),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    saveBoardImage: async (req) => {
+      const alt = req.name || "screenshot";
+      const dataUrl = req.dataBase64.startsWith("data:")
+        ? req.dataBase64
+        : `data:image/png;base64,${req.dataBase64}`;
+      return { path: dataUrl, markdown: `![${alt}](${dataUrl})` } as never;
+    },
+    readBoardImage: async (req) => req.src as never,
     onBoardChange: noopSubscription,
     listOtherWindows: async () => [] as never,
     adoptProjectInWindow: async () => {

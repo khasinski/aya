@@ -29,28 +29,21 @@ if [ -e "$FAKE_GH_STATE/slow" ]; then sleep 1; fi
 exit 2
 `);
 chmodSync(join(bin, "gh"), 0o755);
-writeFileSync(join(bin, "git"), `#!/usr/bin/env node
-const { appendFileSync, existsSync, writeFileSync } = require('node:fs');
-const { spawnSync } = require('node:child_process');
-const { join } = require('node:path');
-const args = process.argv.slice(2);
-const state = process.env.FAKE_GIT_TEST_STATE;
-if (existsSync(join(state, 'track-prompt-setting'))) {
-  appendFileSync(join(state, 'git-prompt-settings'), (process.env.GIT_TERMINAL_PROMPT ?? '<unset>') + '\\n');
-}
-const statusHead = args[0] === 'symbolic-ref' && args[1] === '--quiet' && args[2] === '--short' && args[3] === 'HEAD';
-if (statusHead) {
-  appendFileSync(join(state, 'publish-status-env'), (process.env.GIT_TERMINAL_PROMPT ?? '<unset>') + '\\n');
-  if (existsSync(join(state, 'hold-publish-status'))) {
-    writeFileSync(join(state, 'publish-status-pid'), String(process.pid));
-    process.on('SIGTERM', () => {});
-    setInterval(() => {}, 1000);
-  }
-}
-const result = spawnSync(process.env.FAKE_GIT_REAL, args, { encoding: 'utf8', env: process.env });
-if (result.stdout) process.stdout.write(result.stdout);
-if (result.stderr) process.stderr.write(result.stderr);
-process.exit(result.status ?? 1);
+// A shell exec preserves the real Git process and exit status without booting
+// a Node VM for each status/config probe. Only cancellation stays in the shim.
+writeFileSync(join(bin, "git"), `#!/bin/sh
+if [ -e "$FAKE_GIT_TEST_STATE/track-prompt-setting" ]; then
+  printf '%s\\n' "\${GIT_TERMINAL_PROMPT-<unset>}" >> "$FAKE_GIT_TEST_STATE/git-prompt-settings"
+fi
+if [ "$1" = symbolic-ref ] && [ "$2" = --quiet ] && [ "$3" = --short ] && [ "$4" = HEAD ]; then
+  printf '%s\\n' "\${GIT_TERMINAL_PROMPT-<unset>}" >> "$FAKE_GIT_TEST_STATE/publish-status-env"
+  if [ -e "$FAKE_GIT_TEST_STATE/hold-publish-status" ]; then
+    echo $$ > "$FAKE_GIT_TEST_STATE/publish-status-pid"
+    trap '' TERM
+    while :; do sleep 1; done
+  fi
+fi
+exec "$FAKE_GIT_REAL" "$@"
 `);
 chmodSync(join(bin, "git"), 0o755);
 process.env.PATH = `${bin}:${process.env.PATH}`;
@@ -59,7 +52,7 @@ const { getPublishStatus, pushCurrentBranch, createOrFindPullRequest, runGh } = 
 test.after(() => rmSync(root, { recursive: true, force: true }));
 
 function git(cwd, ...args) {
-  return execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: "ignore", env: process.env });
+  return execFileSync(process.env.FAKE_GIT_REAL, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: "ignore", env: process.env });
 }
 function repo(name = "repo") {
   const dir = realpathSync(mkdtempSync(join(root, `${name}-`)));
@@ -89,8 +82,9 @@ test("push remote follows explicit configuration or the only remote; ambiguous r
   const dir = repo("remotes");
   git(dir, "remote", "add", "origin", "https://example.invalid/origin.git");
   git(dir, "remote", "add", "backup", "https://example.invalid/backup.git");
-  assert.equal((await getPublishStatus(dir)).remote, null);
-  assert.match((await getPublishStatus(dir)).pushDisabledReason, /Choose a push remote/);
+  const ambiguous = await getPublishStatus(dir);
+  assert.equal(ambiguous.remote, null);
+  assert.match(ambiguous.pushDisabledReason, /Choose a push remote/);
   git(dir, "config", "branch.main.pushRemote", "backup");
   assert.equal((await getPublishStatus(dir)).remote, "backup");
   git(dir, "config", "--unset", "branch.main.pushRemote");

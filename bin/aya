@@ -90,11 +90,13 @@ Usage:
                                      lead's round digest instead)
   aya debug on|off|status            Turn on/off writing every team decision
                                      to the team's debug log
-  aya present --title <t> <--html f|--image f|--table f|--metric v> [--id <a>] [--no-open]
+  aya present --title <t> <--html f|--image f|--table f|--metric v> [--id <a>] [--no-open] [--asset path]
                                      Show a rich artifact in a window: --html
                                      <file|-> (widget), --image <file>, --table
                                      <json file|-> or --metric <value> with
-                                     --description; --id updates in place
+                                     --description; --id updates in place.
+                                     Local video/audio src files attach automatically;
+                                     --asset <path> attaches media for JS players
   aya artifact list [--json]         List this pane's artifacts
   aya artifact open <id>             Open an artifact's window again
   aya rules fetch <https-url> --agent <name> [--replace]
@@ -118,14 +120,20 @@ Usage:
   aya machines release id            Clear a machine's claim
   aya board [--json] [--project slug]
                                      Show the project's Kanban board
-  aya board add title [--column col] [--description text] [--assignee name] [--project slug]
+  aya board search query [--archive|--active] [--json] [--project slug]
+                                     Search active and archived Kanban cards
+  aya board add title [--column col] [--description text] [--assignee name] [--priority low|medium|high|urgent] [--labels a,b] [--project slug]
                                      Add a card to the project's Kanban board
   aya board move id column [--project slug]
                                      Move a card to another column
-  aya board edit id [--title title] [--description text] [--assignee name] [--project slug]
-                                     Edit a card's title, description or assignee
+  aya board edit id [--title title] [--description text] [--assignee name] [--priority low|medium|high|urgent|none] [--labels a,b|none] [--project slug]
+                                     Edit a card's title, description, assignee, priority or labels
   aya board remove id [--project slug]
                                      Remove a card from the Kanban board
+  aya board clear [column] [--project slug]
+                                     Archive all cards in a column (default: done)
+  aya board archive [list|id|restore id [col]|clear|search query] [--project slug]
+                                     List, archive, restore, clear or search archived cards
   aya board claim id [--replace] [--project slug]
                                      Claim a card for this terminal
   aya board release id [--force] [--project slug]
@@ -361,7 +369,8 @@ function requestFromArgs() {
       else if (arg === "--id") input.artifactId = take(i++);
       else if (arg === "--no-open") open = false;
       else if (arg === "--description") input.description = take(i++);
-      else if (arg === "--html") { setKind("html"); input.html = readSource(take(i++)); }
+      else if (arg === "--html") { setKind("html"); input.workspaceDir = process.cwd(); const source = take(i++); input.html = readSource(source); if (source !== "-") input.htmlBaseDir = path.dirname(path.resolve(source)); }
+      else if (arg === "--asset") { (input.assets ||= []).push(take(i++)); }
       else if (arg === "--image") { setKind("image"); input.imagePath = path.resolve(take(i++)); }
       else if (arg === "--metric") { setKind("metric"); input.value = take(i++); }
       else if (arg === "--table") {

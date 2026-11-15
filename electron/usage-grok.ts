@@ -1,11 +1,13 @@
+import type { GrokLimit,GrokUsage } from '../shared/ipc-types';
+export type { GrokLimit,GrokUsage } from '../shared/ipc-types';
 // Read-only (no token, no endpoint): spend and tokens from session logs, the
 // weekly limit % from the credits line Grok 1.0.41+ writes to logs/unified.jsonl.
 
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isOversizedUsageJsonlLine,readBufferAtMost,scanJsonlTail } from "./bounded-file-read";
 import { expandUserPath } from "./usage";
-import { isOversizedUsageJsonlLine, readBufferAtMost, scanJsonlTail } from "./bounded-file-read";
 
 /** The default Grok home - the env override, else ~/.grok. */
 export const DEFAULT_GROK_HOME =
@@ -29,33 +31,6 @@ export const GROK_USAGE_TOTAL_SCAN_MAX_BYTES = 64 * 1024 * 1024;
 export const USD_PER_GROK_TICK = 1e-10;
 // Epoch values below this are seconds (1e12 ms is 2001; 1e12 s is year 33658).
 export const SECONDS_EPOCH_CEILING = 1e12;
-
-/** Aggregated Grok usage over the window, account-wide across all sessions. */
-export interface GrokUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cachedReadTokens: number;
-  cacheCreationTokens: number;
-  reasoningTokens: number;
-  totalTokens: number;
-  /** Cost in Grok's own unit: 1e-10 USD ("ticks"). USD = ticks * 1e-10. */
-  costUsdTicks: number;
-  /** Completed turns counted. */
-  turns: number;
-  /** Distinct model ids seen, sorted. */
-  models: string[];
-  /** ISO time of the newest turn counted. Stable between polls (unlike "now"),
-   *  so an unchanged week doesn't churn the renderer. */
-  updatedAt: string;
-  limit?: GrokLimit;
-}
-
-export interface GrokLimit {
-  pct: number;
-  resetsAt: string;
-  /** When Grok logged it; Grok logs it irregularly, so it can be old. */
-  updatedAt: string;
-}
 
 const CREDITS_MSG = "billing: fetched credits config";
 

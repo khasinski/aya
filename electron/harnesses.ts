@@ -1,20 +1,10 @@
+import type { HarnessDef } from '../shared/ipc-types';
+export type { HarnessDef } from '../shared/ipc-types';
 // Detect agent CLIs installed on the user's PATH so the first-launch
 // preset list contains only what's actually usable, and so Settings can
 // suggest harnesses the user hasn't added yet.
 
 import { scanCommands } from "./command-probe";
-
-export interface HarnessDef {
-  /** Canonical id; used as the preset id when seeded. */
-  id: string;
-  /** Binary name on PATH (no flags). */
-  binary: string;
-  name: string;
-  icon: string;
-  color: string;
-  /** Default launch command. Plain binary in v1; user can edit later. */
-  command: string;
-}
 
 /** Known agent harnesses + interactive AI CLIs we'll probe for. Add new
  *  ones here as the ecosystem grows. */

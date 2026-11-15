@@ -611,6 +611,7 @@ export function App() {
     splitActivePane,
     splitTerminalRight,
     splitTerminalBelow,
+    splitBesideTerminal,
   } = useSplitLayout({
     projectsRef,
     terminalsRef,
@@ -765,7 +766,7 @@ export function App() {
     const slug = activeProjectIdRef.current;
     if (!slug) return;
     const tabs = Object.values(terminalsRef.current).filter(
-      (t) => t.projectSlug === slug,
+      (t) => t.projectSlug === slug && t.presetId !== PRESET_ID_BOARD,
     );
     if (tabs.length < 2) return;
     const currentId = activeTabByProject[slug];
@@ -1200,12 +1201,12 @@ export function App() {
   const startWorktrees = useCallback<NonNullable<React.ComponentProps<typeof Sidebar>['onStartWorktrees']>>((projectId, preset, checkouts, prompt) => {
     for (const checkout of checkouts) launchTerminal(preset, checkout.path, undefined, prompt, projectId);
   }, [launchTerminal]);
-  const startCardInNewPane = useCallback(async (preset: Preset, cardId: string, projectSlug: string) => {
+  const startCardInNewPane = useCallback(async (preset: Preset, cardId: string, projectSlug: string, cwd?: string) => {
     if (preset.interfaceMode === "gui" && guiSupportedAgent(preset)) throw new Error("Board task startup is available for terminal presets.");
     const paneId = uuid();
     const { board, previous } = await window.aya.reserveBoardCardStart({ projectSlug, cardId, paneId, paneName: defaultTabName(preset) });
     const card = board.cards.find(c => c.id === cardId)!;
-    const launched = launchTerminal(preset, undefined, undefined, undefined, projectSlug, paneId, {
+    const launched = launchTerminal(preset, cwd, undefined, undefined, projectSlug, paneId, {
       cardId, since: card.claim!.since, previousColumn: previous.columnId, previousAssignee: previous.assignee,
     });
     if (!launched) {
@@ -1291,6 +1292,9 @@ export function App() {
             resizeSplit={resizeSplit}
             projectTerminals={projectTerminals}
             onStartCardInNewPane={startCardInNewPane}
+            onCreateWorktrees={createWorktreesForProject}
+            onFocusTerminal={selectTerminalFromSidebar}
+            onSplitBesideTerminal={splitEnabled ? splitBesideTerminal : undefined}
           />
         );
         const sidebarNode = (

@@ -1,11 +1,11 @@
-import { useModalFocus } from './useModalFocus';
-import { useEffect, useRef, useState } from "react";
+import { useEffect,useRef,useState } from "react";
 import type {
-  RemoteDirectoryListing,
-  RemoteHealthResult,
-  RemoteProjectCreateResult,
+	RemoteDirectoryListing,
+	RemoteHealthResult,
+	RemoteProjectCreateResult,
 } from "../types";
-import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+import { closeFromBackdropClick,markBackdropMouseDown } from "./modal-backdrop";
+import { useModalFocus } from './useModalFocus';
 
 interface Props {
   defaultDirectory?: string;
@@ -337,7 +337,7 @@ export function NewProjectModal({
                 onChange={(e) => setDirectoryAndMaybeName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
-                    submit();
+                    void submit();
                   } else if (
                     e.key === "Tab" &&
                     !e.shiftKey &&

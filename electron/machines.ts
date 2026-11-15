@@ -1,19 +1,21 @@
+import type { KnownHost } from '../shared/ipc-types';
+export type { KnownHost } from '../shared/ipc-types';
 // `aya machines`: the registry, the one-sentence add, claims and the status text (docs/machines.md).
 // Read-only towards every machine: nothing here loads, unloads or calls a model.
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { hostTelemetryUnavailableText } from "../shared/machines-status-text.cjs";
 import { writeFileAtomic } from "./atomic-write";
 import { oneAtATime } from "./keyed-queue";
-import { probeMachine, type MachineStatus, type Reach } from "./machines-probe";
+import { normalizeApiUrl,probeApi,type ApiBackend } from "./machines-api";
+import { MACHINES_AUTH_FILE,machineToken,savedTokenPreview,saveMachineToken,validateMachineToken } from "./machines-auth";
+import { discoverApiEndpoints,type ApiDiscovery } from "./machines-discovery";
+import { probeMachine,type MachineStatus,type Reach } from "./machines-probe";
+import { singleFlight } from "./single-flight";
 import { isSshTarget } from "./ssh";
 import { sshHostAliases } from "./ssh-hosts";
-import { singleFlight } from "./single-flight";
-import { gib, gibFromMiB } from "./units";
-import { normalizeApiUrl, probeApi, type ApiBackend } from "./machines-api";
-import { MACHINES_AUTH_FILE, machineToken, savedTokenPreview, saveMachineToken, validateMachineToken } from "./machines-auth";
-import { discoverApiEndpoints, type ApiDiscovery } from "./machines-discovery";
-import { hostTelemetryUnavailableText } from "../shared/machines-status-text.cjs";
+import { gib,gibFromMiB } from "./units";
 
 export const MACHINES_FILE_NAME = "machines.json";
 export const MACHINES_VERSION = 1;
@@ -208,15 +210,6 @@ export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registr
     await afterSave?.();
     return result;
   });
-}
-
-// ---- known hosts ----
-
-export interface KnownHost {
-  target: string;
-  sources: ("ssh config" | "remote project")[];
-  /** The added machine reached at this target. */
-  machine?: string;
 }
 
 /** ~/.ssh/config aliases and remote project targets, merged case-insensitively as ssh matches Host names. */

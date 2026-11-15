@@ -33,6 +33,12 @@
   background: rgba(88, 166, 255, 0.08);
 }
 
+.aya-kanban-sidebar-toggle--active {
+  border-color: rgba(88, 166, 255, 0.55);
+  color: var(--aya-pane-strong);
+  background: rgba(88, 166, 255, 0.14);
+}
+
 .aya-kanban-toolbar-meta {
   display: flex;
   align-items: center;
@@ -112,6 +118,24 @@
   font-size: 12px;
 }
 
+.aya-kanban-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--aya-pane-strong);
+  border-bottom: 1px solid rgba(88, 166, 255, 0.25);
+  font-size: 12px;
+}
+
+.aya-kanban-notice-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .aya-kanban-columns {
   display: flex;
   flex: 1;
@@ -136,9 +160,9 @@
 .aya-kanban-column {
   display: flex;
   flex-direction: column;
-  min-width: 260px;
-  max-width: 340px;
-  flex: 1 0 270px;
+  min-width: 268px;
+  max-width: 350px;
+  flex: 1 0 278px;
   background: var(--aya-pane-header-bg);
   border: 1px solid var(--aya-pane-header-border);
   border-radius: 10px;
@@ -244,6 +268,19 @@
   padding: 10px;
   overflow-y: auto;
   flex: 1;
+}
+
+.aya-kanban-card-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.aya-kanban-drop-line {
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent, #40c463);
+  box-shadow: 0 0 6px var(--accent, #40c463);
 }
 
 .aya-kanban-empty-col {
@@ -370,6 +407,36 @@
   background: rgba(248, 81, 73, 0.08);
 }
 
+.aya-kanban-iconbtn--shift-ready {
+  color: var(--status-error, #f85149);
+  border-color: rgba(248, 81, 73, 0.42);
+  background: rgba(248, 81, 73, 0.12);
+  font-size: 11px;
+}
+
+.aya-kanban-iconbtn--shift-ready:hover {
+  color: var(--status-error, #f85149);
+  border-color: rgba(248, 81, 73, 0.7);
+  background: rgba(248, 81, 73, 0.22);
+}
+
+.aya-kanban-delete-confirm {
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(248, 81, 73, 0.5);
+  background: rgba(248, 81, 73, 0.16);
+  color: var(--status-error, #f85149);
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.aya-kanban-delete-confirm:hover {
+  background: rgba(248, 81, 73, 0.28);
+}
+
 .aya-kanban-card-title {
   font-size: 13px;
   font-weight: 600;
@@ -378,16 +445,159 @@
   word-break: break-word;
 }
 
+/* Rich text / Markdown description on cards */
+.aya-kanban-card-desc-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .aya-kanban-card-desc {
   font-size: 12px;
   color: var(--aya-pane-subtle);
-  white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.42;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  line-height: 1.45;
+  max-height: 155px;
   overflow: hidden;
+  position: relative;
+}
+
+.aya-kanban-card-desc--expanded {
+  max-height: none;
+  overflow: visible;
+}
+
+.aya-kanban-desc-toggle {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: #58a6ff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0;
+  cursor: pointer;
+}
+
+.aya-kanban-desc-toggle:hover {
+  text-decoration: underline;
+}
+
+.aya-kanban-md {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.aya-kanban-md p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.aya-kanban-md ul,
+.aya-kanban-md ol {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aya-kanban-md li.task-list-item {
+  list-style: none;
+  margin-left: -14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.aya-kanban-md-checkbox {
+  margin: 2px 0 0 0;
+  cursor: pointer;
+  accent-color: var(--accent, #40c463);
+}
+
+.aya-kanban-md code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--aya-pane-header-bg);
+  border: 1px solid var(--aya-pane-header-border);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-md pre {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--aya-pane-header-bg);
+  border: 1px solid var(--aya-pane-header-border);
+  overflow-x: auto;
+}
+
+.aya-kanban-md pre code {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.aya-kanban-md blockquote {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--aya-pane-header-border);
+  color: var(--aya-pane-muted);
+}
+
+.aya-kanban-md-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #58a6ff;
+  text-decoration: none;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(88, 166, 255, 0.35);
+}
+
+.aya-kanban-md-link:hover {
+  color: #79c0ff;
+  border-bottom-color: #79c0ff;
+}
+
+.aya-kanban-md-link-arrow {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.aya-kanban-md-img {
+  display: block;
+  max-width: 100%;
+  max-height: 130px;
+  width: auto;
+  height: auto;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--aya-pane-header-border);
+  margin-top: 3px;
+  cursor: zoom-in;
+  transition: border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.aya-kanban-md-img:hover {
+  border-color: #58a6ff;
+}
+
+.aya-kanban-md-img-missing,
+.aya-kanban-md-img-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--aya-pane-header-bg);
+  border: 1px dashed var(--aya-pane-header-border);
+  color: var(--aya-pane-muted);
 }
 
 /* Card footer: claim/assignee badge on left + compact terminal menu trigger on right */
@@ -412,7 +622,7 @@
 .aya-kanban-pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   font-size: 11px;
   font-weight: 500;
   padding: 2px 7px;
@@ -429,6 +639,35 @@
   border: 1px solid rgba(88, 166, 255, 0.28);
 }
 
+.aya-kanban-pill--closed {
+  background: rgba(139, 148, 158, 0.12);
+  color: var(--aya-pane-subtle);
+  border-color: var(--aya-pane-header-border);
+}
+
+.aya-kanban-pill-focus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aya-kanban-pill-focus:not(:disabled):hover {
+  text-decoration: underline;
+}
+
+.aya-kanban-pill-focus:disabled {
+  cursor: default;
+}
+
 .aya-kanban-pill-dot {
   width: 6px;
   height: 6px;
@@ -438,25 +677,57 @@
   flex-shrink: 0;
 }
 
+.aya-kanban-pill-dot--working {
+  background: #58a6ff;
+  box-shadow: 0 0 6px rgba(88, 166, 255, 0.85);
+}
+
+.aya-kanban-pill-dot--waiting {
+  background: #d29922;
+  box-shadow: 0 0 6px rgba(210, 153, 34, 0.85);
+}
+
+.aya-kanban-pill-dot--done {
+  background: #3fb950;
+  box-shadow: 0 0 5px rgba(63, 185, 80, 0.7);
+}
+
+.aya-kanban-pill-dot--error {
+  background: #f85149;
+  box-shadow: 0 0 6px rgba(248, 81, 73, 0.85);
+}
+
+.aya-kanban-pill-dot--idle,
+.aya-kanban-pill-dot--closed {
+  background: #8b949e;
+  box-shadow: none;
+}
+
+.aya-kanban-pill-split,
 .aya-kanban-pill-release {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
-  margin-left: 1px;
-  margin-right: -3px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   border: none;
   background: transparent;
   color: inherit;
-  opacity: 0.7;
+  opacity: 0.72;
   cursor: pointer;
   padding: 0;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
+.aya-kanban-pill-release {
+  margin-right: -3px;
+  font-size: 12px;
+}
+
+.aya-kanban-pill-split:hover,
 .aya-kanban-pill-release:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.15);
@@ -557,12 +828,21 @@
   height: 1px;
   background: var(--aya-pane-header-border);
   margin: 4px 2px;
+  flex-shrink: 0;
+}
+
+.aya-kanban-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .aya-kanban-popover-item {
   display: flex;
   align-items: center;
   gap: 7px;
+  flex: 1;
+  min-width: 0;
   width: 100%;
   padding: 5px 8px;
   border: none;
@@ -575,8 +855,34 @@
   cursor: pointer;
 }
 
+.aya-kanban-popover-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .aya-kanban-popover-item:hover {
   background: rgba(255, 255, 255, 0.07);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-popover-aux {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--aya-pane-subtle);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.aya-kanban-popover-aux:hover {
+  background: rgba(255, 255, 255, 0.09);
   color: var(--aya-pane-strong);
 }
 
@@ -610,6 +916,38 @@
   border-radius: 8px;
 }
 
+.aya-kanban-md-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.aya-kanban-md-toolbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-header-bg);
+  color: var(--aya-pane-subtle);
+  cursor: pointer;
+}
+
+.aya-kanban-md-toolbtn:hover {
+  color: var(--aya-pane-strong);
+  border-color: var(--aya-pane-subtle);
+}
+
+.aya-kanban-md-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--aya-pane-muted);
+}
+
 .aya-kanban-input,
 .aya-kanban-textarea,
 .aya-kanban-select {
@@ -631,7 +969,7 @@
 
 .aya-kanban-textarea {
   resize: vertical;
-  min-height: 54px;
+  min-height: 68px;
 }
 
 .aya-kanban-form-actions {
@@ -639,4 +977,506 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+/* Image Lightbox */
+.aya-kanban-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  background: rgba(5, 8, 13, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.aya-kanban-lightbox-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(92vw, 1080px);
+  max-height: 90vh;
+  background: var(--aya-pane-header-bg);
+  border: 1px solid var(--aya-pane-header-border);
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65);
+}
+
+.aya-kanban-lightbox-inner img {
+  max-width: 100%;
+  max-height: calc(90vh - 56px);
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.aya-kanban-lightbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--aya-pane-subtle);
+}
+
+/* Search & Filter bar */
+.aya-kanban-search-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.aya-kanban-search-input {
+  width: 170px;
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-bg);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-search-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+  width: 210px;
+}
+
+.aya-kanban-search-clear {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 166, 255, 0.4);
+  background: rgba(88, 166, 255, 0.12);
+  color: #79c0ff;
+  cursor: pointer;
+}
+
+.aya-kanban-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--aya-pane-header-border);
+  background: rgba(255, 255, 255, 0.015);
+  flex-wrap: wrap;
+}
+
+.aya-kanban-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-header-bg);
+  color: var(--aya-pane-subtle);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.aya-kanban-filter-chip:hover {
+  border-color: var(--aya-pane-subtle);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-filter-chip--active {
+  border-color: #58a6ff !important;
+  background: rgba(88, 166, 255, 0.18) !important;
+  color: var(--aya-pane-strong) !important;
+  font-weight: 600;
+}
+
+.aya-kanban-filter-chip--archive {
+  border-color: rgba(163, 113, 247, 0.45);
+  background: rgba(163, 113, 247, 0.14);
+  color: #d2a8ff;
+}
+
+.aya-kanban-filter-chip--archive:hover {
+  border-color: #a371f7;
+  color: #e2c5ff;
+}
+
+.aya-kanban-filter-reset {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 1.5px 6px;
+  border: none;
+  background: transparent;
+  color: #58a6ff;
+  cursor: pointer;
+}
+
+.aya-kanban-filter-reset:hover {
+  text-decoration: underline;
+}
+
+.aya-kanban-shortcuts-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--aya-pane-muted);
+}
+
+.aya-kanban-shortcuts-hint kbd {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-header-bg);
+  color: var(--aya-pane-subtle);
+}
+
+/* Undo bar */
+.aya-kanban-undo-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(210, 153, 34, 0.12);
+  color: var(--aya-pane-strong);
+  border-bottom: 1px solid rgba(210, 153, 34, 0.32);
+  font-size: 12px;
+}
+
+/* Collapsed column */
+.aya-kanban-column--collapsed {
+  min-width: 42px;
+  max-width: 42px;
+  flex: 0 0 42px;
+  align-items: center;
+  padding: 8px 4px;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.aya-kanban-column--collapsed:hover {
+  border-color: var(--aya-pane-subtle);
+}
+
+.aya-kanban-column-collapsed-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--aya-pane-subtle);
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-height: 220px;
+}
+
+.aya-kanban-col-clear-btn {
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-bg);
+  color: var(--aya-pane-subtle);
+  cursor: pointer;
+}
+
+.aya-kanban-col-clear-btn:hover {
+  color: var(--status-error, #f85149);
+  border-color: rgba(248, 81, 73, 0.4);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+/* Card meta left: ID + priority + checklist progress */
+.aya-kanban-card-meta-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.aya-kanban-card--priority-urgent {
+  border-top: 2px solid rgba(248, 81, 73, 0.75);
+}
+
+.aya-kanban-card--priority-high {
+  border-top: 2px solid rgba(219, 109, 40, 0.7);
+}
+
+.aya-kanban-priority-badge {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  line-height: 1.25;
+}
+
+.aya-kanban-priority-badge--urgent {
+  background: rgba(248, 81, 73, 0.16);
+  color: #ff7b72;
+  border-color: rgba(248, 81, 73, 0.4);
+}
+
+.aya-kanban-priority-badge--high {
+  background: rgba(219, 109, 40, 0.16);
+  color: #ffa657;
+  border-color: rgba(219, 109, 40, 0.4);
+}
+
+.aya-kanban-priority-badge--medium {
+  background: rgba(210, 153, 34, 0.15);
+  color: #e3b341;
+  border-color: rgba(210, 153, 34, 0.38);
+}
+
+.aya-kanban-priority-badge--low {
+  background: rgba(139, 148, 158, 0.14);
+  color: var(--aya-pane-subtle);
+  border-color: rgba(139, 148, 158, 0.3);
+}
+
+/* Checklist progress pill on card */
+.aya-kanban-checklist-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--aya-pane-header-bg);
+  border: 1px solid var(--aya-pane-header-border);
+  color: var(--aya-pane-subtle);
+}
+
+.aya-kanban-checklist-pill--done {
+  background: rgba(63, 185, 80, 0.14);
+  border-color: rgba(63, 185, 80, 0.4);
+  color: #56d364;
+}
+
+.aya-kanban-checklist-bar {
+  width: 24px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(139, 148, 158, 0.25);
+  overflow: hidden;
+}
+
+.aya-kanban-checklist-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #58a6ff;
+}
+
+.aya-kanban-checklist-pill--done .aya-kanban-checklist-bar-fill {
+  background: #3fb950;
+}
+
+/* Card label pills */
+.aya-kanban-card-labels {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.aya-kanban-label-pill {
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  background: rgba(88, 166, 255, 0.08);
+  color: #79c0ff;
+  cursor: pointer;
+  line-height: 1.3;
+}
+
+.aya-kanban-label-pill:hover,
+.aya-kanban-label-pill--active {
+  border-color: #58a6ff;
+  background: rgba(88, 166, 255, 0.2);
+}
+
+/* Priority & labels form controls */
+.aya-kanban-form-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.aya-kanban-form-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 6px;
+}
+
+.aya-kanban-quick-labels {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.aya-kanban-quick-label {
+  font-family: inherit;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px dashed var(--aya-pane-header-border);
+  background: transparent;
+  color: var(--aya-pane-muted);
+  cursor: pointer;
+}
+
+.aya-kanban-quick-label:hover {
+  color: var(--aya-pane-strong);
+  border-color: var(--aya-pane-subtle);
+}
+
+.aya-kanban-quick-label--active {
+  border-style: solid;
+  border-color: #58a6ff;
+  background: rgba(88, 166, 255, 0.15);
+  color: #79c0ff;
+}
+
+/* Quick priority selector in popover */
+.aya-kanban-popover-priorities {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 5px;
+  flex-wrap: wrap;
+}
+
+.aya-kanban-priority-chip {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-bg);
+  color: var(--aya-pane-subtle);
+  cursor: pointer;
+}
+
+.aya-kanban-priority-chip--active {
+  box-shadow: 0 0 0 1px var(--aya-pane-strong);
+}
+
+/* Body container: columns + optional archive drawer */
+.aya-kanban-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.aya-kanban-archive-btn--active {
+  border-color: #58a6ff;
+  background: rgba(88, 166, 255, 0.16);
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-archive-drawer {
+  width: 340px;
+  min-width: 280px;
+  max-width: 45%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--aya-pane-header-border);
+  background: var(--aya-pane-header-bg);
+  min-height: 0;
+}
+
+.aya-kanban-archive-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 11px 7px;
+  border-bottom: 1px solid var(--aya-pane-header-border);
+}
+
+.aya-kanban-archive-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--aya-pane-strong);
+}
+
+.aya-kanban-archive-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.aya-kanban-archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.aya-kanban-card--archived {
+  cursor: default;
+  opacity: 0.92;
+  border-style: dashed;
+}
+
+.aya-kanban-card--archived:hover {
+  opacity: 1;
+}
+
+.aya-kanban-archive-meta {
+  font-size: 10.5px;
+  color: var(--aya-pane-muted);
+}
+
+.aya-kanban-card-quick--visible {
+  opacity: 1;
+}
+
+.aya-kanban-archive-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(88, 166, 255, 0.38);
+  background: rgba(88, 166, 255, 0.12);
+  color: #79c0ff;
+  cursor: pointer;
+}
+
+.aya-kanban-archive-restore-btn:hover {
+  border-color: #58a6ff;
+  background: rgba(88, 166, 255, 0.22);
+  color: var(--aya-pane-strong);
 }

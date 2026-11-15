@@ -67,7 +67,7 @@ for(const interrupted of [false,true,'ack-failure','attach-failure'])test(`a sep
   await wait(()=>{if(child.exitCode!==null)throw Error(`successor failed: ${stderr}`);return fs.existsSync(path.join(process.env.AYA_HOME,'pty-host.sock'));});
   next=authorizeFixtureClient(new PtyHostClient(hostScript));
   assert.equal((await next.hostStatus()).pid,child.pid);
-  assert.equal(await next.getPid('pane'),pid);
+  await wait(async()=>await next.getPid('pane')===pid);
   assert.equal((await next.hostStatus()).owner.pid,status.owner.pid);
   // No renderer exists yet. The new host must already have consumed the bytes.
   await wait(async()=>String(await next.request({id:0,type:'buffer',ptyId:'pane'})).includes('BETWEEN'));

@@ -1,31 +1,19 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash,randomBytes } from "node:crypto";
+import type { CiFailurePreview,PullRequestCheck } from '../shared/ipc-types';
 import { reviewPtyPayload } from "./diff-comments-prompt";
 import { runGh } from "./git-publish";
 import { printable } from "./printable";
+export type { CiFailurePreview,PullRequestCheck } from '../shared/ipc-types';
 
 export const MAX_CI_LOG_TAIL_BYTES = 8 * 1024;
 export const MAX_STORED_CI_PREVIEWS = 128;
 const GH_TIMEOUT_MS = 20_000;
 const GH_POLL_TIMEOUT_MS = 12_000;
 
-export interface PullRequestCheck {
-  name: string;
-  state: string;
-  bucket: "pass" | "fail" | "pending" | "skipping" | "cancel" | "unknown";
-  url: string | null;
-}
-
 export interface PullRequestChecks {
   pullRequestUrl: string | null;
   pullRequestState: "open" | "merged" | "closed" | "unknown" | "none";
   checks: PullRequestCheck[];
-}
-
-export interface CiFailurePreview {
-  token: string;
-  checkName: string;
-  checkUrl: string;
-  prompt: string;
 }
 
 type Gh = (directory: string, args: string[], timeout?: number, signal?: AbortSignal) => Promise<string>;

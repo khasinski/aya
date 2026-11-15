@@ -16,6 +16,10 @@ const {
   updateBoardCard,
   moveBoardCard,
   deleteBoardCard,
+  archiveBoardCard,
+  unarchiveBoardCard,
+  clearBoardColumn,
+  restoreBoardCards,
   claimBoardCard,
   releaseBoardCard,
   addBoardColumn,
@@ -23,6 +27,13 @@ const {
   renameBoardColumn,
   deleteBoardColumn,
   exportBoardToRepo,
+  formatBoardPrompt,
+  releaseBoardClaimsForPane,
+  syncBoardPaneName,
+  saveBoardImage,
+  readBoardImageDataUrl,
+  matchesBoardQuery,
+  searchBoard,
   handleBoardRequest,
 } = await import("../dist-electron/board.js");
 
@@ -575,6 +586,295 @@ test("aya board CLI end-to-end over control socket", async () => {
     assert.equal(existsSync(join(fx.repoDir, ".aya", "board.json")), true);
   } finally {
     stop();
+    fx.cleanup();
+  }
+});
+
+test("formatBoardPrompt formats multi-line task context and aya board hint", () => {
+  const prompt = formatBoardPrompt({
+    id: "t-7",
+    title: "Fix login redirect",
+    description: "Check callback URL\nand query params",
+    columnId: "in-progress",
+    assignee: "Claude 1",
+    createdAt: "2026-11-11T10:00:00.000Z",
+    updatedAt: "2026-11-11T10:00:00.000Z",
+  });
+  assert.match(prompt, /^Task t-7: Fix login redirect/m);
+  assert.match(prompt, /Check callback URL\nand query params/);
+  assert.match(prompt, /aya board move t-7 done/);
+});
+
+test("card reordering within a column and pane rename/close claim sync", async () => {
+  const fx = makeFixture();
+  try {
+    // Closing a pane when no board file exists should not create a board file
+    const noBoard = await releaseBoardClaimsForPane(fx.home, fx.project, "pane-1");
+    assert.equal(noBoard, null);
+    assert.equal(existsSync(join(fx.home, "boards", "demo.json")), false);
+
+    await addBoardCard(fx.home, fx.project, { title: "First" });
+    await addBoardCard(fx.home, fx.project, { title: "Second" });
+    await addBoardCard(fx.home, fx.project, { title: "Third" });
+
+    // Move "Third" (t-3) to index 0 of todo
+    let { board } = await moveBoardCard(fx.home, fx.project, "t-3", "todo", 0);
+    assert.deepEqual(
+      board.cards.filter((c) => c.columnId === "todo").map((c) => c.id),
+      ["t-3", "t-1", "t-2"],
+    );
+
+    // Claim t-3 for pane-1, then rename pane-1 -> "Claude Lead"
+    await claimBoardCard(fx.home, fx.project, "t-3", {
+      paneId: "pane-1",
+      paneName: "Claude 1",
+    });
+    board = await syncBoardPaneName(fx.home, fx.project, "pane-1", "Claude Lead");
+    const claimed = board.cards.find((c) => c.id === "t-3");
+    assert.equal(claimed.claim.paneName, "Claude Lead");
+    assert.equal(claimed.assignee, "Claude Lead");
+
+    // Closing pane-1 releases its claim automatically
+    board = await releaseBoardClaimsForPane(fx.home, fx.project, "pane-1");
+    assert.equal(board.cards.find((c) => c.id === "t-3").claim, undefined);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("saveBoardImage and readBoardImageDataUrl store and load PNG assets", async () => {
+  const fx = makeFixture();
+  // 1x1 transparent PNG base64
+  const pngBase64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  try {
+    const savedUser = await saveBoardImage(fx.home, fx.project, {
+      dataBase64: `data:image/png;base64,${pngBase64}`,
+      name: "ui-bug.png",
+    });
+    assert.match(savedUser.markdown, /^!\[ui-bug\.png\]\(/);
+    const dataUrl = await readBoardImageDataUrl(fx.home, fx.project, savedUser.path);
+    assert.equal(dataUrl, `data:image/png;base64,${pngBase64}`);
+
+    // Add a card referencing the user-level image, then promote board to repo:
+    // exportBoardToRepo copies the image into .aya/board-assets/ and rewrites the markdown path!
+    await addBoardCard(fx.home, fx.project, {
+      title: "Card with screenshot",
+      description: `See ${savedUser.markdown}`,
+    });
+
+    // When .aya/board.json exists in repo, images are stored under .aya/board-assets/ with relative path
+    const exported = await exportBoardToRepo(fx.home, fx.project);
+    assert.match(
+      exported.cards[0].description,
+      /!\[ui-bug\.png\]\(\.aya\/board-assets\/ui-bug-.*\.png\)/,
+    );
+    const savedRepo = await saveBoardImage(fx.home, fx.project, {
+      dataBase64: pngBase64,
+      name: "diagram",
+    });
+    assert.match(savedRepo.path, /^\.aya\/board-assets\/diagram-.*\.png$/);
+    const repoDataUrl = await readBoardImageDataUrl(fx.home, fx.project, savedRepo.path);
+    assert.equal(repoDataUrl, `data:image/png;base64,${pngBase64}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("card priority, labels, clearBoardColumn, and restoreBoardCards (Undo)", async () => {
+  const fx = makeFixture();
+  try {
+    const { card: c1 } = await addBoardCard(fx.home, fx.project, {
+      title: "Fix crash",
+      priority: "urgent",
+      labels: ["bug", "#ui", "BUG"],
+      columnId: "done",
+    });
+    assert.equal(c1.priority, "urgent");
+    assert.deepEqual(c1.labels, ["bug", "ui"]);
+
+    const prompt = formatBoardPrompt(c1);
+    assert.match(prompt, /priority: urgent/);
+    assert.match(prompt, /labels: bug, ui/);
+
+    const { card: updated } = await updateBoardCard(fx.home, fx.project, c1.id, {
+      priority: "high",
+      labels: ["release"],
+    });
+    assert.equal(updated.priority, "high");
+    assert.deepEqual(updated.labels, ["release"]);
+
+    const { card: c2 } = await addBoardCard(fx.home, fx.project, {
+      title: "Second done task",
+      columnId: "done",
+    });
+    await addBoardCard(fx.home, fx.project, {
+      title: "Keep in todo",
+      columnId: "todo",
+    });
+
+    // Clear "done" column archives the cards into archivedCards
+    const cleared = await clearBoardColumn(fx.home, fx.project, "done");
+    assert.equal(cleared.deleted.length, 2);
+    assert.deepEqual(
+      cleared.board.cards.map((c) => c.title),
+      ["Keep in todo"],
+    );
+    assert.equal(cleared.board.archivedCards.length, 2);
+    assert.deepEqual(
+      cleared.board.archivedCards.map((c) => c.id),
+      [c1.id, c2.id],
+    );
+    assert.ok(cleared.board.archivedCards[0].archivedAt);
+
+    // Adding a new card never collides with archived card IDs
+    const { card: c4 } = await addBoardCard(fx.home, fx.project, {
+      title: "Fourth card after archive",
+      columnId: "todo",
+    });
+    assert.equal(c4.id, "t-4");
+
+    // Undo via restoreBoardCards restores original IDs, columns, and order, and removes them from archivedCards
+    const restored = await restoreBoardCards(
+      fx.home,
+      fx.project,
+      cleared.deleted.map((card, index) => ({ card, index })),
+    );
+    assert.equal(restored.archivedCards.length, 0);
+    const doneCards = restored.cards.filter((c) => c.columnId === "done");
+    assert.deepEqual(
+      doneCards.map((c) => c.id),
+      [c1.id, c2.id],
+    );
+    assert.equal(doneCards[0].priority, "high");
+    assert.deepEqual(doneCards[0].labels, ["release"]);
+
+    // Single card archive, unarchive, permanent delete from archive, and empty archive
+    const { board: afterSingleArch } = await archiveBoardCard(fx.home, fx.project, c1.id);
+    assert.equal(afterSingleArch.archivedCards.length, 1);
+    assert.equal(afterSingleArch.archivedCards[0].id, c1.id);
+
+    const { board: afterUnarch } = await unarchiveBoardCard(fx.home, fx.project, c1.id);
+    assert.equal(afterUnarch.archivedCards.length, 0);
+    assert.ok(afterUnarch.cards.some((c) => c.id === c1.id && c.columnId === "done"));
+
+    await clearBoardColumn(fx.home, fx.project, "done");
+    let snap = await getBoard(fx.home, fx.project);
+    assert.equal(snap.archivedCards.length, 2);
+
+    // Delete single card from archive
+    ({ board: snap } = await deleteBoardCard(fx.home, fx.project, c1.id));
+    assert.deepEqual(
+      snap.archivedCards.map((c) => c.id),
+      [c2.id],
+    );
+
+    // Empty entire archive
+    ({ board: snap } = await clearBoardColumn(fx.home, fx.project, "__archive__"));
+    assert.equal(snap.archivedCards.length, 0);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("searchBoard, matchesBoardQuery, and aya board search CLI across active and archived cards", async () => {
+  const fx = makeFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, {
+      title: "Fix authentication race condition",
+      description: "Token refresh collides under concurrent requests",
+      priority: "urgent",
+      labels: ["bug", "auth"],
+      assignee: "Claude 1",
+      columnId: "in-progress",
+    });
+    await addBoardCard(fx.home, fx.project, {
+      title: "Add dark mode toggle",
+      description: "Settings modal switch",
+      priority: "low",
+      labels: ["ui", "feat"],
+      columnId: "todo",
+    });
+    const { card: doneCard } = await addBoardCard(fx.home, fx.project, {
+      title: "Legacy OAuth migration",
+      description: "Replaced v1 token endpoint",
+      priority: "high",
+      labels: ["auth", "cleanup"],
+      columnId: "done",
+    });
+    await archiveBoardCard(fx.home, fx.project, doneCard.id);
+
+    // Search across both active and archived cards for "token"
+    const tokenHits = await searchBoard(fx.home, fx.project, "token");
+    assert.deepEqual(
+      tokenHits.activeMatches.map((c) => c.id),
+      ["t-1"],
+    );
+    assert.deepEqual(
+      tokenHits.archivedMatches.map((c) => c.id),
+      ["t-3"],
+    );
+
+    // Token filters: #auth p0 @claude
+    const urgentAuth = await searchBoard(fx.home, fx.project, "#auth p0 @claude");
+    assert.deepEqual(
+      urgentAuth.activeMatches.map((c) => c.id),
+      ["t-1"],
+    );
+    assert.equal(urgentAuth.archivedMatches.length, 0);
+
+    // Token filter: is:archived #auth
+    const archivedAuth = await searchBoard(fx.home, fx.project, "is:archived #auth");
+    assert.equal(archivedAuth.activeMatches.length, 0);
+    assert.deepEqual(
+      archivedAuth.archivedMatches.map((c) => c.id),
+      ["t-3"],
+    );
+
+    // CLI handler: `aya board search auth`
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    const cliAll = await handleBoardRequest(
+      { argv: ["search", "auth"], cwd: fx.repoDir },
+      "pane-1",
+      deps,
+    );
+    assert.match(cliAll.output, /Search "auth" on demo — 2 matches:/);
+    assert.match(cliAll.output, /## Active \(1\)/);
+    assert.match(cliAll.output, /t-1\s+Fix authentication race condition/);
+    assert.match(cliAll.output, /## Archive \(1\)/);
+    assert.match(cliAll.output, /t-3\s+Legacy OAuth migration/);
+
+    // CLI handler: `aya board search auth --archive --json`
+    const cliArchJson = await handleBoardRequest(
+      { argv: ["search", "auth", "--archive", "--json"], cwd: fx.repoDir },
+      "pane-1",
+      deps,
+    );
+    const parsed = JSON.parse(cliArchJson.output);
+    assert.equal(parsed.scope, "archive");
+    assert.equal(parsed.active.length, 0);
+    assert.equal(parsed.archived.length, 1);
+    assert.equal(parsed.archived[0].id, "t-3");
+
+    // CLI handler: `aya board archive search oauth`
+    const cliSubArch = await handleBoardRequest(
+      { argv: ["archive", "search", "oauth"], cwd: fx.repoDir },
+      "pane-1",
+      deps,
+    );
+    assert.match(cliSubArch.output, /## Archive \(1\)/);
+    assert.match(cliSubArch.output, /t-3\s+Legacy OAuth migration/);
+
+    // Direct unit check on matchesBoardQuery
+    assert.equal(
+      matchesBoardQuery(tokenHits.activeMatches[0], "col:progress p:urgent label:bug"),
+      true,
+    );
+    assert.equal(
+      matchesBoardQuery(tokenHits.activeMatches[0], "is:unassigned"),
+      false,
+    );
+  } finally {
     fx.cleanup();
   }
 });

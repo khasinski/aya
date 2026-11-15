@@ -10,12 +10,19 @@ aya present --title <t> --table <json file|->    # {"columns":[...],"rows":[[...
 aya present --title <t> --metric <value> [--description <d>]
     [--id <artifact>]   update that artifact in place (its window reloads, revision +1)
     [--no-open]         store it without opening a window
+    [--asset <path>]    attach media used by JS; repeat for multiple files
 aya artifact list [--json]
 aya artifact open <id>
 ```
 
 `-` reads the HTML or table JSON from stdin. `aya present` prints the artifact id. `aya capabilities` lists both
 commands, so an agent running in a pane learns about them from there.
+
+HTML can contain `<video controls src="./demo.mp4">`, WebM sources, audio, captions and local video posters.
+Aya copies these files into the artifact automatically. Paths resolve beside the HTML file; for stdin they resolve from
+the CLI's working directory. Use `--asset clip.mp4` plus `window.ayaWidget.asset('clip.mp4')` for a JS-created player.
+Media is streamed separately from the HTML, with seeking support; each file can be up to 256 MiB, with 32 files and
+512 MiB total per artifact. External media and iframe players stay blocked.
 
 - HTML runs in the same isolated `aya-widget:` frame as in the Conversation view: no Node, filesystem, network or Aya
   API access. `window.ayaWidget.suggest(text)` copies the text to the clipboard (there is no conversation to receive it).

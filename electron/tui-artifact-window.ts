@@ -16,7 +16,7 @@ const escape = (text: string) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;"
 
 /** The artifact's body as markup; tables and metrics are static, html goes in the isolated widget frame. */
 export function artifactBody(artifact: GuiArtifact, previewUrl?: string): string {
-  if (artifact.kind === "html") return `<iframe title="${escape(artifact.title)}" src="${escape(previewUrl || "")}" sandbox="allow-scripts"></iframe>`;
+  if (artifact.kind === "html") return `<iframe title="${escape(artifact.title)}" src="${escape(previewUrl || "")}" sandbox="allow-scripts" allowfullscreen></iframe>`;
   if (artifact.kind === "image") return `<main><img alt="${escape(artifact.title)}" src="${escape(artifact.dataUrl)}"></main>`;
   if (artifact.kind === "metric") return `<main><div class="metric"><b>${escape(artifact.value)}</b><p>${escape(artifact.description)}</p></div></main>`;
   const head = artifact.columns.map((c) => `<th>${escape(c)}</th>`).join("");
@@ -50,7 +50,7 @@ export function showTuiArtifact(artifact: GuiArtifact, createWindow: CreateWindo
   } else if (!win.isVisible() && process.env.AYA_E2E_HEADLESS !== "1") win.show();
   const id = win.webContents.id, owner = owners.get(id)!;
   shown.set(artifact.id, artifact);
-  const previewUrl = artifact.kind === "html" ? widgetDocument(owner, artifact.html) : undefined;
+  const previewUrl = artifact.kind === "html" ? widgetDocument(owner, artifact.html, artifact.media) : undefined;
   win.setTitle(artifact.title);
   if (process.env.AYA_E2E_HEADLESS !== "1") win.focus();
   void win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(documentFor(artifact, previewUrl)));

@@ -23,6 +23,17 @@
 const spawned = new Set<string>();
 const noSession = new Set<string>();
 const mountDecided = new Set<string>();
+const initialPromptsSent = new Set<string>();
+
+/** Claim the one-shot initialPrompt for a newly-created terminal id. Returns
+ *  true at most once per terminal id (until releaseSpawn on close) so a
+ *  TerminalView re-mount (e.g. switching between Kanban and the harness tab)
+ *  never re-types or re-schedules the prompt. */
+export function claimInitialPrompt(id: string): boolean {
+  if (initialPromptsSent.has(id)) return false;
+  initialPromptsSent.add(id);
+  return true;
+}
 
 /** Mark a terminal as having a confirmed live session (called on PTY output). */
 export function markSpawned(id: string): void {
@@ -77,4 +88,4 @@ export function clearMountDecision(id: string): void {
 }
 
 /** A closed tab cannot mount again in this renderer; release every marker. */
-export function releaseSpawn(id: string): void { spawned.delete(id); noSession.delete(id); mountDecided.delete(id); }
+export function releaseSpawn(id: string): void { spawned.delete(id); noSession.delete(id); mountDecided.delete(id); initialPromptsSent.delete(id); }

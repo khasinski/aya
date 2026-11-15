@@ -1,4 +1,4 @@
-import { PRESET_ID_SHELL } from "./preset-ids";
+import { PRESET_ID_BOARD, PRESET_ID_SHELL } from "./preset-ids";
 import { BUILTIN_SHELL, type Preset, type ProjectConfig, type TerminalState } from "./types";
 
 export function projectLaunchCwd(
@@ -19,5 +19,7 @@ export function nextActiveTerminalId(
   const remaining = Object.values(nextTerminals).filter(
     (x) => x.projectSlug === projectSlug,
   );
+  const nonBoard = remaining.filter((x) => x.presetId !== PRESET_ID_BOARD);
+  if (nonBoard.length > 0) return nonBoard[nonBoard.length - 1].id;
   return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
 }

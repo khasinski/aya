@@ -1,9 +1,9 @@
 // Aya windows: creation, focus, fullscreen and the shared target for outside opens.
 
-import { isWidgetPreviewUrl } from "./gui-artifact-documents";
-import type { BrowserWindow, BrowserWindowConstructorOptions } from "electron";
+import type { BrowserWindow,BrowserWindowConstructorOptions } from "electron";
 import * as path from "node:path";
-import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
+import { isWidgetPreviewUrl } from "./gui-artifact-documents";
+import { isInternalNavigationUrl,parseExternalUrl } from "./navigation";
 import { replayOpensOnLoad } from "./open-delivery";
 import type { PtyHostClient } from "./pty-host-client";
 import { singleFlight } from "./single-flight";
@@ -417,10 +417,10 @@ export function createAyaWindows(deps: AyaWindowsDeps) {
     });
 
     if (IS_DEV) {
-      win.loadURL(DEV_SERVER_URL);
+      void win.loadURL(DEV_SERVER_URL).catch(error => console.error("Could not load development window", error));
       win.webContents.openDevTools({ mode: "detach" });
     } else {
-      win.loadFile(RENDERER_INDEX_PATH);
+      void win.loadFile(RENDERER_INDEX_PATH).catch(error => console.error("Could not load Aya window", error));
     }
 
     return win;

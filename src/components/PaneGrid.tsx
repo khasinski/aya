@@ -1,25 +1,28 @@
-import { memo, useCallback, useRef, type RefObject } from "react";
+import { memo,useCallback,useRef,type RefObject } from "react";
 import { guiSupportedAgent } from "../agentPreset";
-import { emptyProjectPaneTitle, paneStyleFromRect } from "../pane-grid";
+import { beginGuiPaneRecovery } from '../gui-renderer-recovery';
+import type { GuiPaneStatus } from "../gui-status";
+import { emptyProjectPaneTitle,paneStyleFromRect } from "../pane-grid";
 import { PRESET_ID_BOARD } from "../preset-ids";
-import { findProject, terminalSpawn } from "../project-helpers";
+import { findProject,terminalSpawn } from "../project-helpers";
 import type { SettingsTab } from "../settings-tabs";
-import type { DividerRect, LeafRect } from "../split-tree";
+import type { DividerRect,LeafRect } from "../split-tree";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import {
-  getPreset,
-  type BoardSnapshot,
-  type Preset,
-  type ProjectConfig,
-  type Snippet,
-  type TerminalState,
-  type Theme,
-  type ThemeColors,
+	getPreset,
+	type BoardSnapshot,
+	type Preset,
+	type ProjectConfig,
+	type Snippet,
+	type TerminalState,
+	type Theme,
+	type ThemeColors,
 } from "../types";
-import { SplitResizeHandle } from "./SplitResizeHandle";
+import { projectBaseCwd } from "../worktree";
 import { ConversationView } from "./ConversationView";
 import { KanbanView } from "./KanbanView";
-import type { GuiPaneStatus } from "../gui-status";
+import { LocalErrorBoundary } from './LocalErrorBoundary';
+import { SplitResizeHandle } from "./SplitResizeHandle";
 import { TerminalView } from "./TerminalView";
 
 interface Props {
@@ -68,7 +71,10 @@ interface Props {
   headerSlot?: HTMLElement | null;
   resizeSplit: (slug: string, splitId: string, ratio: number) => void;
   projectTerminals: TerminalState[];
-  onStartCardInNewPane?: (preset: Preset, cardId: string, projectSlug: string) => Promise<BoardSnapshot>;
+  onStartCardInNewPane?: (preset: Preset, cardId: string, projectSlug: string, cwd?: string) => Promise<BoardSnapshot>;
+  onCreateWorktrees?: (req: { directory: string; slug: string; count: number; base: string }) => Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
+  onFocusTerminal?: (terminalId: string) => void;
+  onSplitBesideTerminal?: (anchorId: string, targetId: string) => void;
 }
 
 export const PaneGrid = memo(function PaneGrid({
@@ -116,6 +122,9 @@ export const PaneGrid = memo(function PaneGrid({
   resizeSplit,
   projectTerminals,
   onStartCardInNewPane,
+  onCreateWorktrees,
+  onFocusTerminal,
+  onSplitBesideTerminal,
 }: Props) {
   // A stable lookup, so a GUI pane (memoised) does not re-render whenever another terminal's status changes.
   const terminalsRef = useRef(terminals);
@@ -217,8 +226,7 @@ export const PaneGrid = memo(function PaneGrid({
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
         if (terminal.presetId === PRESET_ID_BOARD) {
           return (
-            <KanbanView
-              key={terminal.id}
+            <LocalErrorBoundary key={terminal.id} label="Board" style={paneStyle}><KanbanView
               terminal={terminal}
               paneStyle={paneStyle}
               isActivePane={isSplit && activeLeafId === leafId}
@@ -226,15 +234,29 @@ export const PaneGrid = memo(function PaneGrid({
                 activeProjectId && setActiveSplitCell(activeProjectId, leafId)
               }
               listSiblingTerminals={listSiblingTerminals}
+              siblingTerminals={projectTerminals.filter(
+                (t) => t.id !== terminal.id && t.presetId !== PRESET_ID_BOARD,
+              )}
               presets={activePresets}
+              projectDir={
+                activeProject && !activeProject.remote
+                  ? projectBaseCwd(activeProject)
+                  : undefined
+              }
               onStartCardInNewPane={onStartCardInNewPane}
+              onCreateWorktrees={onCreateWorktrees}
+              onFocusTerminal={onFocusTerminal}
+              onSplitRight={
+                onSplitBesideTerminal
+                  ? (targetId) => onSplitBesideTerminal(terminal.id, targetId)
+                  : undefined
+              }
               headerSlot={headerSlot}
-            />
+            /></LocalErrorBoundary>
           );
         }
         return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !activeProject?.remote ? null : (
-          <TerminalView
-            key={terminal.id}
+          <LocalErrorBoundary key={terminal.id} label="Terminal" style={paneStyle}><TerminalView
             paneStyle={paneStyle}
             terminal={terminal}
             preset={preset}
@@ -272,7 +294,7 @@ export const PaneGrid = memo(function PaneGrid({
               activeProjectId && setActiveSplitCell(activeProjectId, leafId)
             }
             enableWebgl={!isSplit}
-          />
+          /></LocalErrorBoundary>
         );
       })}
       {hiddenTerminals.map((t) => {
@@ -289,8 +311,7 @@ export const PaneGrid = memo(function PaneGrid({
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
         if (t.presetId === PRESET_ID_BOARD) return null;
         return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !project?.remote ? null : (
-          <TerminalView
-            key={t.id}
+          <LocalErrorBoundary key={t.id} label="Terminal" style={{ display: "none" }}><TerminalView
             terminal={t}
             preset={preset}
             {...terminalSpawn(project, preset, t, resumePanes, homeDir)}
@@ -312,7 +333,7 @@ export const PaneGrid = memo(function PaneGrid({
             restartTrigger={restartTriggers[t.id] ?? 0}
             macOptionKeyMode={macOptionKeyMode}
             enableWebgl={false}
-          />
+          /></LocalErrorBoundary>
         );
       })}
       {Object.values(terminals).map(terminal => {
@@ -321,8 +342,7 @@ export const PaneGrid = memo(function PaneGrid({
         if (preset.interfaceMode !== "gui" || !guiSupportedAgent(preset) || project?.remote || terminal.spawnDeferred) return null;
         const pane = paneRects.find(p => p.terminalId === terminal.id);
         return (
-          <ConversationView
-            key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`}
+          <LocalErrorBoundary key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`} label="Conversation" style={pane ? paneStyleFromRect(isSplit, pane.rect) : { display: "none" }} onError={() => beginGuiPaneRecovery(terminal.id)}><ConversationView
             terminal={terminal}
             preset={preset}
             snippets={snippets}
@@ -340,7 +360,7 @@ export const PaneGrid = memo(function PaneGrid({
             findOpen={findInPaneFor === terminal.id}
             onCloseFind={closeFindPane}
             headerSlot={headerSlot}
-          />
+          /></LocalErrorBoundary>
         );
       })}
       {activeProjectId &&

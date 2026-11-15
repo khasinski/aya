@@ -1,23 +1,23 @@
-import { useCallback, useEffect, useRef } from "react";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { Dispatch,RefObject,SetStateAction } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 import { PROJECT_STATE_VERSION } from "../main-mirrors";
-import { compactRecord, dedupeSlugs, defaultTabName, mergeGitInfo } from "../project-helpers";
 import type { MissingDirEntry } from "../project-helpers";
-import { hydrateProjectActiveTabs, hydrateProjectTerminalStates } from "../project-persistence";
-import { compactTree, normalizeTreeForTabs, projectSplitTree } from "../split-tree";
-import { uuid } from "../uuid";
-import { projectBaseCwd, tabFromTerminal } from "../worktree";
-import { BUILTIN_SHELL } from "../types";
+import { compactRecord,dedupeSlugs,defaultTabName,mergeGitInfo } from "../project-helpers";
+import { hydrateProjectActiveTabs,hydrateProjectTerminalStates } from "../project-persistence";
+import { compactTree,normalizeTreeForTabs,projectSplitTree } from "../split-tree";
 import type {
-  Preset,
-  ProjectCollectionState,
-  ProjectConfig,
-  ProjectGitInfo,
-  Snippet,
-  TerminalState,
-  Theme,
-  WorkingTab,
+	Preset,
+	ProjectCollectionState,
+	ProjectConfig,
+	ProjectGitInfo,
+	Snippet,
+	TerminalState,
+	Theme,
+	WorkingTab,
 } from "../types";
+import { BUILTIN_SHELL } from "../types";
+import { uuid } from "../uuid";
+import { projectBaseCwd,tabFromTerminal } from "../worktree";
 
 // Debounce for the single project-state disk writer (the #18 race fix).
 const PROJECT_STATE_SAVE_DEBOUNCE_MS = 150;
@@ -53,6 +53,7 @@ interface ProjectPersistenceOptions {
 }
 
 export function useProjectPersistence(options: ProjectPersistenceOptions) {
+  const [bootstrapError, setBootstrapError] = useState<Error | null>(null);
   // Setters and shared refs are stable; keep the original mount-only closures.
   const initial = useRef(options);
   const {
@@ -321,7 +322,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       // projectsRef, causing `aya <existingProjectPath>` to fall through to
       // create-new with a colliding slug ("Project 'agent' already exists").
       setDidBootstrap(true);
-    })();
+    })().catch(error => setBootstrapError(error instanceof Error ? error : new Error(String(error))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -359,6 +360,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     [],
   );
 
+  if (bootstrapError) throw bootstrapError;
   return { updateProjectCollection, hydrateProjectTerminals, persistProject };
 }
 

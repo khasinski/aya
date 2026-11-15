@@ -27,7 +27,7 @@ A running bar stays above the composer. Completed or stopped bars remain in conv
 
 `aya_present` supports:
 
-- `kind: "html"`, `title`, `html`: up to 2 MiB of self-contained HTML/CSS/JavaScript, including SVG and canvas. Scripts run in an isolated frame with no Node, filesystem, network or Aya API access. Embed dependencies and images instead of fetching them. `window.ayaWidget.suggest(text)` proposes a follow-up; the user reviews it and chooses **Add to message**, then sends it themselves.
+- `kind: "html"`, `title`, `html`: up to 2 MiB of HTML/CSS/JavaScript, including SVG, canvas and local video. Scripts run in an isolated frame with no Node, filesystem or network access. Embed dependencies and images instead of fetching them. `window.ayaWidget.suggest(text)` proposes a follow-up; the user reviews it and chooses **Add to message**, then sends it themselves.
 - `kind: "image"`, `title`, `path`: PNG/JPEG/WebP/SVG files inside the workspace, up to 8 MiB, shown with zoom, keyboard panning and Fit. Unsupported or missing images show a visible error.
 - `kind: "table"`, `title`, `columns`, `rows`: filterable tables with row follow-up suggestions.
 - `kind: "metric"`, `title`, `value`, `description`: compact metric cards.
@@ -40,6 +40,35 @@ Use **Previous/Next** (or Alt+Left/Right), title/content search, and the artifac
 - **Open in browser** writes a standalone local preview and opens the system browser. In that standalone preview, widget actions show follow-up text to copy into Aya.
 
 Panes that run as a terminal (TUI) can present the same kinds with `aya present`; see `tui-artifacts.md`.
+
+### Local video and media
+
+Use an HTML artifact containing ordinary media elements:
+
+```html
+<video controls preload="metadata" src="./demo.mp4"></video>
+<!-- Alternative format, captions and a local poster also work. -->
+<video controls poster="./poster.png">
+  <source src="./demo.webm" type="video/webm">
+  <track kind="captions" src="./captions.vtt" srclang="en">
+</video>
+```
+
+Aya copies local `video`, `audio`, `source` and `track` sources, plus video posters, into content-addressed media storage.
+Paths resolve relative to the supplied HTML file, or the workspace for inline HTML; GUI media must remain inside the
+workspace, including symlink targets. MP4 (H.264/AAC) and WebM (VP8/VP9) are recommended. MP3/WAV/Ogg audio,
+PNG/JPEG/WebP posters and WebVTT captions are also accepted. Limits are 256 MiB per file, 32 files and 512 MiB per artifact.
+Embedded `data:` and `blob:` media also work, subject to the normal HTML size limit.
+
+For players created by JavaScript, declare local paths in the tool's optional `assets` array, then resolve them with
+`window.ayaWidget.asset(path)`. This returns an isolated preview URL, not a filesystem path. Aya streams media with byte
+ranges for seeking; video bytes never enter conversation JSON or the renderer's artifact payload. Saved artifact versions
+retain their media even if the original files are moved or removed. Unreferenced media is collected after seven days;
+active previews and TUI artifacts keep their resources alive.
+
+Saving an HTML artifact creates the selected `.html` file and a sibling `<name>.assets` directory. Keep both together
+when sharing or moving it. Opening in a browser uses the same portable representation. External video URLs and embedded
+YouTube/Vimeo iframes remain blocked; the preview displays an explanation instead of silently showing a broken player.
 
 ## Commands
 

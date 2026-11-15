@@ -1,427 +1,191 @@
 import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type MouseEvent as ReactMouseEvent,
+  memo
 } from "react";
 import { createPortal } from "react-dom";
-import { PRESET_ID_BOARD } from "../preset-ids";
-import { guiSupportedAgent } from "../agentPreset";
-import type {
-  BoardSnapshot,
-  KanbanCard,
-  KanbanColumn,
-  Preset,
-  TerminalState,
-} from "../types";
 import "./kanban.css";
-
-interface Props {
-  terminal: TerminalState;
-  hidden?: boolean;
-  paneStyle?: CSSProperties;
-  isActivePane?: boolean;
-  onActivatePane?: () => void;
-  headerSlot?: HTMLElement | null;
-  listSiblingTerminals: (self: {
-    id: string;
-    projectSlug: string;
-  }) => Array<{ id: string; name: string }>;
-  presets: Preset[];
-  onStartCardInNewPane?: (
-    preset: Preset,
-    cardId: string,
-    projectSlug: string,
-  ) => Promise<BoardSnapshot>;
-}
-
-function cleanIpcError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  return raw.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
-}
-
-function columnDotClass(colId: string): string {
-  if (colId === "todo" || colId === "in-progress" || colId === "review" || colId === "done") {
-    return `aya-kanban-column-dot aya-kanban-column-dot--${colId}`;
-  }
-  return "aya-kanban-column-dot";
-}
-
-export const KanbanView = memo(function KanbanView({
-  terminal,
-  hidden = false,
-  paneStyle,
-  isActivePane = false,
-  onActivatePane,
-  headerSlot = null,
-  listSiblingTerminals,
-  presets,
-  onStartCardInNewPane,
-}: Props) {
-  const [board, setBoard] = useState<BoardSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Add column form state
-  const [addingColumn, setAddingColumn] = useState(false);
-  const [newColumnName, setNewColumnName] = useState("");
-  const [movingColumn, setMovingColumn] = useState(false);
-  const columnMovePending = useRef(false);
-  const columnsRef = useRef<HTMLDivElement>(null);
-  const columnToReveal = useRef<string | null>(null);
-
-  useLayoutEffect(() => {
-    if (!columnToReveal.current) return;
-    columnsRef.current?.querySelector<HTMLElement>(`[data-testid="kanban-column-${CSS.escape(columnToReveal.current)}"]`)
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    columnToReveal.current = null;
-  }, [board]);
-
-  // Rename column state
-  const [renamingColId, setRenamingColId] = useState<string | null>(null);
-  const [renameColDraft, setRenameColDraft] = useState("");
-
-  // Add card per column state
-  const [addingCardColId, setAddingCardColId] = useState<string | null>(null);
-  const [newCardTitle, setNewCardTitle] = useState("");
-  const [newCardDesc, setNewCardDesc] = useState("");
-  const [newCardAssignee, setNewCardAssignee] = useState("");
-
-  // Edit card state
-  const [editingCardId, setEditingCardId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editDesc, setEditDesc] = useState("");
-  const [editAssignee, setEditAssignee] = useState("");
-
-  // Card action popover state
-  const [cardMenu, setCardMenu] = useState<{
-    cardId: string;
-  } | null>(null);
-  const cardMenuRef = useRef<HTMLDivElement>(null);
-  const cardMenuAnchor = useRef<HTMLElement | null>(null);
-
-  useLayoutEffect(() => {
-    if (!cardMenu) return;
-    const menu = cardMenuRef.current;
-    const anchor = cardMenuAnchor.current;
-    if (!menu || !anchor) return;
-    const position = () => {
-      const trigger = anchor.getBoundingClientRect();
-      const { width, height } = menu.getBoundingClientRect();
-      const left = Math.max(8, Math.min(trigger.right - width, window.innerWidth - width - 8));
-      const below = trigger.bottom + 4;
-      const preferredTop = below + height <= window.innerHeight - 8 ? below : trigger.top - height - 4;
-      menu.style.left = `${left}px`;
-      menu.style.top = `${Math.max(8, Math.min(preferredTop, window.innerHeight - height - 8))}px`;
-    };
-    position();
-    const observer = new ResizeObserver(position);
-    observer.observe(menu);
-    window.addEventListener("resize", position);
-    window.addEventListener("scroll", position, true);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", position);
-      window.removeEventListener("scroll", position, true);
-    };
-  }, [cardMenu]);
-
-  // Drag state
-  const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
-  const [dropTargetColId, setDropTargetColId] = useState<string | null>(null);
-
-  const loadBoard = useCallback(async () => {
-    try {
-      const next = await window.aya.getBoard(terminal.projectSlug);
-      setBoard(next);
-    } catch (err) {
-      setError(cleanIpcError(err));
-    }
-  }, [terminal.projectSlug]);
-
-  useEffect(() => {
-    void loadBoard();
-    return window.aya.onBoardChange((slug) => {
-      if (slug === terminal.projectSlug) {
-        void loadBoard();
-      }
-    });
-  }, [loadBoard, terminal.projectSlug]);
-
-  useEffect(() => {
-    if (!cardMenu) return;
-    const close = () => setCardMenu(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setCardMenu(null);
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [cardMenu]);
-
-  const runAction = async (fn: () => Promise<BoardSnapshot | unknown>) => {
-    setError(null);
-    try {
-      const res = await fn();
-      if (res && typeof res === "object" && "columns" in res && "cards" in res) {
-        setBoard(res as BoardSnapshot);
-      } else {
-        await loadBoard();
-      }
-    } catch (err) {
-      setError(cleanIpcError(err));
-    }
-  };
-
-  const handleAddColumn = async () => {
-    const trimmed = newColumnName.trim();
-    if (!trimmed) return;
-    setAddingColumn(false);
-    setNewColumnName("");
-    await runAction(() =>
-      window.aya.addBoardColumn({
-        projectSlug: terminal.projectSlug,
-        title: trimmed,
-      }),
-    );
-  };
-
-  const handleMoveColumn = async (columnId: string, anchor: string, direction: "before" | "after") => {
-    if (columnMovePending.current) return;
-    columnMovePending.current = true;
-    setMovingColumn(true);
-    try {
-      await runAction(async () => {
-        const next = await window.aya.moveBoardColumn({ projectSlug: terminal.projectSlug, columnId, [direction]: anchor });
-        columnToReveal.current = columnId;
-        return next;
-      });
-    } finally {
-      columnMovePending.current = false;
-      setMovingColumn(false);
-    }
-  };
-
-  const handleRenameColumn = async (columnId: string) => {
-    const trimmed = renameColDraft.trim();
-    setRenamingColId(null);
-    if (!trimmed) return;
-    await runAction(() =>
-      window.aya.renameBoardColumn({
-        projectSlug: terminal.projectSlug,
-        columnId,
-        title: trimmed,
-      }),
-    );
-  };
-
-  const handleDeleteColumn = async (col: KanbanColumn) => {
-    await runAction(() =>
-      window.aya.deleteBoardColumn({
-        projectSlug: terminal.projectSlug,
-        columnId: col.id,
-      }),
-    );
-  };
-
-  const openAddCard = (columnId: string) => {
-    setAddingCardColId(columnId);
-    setNewCardTitle("");
-    setNewCardDesc("");
-    setNewCardAssignee("");
-  };
-
-  const handleCreateCard = async (columnId: string) => {
-    const title = newCardTitle.trim();
-    if (!title) return;
-    const description = newCardDesc.trim();
-    const assignee = newCardAssignee.trim();
-    setAddingCardColId(null);
-    setNewCardTitle("");
-    setNewCardDesc("");
-    setNewCardAssignee("");
-    await runAction(() =>
-      window.aya.addBoardCard({
-        projectSlug: terminal.projectSlug,
-        columnId,
-        title,
-        ...(description ? { description } : {}),
-        ...(assignee ? { assignee } : {}),
-      }),
-    );
-  };
-
-  const startEditCard = (card: KanbanCard) => {
-    setCardMenu(null);
-    setEditingCardId(card.id);
-    setEditTitle(card.title);
-    setEditDesc(card.description ?? "");
-    setEditAssignee(card.assignee ?? "");
-  };
-
-  const handleSaveCard = async (cardId: string) => {
-    const title = editTitle.trim();
-    if (!title) return;
-    setEditingCardId(null);
-    await runAction(() =>
-      window.aya.updateBoardCard({
-        projectSlug: terminal.projectSlug,
-        cardId,
-        title,
-        description: editDesc,
-        assignee: editAssignee.trim() || null,
-      }),
-    );
-  };
-
-  const handleMoveCard = async (cardId: string, toColumnId: string) => {
-    setCardMenu(null);
-    await runAction(() =>
-      window.aya.moveBoardCard({
-        projectSlug: terminal.projectSlug,
-        cardId,
-        columnId: toColumnId,
-      }),
-    );
-  };
-
-  const handleDeleteCard = async (cardId: string) => {
-    setCardMenu(null);
-    await runAction(() =>
-      window.aya.deleteBoardCard({
-        projectSlug: terminal.projectSlug,
-        cardId,
-      }),
-    );
-  };
-
-  const handleExportToRepo = async () => {
-    await runAction(() => window.aya.exportBoardToRepo(terminal.projectSlug));
-  };
-
-  const openCardPopover = (e: ReactMouseEvent<HTMLElement>, cardId: string) => {
-    e.stopPropagation();
-    if (cardMenu?.cardId === cardId) {
-      setCardMenu(null);
-      return;
-    }
-    cardMenuAnchor.current = e.currentTarget;
-    setCardMenu({ cardId });
-  };
-
-  const siblings = listSiblingTerminals(terminal);
-  const launchablePresets = presets.filter(p => p.id !== PRESET_ID_BOARD && !(p.interfaceMode === "gui" && guiSupportedAgent(p)));
-
-  const headerNode = (
-    <div className="aya-pane-header">
-      <span className="aya-pane-header-title">
-        <span style={{ color: "#58a6ff", marginRight: 6 }}>▦</span>
-        {terminal.name}
-        <span
-          className="aya-settings-experimental"
-          style={{ marginLeft: 8 }}
-        >
-          Experimental
-        </span>
-      </span>
-      <div className="aya-kanban-toolbar-meta">
-        {board && (
-          <>
-            <span
-              className={`aya-kanban-source-badge ${
-                board.source === "repo" ? "aya-kanban-source-badge--repo" : ""
-              }`}
-              title={`Stored at ${board.filePath}`}
-            >
-              {board.source === "repo"
-                ? "repo (.aya/board.json)"
-                : "user config (~/.aya/boards)"}
-            </span>
-            {board.source === "user" && (
-              <button
-                type="button"
-                className="aya-kanban-btn"
-                title="Promote board to .aya/board.json in the repository so it takes priority and can be committed"
-                onClick={() => void handleExportToRepo()}
-              >
-                Save to .aya/board.json
-              </button>
-            )}
-          </>
-        )}
-        {addingColumn ? (
-          <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-            <input
-              className="aya-kanban-input"
-              style={{ width: 130, padding: "2px 6px", fontSize: 11.5 }}
-              placeholder="Column name…"
-              value={newColumnName}
-              onChange={(e) => setNewColumnName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void handleAddColumn();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  setAddingColumn(false);
-                  setNewColumnName("");
-                }
-              }}
-              autoFocus
-            />
-            <button
-              type="button"
-              className="aya-kanban-btn aya-kanban-btn--primary"
-              onClick={() => void handleAddColumn()}
-            >
-              Add
-            </button>
-            <button
-              type="button"
-              className="aya-kanban-btn"
-              onClick={() => {
-                setAddingColumn(false);
-                setNewColumnName("");
-              }}
-            >
-              Cancel
-            </button>
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="aya-kanban-btn"
-            onClick={() => setAddingColumn(true)}
-          >
-            + Column
-          </button>
-        )}
-      </div>
-    </div>
-  );
-
-  const activeMenuCard =
-    cardMenu && board
-      ? board.cards.find((c) => c.id === cardMenu.cardId) ?? null
-      : null;
-
-  return (
+import { KanbanCardMarkdown, livePaneDotInfo } from './KanbanCardContent';
+import { KanbanColumns } from './KanbanColumns';
+import { PRIORITY_OPTIONS, useKanbanBoard, type Props } from './useKanbanBoard';
+export const KanbanView = memo(function KanbanView(props: Props) {
+  const model = useKanbanBoard(props);
+  const {
+    terminal,
+    hidden,
+    paneStyle,
+    isActivePane,
+    onActivatePane,
+    headerSlot,
+    projectDir,
+    onStartCardInNewPane,
+    onCreateWorktrees,
+    onFocusTerminal,
+    onSplitRight,
+    board,
+    error,
+    setError,
+    notice,
+    setNotice,
+    undoState,
+    setUndoState,
+    filterAssignee,
+    setFilterAssignee,
+    filterPriority,
+    setFilterPriority,
+    filterLabel,
+    setFilterLabel,
+    expandedCards,
+    setExpandedCards,
+    confirmDeleteCardId,
+    setConfirmDeleteCardId,
+    shiftDeleteReady,
+    archiveOpen,
+    setArchiveOpen,
+    confirmEmptyArchive,
+    setConfirmEmptyArchive,
+    previewImage,
+    setPreviewImage,
+    cardMenu,
+    setCardMenu,
+    cardMenuRef,
+    fileInputRef,
+    fileInputTargetRef,
+    runAction,
+    handleUndoDelete,
+    saveAndInsertImageFile,
+    handleArchiveCard,
+    handleRestoreArchivedCard,
+    handleDeleteArchivedCard,
+    handleEmptyArchive,
+    startEditCard,
+    handleQuickSetPriority,
+    handleDeleteCard,
+    handleStartCardInWorktree,
+    siblings,
+    siblingMap,
+    launchablePresets,
+    archivedCards,
+    boardFilterOptions,
+    hasActiveFilter,
+    clearAllFilters,
+    filteredArchivedCards,
+    headerNode,
+    activeMenuCard,
+    showFilterStrip
+  } = model; return (
     <section
       data-testid="kanban-pane"
       data-terminal-id={terminal.id}
-      className={`aya-pane aya-kanban-pane${
-        isActivePane ? " aya-pane--active-split" : ""
-      }`}
+      className={`aya-pane aya-kanban-pane${isActivePane ? " aya-pane--active-split" : ""
+        }`}
       style={{ ...paneStyle, ...(hidden ? { display: "none" } : {}) }}
       onMouseDown={() => onActivatePane?.()}
     >
       {headerSlot && !hidden ? createPortal(headerNode, headerSlot) : headerNode}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) {
+            void saveAndInsertImageFile(fileInputTargetRef.current, file);
+          }
+        }}
+      />
+      <datalist id={`kanban-assignees-${terminal.id}`}>
+        {siblings.map((s) => (
+          <option key={s.id} value={s.name} />
+        ))}
+      </datalist>
+      {showFilterStrip && (
+        <div className="aya-kanban-filterbar">
+          {boardFilterOptions.priorities.map((p) => (
+            <button
+              key={`fp:${p.value}`}
+              type="button"
+              className={`aya-kanban-filter-chip aya-kanban-priority-badge--${p.value}${filterPriority === p.value
+                ? " aya-kanban-filter-chip--active"
+                : ""
+                }`}
+              onClick={() =>
+                setFilterPriority((prev) =>
+                  prev === p.value ? null : p.value,
+                )
+              }
+            >
+              {p.short} {p.label}
+            </button>
+          ))}
+          {boardFilterOptions.labels.map((lbl) => (
+            <button
+              key={`fl:${lbl}`}
+              type="button"
+              className={`aya-kanban-filter-chip${filterLabel?.toLowerCase() === lbl.toLowerCase()
+                ? " aya-kanban-filter-chip--active"
+                : ""
+                }`}
+              onClick={() =>
+                setFilterLabel((prev) =>
+                  prev?.toLowerCase() === lbl.toLowerCase() ? null : lbl,
+                )
+              }
+            >
+              #{lbl}
+            </button>
+          ))}
+          {boardFilterOptions.assignees.map((owner) => (
+            <button
+              key={`fa:${owner}`}
+              type="button"
+              className={`aya-kanban-filter-chip${filterAssignee?.toLowerCase() === owner.toLowerCase()
+                ? " aya-kanban-filter-chip--active"
+                : ""
+                }`}
+              onClick={() =>
+                setFilterAssignee((prev) =>
+                  prev?.toLowerCase() === owner.toLowerCase() ? null : owner,
+                )
+              }
+            >
+              @{owner}
+            </button>
+          ))}
+          {hasActiveFilter && filteredArchivedCards.length > 0 && (
+            <button
+              type="button"
+              data-testid="kanban-filter-archive-hits"
+              className={`aya-kanban-filter-chip aya-kanban-filter-chip--archive${archiveOpen ? " aya-kanban-filter-chip--active" : ""
+                }`}
+              title={
+                archiveOpen
+                  ? "Hide archive drawer"
+                  : "Show matching cards in Archive drawer"
+              }
+              onClick={() => {
+                setArchiveOpen((prev) => !prev);
+                setConfirmEmptyArchive(false);
+              }}
+            >
+              📦 {filteredArchivedCards.length} in Archive ·{" "}
+              {archiveOpen ? "Hide" : "Show"}
+            </button>
+          )}
+          {hasActiveFilter && (
+            <button
+              type="button"
+              className="aya-kanban-filter-reset"
+              onClick={clearAllFilters}
+            >
+              Reset filters
+            </button>
+          )}
+          <span className="aya-kanban-shortcuts-hint">
+            <kbd>n</kbd> new card · <kbd>/</kbd> filter
+          </span>
+        </div>
+      )}
       {error && (
         <div className="aya-kanban-error" role="alert">
           <span>{error}</span>
@@ -436,410 +200,317 @@ export const KanbanView = memo(function KanbanView({
       )}
       {!!board?.notices?.length && (
         <div className="aya-kanban-notices" role="status">
-          {board.notices.map(notice => <div key={notice.id}>
-            Task {notice.cardId}: {notice.state !== "pending"
-              ? `withdrawal delivery started in ${notice.paneName}; check that panel. Automatic retries are paused to avoid sending it twice.`
-              : `withdrawal message is waiting for ${notice.paneName}. Aya will retry when the panel can receive it.`}
-            {notice.state !== "pending" && <button type="button" className="aya-kanban-btn"
-              onClick={() => void runAction(() => window.aya.acknowledgeBoardNotice({ projectSlug: terminal.projectSlug, noticeId: notice.id }))}>
-              Clear checked notice
-            </button>}
-          </div>)}
+          {board.notices.map((n) => (
+            <div key={n.id}>
+              Task {n.cardId}:{" "}
+              {n.state !== "pending"
+                ? `withdrawal delivery started in ${n.paneName}; check that panel. Automatic retries are paused to avoid sending it twice.`
+                : `withdrawal message is waiting for ${n.paneName}. Aya will retry when the panel can receive it.`}
+              {n.state !== "pending" && (
+                <button
+                  type="button"
+                  className="aya-kanban-btn"
+                  onClick={() =>
+                    void runAction(() =>
+                      window.aya.acknowledgeBoardNotice({
+                        projectSlug: terminal.projectSlug,
+                        noticeId: n.id,
+                      }),
+                    )
+                  }
+                >
+                  Clear checked notice
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {notice && (
+        <div className="aya-kanban-notice" role="status">
+          <span>{notice.text}</span>
+          <div className="aya-kanban-notice-actions">
+            {notice.terminalId && onFocusTerminal && (
+              <button
+                type="button"
+                className="aya-kanban-btn aya-kanban-btn--primary"
+                onClick={() => {
+                  const targetId = notice.terminalId!;
+                  setNotice(null);
+                  onFocusTerminal(targetId);
+                }}
+              >
+                Focus {notice.terminalName ?? "terminal"}
+              </button>
+            )}
+            {notice.terminalId && onSplitRight && (
+              <button
+                type="button"
+                className="aya-kanban-btn"
+                onClick={() => {
+                  const targetId = notice.terminalId!;
+                  setNotice(null);
+                  onSplitRight(targetId);
+                }}
+              >
+                ⊞ Split beside board
+              </button>
+            )}
+            <button
+              type="button"
+              className="aya-kanban-btn"
+              onClick={() => setNotice(null)}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+      {undoState && (
+        <div className="aya-kanban-undo-bar" role="status">
+          <span>{undoState.label}</span>
+          <div className="aya-kanban-notice-actions">
+            <button
+              type="button"
+              className="aya-kanban-btn aya-kanban-btn--primary"
+              onClick={() => void handleUndoDelete()}
+            >
+              Undo (⌘Z)
+            </button>
+            <button
+              type="button"
+              className="aya-kanban-btn"
+              onClick={() => setUndoState(null)}
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
       {!board ? (
-        <div style={{ padding: 16, fontSize: 12.5, color: "var(--aya-pane-subtle)" }}>
+        <div
+          style={{
+            padding: 16,
+            fontSize: 12.5,
+            color: "var(--aya-pane-subtle)",
+          }}
+        >
           Loading board…
         </div>
       ) : (
-        <div className="aya-kanban-columns" ref={columnsRef}>
-          {board.columns.map((col, colIndex) => {
-            const colCards = board.cards.filter((c) => c.columnId === col.id);
-            const isDropTarget = dropTargetColId === col.id;
-            const prevCol = colIndex > 0 ? board.columns[colIndex - 1] : null;
-            const nextCol =
-              colIndex < board.columns.length - 1
-                ? board.columns[colIndex + 1]
-                : null;
-            return (
-              <div
-                key={col.id}
-                data-testid={`kanban-column-${col.id}`}
-                className={`aya-kanban-column${
-                  isDropTarget ? " aya-kanban-column--drop-target" : ""
-                }`}
-                onDragOver={(e) => {
-                  if (!draggingCardId) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  if (dropTargetColId !== col.id) setDropTargetColId(col.id);
-                }}
-                onDragLeave={(e) => {
-                  if (
-                    dropTargetColId === col.id &&
-                    !e.currentTarget.contains(e.relatedTarget as Node | null)
-                  ) {
-                    setDropTargetColId(null);
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDropTargetColId(null);
-                  const cardId =
-                    draggingCardId || e.dataTransfer.getData("text/plain");
-                  setDraggingCardId(null);
-                  if (cardId) {
-                    void handleMoveCard(cardId, col.id);
-                  }
-                }}
-              >
-                <div className="aya-kanban-column-header">
-                  <span className={columnDotClass(col.id)} aria-hidden="true" />
-                  {renamingColId === col.id ? (
-                    <input
-                      className="aya-kanban-input"
-                      value={renameColDraft}
-                      onChange={(e) => setRenameColDraft(e.target.value)}
-                      onBlur={() => void handleRenameColumn(col.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void handleRenameColumn(col.id);
-                        } else if (e.key === "Escape") {
-                          e.preventDefault();
-                          setRenamingColId(null);
-                        }
-                      }}
-                      autoFocus
-                    />
-                  ) : (
-                    <span
-                      className="aya-kanban-column-title"
-                      title="Double-click to rename column"
-                      onDoubleClick={() => {
-                        setRenamingColId(col.id);
-                        setRenameColDraft(col.title);
-                      }}
-                    >
-                      {col.title}
-                    </span>
-                  )}
-                  <span className="aya-kanban-column-count">{colCards.length}</span>
-                  <button
-                    type="button"
-                    className="aya-kanban-col-iconbtn"
-                    title={`Move column ${col.title} left`}
-                    aria-label={`Move column ${col.title} left`}
-                    disabled={movingColumn || !prevCol}
-                    onClick={() => { if (prevCol) void handleMoveColumn(col.id, prevCol.id, "before"); }}
-                  >
-                    ←
-                  </button>
-                  <button
-                    type="button"
-                    className="aya-kanban-col-iconbtn"
-                    title={`Move column ${col.title} right`}
-                    aria-label={`Move column ${col.title} right`}
-                    disabled={movingColumn || !nextCol}
-                    onClick={() => { if (nextCol) void handleMoveColumn(col.id, nextCol.id, "after"); }}
-                  >
-                    →
-                  </button>
-                  <button
-                    type="button"
-                    className="aya-kanban-col-iconbtn"
-                    title={`Add card to ${col.title}`}
-                    aria-label={`Add card to ${col.title}`}
-                    onClick={() => openAddCard(col.id)}
-                  >
-                    +
-                  </button>
-                  {board.columns.length > 1 && colCards.length === 0 && (
-                    <button
-                      type="button"
-                      className="aya-kanban-col-iconbtn aya-kanban-col-iconbtn--danger"
-                      title={`Remove empty column ${col.title}`}
-                      aria-label={`Remove column ${col.title}`}
-                      onClick={() => void handleDeleteColumn(col)}
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
+        <div className="aya-kanban-body">
+          <KanbanColumns {...model} board={board} />
 
-                <div className="aya-kanban-cards">
-                  {addingCardColId === col.id && (
-                    <div className="aya-kanban-form">
-                      <input
-                        className="aya-kanban-input"
-                        placeholder="Card title…"
-                        aria-label="Card title"
-                        value={newCardTitle}
-                        onChange={(e) => setNewCardTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            void handleCreateCard(col.id);
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            setAddingCardColId(null);
+          {archiveOpen && (
+            <aside
+              data-testid="kanban-archive-drawer"
+              className="aya-kanban-archive-drawer"
+            >
+              <div className="aya-kanban-archive-header">
+                <span className="aya-kanban-archive-title">
+                  Archive
+                  <span className="aya-kanban-column-count">
+                    {hasActiveFilter
+                      ? `${filteredArchivedCards.length}/${archivedCards.length}`
+                      : archivedCards.length}
+                  </span>
+                </span>
+                <div className="aya-kanban-archive-actions">
+                  {archivedCards.length > 0 &&
+                    (confirmEmptyArchive ? (
+                      <button
+                        type="button"
+                        className="aya-kanban-delete-confirm"
+                        title="Permanently delete all archived cards"
+                        onClick={() => void handleEmptyArchive()}
+                      >
+                        Empty all?
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="aya-kanban-col-clear-btn"
+                        title={
+                          shiftDeleteReady
+                            ? "Permanently empty archive immediately (Shift held)"
+                            : "Permanently delete all archived cards (hold Shift to skip confirmation)"
+                        }
+                        onClick={(e) => {
+                          if (e.shiftKey || shiftDeleteReady) {
+                            void handleEmptyArchive();
+                          } else {
+                            setConfirmEmptyArchive(true);
                           }
                         }}
-                        autoFocus
-                      />
-                      <textarea
-                        className="aya-kanban-textarea"
-                        placeholder="Description / prompt details (optional)…"
-                        aria-label="Card description"
-                        value={newCardDesc}
-                        onChange={(e) => setNewCardDesc(e.target.value)}
-                      />
-                      <input
-                        className="aya-kanban-input"
-                        placeholder="Assignee (optional)…"
-                        aria-label="Card assignee"
-                        value={newCardAssignee}
-                        onChange={(e) => setNewCardAssignee(e.target.value)}
-                      />
-                      <div className="aya-kanban-form-actions">
-                        <button
-                          type="button"
-                          className="aya-kanban-btn"
-                          onClick={() => setAddingCardColId(null)}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          className="aya-kanban-btn aya-kanban-btn--primary"
-                          disabled={!newCardTitle.trim()}
-                          onClick={() => void handleCreateCard(col.id)}
-                        >
-                          Add card
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                      >
+                        Empty
+                      </button>
+                    ))}
+                  <button
+                    type="button"
+                    className="aya-kanban-col-iconbtn"
+                    title="Close archive"
+                    aria-label="Close archive"
+                    onClick={() => {
+                      setArchiveOpen(false);
+                      setConfirmEmptyArchive(false);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
 
-                  {colCards.length === 0 && addingCardColId !== col.id && (
-                    <div className="aya-kanban-empty-col">No cards</div>
-                  )}
-
-                  {colCards.map((card) => {
-                    const isEditing = editingCardId === card.id;
-                    const isDragging = draggingCardId === card.id;
-                    if (isEditing) {
-                      return (
-                        <div key={card.id} className="aya-kanban-form">
-                          <input
-                            className="aya-kanban-input"
-                            value={editTitle}
-                            aria-label="Edit card title"
-                            onChange={(e) => setEditTitle(e.target.value)}
-                            autoFocus
-                          />
-                          <textarea
-                            className="aya-kanban-textarea"
-                            value={editDesc}
-                            aria-label="Edit card description"
-                            onChange={(e) => setEditDesc(e.target.value)}
-                          />
-                          <input
-                            className="aya-kanban-input"
-                            placeholder="Assignee (optional)…"
-                            aria-label="Edit card assignee"
-                            value={editAssignee}
-                            onChange={(e) => setEditAssignee(e.target.value)}
-                          />
-                          <div className="aya-kanban-form-actions">
-                            <button
-                              type="button"
-                              className="aya-kanban-btn"
-                              onClick={() => setEditingCardId(null)}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              className="aya-kanban-btn aya-kanban-btn--primary"
-                              disabled={!editTitle.trim()}
-                              onClick={() => void handleSaveCard(card.id)}
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    const isMenuOpen = cardMenu?.cardId === card.id;
+              <div className="aya-kanban-archive-list">
+                {filteredArchivedCards.length === 0 ? (
+                  <div className="aya-kanban-empty-col">
+                    {hasActiveFilter
+                      ? "No matching archived cards"
+                      : "Archive is empty. Use Archive on the Done column to move completed cards here."}
+                  </div>
+                ) : (
+                  filteredArchivedCards.map((card) => {
+                    const priorityMeta = card.priority
+                      ? PRIORITY_OPTIONS.find((p) => p.value === card.priority)
+                      : null;
+                    const origCol = board.columns.find(
+                      (c) => c.id === card.columnId,
+                    );
+                    const isExpanded = Boolean(expandedCards[card.id]);
+                    const isLongDesc =
+                      Boolean(card.description) &&
+                      (card.description!.length > 180 ||
+                        card.description!.split(/\r?\n/).length > 4);
+                    const archivedDate = card.archivedAt
+                      ? new Date(card.archivedAt).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })
+                      : null;
 
                     return (
                       <div
                         key={card.id}
-                        data-testid={`kanban-card-${card.id}`}
-                        className={`aya-kanban-card${
-                          card.claim ? " aya-kanban-card--claimed" : ""
-                        }${isDragging ? " aya-kanban-card--dragging" : ""}`}
-                        draggable
-                        onDoubleClick={() => startEditCard(card)}
-                        onDragStart={(e) => {
-                          setDraggingCardId(card.id);
-                          e.dataTransfer.effectAllowed = "move";
-                          e.dataTransfer.setData("text/plain", card.id);
-                        }}
-                        onDragEnd={() => {
-                          setDraggingCardId(null);
-                          setDropTargetColId(null);
+                        data-testid={`kanban-archived-card-${card.id}`}
+                        className="aya-kanban-card aya-kanban-card--archived"
+                        onMouseLeave={() => {
+                          if (confirmDeleteCardId === card.id) {
+                            setConfirmDeleteCardId(null);
+                          }
                         }}
                       >
                         <div className="aya-kanban-card-meta">
-                          <span className="aya-kanban-card-id">{card.id}</span>
-                          <div className="aya-kanban-card-quick">
-                            {prevCol && (
-                              <button
-                                type="button"
-                                className="aya-kanban-iconbtn"
-                                title={`Move to ${prevCol.title}`}
-                                aria-label={`Move card ${card.id} to ${prevCol.title}`}
-                                onClick={() =>
-                                  void handleMoveCard(card.id, prevCol.id)
-                                }
-                              >
-                                ←
-                              </button>
-                            )}
-                            {nextCol && (
-                              <button
-                                type="button"
-                                className="aya-kanban-iconbtn"
-                                title={`Move to ${nextCol.title}`}
-                                aria-label={`Move card ${card.id} to ${nextCol.title}`}
-                                onClick={() =>
-                                  void handleMoveCard(card.id, nextCol.id)
-                                }
-                              >
-                                →
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="aya-kanban-iconbtn"
-                              title="Edit card"
-                              aria-label={`Edit card ${card.id}`}
-                              onClick={() => startEditCard(card)}
-                            >
-                              ✎
-                            </button>
-                            <button
-                              type="button"
-                              className="aya-kanban-iconbtn aya-kanban-iconbtn--danger"
-                              title="Delete card"
-                              aria-label={`Delete card ${card.id}`}
-                              onClick={() => void handleDeleteCard(card.id)}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="aya-kanban-card-title">{card.title}</div>
-                        {card.claim?.startup && card.claim.startup !== "sent" && (
-                          <span className="aya-kanban-pill" title="Check the assigned pane before retrying an unconfirmed task delivery">
-                            {card.claim.startup === "reserved" ? "Waiting to start" : "Task delivery unconfirmed"}
-                          </span>
-                        )}
-
-                        {card.description && (
-                          <div className="aya-kanban-card-desc">
-                            {card.description}
-                          </div>
-                        )}
-
-                        <div className="aya-kanban-card-footer">
-                          <div className="aya-kanban-card-badges">
-                            {card.claim ? (
+                          <div className="aya-kanban-card-meta-left">
+                            <span className="aya-kanban-card-id">{card.id}</span>
+                            {priorityMeta && (
                               <span
-                                className="aya-kanban-pill aya-kanban-pill--claimed"
-                                title={`Claimed by ${card.claim.paneName}`}
+                                className={`aya-kanban-priority-badge aya-kanban-priority-badge--${priorityMeta.value}`}
                               >
-                                <span
-                                  className="aya-kanban-pill-dot"
-                                  aria-hidden="true"
-                                />
-                                <span>{card.claim.paneName}</span>
-                                <button
-                                  type="button"
-                                  className="aya-kanban-pill-release"
-                                  title={`Release claim from ${card.claim.paneName}`}
-                                  aria-label={`Release card ${card.id}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void runAction(() =>
-                                      window.aya.releaseBoardCard({
-                                        projectSlug: terminal.projectSlug,
-                                        cardId: card.id,
-                                      }),
-                                    );
-                                  }}
-                                >
-                                  ×
-                                </button>
+                                {priorityMeta.short}
                               </span>
-                            ) : card.assignee ? (
+                            )}
+                            <span className="aya-kanban-archive-meta">
+                              {origCol ? origCol.title : card.columnId}
+                              {archivedDate ? ` · ${archivedDate}` : ""}
+                            </span>
+                          </div>
+                          <div className="aya-kanban-card-quick aya-kanban-card-quick--visible">
+                            <button
+                              type="button"
+                              className="aya-kanban-archive-restore-btn"
+                              title={`Restore ${card.id} to ${origCol ? origCol.title : "board"
+                                }`}
+                              onClick={() => void handleRestoreArchivedCard(card)}
+                            >
+                              ↩ Restore
+                            </button>
+                            {confirmDeleteCardId === card.id ? (
                               <button
                                 type="button"
-                                className="aya-kanban-pill aya-kanban-pill--assignee"
-                                title="Change terminal or assignee"
-                                onClick={(e) => openCardPopover(e, card.id)}
+                                className="aya-kanban-delete-confirm"
+                                title="Confirm permanent deletion"
+                                onClick={() =>
+                                  void handleDeleteArchivedCard(card.id)
+                                }
                               >
-                                @{card.assignee}
+                                Delete?
                               </button>
                             ) : (
                               <button
                                 type="button"
-                                className="aya-kanban-pill--unassigned"
-                                title="Assign or send to terminal"
-                                onClick={(e) => openCardPopover(e, card.id)}
+                                className={`aya-kanban-iconbtn aya-kanban-iconbtn--danger${shiftDeleteReady
+                                  ? " aya-kanban-iconbtn--shift-ready"
+                                  : ""
+                                  }`}
+                                title={
+                                  shiftDeleteReady
+                                    ? "Permanently delete card (Shift held)"
+                                    : "Permanently delete from archive (hold Shift to skip confirmation)"
+                                }
+                                aria-label={`Delete archived card ${card.id}`}
+                                onClick={(e) => {
+                                  if (e.shiftKey || shiftDeleteReady) {
+                                    void handleDeleteArchivedCard(card.id);
+                                  } else {
+                                    setConfirmDeleteCardId(card.id);
+                                  }
+                                }}
                               >
-                                Unassigned
+                                {shiftDeleteReady ? "⌫" : "×"}
                               </button>
                             )}
                           </div>
-
-                          <div
-                            className="aya-kanban-menu-wrap"
-                            onMouseDown={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              className="aya-kanban-run-btn"
-                              aria-haspopup="menu"
-                              aria-expanded={isMenuOpen}
-                              title="Assign, send prompt, or start in terminal"
-                              onClick={(e) => openCardPopover(e, card.id)}
-                            >
-                              <span>▸ Terminal</span>
-                            </button>
-                          </div>
                         </div>
+
+                        <div className="aya-kanban-card-title">{card.title}</div>
+
+                        {card.labels && card.labels.length > 0 && (
+                          <div className="aya-kanban-card-labels">
+                            {card.labels.map((lbl) => (
+                              <span key={lbl} className="aya-kanban-label-pill">
+                                #{lbl}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {card.description && (
+                          <div className="aya-kanban-card-desc-wrap">
+                            <div
+                              className={`aya-kanban-card-desc${isExpanded
+                                ? " aya-kanban-card-desc--expanded"
+                                : ""
+                                }`}
+                            >
+                              <KanbanCardMarkdown
+                                projectSlug={terminal.projectSlug}
+                                text={card.description}
+                                onPreviewImage={setPreviewImage}
+                              />
+                            </div>
+                            {isLongDesc && (
+                              <button
+                                type="button"
+                                className="aya-kanban-desc-toggle"
+                                onClick={() =>
+                                  setExpandedCards((prev) => ({
+                                    ...prev,
+                                    [card.id]: !prev[card.id],
+                                  }))
+                                }
+                              >
+                                {isExpanded ? "Show less" : "Show more"}
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
-                  })}
-
-                  {addingCardColId !== col.id && (
-                    <button
-                      type="button"
-                      className="aya-kanban-col-add-btn"
-                      onClick={() => openAddCard(col.id)}
-                    >
-                      <span>+ Add card</span>
-                    </button>
-                  )}
-                </div>
+                  })
+                )}
               </div>
-            );
-          })}
+            </aside>
+          )}
         </div>
       )}
 
@@ -855,27 +526,69 @@ export const KanbanView = memo(function KanbanView({
               <div className="aya-kanban-popover-section">
                 Send prompt to terminal
               </div>
-              {siblings.map((s) => (
-                <button
-                  key={`send:${s.id}`}
-                  type="button"
-                  role="menuitem"
-                  className="aya-kanban-popover-item"
-                  onClick={() => {
-                    setCardMenu(null);
-                    void runAction(() =>
-                      window.aya.sendBoardCardToPane({
-                        projectSlug: terminal.projectSlug,
-                        cardId: activeMenuCard.id,
-                        targetId: s.id,
-                      }),
-                    );
-                  }}
-                >
-                  <span className="aya-kanban-popover-icon">↪</span>
-                  <span>{s.name}</span>
-                </button>
-              ))}
+              {siblings.map((s) => {
+                const live = siblingMap.get(s.id);
+                const statusInfo = livePaneDotInfo(live);
+                return (
+                  <div key={`send:${s.id}`} className="aya-kanban-popover-row">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="aya-kanban-popover-item"
+                      title={`Send task prompt to ${s.name} and claim card (${statusInfo.label})`}
+                      onClick={() => {
+                        const cardId = activeMenuCard.id;
+                        setCardMenu(null);
+                        void runAction(async () => {
+                          const updated = await window.aya.sendBoardCardToPane({
+                            projectSlug: terminal.projectSlug,
+                            cardId,
+                            targetId: s.id,
+                          });
+                          setNotice({
+                            text: `Sent ${cardId} to ${s.name}`,
+                            terminalId: s.id,
+                            terminalName: s.name,
+                          });
+                          return updated;
+                        });
+                      }}
+                    >
+                      <span className="aya-kanban-popover-icon">↪</span>
+                      <span
+                        className={`aya-kanban-pill-dot aya-kanban-pill-dot--${statusInfo.modifier}`}
+                        title={statusInfo.label}
+                        aria-hidden="true"
+                      />
+                      <span className="aya-kanban-popover-label">{s.name}</span>
+                    </button>
+                    {onSplitRight && (
+                      <button
+                        type="button"
+                        className="aya-kanban-popover-aux"
+                        title={`Send to ${s.name} and open beside Kanban`}
+                        aria-label={`Send to ${s.name} in split`}
+                        onClick={() => {
+                          const cardId = activeMenuCard.id;
+                          setCardMenu(null);
+                          void runAction(async () => {
+                            const updated =
+                              await window.aya.sendBoardCardToPane({
+                                projectSlug: terminal.projectSlug,
+                                cardId,
+                                targetId: s.id,
+                              });
+                            onSplitRight(s.id);
+                            return updated;
+                          });
+                        }}
+                      >
+                        ⊞
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
               <div className="aya-kanban-popover-divider" />
               <div className="aya-kanban-popover-section">
                 Claim for terminal
@@ -900,7 +613,7 @@ export const KanbanView = memo(function KanbanView({
                   }}
                 >
                   <span className="aya-kanban-popover-icon">●</span>
-                  <span>{s.name}</span>
+                  <span className="aya-kanban-popover-label">{s.name}</span>
                 </button>
               ))}
             </>
@@ -915,27 +628,113 @@ export const KanbanView = memo(function KanbanView({
                 Start in new terminal
               </div>
               {launchablePresets.map((p) => (
-                <button
-                  key={`new:${p.id}`}
-                  type="button"
-                  role="menuitem"
-                  className="aya-kanban-popover-item"
-                  onClick={() => {
-                    setCardMenu(null);
-                    void runAction(() => onStartCardInNewPane(p, activeMenuCard.id, terminal.projectSlug));
-                  }}
-                >
-                  <span
-                    className="aya-kanban-popover-icon"
-                    style={p.color ? { color: p.color } : undefined}
+                <div key={`new:${p.id}`} className="aya-kanban-popover-row">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="aya-kanban-popover-item"
+                    onClick={() => {
+                      const cardToStart = activeMenuCard;
+                      setCardMenu(null);
+                      void runAction(() =>
+                        onStartCardInNewPane(
+                          p,
+                          cardToStart.id,
+                          terminal.projectSlug,
+                        ),
+                      );
+                    }}
                   >
-                    {p.icon}
-                  </span>
-                  <span>{p.name}</span>
-                </button>
+                    <span
+                      className="aya-kanban-popover-icon"
+                      style={p.color ? { color: p.color } : undefined}
+                    >
+                      {p.icon}
+                    </span>
+                    <span className="aya-kanban-popover-label">{p.name}</span>
+                  </button>
+                  {projectDir && onCreateWorktrees && (
+                    <button
+                      type="button"
+                      className="aya-kanban-popover-aux"
+                      title={`Start ${p.name} in a new git worktree (${activeMenuCard.id})`}
+                      aria-label={`Start ${p.name} in new worktree`}
+                      onClick={() =>
+                        void handleStartCardInWorktree(activeMenuCard, p, false)
+                      }
+                    >
+                      ⑂
+                    </button>
+                  )}
+                  {onSplitRight && (
+                    <button
+                      type="button"
+                      className="aya-kanban-popover-aux"
+                      title={`Start ${p.name} in split beside Kanban`}
+                      aria-label={`Start ${p.name} in split`}
+                      onClick={() => {
+                        const cardToStart = activeMenuCard;
+                        setCardMenu(null);
+                        void runAction(async () => {
+                          const nextBoard = await onStartCardInNewPane(
+                            p,
+                            cardToStart.id,
+                            terminal.projectSlug,
+                          );
+                          const started = nextBoard.cards.find(
+                            (c) => c.id === cardToStart.id,
+                          );
+                          if (started?.claim?.paneId) {
+                            onSplitRight(started.claim.paneId);
+                          }
+                          return nextBoard;
+                        });
+                      }}
+                    >
+                      ⊞
+                    </button>
+                  )}
+                </div>
               ))}
             </>
           )}
+
+          <div className="aya-kanban-popover-divider" />
+          <div className="aya-kanban-popover-section">Priority</div>
+          <div className="aya-kanban-popover-priorities">
+            {PRIORITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`aya-kanban-priority-chip aya-kanban-priority-badge--${opt.value
+                  }${activeMenuCard.priority === opt.value
+                    ? " aya-kanban-priority-chip--active"
+                    : ""
+                  }`}
+                title={`Set priority to ${opt.label}`}
+                onClick={() =>
+                  void handleQuickSetPriority(
+                    activeMenuCard.id,
+                    activeMenuCard.priority === opt.value ? null : opt.value,
+                  )
+                }
+              >
+                {opt.short}
+              </button>
+            ))}
+            {activeMenuCard.priority && (
+              <button
+                type="button"
+                className="aya-kanban-priority-chip"
+                title="Clear priority"
+                onClick={() =>
+                  void handleQuickSetPriority(activeMenuCard.id, null)
+                }
+              >
+                None
+              </button>
+            )}
+          </div>
 
           <div className="aya-kanban-popover-divider" />
           <button
@@ -950,6 +749,15 @@ export const KanbanView = memo(function KanbanView({
           <button
             type="button"
             role="menuitem"
+            className="aya-kanban-popover-item"
+            onClick={() => void handleArchiveCard(activeMenuCard.id)}
+          >
+            <span className="aya-kanban-popover-icon">⇣</span>
+            <span>Archive card</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
             className="aya-kanban-popover-item aya-kanban-popover-item--danger"
             onClick={() => void handleDeleteCard(activeMenuCard.id)}
           >
@@ -958,6 +766,34 @@ export const KanbanView = memo(function KanbanView({
           </button>
         </div>, document.body
       )}
+
+      {previewImage && (
+        <div
+          className="aya-kanban-lightbox"
+          role="dialog"
+          aria-label={previewImage.alt}
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="aya-kanban-lightbox-inner"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img src={previewImage.src} alt={previewImage.alt} />
+            <div className="aya-kanban-lightbox-bar">
+              <span>{previewImage.alt}</span>
+              <button
+                type="button"
+                className="aya-kanban-btn"
+                onClick={() => setPreviewImage(null)}
+              >
+                Close (Esc)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 });
+
+export { extractChecklistProgress, toggleMarkdownTaskItem } from "./KanbanCardContent";

@@ -2,6 +2,9 @@
 // worktree resumed the newest session of ANY worktree of that repo.
 
 import { test } from "node:test";
+import childProcess from "node:child_process";
+import { createRequire } from "node:module";
+import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -250,7 +253,24 @@ test("output past the named buffer cap is a failed lookup that keeps the command
 });
 
 test("listOpencodeSessions gives up on a lookup that hangs, so the pane still spawns", async () => {
-  const started = Date.now();
-  await assert.rejects(listOpencodeSessions(SHELL, A, fakeEnv("exec sleep 60")));
-  assert.ok(Date.now() - started < 20_000);
+  // Keep a real hung child and Node's kill behavior, while checking that the
+  // production deadline is supplied unchanged before scaling this one probe.
+  const require = createRequire(import.meta.url);
+  const id = require.resolve("../dist-electron/opencode-session.js");
+  const cached = require.cache[id];
+  const realExecFile = childProcess.execFile;
+  const nativeExec = promisify(realExecFile);
+  const calls = [];
+  const scaledExec = (...args) => realExecFile(...args);
+  scaledExec[promisify.custom] = (file, args, options) => {
+    calls.push(options.timeout);
+    return nativeExec(file, args, { ...options, timeout: 200 });
+  };
+  let lookup;
+  childProcess.execFile = scaledExec;
+  delete require.cache[id];
+  try { lookup = require(id).listOpencodeSessions; }
+  finally { childProcess.execFile = realExecFile; require.cache[id] = cached; }
+  await assert.rejects(lookup(SHELL, A, fakeEnv("exec sleep 60")), error => error.killed === true);
+  assert.deepEqual(calls, [10_000]);
 });

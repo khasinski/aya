@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+## v0.18.0 - 2026-11-15
+
+- Keep conversation composer controls on one row in narrow panes, with model, reasoning and plan settings in a compact popover.
+- Save long conversation histories incrementally using chunked message storage; remove the previous 32 MiB message-history ceiling.
+- Render conversation messages near the viewport and pause hidden-pane clocks to reduce UI work.
+- Preview local workspace file links directly in conversations, including the selected source line.
+- Recover individual conversation panes and artifacts after rendering errors while preserving drafts and running sessions.
+- Fix stale workspace images and allow repaired artifact revisions to recover from image errors.
+- Support keyboard and pointer resizing of split panes.
+- Keep PTY logging and conversation asset collection from blocking interactive work.
+- Simplify large UI components, share IPC contracts and expand asynchronous-code and accessibility lint checks.
+- Speed up test execution, remove brittle source-format checks and fix TLS and CLI test isolation.
+
+## v0.17.0 - 2026-11-15
+
+- Play local MP4/WebM video in HTML artifacts in GUI and TUI, with controls, seeking and fullscreen. Attach media
+  automatically from HTML paths or explicitly for JS-created players; preserve copies outside conversation snapshots.
+  HTML exports include portable sibling media files. Show readable errors for blocked or unplayable media.
+
+- Move Kanban access into the terminal header and remove boards from terminal lists and counts.
+- Expand Kanban cards with Markdown descriptions and images, priorities, labels, search and quick filters.
+  Add a searchable archive with card restoration and undo for deletion; improve card ordering and pane claim sync.
+- Reorder Kanban columns from the UI or `aya board column move`. Keep assignment menus within the window.
+- Notify the previous agent when its task is withdrawn, deleted, released or reassigned. Persist pending notices
+  across restarts and cancel a pending initial task prompt when its card is withdrawn during terminal startup (#323).
+
 ## v0.16.0 - 2026-11-11
 
 - Experimental per-project Kanban board (Settings > Kanban board): opens as a pane alongside terminals and in split

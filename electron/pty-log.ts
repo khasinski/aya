@@ -1,3 +1,4 @@
+import { createAsyncPtyLog,type AsyncPtyLogWriter } from './async-pty-log';
 // Durable PTY lifecycle log: one JSON object per line, appended to
 // ~/.aya/pty-events.log by whichever process runs the PTY layer (normally the
 // detached pty host). It exists to answer, after the fact, questions the
@@ -7,9 +8,8 @@
 //
 // Design constraints:
 // - Logging must NEVER break the PTY layer: every append is wrapped, all
-//   THROWN failures are swallowed. (A blocked sync write - hung NFS $HOME,
-//   a FIFO planted at the log path - is not a throw and would stall the
-//   host; accepted risk, see #95.)
+//   failures are swallowed. Production uses a bounded asynchronous queue;
+//   the synchronous writer below is retained for isolated writer tests.
 // - Small and self-limiting: the file rotates to a single `.1` generation at
 //   PTY_LOG_MAX_BYTES, so it cannot grow unbounded on a chatty session.
 // - Private: active and rotated generations are mode 0600 regardless of umask.
@@ -105,12 +105,13 @@ export function createPtyLog(
  *  unit tests import the compiled pty module statically (so paths.ts already
  *  snapshotted the real home) and only then point AYA_HOME at a tmpdir; eager
  *  resolution here would make those tests write into the user's real ~/.aya. */
-let lazyLog: PtyLogWriter | null = null;
-export const ptyLog: PtyLogWriter = {
+let lazyLog: AsyncPtyLogWriter | null = null;
+export const ptyLog: AsyncPtyLogWriter = {
+  flush: () => lazyLog?.flush() ?? Promise.resolve(),
   append(event, fields) {
     if (!lazyLog) {
       const env = process.env.AYA_HOME?.trim();
-      lazyLog = createPtyLog(
+      lazyLog = createAsyncPtyLog(
         env ? path.join(path.resolve(env), PTY_LOG_FILENAME) : PTY_LOG_FILE,
       );
     }

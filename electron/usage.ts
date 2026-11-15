@@ -1,3 +1,5 @@
+import type { UsageAccount,UsageData,UsageWindow } from '../shared/ipc-types';
+export type { UsageAccount,UsageData,UsageWindow } from '../shared/ipc-types';
 // Account-wide Claude/Codex usage snapshot.
 //
 // Aya does NOT fetch this — it only reads a small JSON file that a
@@ -8,36 +10,13 @@
 // The numbers are ACCOUNT-WIDE (all sessions / devices share the 5h + weekly
 // limits) — never per-project or per-terminal. The UI labels them as such.
 
-import * as fs from "node:fs/promises";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CLAUDE_CONFIG_DIRNAME, CLAUDE_SETTINGS_FILENAME } from "./constants";
-import { USAGE_FILE } from "./paths";
 import { readFileAtMost } from "./bounded-file-read";
-
-export interface UsageWindow {
-  /** Percent of this limit window already used (0–100+). */
-  pct: number;
-  /** ISO 8601 time this window resets, if the hook provided it. */
-  resetsAt?: string;
-}
-
-export interface UsageData {
-  /** Rolling 5-hour window. Optional: newer Codex plans expose only a single
-   *  (weekly) window, so a snapshot may carry either ring alone. */
-  fiveHour?: UsageWindow;
-  /** Rolling 7-day (weekly) window — the account-wide cap. Optional, see above. */
-  sevenDay?: UsageWindow;
-  /** ISO 8601 time the hook last wrote this snapshot. */
-  updatedAt: string;
-}
-
-export interface UsageAccount {
-  id: string;
-  label: string;
-  usage: UsageData;
-}
+import { CLAUDE_CONFIG_DIRNAME,CLAUDE_SETTINGS_FILENAME } from "./constants";
+import { USAGE_FILE } from "./paths";
 
 function isWindow(x: unknown): x is UsageWindow {
   if (typeof x !== "object" || x === null) return false;
@@ -106,7 +85,7 @@ export interface ClaudeUsageSource {
   configDir: string;
 }
 
-export { CLAUDE_CONFIG_DIRNAME, CLAUDE_SETTINGS_FILENAME };
+export { CLAUDE_CONFIG_DIRNAME,CLAUDE_SETTINGS_FILENAME };
 export const DEFAULT_CLAUDE_CONFIG_DIR = `~/${CLAUDE_CONFIG_DIRNAME}`;
 
 export function expandUserPath(value: string): string {

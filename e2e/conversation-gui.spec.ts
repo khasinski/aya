@@ -363,6 +363,7 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await search.fill('four-person'); await search.press('Enter');
     await expect(gui.getByRole('combobox', { name: 'Selected artifact' })).toContainText('Capacity planner');
     await expect(search).toHaveCount(0);
+    await gui.getByRole('button', { name: /^Conversation settings:/ }).click();
     await gui.getByRole('combobox', { name: 'Model for next turn' }).selectOption('fake-pro');
     await gui.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('high');
     await expect(gui.getByRole('article', { name: 'Model changed', exact: true })).toContainText('Fake Pro');
@@ -370,6 +371,7 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await prompt.fill('/model fake-pro'); await prompt.press('Enter');
     await expect(gui.getByRole('article', { name: 'Model changed', exact: true })).toHaveCount(1);
     await expect(gui.getByRole('combobox', { name: 'Reasoning effort' })).toHaveValue('high');
+    await gui.getByRole('button', { name: 'Close conversation settings' }).click();
     await prompt.fill('wait'); await prompt.press('Enter');
     await expect(turnStatus).toHaveText('Codex is working…');
     await prompt.fill('Focus on the interaction details');
@@ -377,14 +379,16 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await expect(prompt).toHaveValue('');
     await expect(gui.locator('.aya-gui-messages')).toContainText('↳ Focus on the interaction details');
     // Enter queues by default and Cmd+Enter does the opposite for one message; the toggle changes the default.
-    await expect(gui.locator('.aya-gui-enter-hint')).toContainText('Enter queues · ⌘Enter steers');
     await prompt.fill('Second nudge'); await prompt.press('Meta+Enter');
     await expect(gui.locator('.aya-gui-messages')).toContainText('↳ Second nudge');
+    await gui.getByRole('button', { name: /^Conversation settings:/ }).click();
     await gui.getByRole('button', { name: /Enter while working: queue/ }).click();
-    await expect(gui.locator('.aya-gui-enter-hint')).toContainText('Enter steers · ⌘Enter queues');
+    await gui.getByRole('button', { name: 'Close conversation settings' }).click();
     await prompt.fill('Third nudge'); await prompt.press('Enter');
     await expect(gui.locator('.aya-gui-messages')).toContainText('↳ Third nudge');
+    await gui.getByRole('button', { name: /^Conversation settings:/ }).click();
     await gui.getByRole('button', { name: /Enter while working: steer/ }).click();
+    await gui.getByRole('button', { name: 'Close conversation settings' }).click();
     await prompt.fill('widgets'); await prompt.press('Enter');
     await expect(gui.getByRole('textbox', { name: 'Queued message 1' })).toHaveValue('widgets');
     await gui.getByRole('button', { name: 'Stop', exact: true }).click();
@@ -402,7 +406,12 @@ test('experimental GUI lives inside Aya with closed artifacts, approvals and exp
     await expect(gui.locator('.aya-task-progress--compact')).toHaveCount(0);
     await prompt.fill('progress-wait'); await prompt.press('Enter');
     await expect(gui.locator('.aya-task-progress--compact').getByRole('progressbar')).toHaveAttribute('aria-valuenow', '4');
-    await expect.poll(() => { try { return readdirSync(join(seed.ayaHome, 'conversations')).filter(file => file.endsWith('.json')).some(file => readFileSync(join(seed.ayaHome, 'conversations', file), 'utf8').includes('Decompiled four functions')); } catch { return false; } }).toBe(true);
+    await expect.poll(() => {
+      const directory = join(seed.ayaHome, 'conversations');
+      const snapshot = JSON.parse(readFileSync(join(directory, createHash('sha256').update('tab-left').digest('hex') + '.json'), 'utf8'));
+      return snapshot.view.messages.some((message: { $ayaMessageParts: string[] }) =>
+        message.$ayaMessageParts.map(hash => JSON.parse(readFileSync(join(directory, 'messages', hash + '.json'), 'utf8'))).join('').includes('Decompiled four functions'));
+    }).toBe(true);
     await window.reload();
     await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
     const resumedProgress = gui.locator('.aya-gui-messages').getByRole('progressbar', { name: 'Decompiling functions' }).last();
@@ -630,7 +639,7 @@ test('GUI keeps consistent controls and follows streaming only while reading the
       expect(box?.height).toBe(32);
       await expect(button.locator('.aya-gui-icon')).toHaveCSS('font-size', '18px');
     }
-    await expect(gui.locator('.aya-gui-compose-footer select').first()).toHaveCSS('height', '32px');
+    await expect(gui.getByRole('button', { name: /^Conversation settings:/ })).toHaveCSS('height', '32px');
     await expect(prompt).toHaveCSS('font-size', '14px');
     await prompt.fill('long-stream'); await prompt.press('Enter');
     await expect(gui.locator('article.assistant')).toContainText('Paragraph 30:');
@@ -672,10 +681,12 @@ test('a queued message does not pull the reader away from earlier history', asyn
     await expect(gui.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
     await prompt.fill('queued request'); await prompt.press('Enter');
     await expect(gui.getByRole('textbox', { name: 'Queued message 1' })).toHaveValue('queued request');
-    await expect(gui.locator('article.user').last()).toContainText('queued request', { timeout: 15000 });
+    await expect(gui.getByRole('textbox', { name: 'Queued message 1' })).toHaveCount(0, { timeout: 15000 });
     await expect(gui.getByRole('status', { name: 'Turn status' })).toHaveText('Turn complete', { timeout: 15000 });
     expect(await viewport.evaluate(node => node.scrollTop)).toBeLessThan(3);
     await expect(gui.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+    await gui.getByRole('button', { name: 'Jump to latest' }).click();
+    await expect(gui.locator('article.user').last()).toContainText('queued request');
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 
@@ -845,7 +856,9 @@ test('the composer recalls sent prompts, stashes drafts and quotes an assistant 
     // Cmd+S stashes the draft; in an empty composer it brings it back.
     await prompt.press('Meta+s');
     await expect(prompt).toHaveValue('');
+    await gui.getByRole('button', { name: /^Conversation settings:/ }).click();
     await expect(gui.locator('.aya-gui-stash')).toHaveText('Stash 1');
+    await gui.getByRole('button', { name: 'Close conversation settings' }).click();
     await prompt.press('Meta+s');
     await expect(prompt).toHaveValue('half a thought');
     await expect(gui.locator('.aya-gui-stash')).toHaveCount(0);
@@ -921,17 +934,18 @@ test('plan mode proposes a plan card that can be carried out', async () => {
     await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
     const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
     const turnStatus = gui.getByRole('status', { name: 'Turn status' });
-    const toggle = gui.getByRole('button', { name: /^Plan/ });
+    const settings = gui.getByRole('button', { name: /^Conversation settings:/ });
 
     await prompt.fill('/plan'); await prompt.press('Enter');
-    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(settings).toHaveAttribute('data-active', 'true');
+    await expect(settings).toHaveAttribute('title', /Plan/);
     await prompt.fill('add a LICENSE file'); await prompt.press('Enter');
     const card = gui.getByRole('article', { name: 'Proposed plan' });
     await expect(card).toContainText('Read the code');
     await expect(card).toContainText('Run the tests');
     await expect(turnStatus).toHaveText('Turn complete');
     await card.getByRole('button', { name: 'Implement this plan' }).click();
-    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(settings).not.toHaveAttribute('data-active');
     await expect(gui.locator('.aya-gui-messages')).toContainText('Implement the plan.');
     await expect(turnStatus).toHaveText('Turn complete');
     await expect(card.getByRole('button', { name: 'Implement this plan' })).toHaveCount(0);
@@ -1279,5 +1293,52 @@ test('pasted images become attachments without replacing the message draft', asy
     expect(pasted).toBeTruthy();
     expect(pasted!.startsWith(join(seed.ayaHome, 'gui-attachments') + '/')).toBe(true);
     expect(existsSync(pasted!)).toBe(true);
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
+test('composer stays in one row in narrow panes and settings remain keyboard accessible', async () => {
+  const seed = seedCodexGui();
+  const app = await launchApp(seed);
+  try {
+    const page = await app.firstWindow();
+    const gui = page.locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    await prompt.fill('wait'); await prompt.press('Enter');
+    await expect(gui.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+    await prompt.fill('A follow-up while the agent works');
+    for (const width of [900, 520, 360, 280]) {
+      await gui.evaluate((node, width) => { node.style.width = `${width}px`; node.style.maxWidth = '100%'; }, width);
+      const footer = gui.locator('.aya-gui-compose-footer');
+      await expect.poll(() => footer.evaluate(node => {
+        const bounds = node.getBoundingClientRect();
+        const buttons = [...node.querySelectorAll('button')].filter(button => button.getClientRects().length);
+        return buttons.every(button => {
+          const rect = button.getBoundingClientRect();
+          return Math.abs(rect.top - bounds.top) < 2 && rect.right <= bounds.right + 1;
+        }) && node.scrollWidth <= node.clientWidth + 1;
+      })).toBe(true);
+    }
+    const settings = gui.getByRole('button', { name: /^Conversation settings:/ });
+    await settings.click();
+    const dialog = gui.getByRole('dialog', { name: 'Conversation settings' });
+    await expect(dialog).toBeVisible();
+    await expect(gui.getByRole('combobox', { name: 'Model for next turn' })).toBeFocused();
+    await gui.getByRole('combobox', { name: 'Model for next turn' }).selectOption('fake-pro');
+    await gui.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('high');
+    const pane = await gui.boundingBox(), popup = await dialog.boundingBox();
+    expect(popup!.x + popup!.width).toBeLessThanOrEqual(pane!.x + pane!.width);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(settings).toBeFocused();
+    await expect(settings).toHaveAttribute('title', /Fake Pro.*high/);
+    await expect(gui.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+    await expect(prompt).toHaveValue('A follow-up while the agent works');
+    await settings.click();
+    await prompt.click({ position: { x: 5, y: 5 } });
+    await expect(dialog).toHaveCount(0);
+    await expect(prompt).toBeFocused();
+    await gui.locator('main > form').screenshot({ path: 'test-results/composer-narrow.png' });
+    await gui.getByRole('button', { name: 'Stop', exact: true }).click();
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });

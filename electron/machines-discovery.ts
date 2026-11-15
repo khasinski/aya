@@ -1,12 +1,12 @@
+import type { ApiCandidate,ApiDiscovery } from '../shared/ipc-types';
+export type { ApiCandidate,ApiDiscovery } from '../shared/ipc-types';
 // Endpoint discovery is unauthenticated and bounded to one selected machine. No registry/auth writes.
 import { isIP } from "node:net";
 import { probeApi } from "./machines-api";
 import type { Reach } from "./machines-probe";
-import { requireSshTarget, runProcess, SSH_OPTIONS } from "./ssh";
+import { requireSshTarget,runProcess,SSH_OPTIONS } from "./ssh";
 
 export const API_DISCOVERY_PORTS = [8080, 8000, 1234, 5000] as const;
-export interface ApiCandidate { baseUrl: string; kind: "confirmed" | "auth-required" }
-export interface ApiDiscovery { candidates: ApiCandidate[]; error: string | null }
 
 /** Only a host, never a URL/userinfo/path/options. IPv6 literals are bracketed when constructing URLs. */
 export function discoveryHostname(value: string): string | null {

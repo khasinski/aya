@@ -1,4 +1,6 @@
-import type { Preset, ProjectCollectionState, ProjectConfig } from "./types";
+import type { RemoteDirectoryEntry,RemoteHostInfo } from '../shared/ipc-types';
+import type { Preset,ProjectCollectionState,ProjectConfig } from "./types";
+export type { RemoteDirectoryEntry,RemoteHostInfo } from '../shared/ipc-types';
 
 export const REMOTE_PROTOCOL_VERSION = 1;
 export const REMOTE_MAX_FRAME_BYTES = 2 * 1024 * 1024;
@@ -8,23 +10,10 @@ export const REMOTE_MAX_FRAME_BYTES = 2 * 1024 * 1024;
 export const REMOTE_TERMINAL_PROTOCOL_VERSION = 2;
 export const REMOTE_TERMINAL_REPLAY_MAX_BYTES = 1_048_576;
 
-export interface RemoteHostInfo {
-  id: string;
-  name: string;
-  platform: NodeJS.Platform;
-  user: string;
-}
-
 export interface RemoteSnapshot {
   projects: ProjectConfig[];
   projectState: ProjectCollectionState;
   presets: Preset[];
-}
-
-export interface RemoteDirectoryEntry {
-  name: string;
-  path: string;
-  kind: "directory";
 }
 
 export type RemoteTerminalRequest =

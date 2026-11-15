@@ -1,0 +1,100 @@
+{
+  "goal": "Resolve all 12 findings from the Aya audit",
+  "progressId": "879d4778-7cb9-4434-9f03-23ccba1aa558",
+  "items": [
+    {
+      "id": 1,
+      "issue": "Full snapshots and 32 MiB history ceiling",
+      "status": "verified",
+      "notes": "v3 content-addressed message chunks and incremental IPC; 35 MiB histories and 33 MiB individual messages round-trip"
+    },
+    {
+      "id": 2,
+      "issue": "Full conversation DOM and hidden clock rerenders",
+      "status": "verified",
+      "notes": "Viewport windowing with measured placeholders, isolated timer paused while hidden; find temporarily mounts all text"
+    },
+    {
+      "id": 3,
+      "issue": "Global collection storage lock",
+      "status": "verified",
+      "notes": "Optimistic generation scan with exclusive individual deletions; concurrent save regression passes"
+    },
+    {
+      "id": 4,
+      "issue": "Synchronous PTY logging",
+      "status": "verified",
+      "notes": "Bounded asynchronous production PTY and diagnostics logs, 500ms host exit flush; logger tests await explicit flush"
+    },
+    {
+      "id": 5,
+      "issue": "Local Markdown links",
+      "status": "verified",
+      "notes": "Read-only workspace file preview with line selection and focus restoration; regular text files up to 2 MiB"
+    },
+    {
+      "id": 6,
+      "issue": "Stale WorkspaceImage",
+      "status": "verified",
+      "notes": "Source-keyed image loading/error state and retry; tested valid to missing to repaired"
+    },
+    {
+      "id": 7,
+      "issue": "Persistent Graphic error across revisions",
+      "status": "verified",
+      "notes": "Artifact graphic keyed by revision; repaired revisions and version switching tested"
+    },
+    {
+      "id": 8,
+      "issue": "Mouse-only split resize",
+      "status": "verified",
+      "notes": "Keyboard/ARIA separator plus pointer capture, cancellation cleanup and animation-frame coalescing"
+    },
+    {
+      "id": 9,
+      "issue": "Only window-level error boundary",
+      "status": "verified",
+      "notes": "Local artifact and pane boundaries; scoped recovery preserves draft and running GUI session"
+    },
+    {
+      "id": 10,
+      "issue": "Oversized multi-responsibility components",
+      "status": "verified",
+      "notes": "Kanban board state, columns and card content separated; terminal find/presentation and status diff panel extracted"
+    },
+    {
+      "id": 11,
+      "issue": "Duplicated main-renderer contracts",
+      "status": "verified",
+      "notes": "Shared IPC/project/team/split contracts; AST parity resolves main and renderer to canonical declarations"
+    },
+    {
+      "id": 12,
+      "issue": "Narrow lint scope/rules",
+      "status": "verified",
+      "notes": "Typed async lint for src and electron plus JSX accessibility checks; violations fixed"
+    }
+  ],
+  "verification": {
+    "initialDockItems": 40,
+    "beforeFinalE2e": 37,
+    "typecheck": "passed",
+    "lint": "passed",
+    "fullUnitLog": "/tmp/aya-audit-unit-final.log",
+    "e2eLog": "/tmp/aya-audit-e2e-final.log",
+    "unitTests": {
+      "passed": 8590,
+      "failed": 0,
+      "skipped": 149,
+      "todo": 1
+    },
+    "e2e": {
+      "distinctPassed": 59,
+      "broadRun": "50 passed; one test assertion corrected and passed on rerun",
+      "finalRerun": "10/10 passed"
+    },
+    "build": "passed",
+    "e2eRerunLog": "/tmp/aya-audit-e2e-rerun.log",
+    "diffCheck": "passed"
+  }
+}
