@@ -1,5 +1,6 @@
 import { test, expect, launchApp, closeAndWait } from './fixtures';
 import { GUI_WORKLOAD, seedGuiWorkload } from './helpers/gui-workload';
+import { fireShortcut } from './helpers/shortcut';
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -12,8 +13,9 @@ test('large GUI workload records opening, input-to-frame latency and memory whil
     await expect(gui.locator('header').getByRole('status')).toHaveText('Ready', { timeout: 30000 });
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const openingMs = performance.now() - start;
-    await expect(gui.locator('article.assistant')).toHaveCount(GUI_WORKLOAD.messages);
-    const skipped = await gui.locator('article.assistant').evaluateAll(nodes => nodes.filter(node => node.firstElementChild && !node.firstElementChild.checkVisibility({ contentVisibilityAuto: true })).length);
+    await expect(gui.locator('.aya-message-window')).toHaveCount(GUI_WORKLOAD.messages);
+    await expect.poll(() => gui.locator('article.assistant').count()).toBeLessThan(100);
+    const skipped = await gui.locator('.aya-message-window[data-windowed]').count();
     expect(skipped).toBeGreaterThan(0);
     await expect.poll(() => {
       try { return JSON.parse(readFileSync(join(seed.ayaHome, 'pty-owner', 'record.json'), 'utf8')).panes.length; } catch { return 0; }
@@ -33,24 +35,24 @@ test('large GUI workload records opening, input-to-frame latency and memory whil
     expect(samples.length).toBeGreaterThanOrEqual(20);
     const previewStart = performance.now();
     await gui.getByRole('button', { name: 'Artifacts', exact: true }).click();
-    // Cold CI workers render 2,500 messages while preparing the first preview.
+    // Cold CI workers load a large restored history while preparing the first preview.
     // Measure that latency below without imposing the normal small-view timeout.
     // Polled every frame: toBeVisible retries at growing intervals (up to 1 s), which is too coarse to time against.
     const widgetHeading = gui.frameLocator('iframe').getByRole('heading', { name: 'Benchmark widget 0' });
     await expect.poll(() => widgetHeading.isVisible(), { intervals: [16], timeout: 30000 }).toBe(true);
     const artifactOpenMs = performance.now() - previewStart;
-    // The whole text remains in the DOM, selectable and reachable by Chromium find.
-    const matches = await app.evaluate(({ BrowserWindow }) => new Promise<number>(resolve => {
-      const contents = BrowserWindow.getAllWindows()[0].webContents;
-      const listener = (_event: Electron.Event, result: Electron.Result) => { if (result.finalUpdate) { contents.removeListener('found-in-page', listener); resolve(result.matches); } };
-      contents.on('found-in-page', listener); contents.findInPage('History needle 17:');
-    }));
-    expect(matches).toBe(1);
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.stopFindInPage('clearSelection'));
-    const selection = await gui.locator('article.assistant').nth(17).evaluate(node => {
+    // Find mounts the searchable history and scrolls to a previously unmounted row.
+    await fireShortcut(app, 'find-in-pane');
+    await gui.getByRole('searchbox', { name: 'Find in conversation' }).fill('History needle 17:');
+    await expect(gui.getByRole('status', { name: 'Find results' })).toHaveText('1 of 1');
+    const matched = gui.locator('article.assistant').filter({ hasText: 'History needle 17:' });
+    await expect(matched).toBeInViewport();
+    const selection = await matched.evaluate(node => {
       const range = document.createRange(); range.selectNodeContents(node); const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range); const text = selection.toString(); selection.removeAllRanges(); return text;
     });
     expect(selection).toContain('History needle 17:');
+    await gui.getByRole('button', { name: 'Close find', exact: true }).click();
+    await expect.poll(() => gui.locator('article.assistant').count()).toBeLessThan(100);
     const sorted = [...samples].sort((a, b) => a - b);
     // Budgets, not only a record. Typing must stay well under what a person notices (measured 16 ms median, 18 ms p95
     // on an M-series Mac, 2026-11); a command's result must come within the Doherty threshold of 400 ms. CI workers are
