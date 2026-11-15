@@ -179,6 +179,12 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       journals.get(key)?.acknowledge(Number(view.eventSequence || 0));
       return { revision: revision + 1 };
     }
+    if (action === 'dispose-pane') {
+      recoverablePanels.delete(key);
+      journals.delete(key);
+      searches.delete(key);
+      return panels.close(key);
+    }
     if (action === 'close' || action === 'retain-for-recovery' || action === 'retain-pane') {
       searches.delete(key);
       if (action === 'retain-for-recovery') prepareGuiRendererRecovery(event.sender.id);
@@ -364,7 +370,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'respond') { const p = value as { id: string | number; value: Parameters<CodexGuiSession['respond']>[1] }; return entry.session.respond(p.id, p.value); }
     throw Error('Unknown GUI action');
     };
-    return ['load', 'connect', 'reconnect', 'persist', 'close', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
+    return ['load', 'connect', 'reconnect', 'persist', 'close', 'dispose-pane', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
   });
   app.on('before-quit', () => { for (const { session } of sessions.values()) session.close(); });
 }

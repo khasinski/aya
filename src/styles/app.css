@@ -1669,3 +1669,6 @@ body {
   overflow: hidden;
 }
 .aya-stacked-headerslot .aya-pane-header-process { overflow: hidden; text-overflow: ellipsis; }
+.aya-stacked-headerslot :is(button, input, select, textarea, a) {
+  -webkit-app-region: no-drag;
+}

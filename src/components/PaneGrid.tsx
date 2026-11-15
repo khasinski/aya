@@ -1,6 +1,6 @@
 import { memo,useCallback,useRef,type RefObject } from "react";
 import { guiSupportedAgent } from "../agentPreset";
-import { beginGuiPaneRecovery } from '../gui-renderer-recovery';
+import { beginGuiPaneRecovery, guiRendererRecoveryInProgress } from '../gui-renderer-recovery';
 import type { GuiPaneStatus } from "../gui-status";
 import { emptyProjectPaneTitle,paneStyleFromRect } from "../pane-grid";
 import { PRESET_ID_BOARD } from "../preset-ids";
@@ -141,6 +141,8 @@ export const PaneGrid = memo(function PaneGrid({
         // nested to match it: nesting would move each TerminalView in
         // the React tree on every reshape and remount the terminal.
         const paneStyle = paneStyleFromRect(isSplit, rect);
+        const errorPaneClass = `aya-pane${isSplit && activeLeafId === leafId ? " aya-pane--active-split" : ""}`;
+        const activatePane = () => { if (activeProjectId) setActiveSplitCell(activeProjectId, leafId); };
         if (!terminal) {
           return (
             <div
@@ -226,7 +228,7 @@ export const PaneGrid = memo(function PaneGrid({
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
         if (terminal.presetId === PRESET_ID_BOARD) {
           return (
-            <LocalErrorBoundary key={terminal.id} label="Board" style={paneStyle}><KanbanView
+            <LocalErrorBoundary key={terminal.id} label="Board" className={errorPaneClass} onActivate={activatePane} style={paneStyle}><KanbanView
               terminal={terminal}
               paneStyle={paneStyle}
               isActivePane={isSplit && activeLeafId === leafId}
@@ -256,7 +258,7 @@ export const PaneGrid = memo(function PaneGrid({
           );
         }
         return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !activeProject?.remote ? null : (
-          <LocalErrorBoundary key={terminal.id} label="Terminal" style={paneStyle}><TerminalView
+          <LocalErrorBoundary key={terminal.id} label="Terminal" className={errorPaneClass} onActivate={activatePane} style={paneStyle}><TerminalView
             paneStyle={paneStyle}
             terminal={terminal}
             preset={preset}
@@ -311,7 +313,7 @@ export const PaneGrid = memo(function PaneGrid({
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
         if (t.presetId === PRESET_ID_BOARD) return null;
         return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !project?.remote ? null : (
-          <LocalErrorBoundary key={t.id} label="Terminal" style={{ display: "none" }}><TerminalView
+          <LocalErrorBoundary key={t.id} label="Terminal" className="aya-pane" style={{ display: "none" }}><TerminalView
             terminal={t}
             preset={preset}
             {...terminalSpawn(project, preset, t, resumePanes, homeDir)}
@@ -342,7 +344,13 @@ export const PaneGrid = memo(function PaneGrid({
         if (preset.interfaceMode !== "gui" || !guiSupportedAgent(preset) || project?.remote || terminal.spawnDeferred) return null;
         const pane = paneRects.find(p => p.terminalId === terminal.id);
         return (
-          <LocalErrorBoundary key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`} label="Conversation" style={pane ? paneStyleFromRect(isSplit, pane.rect) : { display: "none" }} onError={() => beginGuiPaneRecovery(terminal.id)}><ConversationView
+          <LocalErrorBoundary key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`} label="Conversation"
+            className={`aya-pane${isSplit && pane && activeLeafId === pane.leafId ? " aya-pane--active-split" : ""}`}
+            onActivate={() => { if (activeProjectId && pane) setActiveSplitCell(activeProjectId, pane.leafId); }}
+            onDispose={() => {
+              if (!guiRendererRecoveryInProgress()) void window.ayaGui?.invoke(terminal.id, 'dispose-pane').catch(error => console.error('Could not close failed conversation', error));
+            }}
+            style={pane ? paneStyleFromRect(isSplit, pane.rect) : { display: "none" }} onError={() => beginGuiPaneRecovery(terminal.id)}><ConversationView
             terminal={terminal}
             preset={preset}
             snippets={snippets}

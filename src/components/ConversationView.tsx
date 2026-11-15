@@ -116,7 +116,7 @@ type ConversationProps = {
 };
 export const ConversationView = memo(function ConversationView(props: ConversationProps) {
   const [generation, setGeneration] = useState(0);
-  return <WorkspaceFileLinks key={`${props.terminal.id}:${generation}`} terminalId={props.terminal.id}><ConversationSession {...props} onSwitch={() => setGeneration(n => n + 1)} /></WorkspaceFileLinks>;
+  return <WorkspaceFileLinks key={`${props.terminal.id}:${generation}`} terminalId={props.terminal.id} hidden={props.hidden}><ConversationSession {...props} onSwitch={() => setGeneration(n => n + 1)} /></WorkspaceFileLinks>;
 });
 function ConversationSession({ headerSlot = null, terminal, preset, snippets, snippetsOpen, onSnippetsOpenChange, onOpenSettings, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, listSiblingTerminals, onSwitch }: ConversationProps & { onSwitch: () => void }) {
   const api = window.ayaGui;

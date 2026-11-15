@@ -1,14 +1,17 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useModalFocus } from './useModalFocus';
 import { ipcMessage } from './use-async-action';
 interface Preview { path: string; line: number; firstLine: number; totalLines: number; lines: string[] }
 const FileLinks = createContext<((href: string) => void) | null>(null);
 export const useWorkspaceFileLink = () => useContext(FileLinks);
-export function WorkspaceFileLinks({ terminalId, children }: { terminalId: string; children: ReactNode }) {
+export function WorkspaceFileLinks({ terminalId, hidden = false, children }: { terminalId: string; hidden?: boolean; children: ReactNode }) {
   const [request, setRequest] = useState<{ href: string; preview?: Preview; error?: string } | null>(null);
   const generation = useRef(0);
   const close = () => { generation.current++; setRequest(null); };
+  useEffect(() => {
+    if (hidden) { generation.current++; setRequest(null); }
+  }, [hidden]);
   const open = useCallback((href: string) => {
     const current = ++generation.current;
     setRequest({ href });
@@ -18,7 +21,7 @@ export function WorkspaceFileLinks({ terminalId, children }: { terminalId: strin
       error => { if (generation.current === current) setRequest({ href, error: ipcMessage(error) }); },
     );
   }, [terminalId]);
-  return <FileLinks.Provider value={open}>{children}{request && <WorkspaceFileDialog request={request} close={close} open={open} />}</FileLinks.Provider>;
+  return <FileLinks.Provider value={open}>{children}{request && !hidden && <WorkspaceFileDialog request={request} close={close} open={open} />}</FileLinks.Provider>;
 }
 
 function WorkspaceFileDialog({ request, close, open }: {

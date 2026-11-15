@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.18.1 - 2026-11-15
+
+- Fix native clicks on the Kanban launcher and on Kanban header controls in the Stacked layout.
+- Match the Projects left Kanban launcher to terminal tabs and show live per-column card counts, including custom columns.
+- Preserve the reading position after gentle scrolling during streamed replies, plan expansion and find-highlight updates; resume following with End or Jump to latest.
+- Close workspace file previews when switching away from their conversation.
+- Preserve failed panes' position, size and activation in split layouts.
+- Stop the retained agent when a failed conversation pane is closed, while preserving session recovery through Retry.
+
 ## v0.18.0 - 2026-11-15
 
 - Keep conversation composer controls on one row in narrow panes, with model, reasoning and plan settings in a compact popover.
