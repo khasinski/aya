@@ -492,6 +492,7 @@ body {
 }
 .aya-sidebar-row:focus-visible,
 .aya-tab[role="tab"]:focus-visible,
+.aya-kanban-tab:focus-visible,
 .aya-railtab[role="listitem"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -1442,6 +1443,16 @@ body {
 /* Terminal tabs live in the top bar; size to content and scroll. */
 .aya-termtabs { overflow-x: auto; overflow-y: hidden; }
 .aya-termtab { max-width: 260px; }
+/* The board launcher shares the terminal tab treatment; reset native button
+   chrome without introducing a separate compact button inside the strip. */
+.aya-kanban-tab {
+  font-family: inherit;
+  text-align: left;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+}
+.aya-kanban-tab:not(.aya-tab--active):not(:hover) { background: transparent; }
 /* The strip is only 40px tall. The name stays vertically centered (on the same
    line as the icon/dot), and the summary is positioned just below it; without
    room that summary clips at the tab's bottom edge. padding-bottom shifts the

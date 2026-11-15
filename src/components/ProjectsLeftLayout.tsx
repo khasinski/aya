@@ -27,6 +27,7 @@ import { compactDir } from "../project-path";
 import { PRESET_ID_BOARD } from "../preset-ids";
 import { RecentProjectsMenu } from "./RecentProjectsMenu";
 import { ProjectContextMenu } from "./ProjectContextMenu";
+import { KanbanLauncher } from "./KanbanLauncher";
 
 // Project rail width bounds (px) for the drag-resize handle.
 const RAIL_MIN_WIDTH_PX = 160;
@@ -562,24 +563,18 @@ function ProjectsLeftLayoutImpl({
   );
 
   const kanbanToggleNode = kanbanEnabled && !activeProjectRemote ? (
-    <button
-      type="button"
-      className={`aya-kanban-sidebar-toggle${
-        boardTab && boardTab.id === activeTerminalId ? " aya-kanban-sidebar-toggle--active" : ""
-      }`}
-      aria-current={boardTab && boardTab.id === activeTerminalId ? "true" : undefined}
-      title="Open Kanban board for this project"
-      onClick={() => {
+    <KanbanLauncher
+      projectSlug={activeProjectId}
+      active={Boolean(boardTab && boardTab.id === activeTerminalId)}
+      compact={stacked}
+      onOpen={() => {
         if (boardTab) {
           onSelectTerminal(boardTab.id);
         } else {
           onLaunchTerminal(BUILTIN_BOARD);
         }
       }}
-    >
-      <span style={{ color: "#58a6ff" }}>▦</span>
-      <span>Kanban</span>
-    </button>
+    />
   ) : null;
 
   const termTabsNode = (
