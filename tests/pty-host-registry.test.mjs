@@ -6,7 +6,7 @@ import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitFor } from "./helpers/pty-host.mjs";
@@ -405,11 +405,12 @@ test("a real spawned host retains its record through SIGTERM exit until verified
     assert.equal(recs[0].pgid, recs[0].pid, "host verified it leads its own group");
     assert.ok(recs[0].startTime.length > 0, "record carries a verifiable start time");
     assert.match(recs[0].nonce, /^[0-9a-f]{16}$/, "an 8-byte hex nonce");
-    const start = readFileSync(join(home, "pty-events.log"), "utf-8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-      .find((e) => e.ev === "host-start");
+    const start = await waitFor(() => {
+      const log = join(home, "pty-events.log");
+      if (!existsSync(log)) return false;
+      return readFileSync(log, "utf-8").split("\n").filter(Boolean)
+        .map(line => JSON.parse(line)).find(e => e.ev === "host-start");
+    });
     assert.equal(start?.scriptHash, recs[0].scriptHash.slice(0, 8), "the log keeps an 8-char hash prefix");
 
     // SIGTERM must now do a REAL graceful shutdown (not leave a socketless

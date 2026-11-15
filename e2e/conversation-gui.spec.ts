@@ -639,7 +639,7 @@ test('GUI keeps consistent controls and follows streaming only while reading the
       expect(box?.height).toBe(32);
       await expect(button.locator('.aya-gui-icon')).toHaveCSS('font-size', '18px');
     }
-    await expect(gui.locator('.aya-gui-compose-footer select').first()).toHaveCSS('height', '32px');
+    await expect(gui.getByRole('button', { name: /^Conversation settings:/ })).toHaveCSS('height', '32px');
     await expect(prompt).toHaveCSS('font-size', '14px');
     await prompt.fill('long-stream'); await prompt.press('Enter');
     await expect(gui.locator('article.assistant')).toContainText('Paragraph 30:');
@@ -856,7 +856,9 @@ test('the composer recalls sent prompts, stashes drafts and quotes an assistant 
     // Cmd+S stashes the draft; in an empty composer it brings it back.
     await prompt.press('Meta+s');
     await expect(prompt).toHaveValue('');
+    await gui.getByRole('button', { name: /^Conversation settings:/ }).click();
     await expect(gui.locator('.aya-gui-stash')).toHaveText('Stash 1');
+    await gui.getByRole('button', { name: 'Close conversation settings' }).click();
     await prompt.press('Meta+s');
     await expect(prompt).toHaveValue('half a thought');
     await expect(gui.locator('.aya-gui-stash')).toHaveCount(0);

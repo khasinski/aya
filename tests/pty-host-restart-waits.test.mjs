@@ -56,7 +56,8 @@ async function slowHost(t) {
 }
 
 /** The new host started only after the old one's last line: nothing overlapped. */
-function assertStartedAfterOldExit(oldPid, newPid) {
+async function assertStartedAfterOldExit(oldPid, newPid) {
+  await waitFor(() => events().some(e => e.pid === newPid && e.ev === "host-start"));
   const all = events();
   const lastOld = all.filter((e) => e.pid === oldPid).at(-1);
   const newStart = all.find((e) => e.pid === newPid && e.ev === "host-start");
@@ -70,7 +71,7 @@ test("restart() resolves only once the old host has exited", async (t) => {
   assert.equal(isAlive(oldPid), false, "the old host is gone when restart() resolves");
   const newPid = (await client.hostStatus()).pid;
   assert.notEqual(newPid, oldPid);
-  assertStartedAfterOldExit(oldPid, newPid);
+  await assertStartedAfterOldExit(oldPid, newPid);
   await client.shutdown();
 });
 
@@ -79,7 +80,7 @@ test("a request sent during restart() waits, and reaches a host started after th
   // What a window does while Diagnostics restarts the host: it keeps asking.
   const [, status] = await Promise.all([client.restart(), client.hostStatus()]);
   assert.notEqual(status.pid, oldPid, "the request did not reach the host being replaced");
-  assertStartedAfterOldExit(oldPid, status.pid);
+  await assertStartedAfterOldExit(oldPid, status.pid);
   await client.shutdown();
 });
 
