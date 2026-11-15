@@ -14,6 +14,7 @@ import { PRESET_ID_BOARD } from "../preset-ids";
 import { TerminalStatusDot } from "./TerminalStatusDot";
 import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
 import { WorktreeCreateDialog, WorktreeRemoveDialog } from "./WorktreeDialogs";
+import { KanbanLauncher } from "./KanbanLauncher";
 
 // Clamp bounds for drag-resizing the sidebar (px).
 const SIDEBAR_MIN_WIDTH_PX = 180;
@@ -423,24 +424,18 @@ function SidebarImpl({
       <div className="aya-sidebar-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span>{visibleTerminals.length} terminals</span>
         {kanbanEnabled && !projectRemote && (
-          <button
-            type="button"
-            className={`aya-kanban-sidebar-toggle${
-              boardTab && boardTab.id === activeId ? " aya-kanban-sidebar-toggle--active" : ""
-            }`}
-            aria-current={boardTab && boardTab.id === activeId ? "true" : undefined}
-            title="Open Kanban board for this project"
-            onClick={() => {
+          <KanbanLauncher
+            projectSlug={projectId ?? null}
+            active={Boolean(boardTab && boardTab.id === activeId)}
+            compact
+            onOpen={() => {
               if (boardTab) {
                 onSelect(boardTab.id);
               } else {
                 onLaunch(BUILTIN_BOARD);
               }
             }}
-          >
-            <span style={{ color: "#58a6ff" }}>▦</span>
-            <span>Kanban</span>
-          </button>
+          />
         )}
       </div>
       <div className="aya-sidebar-list">
