@@ -48,6 +48,7 @@ test.after(() => {
 
 const {
   readSnapshot,
+  scopeFromEnvDump,
   readSnapshotAsync,
   readEnvProbe,
   readEnvProbeAsync,
@@ -483,8 +484,17 @@ test("default deps: a self probe that fails does not stop the sweep", async () =
 test("readEnvProbeAsync and readLeaderGoneAsync give what the sync readers give, live and gone", async () => {
   const child = spawnIdle([], { detached: true, env: { ...process.env, AYA_SWEEP_ASYNC_MARK: "seen" } });
   const probe = await waitFor(() => readEnvProbe(child.pid));
-  assert.deepEqual(await readEnvProbeAsync(child.pid), probe);
-  assert.deepEqual(await readEnvProbeAsync(process.pid), readEnvProbe(process.pid));
+  const asyncProbe = await readEnvProbeAsync(child.pid);
+  const sameScope = (a, b) => {
+    assert.ok(a && b, "both readers found the live process");
+    assert.equal(a.pgid, b.pgid);
+    assert.equal(scopeFromEnvDump(a.commandWithEnv, homedir()), scopeFromEnvDump(b.commandWithEnv, homedir()));
+  };
+  // Darwin's ps also emits loader/kernel metadata which can change between
+  // samples. Compare the identity/scope used by the sweep, not that metadata.
+  sameScope(asyncProbe, probe);
+  for (const sample of [probe, asyncProbe]) assert.match(sample.commandWithEnv, /\bAYA_SWEEP_ASYNC_MARK=seen\b/);
+  sameScope(await readEnvProbeAsync(process.pid), readEnvProbe(process.pid));
   assert.equal(await readLeaderGoneAsync(process.pid), false);
   assert.equal(await readLeaderGoneAsync(child.pid), false);
   child.kill("SIGKILL");
