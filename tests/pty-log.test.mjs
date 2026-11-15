@@ -151,13 +151,14 @@ test("a stale in-process size never double-rotates over a fresh generation (#89)
   assert.equal(readLines(file)[0].ptyId, "cccc");
 });
 
-test("the ptyLog singleton resolves AYA_HOME lazily at the first append (#91)", () => {
+test("the ptyLog singleton resolves AYA_HOME lazily at the first append (#91)", async () => {
   // pty-log.js was imported at the top of this file, BEFORE this env write -
   // an eager import-time binding (the natural regression) would aim at the
   // real ~/.aya and leave this tmpdir empty.
   const home = tmp();
   process.env.AYA_HOME = home;
   ptyLog.append("host-start", { version: "test" });
+  await ptyLog.flush();
   const lines = readLines(path.join(home, "pty-events.log"));
   assert.equal(lines.length, 1);
   assert.equal(lines[0].ev, "host-start");

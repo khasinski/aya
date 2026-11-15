@@ -49,8 +49,8 @@ function setup(over = {}) {
     isMaximized() { return this.maximized; }
     maximize() { this.maximized = true; log.push(["maximize", this.id]); }
     show() { log.push(["show", this.id]); }
-    loadURL(url) { log.push(["url", this.id, url]); }
-    loadFile(file) { log.push(["file", this.id, file]); }
+    loadURL(url) { log.push(["url", this.id, url]); return Promise.resolve(); }
+    loadFile(file) { log.push(["file", this.id, file]); return Promise.resolve(); }
     close() { this.destroyed = true; this.emit("closed"); }
   }
   const projects = createWindowProjectState({

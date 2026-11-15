@@ -1,21 +1,23 @@
-import { artifactSearchText, normalizeArtifactSearch } from '../shared/gui-artifact-search.cjs';
-import { GuiRecoveryJournal } from './gui-recovery-journal';
-import { GuiPanelState, matchesGuiBinding } from './gui-panel-state';
-import { openArtifactWindow } from './artifact-preview-window';
-import { pathToFileURL } from 'node:url';
-import { writeFileAtomic } from './atomic-write';
-import { AYA_HOME } from './paths';
+import { app,BrowserWindow,clipboard,dialog,ipcMain } from 'electron';
+import { createHash,randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import { randomUUID, createHash } from 'node:crypto';
-import { loadConversation, saveConversation, archiveConversation, listConversations, readArchivedConversation, hydrateConversationArtifact } from './gui-conversation-store';
-import { clearWidgetDocuments, registerWidgetProtocol, widgetDocument } from './gui-artifact-documents';
-import { exportArtifactMedia } from './gui-artifact-media';
-import { installArtifactImageMenu, saveGuiArtifact } from './gui-artifact-image-menu';
-import type { GuiArtifact, GuiArtifactEntry, GuiEvent } from '../shared/codex-gui';
-import { app, ipcMain, dialog, BrowserWindow, clipboard } from 'electron';
 import { homedir } from 'node:os';
-import { CodexGuiSession, PiGuiSession, ClaudeGuiSession, AntigravityGuiSession, workspaceImage, type GuiAgentKind, type GuiSessionInstance } from './codex-gui-session';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { GuiArtifact,GuiArtifactEntry,GuiEvent } from '../shared/codex-gui';
+import { applyConversationPatch } from '../shared/conversation-patch.cjs';
+import { artifactSearchText,normalizeArtifactSearch } from '../shared/gui-artifact-search.cjs';
+import { openArtifactWindow } from './artifact-preview-window';
+import { writeFileAtomic } from './atomic-write';
+import { AntigravityGuiSession,ClaudeGuiSession,CodexGuiSession,PiGuiSession,workspaceImage,type GuiAgentKind,type GuiSessionInstance } from './codex-gui-session';
+import { clearWidgetDocuments,registerWidgetProtocol,widgetDocument } from './gui-artifact-documents';
+import { installArtifactImageMenu,saveGuiArtifact } from './gui-artifact-image-menu';
+import { exportArtifactMedia } from './gui-artifact-media';
+import { archiveConversation,hydrateConversationArtifact,listConversations,loadConversation,readArchivedConversation,saveConversation } from './gui-conversation-store';
+import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
+import { GuiRecoveryJournal } from './gui-recovery-journal';
+import { AYA_HOME } from './paths';
+import { readWorkspaceFile } from './workspace-file';
 function normalizeGuiAgent(raw: unknown): GuiAgentKind {
   return raw === 'pi' || raw === 'claude' || raw === 'antigravity' ? raw : 'codex';
 }
@@ -51,6 +53,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
   const panels = new GuiPanelState(async (id, snapshot) => { await saveConversation(id, snapshot); await archiveConversation(snapshot); }, clearWidgetDocuments);
   const { artifacts, artifactVersions, sessions, snapshots, attachments } = panels;
   activeGuiSessions = sessions;
+  const saveRevisions = new WeakMap<object, number>();
   const owners = new Set<number>();
   const recoveringOwners = new Set<number>();
   const recoverablePanels = new Set<string>();
@@ -168,14 +171,18 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'persist') {
       const snapshot = snapshots.get(key);
       if (!snapshot) throw Error('Conversation has not connected yet');
-      snapshot.view = withPanelArtifacts(key, value as Record<string, unknown>);
-      await saveConversation(id, snapshot);
-      journals.get(key)?.acknowledge(Number(snapshot.view?.eventSequence || 0));
-      return;
+      const revision = saveRevisions.get(snapshot) || 0;
+      const view: Record<string, unknown> = withPanelArtifacts(key, applyConversationPatch(snapshot.view, value as Record<string, unknown>, revision));
+      await saveConversation(id, { ...snapshot, view });
+      snapshot.view = view;
+      saveRevisions.set(snapshot, revision + 1);
+      journals.get(key)?.acknowledge(Number(view.eventSequence || 0));
+      return { revision: revision + 1 };
     }
-    if (action === 'close' || action === 'retain-for-recovery') {
+    if (action === 'close' || action === 'retain-for-recovery' || action === 'retain-pane') {
       searches.delete(key);
       if (action === 'retain-for-recovery') prepareGuiRendererRecovery(event.sender.id);
+      if (action === 'retain-pane') recoverablePanels.add(key);
       if (!snapshots.has(key)) return;
       if (recoverablePanels.has(key) && sessions.has(key)) {
         const snapshot = snapshots.get(key)!;
@@ -351,12 +358,13 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) });
     }
     if (action === 'interrupt') return entry.session.interrupt();
+    if (action === 'read-linked-file') return readWorkspaceFile(entry.cwd, value);
     if (action === 'image') return workspaceImage(entry.cwd, String(value));
     if (action === 'command') { const p = value as { name: string; argument: string }; return entry.session.command(p.name, p.argument); }
     if (action === 'respond') { const p = value as { id: string | number; value: Parameters<CodexGuiSession['respond']>[1] }; return entry.session.respond(p.id, p.value); }
     throw Error('Unknown GUI action');
     };
-    return ['load', 'connect', 'reconnect', 'persist', 'close', 'retain-for-recovery', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
+    return ['load', 'connect', 'reconnect', 'persist', 'close', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
   });
   app.on('before-quit', () => { for (const { session } of sessions.values()) session.close(); });
 }

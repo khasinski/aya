@@ -1,10 +1,11 @@
-import { artifactSearchText, normalizeArtifactSearch } from '../../shared/gui-artifact-search.cjs';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { GuiArtifact, GuiArtifactEntry } from '../../shared/codex-gui';
+import { useEffect,useId,useMemo,useRef,useState } from 'react';
+import type { GuiArtifact,GuiArtifactEntry } from '../../shared/codex-gui';
+import { artifactSearchText,normalizeArtifactSearch } from '../../shared/gui-artifact-search.cjs';
+import { LocalErrorBoundary } from './LocalErrorBoundary';
 
 const normalizeSearch = normalizeArtifactSearch;
 
-export function ArtifactPanel({ artifacts, selected, history, seenRevisions, visible, onViewed, onPreview, onLoad, onSearch, onSelect, onSuggest, onSave, onOpen, onBrowser }: {
+function ArtifactPanelContents({ artifacts, selected, history, seenRevisions, visible, onViewed, onPreview, onLoad, onSearch, onSelect, onSuggest, onSave, onOpen, onBrowser }: {
   onSearch: (query: string) => Promise<string[]>;
   onLoad: (id: string, revision?: number) => Promise<GuiArtifact>;
   artifacts: GuiArtifactEntry[]; selected: string; history: Record<string, GuiArtifactEntry[]>;
@@ -22,7 +23,7 @@ export function ArtifactPanel({ artifacts, selected, history, seenRevisions, vis
     {!artifacts.length ? <div className="aya-artifact-empty"><h3>No artifacts yet</h3><p>Tables, images and widgets created in this conversation will appear here.</p></div> : <>
       <div className="aya-artifact-navigation"><button aria-label="Previous artifact" title="Previous · Alt+←" disabled={index <= 0} onClick={() => onSelect(artifacts[index - 1].id)}>←</button><span role="status" aria-label="Artifact position">{index + 1} of {artifacts.length}</span><button aria-label="Next artifact" title="Next · Alt+→" disabled={index < 0 || index >= artifacts.length - 1} onClick={() => onSelect(artifacts[index + 1].id)}>→</button><button className="aya-artifact-expand" title={expanded ? 'Return to conversation' : 'Expand preview'} aria-label={expanded ? 'Reduce artifacts' : 'Expand artifacts'} aria-pressed={expanded} onClick={() => setExpanded(!expanded)}><span className="aya-gui-icon" aria-hidden="true">{expanded ? 'close_fullscreen' : 'open_in_full'}</span></button></div>
       <ArtifactPicker onSearch={onSearch} artifacts={artifacts} selected={artifact?.id || ''} seenRevisions={seenRevisions} onSelect={onSelect} />
-      {artifact && <ArtifactContent key={artifact.id} artifact={artifact} versions={history[artifact.id] || [artifact]} version={versionByArtifact[artifact.id] || 'latest'} onVersion={version => setVersionByArtifact(old => ({ ...old, [artifact.id]: version }))} visible={visible} onViewed={onViewed} onPreview={onPreview} onLoad={onLoad} onSuggest={onSuggest} onSave={onSave} onOpen={onOpen} onBrowser={onBrowser} />}
+      {artifact && <LocalErrorBoundary key={`${artifact.id}:${artifact.revision || 1}:${versionByArtifact[artifact.id] || "latest"}`} label="Artifact"><ArtifactContent key={artifact.id} artifact={artifact} versions={history[artifact.id] || [artifact]} version={versionByArtifact[artifact.id] || 'latest'} onVersion={version => setVersionByArtifact(old => ({ ...old, [artifact.id]: version }))} visible={visible} onViewed={onViewed} onPreview={onPreview} onLoad={onLoad} onSuggest={onSuggest} onSave={onSave} onOpen={onOpen} onBrowser={onBrowser} /></LocalErrorBoundary>}
     </>}
   </aside>;
 }
@@ -115,7 +116,7 @@ function ArtifactContent({ artifact, versions, version, onVersion, visible, onVi
       {(a.kind === 'html' || a.kind === 'image') && <div className="aya-artifact-actions"><button title="Open this version in a new window" onClick={() => { setSaveStatus(''); void onOpen(a.id, a.revision).catch(() => setSaveStatus('Could not open preview. Try again.')); }}>Open window ↗</button><button title="Open in your system browser" onClick={() => { setSaveStatus(''); void onBrowser(a.id, a.revision).catch(() => setSaveStatus('Could not open browser. Try again.')); }}>Open in browser</button><button className="aya-artifact-save" onClick={() => void save()} title="Save this version to file">Save ↓</button></div>}
     </div>
     {saveStatus && <p role="status" className="aya-artifact-feedback">{saveStatus}</p>}
-    {a.kind === 'html' ? source ? <pre className="aya-widget-source"><code>{a.html}</code></pre> : <HtmlWidget artifact={a} onSuggest={onSuggest} onPreview={onPreview} /> : a.kind === 'image' ? <Graphic artifact={a} /> : a.kind === 'metric' ? <div className="aya-artifact-metric"><strong>{a.value}</strong><p>{a.description}</p></div> : <>
+    {a.kind === 'html' ? source ? <pre className="aya-widget-source"><code>{a.html}</code></pre> : <HtmlWidget artifact={a} onSuggest={onSuggest} onPreview={onPreview} /> : a.kind === 'image' ? <Graphic key={`${a.id}:${a.revision || 1}`} artifact={a} /> : a.kind === 'metric' ? <div className="aya-artifact-metric"><strong>{a.value}</strong><p>{a.description}</p></div> : <>
       <input className="aya-artifact-filter" aria-label="Filter rows" placeholder="Filter rows…" value={filter} onChange={e => setFilter(e.target.value)} />
       <div className="aya-gui-table"><table><thead><tr>{a.columns.map((c, i) => <th key={i}>{c}</th>)}<th /></tr></thead><tbody>{matchingRows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}<td><button title="Prepare a message about this row. You can review and edit it before sending." onClick={() => onSuggest(`Discuss this row from “${a.title}”: ${a.columns.map((c, j) => `${c}: ${row[j]}`).join('; ')}`)} aria-label="Discuss row" className="aya-gui-icon-button"><span className="aya-gui-icon" aria-hidden="true">chat_bubble_outline</span></button></td></tr>)}{!matchingRows.length && <tr><td colSpan={a.columns.length + 1} role="status">{a.rows.length ? 'No matching rows' : 'No rows to display'}</td></tr>}</tbody></table></div>
     </>}
@@ -165,4 +166,9 @@ function Graphic({ artifact }: { artifact: Extract<GuiArtifact, { kind: 'image' 
     <div className="aya-graphic-viewport" style={{ cursor: zoom > 1 ? 'grab' : 'default' }} onDoubleClick={() => setZoom(z => z === 1 ? 2 : 1)} onPointerDown={e => { if (zoom <= 1 || e.button !== 0) return; drag.current = { x: e.clientX, y: e.clientY, left: e.currentTarget.scrollLeft, top: e.currentTarget.scrollTop }; e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.style.cursor = 'grabbing'; }} onPointerMove={e => { if (!drag.current) return; e.currentTarget.scrollLeft = drag.current.left - (e.clientX - drag.current.x); e.currentTarget.scrollTop = drag.current.top - (e.clientY - drag.current.y); }} onPointerUp={e => { drag.current = null; e.currentTarget.style.cursor = zoom > 1 ? 'grab' : 'default'; }} onPointerCancel={() => { drag.current = null; }} tabIndex={0} aria-label="Graphic preview. Double-click or use plus and minus to zoom. Drag or use arrow keys to pan.">{error ? <p role="alert">This image could not be decoded.</p> : <img style={{ width: `${zoom * 100}%`, maxWidth: 'none', maxHeight: 'none' }} src={artifact.dataUrl} alt={artifact.title} onError={() => setError(true)} draggable={false} />}</div>
     <small className="aya-graphic-path" title={artifact.path}>{artifact.path}</small>
   </div>;
+}
+
+export function ArtifactPanel(props: Parameters<typeof ArtifactPanelContents>[0]) {
+  const revisionKey = props.artifacts.map(a => `${a.id}:${a.revision || 1}`).join('|');
+  return <LocalErrorBoundary key={revisionKey} label="Artifact"><ArtifactPanelContents {...props} /></LocalErrorBoundary>;
 }

@@ -1,27 +1,7 @@
+import type { SplitNode } from "../shared/split-node.cjs";
 import { isSplitNode as commonIsSplitNode } from "../shared/split-node.cjs";
-// Main-process view of the pane layout tree.
-//
-// The renderer owns the layout ALGEBRA (src/split-tree.ts: splitting, resizing,
-// geometry, and the migration from the pre-tree grid format). The main process
-// only ever needs to answer "is this shape safe to store / accept over IPC?",
-// so this file deliberately stays a type plus a validator rather than a second
-// copy of the algorithm that could drift from the real one.
-//
-// Kept in step with src/split-tree.ts the same way electron/types.ts is kept in
-// step with src/types.ts — deliberate duplication so the two TS projects stay
-// independent. tests/split-tree-parity.test.mjs pins the two validators
-// together.
+export type { SplitNode } from "../shared/split-node.cjs";
 
-export type SplitNode =
-  | { kind: "leaf"; id: string; terminalId: string | null }
-  | {
-      kind: "split";
-      id: string;
-      direction: "row" | "column";
-      ratio: number;
-      first: SplitNode;
-      second: SplitNode;
-    };
 
 /** Maximum split-grid dimensions (rows x cols): the clamp in config.ts and the
  *  IPC validator enforce the same rule. */

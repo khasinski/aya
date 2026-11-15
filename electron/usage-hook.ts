@@ -1,3 +1,5 @@
+import type { UsageHookStatus } from '../shared/ipc-types';
+export type { UsageHookStatus } from '../shared/ipc-types';
 // Optional, user-enabled installer for the account-wide Claude usage chip.
 //
 // Claude Code hands every statusLine command a JSON document on stdin, and since
@@ -18,17 +20,17 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { oneAtATime,withFileLock } from "./keyed-queue";
+import { shellQuote } from "./pane-command";
 import { pathExists } from "./path-exists";
-import { oneAtATime, withFileLock } from "./keyed-queue";
-import { AYA_HOME, EXECUTABLE_FILE_MODE, USAGE_FILE } from "./paths";
+import { AYA_HOME,EXECUTABLE_FILE_MODE,USAGE_FILE } from "./paths";
 import { listPresets } from "./presets";
 import {
-  CLAUDE_CONFIG_DIRNAME,
-  CLAUDE_SETTINGS_FILENAME,
-  DEFAULT_CLAUDE_CONFIG_DIR,
-  expandUserPath,
+	CLAUDE_CONFIG_DIRNAME,
+	CLAUDE_SETTINGS_FILENAME,
+	DEFAULT_CLAUDE_CONFIG_DIR,
+	expandUserPath,
 } from "./usage";
-import { shellQuote } from "./pane-command";
 
 function hasSettingsOverride(): boolean {
   return !!process.env.AYA_CLAUDE_SETTINGS?.trim();
@@ -47,14 +49,6 @@ export const HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-usage-hook.sh");
 
 // A status line redraws many times a turn; rewrite the snapshot at most this often.
 export const HOOK_THROTTLE_SECONDS = 30;
-
-export interface UsageHookStatus {
-  installed: boolean;
-  /** Absolute path to the generated script (whether or not it exists yet). */
-  scriptPath: string;
-  /** Where the hook is registered. */
-  settingsPath: string;
-}
 
 /** The Stop-hook command earlier builds registered; only ever removed now. */
 function legacyHookCommand(configDir: string): string {

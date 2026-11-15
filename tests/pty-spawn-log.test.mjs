@@ -15,6 +15,7 @@ process.env.HOME = join(root, "home");
 process.env.SHELL = "/bin/sh";
 process.env.PATH = "/usr/bin:/bin";
 
+const { ptyLog } = await import("../dist-electron/pty-log.js");
 const { killPty, spawnPty, SPAWN_LOG_COMMAND_MAX_CHARS } = await import("../dist-electron/pty.js");
 
 const sink = { sendPtyEvent() {}, isDestroyed: () => false };
@@ -22,6 +23,7 @@ const sink = { sendPtyEvent() {}, isDestroyed: () => false };
 async function loggedCommand(ptyId, command) {
   await spawnPty({ ptyId, command, cwd, cols: 80, rows: 24 }, sink);
   killPty(ptyId);
+  await ptyLog.flush();
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   const line = log.split("\n").map((l) => (l ? JSON.parse(l) : null)).find((e) => e?.ev === "spawn" && e.ptyId === ptyId);
   assert.ok(line, `no spawn line for ${ptyId}`);

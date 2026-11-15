@@ -104,7 +104,7 @@ test('fragmented credential response is accepted; oversized request closes promp
  }finally{for(const s of connections)s.destroy();await new Promise(resolve=>rejectServer.close(resolve));q.transfer.dispose();fs.rmSync(otherRoot,{recursive:true,force:true});}
 });
 test('stalled redemption has a whole exchange deadline on both server and client',{timeout:14000},async()=>{
- for(const side of ['server','client']){
+ await Promise.all(['server','client'].map(async side=>{
   fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/auth-redemption-stall-')),socket=path.join(root,'host.sock'),p=pair(),sockets=new Set();
   const server=net.createServer(s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));if(side==='server')void acceptHostRedemption(s,p.transfer,host,()=>recipient).catch(()=>{});else s.on('data',()=>{});});
   try{
@@ -112,7 +112,7 @@ test('stalled redemption has a whole exchange deadline on both server and client
    if(side==='server')await new Promise(resolve=>s.once('close',resolve));else await assert.rejects(redeemHostCapability(s,p.ticket,recipient,()=>host));
    const elapsed=performance.now()-start;assert.ok(elapsed>=4500&&elapsed<6500,`bounded ${side} exchange: ${elapsed}ms`);assert.equal(p.transfer.phase,'active');
   }finally{for(const s of sockets)s.destroy();await new Promise(resolve=>server.close(resolve));p.transfer.dispose();fs.rmSync(root,{recursive:true,force:true});}
- }
+ }));
 });
 test('fragmented maximum-size request is read once before a credential response',{timeout:8000},async()=>{
  fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/auth-redemption-request-')),socket=path.join(root,'host.sock'),p=pair(),sockets=new Set();

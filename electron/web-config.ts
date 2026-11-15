@@ -1,3 +1,5 @@
+import type { WebInterfaceAddress } from '../shared/ipc-types';
+export type { WebInterfaceAddress } from '../shared/ipc-types';
 // Aya Web (experimental) — persistence for the browser-access server config.
 //
 // Stored at ~/.aya/web.json with owner-only permissions. Passwords are kept
@@ -12,7 +14,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./paths";
+import { AYA_HOME,OWNER_ONLY_FILE_MODE } from "./paths";
 
 export const WEB_CONFIG_FILE = path.join(AYA_HOME, "web.json");
 
@@ -54,11 +56,6 @@ export function normalizeWebHost(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const host = value.trim();
   return net.isIP(host) ? host : null;
-}
-
-export interface WebInterfaceAddress {
-  name: string;
-  address: string;
 }
 
 /** The non-internal IPv4 addresses in an os.networkInterfaces() result, in its order. */

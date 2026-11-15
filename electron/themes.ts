@@ -1,3 +1,5 @@
+import type { Theme,ThemeColors,ThemesFile } from '../shared/ipc-types';
+export type { Theme,ThemeColors,ThemesFile } from '../shared/ipc-types';
 // Terminal color themes.
 //
 // Internal representation matches xterm.js's `ITheme` so we can pass a theme
@@ -14,41 +16,6 @@ import * as plist from "plist";
 import { writeFileAtomic } from "./atomic-write";
 import { THEMES_FILE } from "./paths";
 import { slugifyName } from "./text";
-
-export interface ThemeColors {
-  background: string;
-  foreground: string;
-  cursor: string;
-  cursorAccent?: string;
-  selectionBackground?: string;
-  black: string;
-  red: string;
-  green: string;
-  yellow: string;
-  blue: string;
-  magenta: string;
-  cyan: string;
-  white: string;
-  brightBlack: string;
-  brightRed: string;
-  brightGreen: string;
-  brightYellow: string;
-  brightBlue: string;
-  brightMagenta: string;
-  brightCyan: string;
-  brightWhite: string;
-}
-
-export interface Theme {
-  id: string;
-  name: string;
-  colors: ThemeColors;
-}
-
-export interface ThemesFile {
-  themes: Theme[];
-  activeId: string;
-}
 
 /** "Aya Dark" — the tuned palette from the design (TerminalView.tsx previously
  *  hard-coded this). Kept as the default and as the seed for new installs. */

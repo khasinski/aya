@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import * as net from "node:net";
+import { dirname, delimiter } from "node:path";
 
 const CLI = new URL("../../bin/aya", import.meta.url).pathname;
 
@@ -60,8 +61,10 @@ export function stubApp(socket, delayMs = 0) {
 /** bin/aya `args` under `shell`: its exit status and stderr. */
 export function runCli(shell, args, env) {
   return new Promise((done, fail) => {
-    // A mise `node` shim, resolved under the test's throwaway HOME, warns on stderr and these tests assert stderr.
-    const child = spawn(shell, [CLI, ...args], { env: { MISE_LOG_LEVEL: "error", ...env }, stdio: ["ignore", "ignore", "pipe"] });
+    // Exercise the CLI with the same real Node as the runner. Version-manager
+    // shims under a throwaway HOME may bootstrap tools or emit unrelated errors.
+    const cliEnv = { ...env, PATH: `${dirname(process.execPath)}${delimiter}${env.PATH ?? process.env.PATH ?? ""}` };
+    const child = spawn(shell, [CLI, ...args], { env: cliEnv, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => (stderr += chunk));

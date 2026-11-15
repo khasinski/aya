@@ -1,23 +1,9 @@
-import { constants, promises as fs } from "node:fs";
+import { constants,promises as fs } from "node:fs";
 import * as path from "node:path";
-import { oneAtATime } from "./keyed-queue";
+import type { DiffComment } from '../shared/ipc-types';
 import { writeFileAtomic } from "./atomic-write";
-
-export interface DiffComment {
-  id: string;
-  file: string;
-  hunk: string;
-  line: string;
-  newLine: number | null;
-  oldLine: number | null;
-  /** Occurrence of the exact diff row inside its hunk. */
-  occurrence: number;
-  checkout: string;
-  note: string;
-  createdAt: string;
-  sentAt: string | null;
-  sentTo: string | null;
-}
+import { oneAtATime } from "./keyed-queue";
+export type { DiffComment } from '../shared/ipc-types';
 
 export const DIFF_COMMENTS_DIR = "diff-comments";
 export const MAX_DIFF_COMMENTS = 200;

@@ -1,101 +1,66 @@
-// The IPC contract is declared twice (src/types.ts, electron/types.ts) and kept
-// in sync by hand: each project compiles against its OWN copy, so drift only
-// misbehaves at runtime. Member ORDER is not compared - types are structural.
-
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import ts from "typescript";
-
-const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
-const RENDERER = "src/types.ts";
-const MAIN = "electron/types.ts";
-
-const printer = ts.createPrinter({ removeComments: true });
-
-/** One declaration reduced to comparable parts: an interface contributes its
- *  members, its heritage and its type parameters (sorted), anything else its
- *  whole printed form. `node.members` alone would miss `extends`, and
- *  `WorktreeStatus extends Worktree` exists in both copies. */
-function declarationShape(node, sourceFile) {
-  const print = (n) =>
-    printer.printNode(ts.EmitHint.Unspecified, n, sourceFile).replace(/\s+/g, " ").trim();
-  if (!ts.isInterfaceDeclaration(node)) return [print(node)];
-  // Tagged, so a heritage clause can never collide with a member of the same text.
-  const head = [
-    ...(node.typeParameters ?? []).map((n) => `<param> ${print(n)}`),
-    ...(node.heritageClauses ?? []).map((n) => `<heritage> ${print(n)}`),
-  ];
-  return [...head, ...node.members.map(print)].sort();
+// Resolve re-exported declarations without constructing the entire application
+// type graph. Both projects typecheck the canonical declarations independently.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import ts from 'typescript';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+const files = new Map();
+function source(file) {
+  file = resolve(file);
+  if (!files.has(file)) files.set(file, ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ES2022, true));
+  return files.get(file);
 }
-
-/** Every exported interface / type alias in a file, by name. */
-function exportedTypes(relativePath) {
-  const source = readFileSync(join(REPO, relativePath), "utf8");
-  const sourceFile = ts.createSourceFile(
-    relativePath,
-    source,
-    ts.ScriptTarget.ES2022,
-    true,
-  );
-  const found = new Map();
-  for (const statement of sourceFile.statements) {
-    const isType =
-      ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement);
-    const isExported = statement.modifiers?.some(
-      (m) => m.kind === ts.SyntaxKind.ExportKeyword,
-    );
-    if (isType && isExported) {
-      found.set(statement.name.text, declarationShape(statement, sourceFile));
-    }
-  }
+function moduleFile(file, specifier) {
+  const base = resolve(dirname(file), specifier);
+  const candidates = [base, base + '.ts', base + '.d.ts', base.replace(/\.cjs$/, '.d.cts')];
+  const found = candidates.find(existsSync);
+  if (!found) throw Error(`Missing module: ${base}`);
   return found;
 }
-
-const renderer = exportedTypes(RENDERER);
-const main = exportedTypes(MAIN);
-
-// Every assertion below is "for each thing we found", so a parser that finds
-// nothing would pass them all.
-test("types parity: both type files parse into declarations", () => {
-  assert.ok(renderer.size > 0, `no exported types parsed out of ${RENDERER}`);
-  assert.ok(main.size > 0, `no exported types parsed out of ${MAIN}`);
-});
-
-// Without this, a one-sided rename shrinks the compared set and every remaining
-// check still passes.
-test("types parity: every main-process type has a renderer counterpart", () => {
-  const orphans = [...main.keys()].filter((name) => !renderer.has(name));
-  assert.deepEqual(
-    orphans,
-    [],
-    `${MAIN} declares types ${RENDERER} does not: ${orphans.join(", ")}. ` +
-      `Either mirror them into the renderer copy, or - if they are genuinely ` +
-      `main-process-only - move them out of ${MAIN} to the module that owns them.`,
-  );
-});
-
-test("types parity: shared declarations are structurally identical", () => {
-  const drifted = [];
-  for (const [name, mainShape] of main) {
-    const rendererShape = renderer.get(name);
-    if (!rendererShape) continue; // reported by the orphan test above
-    const only = (a, b) => a.filter((part) => !b.includes(part));
-    const missingInMain = only(rendererShape, mainShape);
-    const missingInRenderer = only(mainShape, rendererShape);
-    if (missingInMain.length || missingInRenderer.length) {
-      drifted.push(
-        `${name}:\n` +
-          `    only in ${RENDERER}: ${missingInMain.join(" | ") || "(nothing)"}\n` +
-          `    only in ${MAIN}: ${missingInRenderer.join(" | ") || "(nothing)"}`,
-      );
+function declaration(file, name, visited = new Set()) {
+  file = resolve(file);
+  const key = file + ':' + name;
+  if (visited.has(key)) return null;
+  visited.add(key);
+  for (const node of source(file).statements) {
+    if ((ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) && node.name.text === name) return { file, node };
+    if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
+      const item = node.exportClause.elements.find(item => item.name.text === name);
+      if (item) {
+        const local = (item.propertyName || item.name).text;
+        if (node.moduleSpecifier) return declaration(moduleFile(file, node.moduleSpecifier.text), local, visited);
+        for (const statement of source(file).statements) {
+          if (!ts.isImportDeclaration(statement)) continue;
+          const binding = statement.importClause?.namedBindings;
+          if (!binding || !ts.isNamedImports(binding)) continue;
+          const imported = binding.elements.find(item => item.name.text === local);
+          if (imported) return declaration(moduleFile(file, statement.moduleSpecifier.text), (imported.propertyName || imported.name).text, visited);
+        }
+      }
     }
   }
-  assert.deepEqual(
-    drifted,
-    [],
-    `the two copies of the IPC contract disagree:\n  ${drifted.join("\n  ")}`,
-  );
+  return null;
+}
+const shared = ['shared/ipc-types.d.ts', 'shared/project-team-types.d.ts'];
+
+test('main and renderer use canonical wire declarations rather than maintaining copies', () => {
+  for (const file of shared) for (const node of source(file).statements) {
+    if (!ts.isInterfaceDeclaration(node) && !ts.isTypeAliasDeclaration(node)) continue;
+    const name = node.name.text;
+    const main = declaration('electron/types.ts', name), renderer = declaration('src/types.ts', name);
+    if (!main || main.file !== resolve(file)) continue; // backend-only projections have their own owner
+    assert.ok(renderer, `Renderer must export ${name}`);
+    assert.equal(renderer.file, main.file, name);
+    assert.ok(renderer.node === main.node, `${name} has distinct declarations`);
+  }
+});
+
+test('core API, project, preset and team exports cannot drift back into copies', () => {
+  for (const name of ['AyaApi', 'ProjectConfig', 'Preset', 'TeamDefinition', 'PtyEvent', 'GitChangedFile', 'UsageData']) {
+    const a = declaration('src/types.ts', name), b = declaration('electron/types.ts', name);
+    assert.ok(a && b, name);
+    assert.ok(a.node === b.node, `${name} has distinct declarations`);
+    assert.ok(a.file.includes('/shared/'), name);
+  }
 });

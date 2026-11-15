@@ -82,7 +82,7 @@ test('renderer crashes preserve the running GUI process, streamed answer and pen
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 
-test('a React render failure retains the GUI process and unsaved draft before error-screen reload', async () => {
+test('an artifact render failure preserves the conversation, running agent and draft', async () => {
   const { seed, starts } = guiSeed(), app = await launchApp(seed);
   try {
     const page = await app.firstWindow(), gui = page.locator('.aya-conversation');
@@ -94,8 +94,8 @@ test('a React render failure retains the GUI process and unsaved draft before er
     // Fault injection bypasses the valid artifact tool so React really throws;
     // main's persisted artifact library remains valid for recovery.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('codex-gui:event', 'tab-left', { method: 'aya/artifact', params: { open: true, artifact: { id: 'render-fault', title: 'Render fault', kind: 'table', columns: null, rows: null } } }));
-    await expect(page.getByText('This window hit an error')).toBeVisible();
-    await page.getByRole('button', { name: 'Reload window', exact: true }).click();
+    await expect(page.getByText('Artifact could not be displayed')).toBeVisible();
+    await expect(page.getByText('This window hit an error')).toHaveCount(0);
     await expect(gui.locator('header').getByRole('status')).toContainText('is working');
     await expect(prompt).toHaveValue('Draft retained through a render failure');
     expect(readFileSync(starts, 'utf8').trim().split('\n')).toHaveLength(1);

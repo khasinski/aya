@@ -34,6 +34,7 @@ process.env.XDG_DATA_HOME = join(root, "xdg-data");
 process.env.SHELL = protocolShell();
 process.env.PATH = `${bin}:/usr/bin:/bin`;
 
+const { ptyLog } = await import("../dist-electron/pty-log.js");
 const { activePtyCount, isPtyStarting, killPty, spawnPty } = await import("../dist-electron/pty.js");
 
 // Keep the lookup suspended until the test has killed/restarted the pane.
@@ -58,6 +59,7 @@ test("a kill that lands during the opencode lookup stops the spawn", async () =>
   killPty(ptyId);
   releaseLookup();
   await spawning;
+  await ptyLog.flush();
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   const started = activePtyCount();
   if (started) killPty(ptyId);
@@ -87,6 +89,7 @@ test("a restart during the lookup starts the new spawn, never the killed one", a
   await second;
   await waitForOutput(sink, "restarted-marker");
   killPty(ptyId);
+  await ptyLog.flush();
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   const spawns = log.match(/"ev":"spawn","ptyId":"kill-then-restart",[^\n]*/g) ?? [];
   assert.match(output(sink), /restarted-marker/, "the restarted tab must get a process");
@@ -108,6 +111,7 @@ test("a restart of an opencode pane during its lookup resumes (every agent resta
   const started = activePtyCount();
   killPty(ptyId);
   assert.equal(started, 1, "the restart must leave exactly one live child");
+  await ptyLog.flush();
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   assert.match(log, /"ev":"opencode-session-none","ptyId":"kill-then-restart-same"/);
 });
@@ -128,6 +132,7 @@ test("a tab closed again while its restart waits starts nothing", async () => {
   const started = activePtyCount();
   if (started) killPty(ptyId);
   assert.equal(started, 0, "no child may outlive the closed tab");
+  await ptyLog.flush();
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   assert.match(log, /"ev":"spawn-dropped-in-flight","ptyId":"kill-restart-kill"/);
 });
@@ -152,6 +157,7 @@ test("a kill with no spawn under way still drops the next spawn of that id", asy
   killPty(ptyId);
   await spawnPty({ ptyId, command: "echo never", cwd, cols: 80, rows: 24 }, sink);
   assert.equal(activePtyCount(), 0);
+  await ptyLog.flush();
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   assert.match(log, /"ev":"spawn-dropped-pending-kill","ptyId":"kill-before-spawn"/);
 });

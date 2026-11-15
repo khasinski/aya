@@ -1,16 +1,18 @@
+import type { GitCommitResult,GitMutationResult } from '../shared/ipc-types';
 import { mapConcurrent } from "./bounded-map";
+export type { GitCommitResult,GitMutationResult } from '../shared/ipc-types';
 // Lightweight git info for the status bar. We shell out to `git` because we
 // already require a working POSIX env (claude / codex need it too). If git
 // isn't installed or the dir isn't a repo, return nulls.
 
-import { exec, execFile } from "node:child_process";
+import { isUtf8 } from "node:buffer";
+import { exec,execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
-import { isUtf8 } from "node:buffer";
+import { lstat,mkdir,open,realpath } from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
+import type { ProjectGitInfo,Worktree,WorktreeStatus } from "./types";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -170,14 +172,6 @@ export async function listWorktreesOrThrow(directory: string): Promise<Worktree[
     }),
   );
 }
-
-/** Outcome of a git command that CHANGES the repository. Unlike every read
- *  above (which degrades to an empty result), a failed mutation must reach the
- *  user: "branch already exists" or "worktree is dirty" is information they
- *  need in order to act, and a silent no-op would look like a broken button. */
-export type GitMutationResult =
-  | { ok: true; path: string }
-  | { ok: false; error: string };
 
 // Creating a worktree can pull, resolve refs and write a whole checkout, so it
 // gets a longer leash than the read-only status probes.
@@ -497,10 +491,6 @@ export interface GitChangedFile {
   path: string;
   originalPath?: string;
 }
-
-export type GitCommitResult =
-  | { ok: true; commit: string }
-  | { ok: false; error: string };
 
 export function parseGitPorcelain(status: string): GitChangedFile[] {
   return status

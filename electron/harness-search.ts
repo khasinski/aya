@@ -1,3 +1,5 @@
+import type { HarnessSearchHit,HarnessSearchRequest } from '../shared/ipc-types';
+export type { HarnessSearchHit,HarnessSearchRequest } from '../shared/ipc-types';
 // Harness-aware search ("History" mode of the in-pane find bar, experimental).
 //
 // Claude Code and Codex already persist every session as JSONL on disk —
@@ -16,35 +18,10 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { codexHomeFor } from "./agent-brief";
-import { claudeProjectDirName } from "./claude-session";
-import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
-import { CODEX_SESSIONS_SUBDIR, DEFAULT_CODEX_HOME } from "./usage-codex";
 import { scanJsonlLinesReverse } from "./bounded-file-read";
-
-export interface HarnessSearchRequest {
-  agent: "claude" | "codex";
-  /** The tab's working directory — scopes which sessions are searched. */
-  cwd: string;
-  /** Preset's config-dir override (may be ~-relative); defaults to the
-   *  agent's standard home (~/.claude / CODEX_HOME, else ~/.codex). */
-  configDir?: string;
-  /** The preset's command; a leading CODEX_HOME=... there is codex's home. */
-  command?: string;
-  query: string;
-}
-
-export interface HarnessSearchHit {
-  sessionId: string;
-  role: "user" | "assistant";
-  /** ISO timestamp of the matched message, when the transcript carried one. */
-  timestamp?: string;
-  /** Full message text (capped) — shown when the user expands the hit. */
-  text: string;
-  snippet: string;
-  /** Offset/length of the first matched token WITHIN the snippet. */
-  matchStart: number;
-  matchLength: number;
-}
+import { claudeProjectDirName } from "./claude-session";
+import { DEFAULT_CLAUDE_CONFIG_DIR,expandUserPath } from "./usage";
+import { CODEX_SESSIONS_SUBDIR,DEFAULT_CODEX_HOME } from "./usage-codex";
 
 export interface HarnessSearchResult {
   hits: HarnessSearchHit[];

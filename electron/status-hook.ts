@@ -1,3 +1,5 @@
+import type { StatusHookStatus } from '../shared/ipc-types';
+export type { StatusHookStatus } from '../shared/ipc-types';
 // Optional, user-enabled installer for AUTOMATIC agent status (#38).
 //
 // Claude Code's status in Aya is otherwise best-effort: a regex bell heuristic
@@ -22,18 +24,18 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { pathExists } from "./path-exists";
-import { AYA_HOME, EXECUTABLE_FILE_MODE } from "./paths";
 import { bundledAyaCliPath } from "./cli-path";
 import { HOOK_VIA } from "./constants";
-import {
-  claudeConfigDirs,
-  readSettingsFile,
-  refreshInstalledScript,
-  serially,
-  settingsFileForConfigDir,
-} from "./usage-hook";
 import { shellQuote } from "./pane-command";
+import { pathExists } from "./path-exists";
+import { AYA_HOME,EXECUTABLE_FILE_MODE } from "./paths";
+import {
+	claudeConfigDirs,
+	readSettingsFile,
+	refreshInstalledScript,
+	serially,
+	settingsFileForConfigDir,
+} from "./usage-hook";
 
 // The generated hook script lives in Aya's own dir (always exists), referenced
 // by absolute path from every hook entry.
@@ -43,23 +45,6 @@ export const STATUS_HOOK_EVENTS = ["PostToolUse", "Stop", "StopFailure"] as cons
 /** Registered by earlier versions: our command is removed from them at startup and on uninstall. */
 const RETIRED_STATUS_HOOK_EVENTS = ["Notification"] as const;
 const EVERY_STATUS_HOOK_EVENT = [...STATUS_HOOK_EVENTS, ...RETIRED_STATUS_HOOK_EVENTS];
-
-export interface StatusHookStatus {
-  installed: boolean;
-  /** Absolute path to the generated script (whether or not it exists yet). */
-  scriptPath: string;
-  /** Where the hooks are registered. */
-  settingsPath: string;
-  /** Codex half of the same toggle (#38): its `notify` program. Filled in by
-   *  main.ts (this Claude-side module doesn't know about Codex). `configured` =
-   *  ours is set; `conflict` = the user already has their own notify, left
-   *  untouched. */
-  codex?: {
-    configured: boolean;
-    conflict: boolean;
-    configPath: string;
-  };
-}
 
 // Characters a POSIX shell word can hold unquoted.
 const SHELL_SAFE_RE = /^[A-Za-z0-9_\/.,:@%+=-]+$/;

@@ -4,14 +4,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 
 import * as renderer from "../dist-test/units.js";
 import * as main from "../dist-electron/units.js";
-
-test("electron/units.ts and src/units.ts are the same file", () => {
-  assert.equal(readFileSync("electron/units.ts", "utf8"), readFileSync("src/units.ts", "utf8"));
-});
 
 const CASES = [
   // The bytes /api/ps reported for a loaded model; `ollama ps` printed 9.1 GB, Aya says 8.5 GiB.

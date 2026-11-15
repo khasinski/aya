@@ -1,3 +1,5 @@
+import type { BufferSearchHit } from '../shared/ipc-types';
+export type { BufferSearchHit } from '../shared/ipc-types';
 // PTY host. One IPty per ptyId, all events forwarded to the renderer.
 //
 // We accept a literal `command` string from the renderer and wrap it in
@@ -5,46 +7,45 @@
 // interactive shell - not a hard-coded bash - lets PATH, functions, aliases,
 // and env from their normal terminal startup files flow through.
 
+import type * as PtyModule from "node-pty";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type * as PtyModule from "node-pty";
-import { OwnerPty } from "./pty-owner-adapter";
-import {MAX_CHECKPOINT_BYTES,MAX_VT_SNAPSHOT_BYTES} from "./vt-checkpoint-schema";
-import {MAX_PTY_PANES, paneLimitFailureMessage} from "./pty-pane-limits";
-import type { VtCheckpoint } from "./vt-checkpoint";
-import { validatePaneCoreCheckpoint, validateCoreHandoverPart, checkpointGeneration, type CoreHandoverPart, type EndedCoreCheckpoint, type PaneCoreCheckpoint } from "./pty-core-checkpoint";
-import { currentOwnerRuntime, getOwnerRuntime } from "./pty-owner-runtime";
-import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
-import {
-  extractAyaOsc,
-  parseAyaOscSession,
-  parseAyaOscStatus,
-} from "./osc-extractor";
-import {
-  beginVtRecovery,
-  panes as vtPanes,
-  snapshotOf,
-  vtSnapshotMatches,
-  checkpointVtPane,
-  restoreVtPane,
-  closeAllVtPanes,
-  closeVtPane,
-  openVtPane,
-  resizeVtPane,
-  vtPaneAltScreen,
-  vtPaneReplayModeState,
-  writeVtPane,
-} from "./vt-mirror";
-import { validVtSnapshotFence, type VtSnapshotFence } from "./vt-snapshot-fence";
-import type { OwnerPane } from "./pty-owner-client";
-import type { RecoveryPane } from "./pty-recovery-bootstrap";
-import { validateRecoveryLaunch } from "./pty-core-checkpoint";
 import type { PaneLaunch } from "./launch-mode";
+import {
+	extractAyaOsc,
+	parseAyaOscSession,
+	parseAyaOscStatus,
+} from "./osc-extractor";
 import type { PaneSize } from "./pane-render";
-import { COMMAND_NOT_FOUND_EXIT_CODE, MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
-import { consumeReplayModes, initialReplayModeTracker, legacyReplayModeTracker, replayModePrefix, validateReplayModeTracker, type ReplayModeTracker, type ReplayModeState } from "./pty-replay-modes";
+import { checkpointGeneration,validateCoreHandoverPart,validatePaneCoreCheckpoint,validateRecoveryLaunch,type CoreHandoverPart,type EndedCoreCheckpoint,type PaneCoreCheckpoint } from "./pty-core-checkpoint";
+import { COMMAND_NOT_FOUND_EXIT_CODE,MIN_PTY_COLS,MIN_PTY_ROWS } from "./pty-core-constants";
 import { ptyLog } from "./pty-log";
+import { OwnerPty } from "./pty-owner-adapter";
+import type { OwnerPane } from "./pty-owner-client";
+import { currentOwnerRuntime,getOwnerRuntime } from "./pty-owner-runtime";
+import { MAX_PTY_PANES,paneLimitFailureMessage } from "./pty-pane-limits";
+import type { RecoveryPane } from "./pty-recovery-bootstrap";
+import { consumeReplayModes,initialReplayModeTracker,legacyReplayModeTracker,replayModePrefix,validateReplayModeTracker,type ReplayModeState,type ReplayModeTracker } from "./pty-replay-modes";
+import type { PtyEvent,SpawnFailureReason,SpawnRequest } from "./types";
+import type { VtCheckpoint } from "./vt-checkpoint";
+import { MAX_CHECKPOINT_BYTES,MAX_VT_SNAPSHOT_BYTES } from "./vt-checkpoint-schema";
+import {
+	beginVtRecovery,
+	checkpointVtPane,
+	closeAllVtPanes,
+	closeVtPane,
+	openVtPane,
+	resizeVtPane,
+	restoreVtPane,
+	snapshotOf,
+	vtPaneAltScreen,
+	vtPaneReplayModeState,
+	panes as vtPanes,
+	vtSnapshotMatches,
+	writeVtPane,
+} from "./vt-mirror";
+import { validVtSnapshotFence,type VtSnapshotFence } from "./vt-snapshot-fence";
 
 export type PreparedSpawn =
   | { failure: { reason: SpawnFailureReason; message: string } }
@@ -511,17 +512,6 @@ export function stripAnsi(s: string): string {
     // payload of ST-terminated sequences into search snippets.
     .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
-}
-
-export interface BufferSearchHit {
-  ptyId: string;
-  /** Cleaned snippet around the first occurrence (~80 chars total). */
-  snippet: string;
-  /** Position of the match within the cleaned snippet, for highlighting. */
-  matchStart: number;
-  matchLength: number;
-  /** Approximate number of additional occurrences beyond the first. */
-  more: number;
 }
 
 /** Case-insensitive AND-search over every live PTY buffer: each whitespace token must appear; the snippet

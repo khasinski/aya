@@ -1,166 +1,166 @@
-import { debugLogsPending, flushDebugLogs } from "./team-debug";
+import { createBoardInputProtection } from "./board-notices";
+import { busyGuiSessionCount,isGuiSessionBusy,prepareGuiRendererRecovery,registerCodexGuiIpc } from "./codex-gui-ipc";
 import { registerWidgetScheme } from './gui-artifact-documents';
-import { busyGuiSessionCount, isGuiSessionBusy, registerCodexGuiIpc, prepareGuiRendererRecovery } from "./codex-gui-ipc";
-import {findAuthTransferTicket} from "./pty-host-auth-ticket";
-import { builtinScreenRules } from "./screen-rule-provider";
+import { isUserOnlyHold } from "./pane-holds";
+import { findAuthTransferTicket } from "./pty-host-auth-ticket";
 import type { ScreenRuleSet } from "./screen-rule-data";
-import { UserRuleProvider } from "./screen-user-rule-provider";
 import { fetchUserRuleFile } from "./screen-rule-fetch";
-import { TuiArtifactStore } from "./tui-artifacts";
-import { showTuiArtifact } from "./tui-artifact-window";
+import { builtinScreenRules } from "./screen-rule-provider";
 import { GuardedRuleInput } from "./screen-user-rule-input";
 import { UserRulePanePolicy } from "./screen-user-rule-pane";
-import { isUserOnlyHold } from "./pane-holds";
-import { createBoardInputProtection } from "./board-notices";
+import { UserRuleProvider } from "./screen-user-rule-provider";
+import { debugLogsPending,flushDebugLogs } from "./team-debug";
+import { showTuiArtifact } from "./tui-artifact-window";
+import { TuiArtifactStore } from "./tui-artifacts";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
 import {
-  app,
-  autoUpdater as nativeAutoUpdater,
-  BrowserWindow,
-  clipboard,
-  dialog,
-  ipcMain,
-  Menu,
-  nativeImage,
-  Notification,
-  shell,
-  systemPreferences,
-  type BrowserWindowConstructorOptions,
+	app,
+	BrowserWindow,
+	clipboard,
+	dialog,
+	ipcMain,
+	Menu,
+	autoUpdater as nativeAutoUpdater,
+	nativeImage,
+	Notification,
+	shell,
+	systemPreferences,
+	type BrowserWindowConstructorOptions,
 } from "electron";
 import { autoUpdater } from "electron-updater";
-import { installApplicationMenu, setStaleMenuIcon } from "./app-menu";
-import { showAyaAboutPanel } from "./about-panel";
-import { appendFileSync, statSync } from "node:fs";
-import * as os from "node:os";
 import * as crypto from "node:crypto";
+import { appendFileSync,statSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { getOrCreateProject, listProjects, listProjectState, saveProjectState, updateProjectFromLatest } from "./config";
-import { bundledAyaCliPath } from "./cli-path";
-import { isShellCommand, withCliFirst } from "./pane-command";
-import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
-import { startConfigWatcher } from "./config-watcher";
-import { agentStatusesPending, flushAgentStatuses, noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
-import { deliverTeamMessage, paneOutputMarks, sendPaneTextThroughControl, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
-import { confirmOpen, dispatchOpenProject, findDirInArgv, logOpenFailure } from "./open-delivery";
-import { createAyaWindows } from "./windows";
-import { createCliAdoptionStore } from "./cli-adoption";
-import { dropCodexBriefSections, rewriteIfChanged } from "./codex-brief";
+import { showAyaAboutPanel } from "./about-panel";
 import { syncAntigravityBrief } from "./agent-brief";
+import { withSharedDirCommand } from "./agent-session";
+import { agentStatusesPending,flushAgentStatuses,noteUserAnswer,onStatusPushed,outstandingWaiting } from "./agent-status";
+import { installApplicationMenu,setStaleMenuIcon } from "./app-menu";
+import { createAsyncPtyLog } from "./async-pty-log";
+import {
+	appleHelperPath,
+	normalizeAyaIntelligenceConfig,
+	ollamaStatus,
+	pullOllamaModel,
+	summarizeLocal,
+	validateLocalSummaryRequest,
+	validateOllamaModelName,
+} from "./aya-intelligence";
+import { onBoardChanged } from "./board";
+import { createCliAdoptionStore } from "./cli-adoption";
+import { bundledAyaCliPath } from "./cli-path";
+import { createCliSetup,findExecutableOnPath,pathEntries } from "./cli-setup";
+import { dropCodexBriefSections,rewriteIfChanged } from "./codex-brief";
+import { notePathRepaired,presetInstalled } from "./command-probe";
+import { getOrCreateProject,listProjects,listProjectState,saveProjectState,updateProjectFromLatest } from "./config";
+import { startConfigWatcher } from "./config-watcher";
+import { HOOK_VIA } from "./constants";
+import { deliverTeamMessage,paneOutputMarks,sendPaneTextThroughControl,settledAfterSubmit,startControlServer,type ControlStatusSink,type TurnProbe } from "./control";
+import { createGpuDeathHandler,diagnosticsReport } from "./diagnostics";
+import { installHeadlessUiRouter } from "./e2e-headless-ui";
+import { foregroundCommand } from "./foreground-command";
+import { headCommit,workingTreeState } from "./git";
+import { registerGitStatusQuitGuard } from "./git-status-quit";
+import {
+	appleChat,
+	providerChat,
+	type ChatOptions,
+} from "./intelligence-chat";
+import { createAyaWeb,registerAyaWebIpc } from "./ipc/aya-web-ipc";
+import { registerBoardIpc } from "./ipc/board-ipc";
+import { registerCiChecksIpc } from "./ipc/ci-checks-ipc";
+import { registerDiffCommentsIpc } from "./ipc/diff-comments-ipc";
+import { registerEnvIpc } from "./ipc/env-ipc";
+import { registerProjectsIpc } from "./ipc/projects-ipc";
+import { registerPromptAttachmentIpc } from "./ipc/prompt-attachments-ipc";
+import { registerPtyIpc } from "./ipc/pty-ipc";
+import { registerRemoteIpc } from "./ipc/remote-ipc";
+import { registerSettingsIpc } from "./ipc/settings-ipc";
+import { registerSystemIpc } from "./ipc/system-ipc";
+import { registerTeamIpc } from "./ipc/team-ipc";
+import { registerUsageIpc } from "./ipc/usage-ipc";
+import { captureIpcHandlers } from "./ipc/web-capture";
+import { registerWindowIpc } from "./ipc/window-ipc";
+import { roleLaunchCheck } from "./launch-config";
+import { launchBlockOf,launchHoldOf,launchNoteOf,launchUnsure } from "./launch-mode";
+import { quietWhenTesting,restartDialog } from "./native-ui-text";
+import { openExternalUrl } from "./navigation";
+import { watchOmarchyTheme } from "./omarchy";
+import { confirmOpen,dispatchOpenProject,findDirInArgv,logOpenFailure } from "./open-delivery";
+import {
+	createPaneBriefDeps,
+	loginShellEnv,
+	removePaneBrief,
+	roleNoteReport,
+	sweepPaneBriefs,
+	withAgentBrief,
+} from "./pane-brief";
+import { isShellCommand,withCliFirst } from "./pane-command";
+import { paneReadText } from "./pane-render";
 import { pathExists } from "./path-exists";
 import {
-  createPaneBriefDeps,
-  loginShellEnv,
-  removePaneBrief,
-  roleNoteReport,
-  sweepPaneBriefs,
-  withAgentBrief,
-} from "./pane-brief";
-import { createSpawnGate } from "./spawn-gate";
-import {
-  appleChat,
-  type ChatOptions,
-  providerChat,
-} from "./intelligence-chat";
-import { withLaunchHolds, withSpawnHolds, type TeamControlDeps } from "./team-control";
-import { roleLaunchCheck } from "./launch-config";
-import { launchBlockOf, launchHoldOf, launchNoteOf, launchUnsure } from "./launch-mode";
+	AGENT_BRIEF_FILES_FILE,
+	AYA_HOME,
+	CLI_ADOPTION_FILE,
+	CONTROL_SOCKET_PATH,
+	DIAGNOSTICS_LOG_FILE,
+	IS_DEV,
+	IS_E2E_HEADLESS,
+	IS_E2E_PTY_SHUTDOWN,
+	PANE_LAUNCH_ROLES_FILE,
+	PTY_HOST_SOCKET_PATH,
+	REACHED_AYA_FILE,
+	REMOTE_SOCKET_PATH,
+	SPAWN_PREP_DELAY_MS,
+} from "./paths";
+import { listPresets,type AgentKind } from "./presets";
+import { createPtyDataCoalescer } from "./pty-event-coalescer";
+import { PtyHostClient,waitForExit } from "./pty-host-client";
+import { createPtyHostHealth,probeSocketPid } from "./pty-host-health";
+import { liveHostRecordsAsync,reapStaleHostRecords } from "./pty-host-registry";
+import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
+import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
+import { ownerProcessStartIdentity } from "./pty-owner-client";
+import { MAX_PTY_PANES,paneLimitFailureMessage } from "./pty-pane-limits";
 import { reachedAyaPanes } from "./reached-aya";
-import { watchDebugSwitch } from "./team-debug";
-import { debugPane } from "./team-debug-route";
-import { userShell } from "./shell";
-import { registerTeamIpc } from "./ipc/team-ipc";
-import { askProjectWindow, askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
-import { confirmPaneRestart, confirmRestart, confirmStoppingProcesses, type RelaunchDeps } from "./relaunch-notes";
-import { foregroundCommand } from "./foreground-command";
-import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
-import { attachSquirrelUpdaterEvents } from "./squirrel-updater-events";
-import { notePathRepaired, presetInstalled } from "./command-probe";
-import type { TeamRunner } from "./team-runner";
-import { openTeamStore } from "./team-store";
-import { startRemoteServer } from "./remote-server";
-import { RemotePtySessions } from "./remote-pty-sessions";
+import { confirmPaneRestart,confirmRestart,confirmStoppingProcesses,type RelaunchDeps } from "./relaunch-notes";
 import { RemoteTerminalClient } from "./remote-client";
+import { RemotePtySessions } from "./remote-pty-sessions";
+import { startRemoteServer } from "./remote-server";
+import { initializeRemoteSessionsOnStartup } from "./remote-session-restore";
 import { RemoteTerminalManager } from "./remote-terminal-manager";
 import { createRemoteTerminalOnSpawned } from "./remote-terminal-project";
-import { initializeRemoteSessionsOnStartup } from "./remote-session-restore";
-import { headCommit, workingTreeState } from "./git";
-import {
-  AYA_HOME,
-  CLI_ADOPTION_FILE,
-  CONTROL_SOCKET_PATH,
-  DIAGNOSTICS_LOG_FILE,
-  IS_DEV,
-  IS_E2E_HEADLESS,
-  IS_E2E_PTY_SHUTDOWN,
-  SPAWN_PREP_DELAY_MS,
-  PTY_HOST_SOCKET_PATH,
-  REMOTE_SOCKET_PATH,
-  REACHED_AYA_FILE,
-  PANE_LAUNCH_ROLES_FILE,
-  AGENT_BRIEF_FILES_FILE,
-} from "./paths";
-import { installHeadlessUiRouter } from "./e2e-headless-ui";
-import { createPtyLog } from "./pty-log";
-import { createPtyDataCoalescer } from "./pty-event-coalescer";
-import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
-import { watchOmarchyTheme } from "./omarchy";
-import { openExternalUrl } from "./navigation";
-import { listPresets, type AgentKind } from "./presets";
+import { userShell } from "./shell";
+import { repairProcessPath,resolveLoginShellPath } from "./shell-path";
+import { homeSocketProblems } from "./socket-path";
+import { createSpawnGate } from "./spawn-gate";
+import { attachSquirrelUpdaterEvents } from "./squirrel-updater-events";
+import { migrateStatusHookCommand,refreshStatusHookScript } from "./status-hook";
+import { refreshStatusCodexHookScript } from "./status-hook-codex";
+import { withLaunchHolds,withSpawnHolds,type TeamControlDeps } from "./team-control";
+import { watchDebugSwitch } from "./team-debug";
+import { debugPane } from "./team-debug-route";
+import { askProjectWindow,askWindowToOpenPanes,newPaneId,paneAliveOf,presetAgent,RendererRequests,teamPaneDeps,type PaneHost } from "./team-panes";
+import type { TeamRunner } from "./team-runner";
+import { openTeamStore } from "./team-store";
+import type {
+	ControlStatusUpdate,
+	PtyEvent,
+	SpawnRequest,
+} from "./types";
+import { UPDATE_SPAWN_REFUSAL } from "./update-spawn";
+import { createUpdates,UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { expandUserPath } from "./usage";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
-import { refreshUsageHookScript, usageHookStatus } from "./usage-hook";
-import { refreshStatusHookScript, migrateStatusHookCommand } from "./status-hook";
-import { refreshStatusCodexHookScript } from "./status-hook-codex";
-import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
-import { paneReadText } from "./pane-render";
-import { PtyHostClient, waitForExit } from "./pty-host-client";
-import { MAX_PTY_PANES, paneLimitFailureMessage } from "./pty-pane-limits";
-import { homeSocketProblems } from "./socket-path";
-import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
-import { liveHostRecordsAsync, reapStaleHostRecords } from "./pty-host-registry";
-import { ownerProcessStartIdentity } from "./pty-owner-client";
-import { createPtyHostHealth, probeSocketPid } from "./pty-host-health";
-import { HOOK_VIA } from "./constants";
-import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
-import { withSharedDirCommand } from "./agent-session";
-import { loadWindowState, trackWindowState } from "./window-state";
-import { createWindowProjectState } from "./window-slices";
-import { loadWebConfig, saveWebConfig } from "./web-config";
-import { captureIpcHandlers } from "./ipc/web-capture";
-import { registerEnvIpc } from "./ipc/env-ipc";
-import { registerGitStatusQuitGuard } from "./git-status-quit";
-import { registerDiffCommentsIpc } from "./ipc/diff-comments-ipc";
-import { registerBoardIpc } from "./ipc/board-ipc";
-import { onBoardChanged } from "./board";
-import { registerCiChecksIpc } from "./ipc/ci-checks-ipc";
-import { registerWindowIpc } from "./ipc/window-ipc";
-import { registerSystemIpc } from "./ipc/system-ipc";
-import { registerUsageIpc } from "./ipc/usage-ipc";
-import { registerSettingsIpc } from "./ipc/settings-ipc";
-import { registerRemoteIpc } from "./ipc/remote-ipc";
-import { registerProjectsIpc } from "./ipc/projects-ipc";
-import { createAyaWeb, registerAyaWebIpc } from "./ipc/aya-web-ipc";
-import { registerPtyIpc } from "./ipc/pty-ipc";
-import { registerPromptAttachmentIpc } from "./ipc/prompt-attachments-ipc";
+import { refreshUsageHookScript,usageHookStatus } from "./usage-hook";
+import { loadWebConfig,saveWebConfig } from "./web-config";
 import { startWebServer } from "./web-server";
-import {
-  appleHelperPath,
-  normalizeAyaIntelligenceConfig,
-  ollamaStatus,
-  pullOllamaModel,
-  summarizeLocal,
-  validateLocalSummaryRequest,
-  validateOllamaModelName,
-} from "./aya-intelligence";
-import { quietWhenTesting, restartDialog } from "./native-ui-text";
-import { UPDATE_SPAWN_REFUSAL } from "./update-spawn";
-import type {
-  ControlStatusUpdate,
-  PtyEvent,
-  SpawnRequest,
-} from "./types";
+import { createWindowProjectState } from "./window-slices";
+import { loadWindowState,trackWindowState } from "./window-state";
+import { createAyaWindows } from "./windows";
 
 registerWidgetScheme();
 const headlessWindowOptions = installHeadlessUiRouter({ env: process.env, app, dialog, BrowserWindow, Notification, ipcMain });
@@ -181,9 +181,9 @@ const MAX_KEYBOARD_PROJECTS = 9;
 const COLOR_DARK_BG = "#0d1117";
 const COLOR_LIGHT_TEXT = "#f0f6fc";
 
-import {PlannedUpdate} from "./pty-planned-update";
-import {HandoverDisplays} from "./pty-handover-display";
-import {InstalledBuild,installedBuildFile} from "./installed-build";
+import { InstalledBuild,installedBuildFile } from "./installed-build";
+import { HandoverDisplays } from "./pty-handover-display";
+import { PlannedUpdate } from "./pty-planned-update";
 
 configureAppIdentity();
 
@@ -209,7 +209,7 @@ if (!app.requestSingleInstanceLock()) {
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
 const installedBuild = new InstalledBuild(installedBuildFile(PTY_HOST_SCRIPT));
-const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
+const diagnosticsLog = createAsyncPtyLog(DIAGNOSTICS_LOG_FILE);
 builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
 const builtinState = builtinScreenRules.get();
 const builtinRuleSet: ScreenRuleSet = builtinState.available ? builtinState.rules : {
@@ -1314,6 +1314,10 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length > 0) return;
     createWindowOnce().catch((err) => console.warn("[aya] could not create a window:", err));
   });
+}).catch(error => {
+  console.error("Aya startup failed", error);
+  dialog.showErrorBox("Aya could not start", error instanceof Error ? error.message : String(error));
+  app.quit();
 });
 
 app.on("window-all-closed", () => {

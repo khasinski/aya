@@ -10,22 +10,10 @@ import { isSplitNode as commonIsSplitNode } from "../shared/split-node.cjs";
 // never generates its own ids (callers pass them in), so the whole layout
 // algebra is testable without a renderer.
 
+import type { SplitNode } from "../shared/split-node.cjs";
 import type { ProjectConfig } from "./types";
+export type { SplitNode } from "../shared/split-node.cjs";
 
-/** `direction` uses flexbox meaning: "row" places the two children side by
- *  side (a vertical divider — "split right"), "column" stacks them (a
- *  horizontal divider — "split below"). */
-export type SplitNode =
-  | { kind: "leaf"; id: string; terminalId: string | null }
-  | {
-      kind: "split";
-      id: string;
-      direction: "row" | "column";
-      /** Fraction of the parent given to `first`, in (0, 1). */
-      ratio: number;
-      first: SplitNode;
-      second: SplitNode;
-    };
 
 /** Panes are capped at what the old 5x5 grid allowed, so a layout can't grow
  *  unbounded through repeated splits. */

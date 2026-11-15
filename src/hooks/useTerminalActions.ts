@@ -1,22 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { terminalKillRefusal } from "../terminal-kill-refusal";
-import type { Dispatch, RefObject, SetStateAction } from "react";
-import { clearedTerminalStatus } from "../pty-event-reducer";
-import { clearMountDecision, forgetSpawn, releaseSpawn, wasSpawned } from "../spawnSession";
+import type { Dispatch,RefObject,SetStateAction } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
-import { defaultTabName, findProject, remoteTerminalCommand } from "../project-helpers";
-import { projectBaseCwd, tabFromTerminal } from "../worktree";
+import { PRESET_ID_BOARD,PRESET_ID_SHELL } from "../preset-ids";
+import { defaultTabName,findProject,remoteTerminalCommand } from "../project-helpers";
+import { clearedTerminalStatus } from "../pty-event-reducer";
+import { clearMountDecision,forgetSpawn,releaseSpawn,wasSpawned } from "../spawnSession";
 import {
-  assignTerminal,
-  compactTree,
-  normalizeTreeForTabs,
-  projectSplitTree,
-  resolveActiveLeafId,
+	assignTerminal,
+	compactTree,
+	normalizeTreeForTabs,
+	projectSplitTree,
+	resolveActiveLeafId,
 } from "../split-tree";
-import { PRESET_ID_BOARD, PRESET_ID_SHELL } from "../preset-ids";
-import { nextActiveTerminalId, projectLaunchCwd, shellPresetForTab } from "../terminal-actions";
+import { nextActiveTerminalId,projectLaunchCwd,shellPresetForTab } from "../terminal-actions";
+import { terminalKillRefusal } from "../terminal-kill-refusal";
+import { BUILTIN_BOARD,getPreset,type Preset,type ProjectConfig,type ProjectEvent,type TerminalState,type WorkingTab } from "../types";
 import { uuid } from "../uuid";
-import { BUILTIN_BOARD, getPreset, type Preset, type ProjectConfig, type ProjectEvent, type TerminalState, type WorkingTab } from "../types";
+import { projectBaseCwd,tabFromTerminal } from "../worktree";
 
 interface TerminalActionsOptions {
   projectFallbacks: Record<string, string>;
@@ -303,7 +303,7 @@ export function useTerminalActions({
     setTerminals((prev) => {
         const next = { ...prev };
         delete next[id];
-        persistProject(t.projectSlug, next);
+        void persistProject(t.projectSlug, next).catch(error => console.error("Could not save terminal changes", error));
         return next;
       });
     },
@@ -370,7 +370,7 @@ export function useTerminalActions({
         const t = prev[id];
         if (!t) return prev;
         const next = { ...prev, [id]: { ...t, name } };
-        persistProject(t.projectSlug, next);
+        void persistProject(t.projectSlug, next).catch(error => console.error("Could not save terminal changes", error));
         if (typeof window.aya.syncBoardPaneName === "function") {
           void window.aya.syncBoardPaneName({ projectSlug: t.projectSlug, paneId: id, paneName: name }).catch(() => {});
         }

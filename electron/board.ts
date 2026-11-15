@@ -1,3 +1,5 @@
+import type { KanbanCard,KanbanClaim,KanbanColumn,KanbanPriority } from '../shared/ipc-types';
+export type { KanbanCard,KanbanClaim,KanbanColumn,KanbanPriority } from '../shared/ipc-types';
 // Per-project Kanban board store and `aya board` CLI handler.
 //
 // Storage priority:
@@ -5,15 +7,15 @@
 // 2. `<ayaHome>/boards/<project.slug>.json` in the user's Aya config directory.
 
 import { randomBytes } from "node:crypto";
-import { constants, promises as fs } from "node:fs";
+import { constants,promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { displayBoardNotices,type BoardNotice } from "./board-notices";
 import { oneAtATime } from "./keyed-queue";
-import { PROJECT_AYA_DIRNAME } from "./paths";
-import { slugifyName } from "./text";
-import { callerProject } from "./team-author";
-import { displayBoardNotices, type BoardNotice } from "./board-notices";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
+import { PROJECT_AYA_DIRNAME } from "./paths";
+import { callerProject } from "./team-author";
+import { slugifyName } from "./text";
 import type { ProjectConfig } from "./types";
 
 export const BOARDS_DIR_NAME = "boards";
@@ -36,40 +38,12 @@ const ID_RE = /^[a-z0-9_-]{1,64}$/i;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const serial = oneAtATime();
 
-export type KanbanPriority = "low" | "medium" | "high" | "urgent";
-
 export const VALID_KANBAN_PRIORITIES: readonly KanbanPriority[] = [
   "low",
   "medium",
   "high",
   "urgent",
 ];
-
-export interface KanbanColumn {
-  id: string;
-  title: string;
-}
-
-export interface KanbanClaim {
-  paneId?: string;
-  paneName: string;
-  since: string;
-  startup?: "reserved" | "sending" | "sent";
-}
-
-export interface KanbanCard {
-  id: string;
-  columnId: string;
-  title: string;
-  description?: string;
-  assignee?: string;
-  priority?: KanbanPriority;
-  labels?: string[];
-  claim?: KanbanClaim;
-  archivedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface BoardSnapshot {
   version: 1;

@@ -1,19 +1,22 @@
 import { createHash } from 'node:crypto';
-import { readdir, stat, unlink } from 'node:fs/promises';
+import { readdir,stat,unlink } from 'node:fs/promises';
 import * as path from 'node:path';
-import { AYA_HOME } from './paths';
+import type { DeferredGuiArtifact,GuiArtifact } from '../shared/codex-gui';
 import { writeFileAtomic } from './atomic-write';
-import { readStoredJson, readStoredText } from './stored-json';
-import { LatestSnapshotWriter } from './latest-snapshot-writer';
 import { mapConcurrent } from './bounded-map';
-import type { DeferredGuiArtifact, GuiArtifact } from '../shared/codex-gui';
 import { collectUnusedArtifactMedia } from './gui-artifact-media';
+import { invalidateStoredMessages, loadMessages,messageDirectory,messageHashes,storeMessages } from './gui-message-store';
+import { LatestSnapshotWriter } from './latest-snapshot-writer';
+import { AYA_HOME } from './paths';
+import { readStoredJson,readStoredText } from './stored-json';
 export interface ConversationSnapshot { cwd: string; configDir?: string; agent?: string; threadId?: string; view?: Record<string, unknown> }
 const writes = new Map<string, Promise<void>>();
 const writers = new Map<string, LatestSnapshotWriter<ConversationSnapshot>>();
 const SNAPSHOT_LIMIT = 32 * 1024 * 1024;
 const ASSET_LIMIT = 32 * 1024 * 1024;
 const activeStorage = new Set<Promise<unknown>>();
+let storageGeneration = 0;
+let deletion: Promise<unknown> | null = null;
 let collection: Promise<{ removed: number; aborted: boolean }> | null = null;
 let collectionScheduled = false;
 let nextCollectionAt = 0;
@@ -27,7 +30,9 @@ export function scheduleConversationAssetCollection() {
   }, 60_000).unref();
 }
 async function withStorageAccess<T>(access: () => Promise<T>): Promise<T> {
-  while (collection) await collection.catch(() => {});
+  // Scanning never blocks users. Only an already-started unlink is exclusive.
+  storageGeneration++;
+  while (deletion) await deletion.catch(() => {});
   const task = access(); activeStorage.add(task);
   try { return await task; } finally { activeStorage.delete(task); }
 }
@@ -110,9 +115,9 @@ export async function loadConversation(id: string, options: { lazyArtifacts?: bo
     const stored = await readStoredJson(file(id), SNAPSHOT_LIMIT) as ConversationSnapshot & { storageVersion?: number };
     if (!stored || typeof stored.cwd !== 'string' || (stored.threadId !== undefined && typeof stored.threadId !== 'string')) throw Error('Invalid conversation snapshot');
     const { storageVersion, ...value } = stored;
-    if (storageVersion !== undefined && storageVersion !== 2) throw Error('Unsupported conversation storage version');
+    if (storageVersion !== undefined && storageVersion !== 2 && storageVersion !== 3) throw Error('Unsupported conversation storage version');
     validateArtifactLayout(value.view);
-    if (storageVersion === 2) {
+    if (storageVersion === 2 || storageVersion === 3) {
       const assets = new Map<string, Promise<unknown>>();
       value.view = await mapArtifacts(value.view, reference => {
         if (options.lazyArtifacts) return Promise.resolve(deferredArtifact(reference));
@@ -123,6 +128,7 @@ export async function loadConversation(id: string, options: { lazyArtifacts?: bo
         return loaded;
       });
     }
+    if (storageVersion === 3) value.view = await loadMessages(value.view);
     return value;
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
     // A missing snapshot is an empty panel; a missing asset must not silently erase an existing conversation.
@@ -138,7 +144,7 @@ export function saveConversation(id: string, value: ConversationSnapshot) {
   if (!writer) {
     writer = new LatestSnapshotWriter(snapshot => withStorageAccess(async () => {
       validateArtifactLayout(snapshot.view);
-      const stored = { ...snapshot, storageVersion: 2, view: await mapArtifacts(snapshot.view, storeArtifact) };
+      const stored = { ...snapshot, storageVersion: 3, view: await storeMessages(await mapArtifacts(snapshot.view, storeArtifact)) };
       const data = JSON.stringify(stored);
       if (Buffer.byteLength(data) > SNAPSHOT_LIMIT) throw Error('Conversation text exceeds the 32 MB local history limit');
       // Referenced assets are fully committed before publishing the new snapshot.
@@ -210,23 +216,36 @@ export async function listConversations(binding: ConversationSnapshot, options: 
     .slice(offset, offset + limit).map(row => ({ id: row.id, threadId: row.threadId, title: row.title, updatedAt: row.updatedAt, current: row.threadId === binding.threadId }));
 }
 
-/** Stop writers only during collection. Never delete a referenced version, and
- * refuse collection if any snapshot cannot be interpreted safely. */
+/** Optimistic mark/sweep: concurrent storage access invalidates this pass.
+ * Only individual deletions exclude readers/writers; the library scan does not. */
 export function collectUnusedConversationAssets(now = Date.now()): Promise<{ removed: number; aborted: boolean }> {
   if (collection) return collection;
   const running = [...activeStorage];
   const task = Promise.resolve().then(async () => {
     await Promise.allSettled(running);
+    const generation = storageGeneration;
+    const changed = () => generation !== storageGeneration || activeStorage.size > 0;
+    const interrupted = new Error('Storage changed during collection');
+    const remove = async (file: string) => {
+      if (changed()) throw interrupted;
+      const pending = unlink(file);
+      deletion = pending;
+      try { await pending; } finally { if (deletion === pending) deletion = null; }
+    };
     const root = path.join(AYA_HOME, 'conversations');
     let names: string[];
     try { names = await readdir(root); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { removed: 0, aborted: false }; throw error; }
     const referenced = new Set<string>();
+    const referencedMessages = new Set<string>();
     try {
       for (const name of names.filter(n => /^[a-f0-9]{64}\.json$/.test(n))) {
         const snapshot = await readStoredJson(path.join(root, name), SNAPSHOT_LIMIT) as ConversationSnapshot & { storageVersion?: number };
-        if (!snapshot || typeof snapshot.cwd !== 'string' || ![undefined, 2].includes(snapshot.storageVersion)) throw Error('Invalid snapshot');
+        if (!snapshot || typeof snapshot.cwd !== 'string' || ![undefined, 2, 3].includes(snapshot.storageVersion)) throw Error('Invalid snapshot');
         validateArtifactLayout(snapshot.view);
-        if (snapshot.storageVersion === 2) await mapArtifacts(snapshot.view, async value => {
+        if (snapshot.storageVersion === 3 && Array.isArray(snapshot.view?.messages)) {
+          for (const ref of snapshot.view.messages) for (const hash of messageHashes(ref)) referencedMessages.add(hash);
+        }
+        if (snapshot.storageVersion === 2 || snapshot.storageVersion === 3) await mapArtifacts(snapshot.view, async value => {
           const hash = (value as ArtifactReference | null)?.$ayaArtifact;
           if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) throw Error('Invalid artifact reference');
           referenced.add(hash); return value;
@@ -237,12 +256,13 @@ export function collectUnusedConversationAssets(now = Date.now()): Promise<{ rem
     try { assets = await readdir(path.join(root, 'assets')); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') assets = []; else throw error; }
     let removed = 0;
     const retainedMedia = new Set<string>();
+    try {
     for (const name of assets.filter(n => /^[a-f0-9]{64}\.json$/.test(n))) {
       const target = path.join(root, 'assets', name);
       try {
         const info = await stat(target);
         if (!referenced.has(name.slice(0, -5)) && now - info.mtimeMs >= 7 * 24 * 60 * 60 * 1000) {
-          await unlink(target); removed++; continue;
+          await remove(target); removed++; continue;
         }
         const artifact = await readStoredJson(target, ASSET_LIMIT) as { media?: { hash?: unknown }[] };
         if (Array.isArray(artifact?.media)) for (const media of artifact.media) {
@@ -250,8 +270,17 @@ export function collectUnusedConversationAssets(now = Date.now()): Promise<{ rem
         }
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
-    removed += await collectUnusedArtifactMedia(retainedMedia, now);
-    return { removed, aborted: false };
+    let messageFiles: string[] = [];
+    try { messageFiles = await readdir(messageDirectory()); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    for (const name of messageFiles.filter(n => /^[a-f0-9]{64}\.json$/.test(n))) {
+      if (referencedMessages.has(name.slice(0, -5))) continue;
+      const target = path.join(messageDirectory(), name);
+      if (now - (await stat(target)).mtimeMs >= 7 * 24 * 60 * 60 * 1000) { invalidateStoredMessages(); await remove(target); removed++; }
+    }
+    if (changed()) return { removed, aborted: true };
+    removed += await collectUnusedArtifactMedia(retainedMedia, now, remove);
+    return { removed, aborted: changed() };
+    } catch (error) { if (error === interrupted) return { removed, aborted: true }; throw error; }
   });
   collection = task;
   void task.finally(() => { if (collection === task) collection = null; }).catch(() => {});

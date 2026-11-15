@@ -72,14 +72,14 @@ test('unreadable or future-version snapshots abort collection without removing a
   await store.saveConversation('panel', { ...binding, view: { artifacts: [{ id: 'a', html: 'keep' }] } });
   await fs.writeFile(snapshotPath('broken'), '{');
   assert.deepEqual(await store.collectUnusedConversationAssets(Date.now() + 9 * 86400_000), { removed: 0, aborted: true });
-  await fs.writeFile(snapshotPath('broken'), JSON.stringify({ ...binding, storageVersion: 3 }));
+  await fs.writeFile(snapshotPath('broken'), JSON.stringify({ ...binding, storageVersion: 4 }));
   assert.deepEqual(await store.collectUnusedConversationAssets(Date.now() + 9 * 86400_000), { removed: 0, aborted: true });
   await fs.writeFile(snapshotPath('broken'), JSON.stringify({ ...binding, storageVersion: 2, view: { artifactHistory: { malformed: {} } } }));
   assert.deepEqual(await store.collectUnusedConversationAssets(Date.now() + 9 * 86400_000), { removed: 0, aborted: true });
   assert.equal((await fs.readdir(path.join(directory, 'assets'))).length, 1);
 });
 
-test('collection waits for active writes and a new save waits for collection', async t => {
+test('collection waits for active writes and preserves a concurrent replacement save', async t => {
   let release, started;
   const writing = new Promise(resolve => { started = resolve; });
   const original = fs.rename.bind(fs);

@@ -45,6 +45,7 @@ test("lifecycle events land in $AYA_HOME/pty-events.log (lazy singleton + wiring
   const req = baseReq({ attachOnly: true });
   await spawnPty(req, sink);
   killPty(req.ptyId); // dead id -> arms the pending-kill marker, logs live:false
+  await (await import("../dist-electron/pty-log.js")).ptyLog.flush();
   const lines = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8")
     .split("\n")
     .filter(Boolean)

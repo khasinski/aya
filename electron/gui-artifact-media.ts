@@ -1,13 +1,13 @@
-import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, open, realpath, rename, unlink, readdir, stat } from 'node:fs/promises';
+import { Parser } from 'htmlparser2';
+import { createHash,randomUUID } from 'node:crypto';
+import { constants,createReadStream,createWriteStream } from 'node:fs';
+import { mkdir,open,readdir,realpath,rename,stat,unlink } from 'node:fs/promises';
 import * as path from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
-import { Transform, Readable } from 'node:stream';
+import { Readable,Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { Parser } from 'htmlparser2';
-import { AYA_HOME } from './paths';
 import type { GuiArtifactMedia } from '../shared/codex-gui';
+import { AYA_HOME } from './paths';
 
 export const MAX_MEDIA_BYTES = 256 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 512 * 1024 * 1024;
@@ -150,7 +150,7 @@ export async function exportArtifactMedia(html: string, media: readonly GuiArtif
   const mapping = Object.fromEntries(media.map(item => [item.name, urls.get(item.hash)]));
   return '<script>window.ayaWidget=Object.freeze({...window.ayaWidget,asset:name=>(' + JSON.stringify(mapping).replace(/</g, '\\u003c') + ')[name]});</script>' + portable;
 }
-export async function collectUnusedArtifactMedia(referenced: Set<string>, now: number): Promise<number> {
+export async function collectUnusedArtifactMedia(referenced: Set<string>, now: number, remove: (file: string) => Promise<unknown> = unlink): Promise<number> {
   const retained = new Set([...referenced, ...[...leases.values()].flatMap(set => [...set])]);
   let names: string[];
   try { names = await readdir(directory()); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw error; }
@@ -159,7 +159,7 @@ export async function collectUnusedArtifactMedia(referenced: Set<string>, now: n
     if (retained.has(name.slice(0, -4))) continue;
     const target = path.join(directory(), name), info = await stat(target);
     if (now - info.mtimeMs < 7 * 24 * 60 * 60 * 1000) continue;
-    await unlink(target); removed++;
+    await remove(target); removed++;
   }
   return removed;
 }

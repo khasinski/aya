@@ -47,7 +47,7 @@ test('large artifact payloads live outside the snapshot, deduplicate revisions a
   await writeFile(snapshotFile('legacy-panel'), JSON.stringify(legacy));
   assert.deepEqual(await loadConversation('legacy-panel'), legacy);
   await saveConversation('legacy-panel', legacy);
-  assert.equal(JSON.parse(await readFile(snapshotFile('legacy-panel'), 'utf8')).storageVersion, 2);
+  assert.equal(JSON.parse(await readFile(snapshotFile('legacy-panel'), 'utf8')).storageVersion, 3);
   assert.deepEqual(await loadConversation('legacy-panel'), legacy);
   const reference = JSON.parse(text).view.artifacts[0].$ayaArtifact;
   await unlink(path.join(directory, 'assets', reference + '.json'));

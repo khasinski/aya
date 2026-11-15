@@ -1,3 +1,5 @@
+import type { Snippet } from '../shared/ipc-types';
+export type { Snippet } from '../shared/ipc-types';
 // Saved snippets — reusable text the user injects into the active terminal on
 // demand. Stored at ~/.aya/snippets.json.
 //
@@ -15,15 +17,6 @@
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { SNIPPETS_FILE } from "./paths";
-
-export interface Snippet {
-  id: string;
-  name: string;
-  /** Literal text written to the PTY. */
-  text: string;
-  /** When true, Aya appends "\r" so the text runs immediately. */
-  autoRun: boolean;
-}
 
 /** The one snippet-count rule: saves above it are refused, reads are capped. */
 export const SNIPPETS_MAX = 200;

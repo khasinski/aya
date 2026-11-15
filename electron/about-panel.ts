@@ -1,6 +1,6 @@
 // The native macOS About panel and the custom panel used in dev and on other platforms.
 
-import type { App, BrowserWindow, BrowserWindowConstructorOptions } from "electron";
+import type { App,BrowserWindow,BrowserWindowConstructorOptions } from "electron";
 import { readFileSync } from "node:fs";
 
 // About dialog window dimensions (square, px)
@@ -121,7 +121,7 @@ export function showAyaAboutPanel(deps: AboutPanelDeps): void {
     </main>
   </body>
 </html>`;
-  about.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  void about.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(error => console.error("Could not load About window", error));
   about.once("ready-to-show", () => about.show());
 }
 

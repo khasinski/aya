@@ -1,3 +1,5 @@
+import type { AgentKind,Preset } from "../shared/project-team-types";
+export type { AgentKind,Preset } from "../shared/project-team-types";
 // Terminal presets (Claude / Codex / Shell / user-defined).
 //
 // Stored at ~/.aya/presets.json. On first launch we seed the file with the
@@ -12,46 +14,6 @@ import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { probeHarnesses } from "./harnesses";
 import { PRESETS_FILE } from "./paths";
-
-/** Agent CLIs Aya knows how to classify and resume. "custom" is anything
- *  else — a plain shell, a script, an agent we have no resume story for.
- *  Mirrored in src/types.ts; keep the two in sync. */
-export type AgentKind =
-  | "claude"
-  | "codex"
-  | "opencode"
-  | "kilo"
-  | "pi"
-  | "cursor"
-  | "copilot"
-  | "grok"
-  | "droid"
-  | "devin"
-  | "kimi"
-  | "hermes"
-  | "qodercli"
-  | "antigravity"
-  | "custom";
-
-export interface Preset {
-  interfaceMode?: "terminal" | "gui";
-  id: string;
-  name: string;
-  icon: string;
-  color: string; // CSS hex like "#d97757" or "" for the default neutral
-  command: string;
-  agent?: AgentKind;
-  configDir?: string;
-  unsafeMode?: boolean;
-  autoResume?: boolean;
-  /** Opt-in: tell the agent that `aya` exists, through its harness's channel
-   *  (electron/agent-brief.ts). Harnesses without a channel ignore it. */
-  agentBrief?: boolean;
-  /** Optional override. If set, terminals spawned from this preset render
-   *  with the matching theme instead of the global active theme. Empty
-   *  string and undefined both mean "use the default". */
-  themeId?: string;
-}
 
 export const DEFAULT_PRESETS: readonly Preset[] = [
   {

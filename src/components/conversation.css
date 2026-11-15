@@ -246,8 +246,6 @@
 
 /* Keep history searchable/selectable in the DOM while skipping off-screen
    layout and paint. Remember measured heights to preserve scroll anchoring. */
-.aya-gui-message-content>article{content-visibility:auto;contain-intrinsic-size:auto 180px}
-.aya-gui-message-content>article:nth-last-of-type(-n+3){content-visibility:visible;contain-intrinsic-size:none}
 
 .aya-gui-body form > .aya-gui-request, .aya-gui-body form > .aya-gui-question-card { margin: 0 0 12px; }
 .aya-gui-request-actions button[data-primary] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
@@ -306,3 +304,31 @@
   .aya-gui-enter-hint { display:none!important; }
   .aya-gui-compose-footer select { max-width:130px; }
 }
+
+/* A single action row follows the pane width, including narrow split panes. */
+.aya-gui-compose-footer { flex-wrap: nowrap; gap: 6px; min-width: 0; }
+.aya-gui-compose-footer > :is(button,.aya-gui-context) { flex-shrink: 0; white-space: nowrap; }
+.aya-gui-compose-footer .aya-gui-enter-hint { display: none; }
+.aya-composer-options { position: relative; flex: 1; min-width: 32px; }
+.aya-gui-compose-footer .aya-composer-options-trigger { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 32px; padding: 0 8px; background: transparent; }
+.aya-composer-options-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aya-composer-options-chevron { flex: none; color: var(--fg-tertiary); }
+.aya-composer-options-trigger[data-active] { color: var(--accent); }
+.aya-composer-options-panel { position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 8; box-sizing: border-box; width: 300px; max-width: calc(100cqw - 100px); max-height: min(420px,60vh); overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); box-shadow: 0 8px 30px #0005; }
+.aya-composer-options-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.aya-composer-options-panel label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--fg-secondary); }
+.aya-gui-compose-footer .aya-composer-options-panel select { width: 100%; max-width: none; background: var(--bg); }
+.aya-composer-options-panel > small { color: var(--fg-tertiary); font-size: 10px; }
+.aya-composer-options-toggles { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+@container (max-width: 520px) {
+  .aya-gui-compose-footer { gap: 4px; }
+  .aya-gui-compose-footer > button { padding: 0 7px; }
+  .aya-gui-context-label, .aya-gui-steer-secondary, .aya-composer-options-chevron { display: none; }
+  .aya-gui-compose-footer .aya-gui-context-button { width: 32px; padding: 0; }
+}
+@container (max-width: 300px) {
+  .aya-composer-options-summary { display: none; }
+  .aya-gui-compose-footer .aya-composer-options-trigger { width: 32px; padding: 0; justify-content: center; }
+}
+
+.aya-gui-compose-footer .aya-composer-options-panel .aya-gui-enter-hint { display: block !important; white-space: normal; line-height: 1.5; }

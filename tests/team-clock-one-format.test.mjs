@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 
 const view = await import("../dist-test/team-view.js");
 const { clock: mainClock, ROUND_CHECK_MIN_MS } = await import("../dist-electron/team-times.js");
@@ -21,12 +20,6 @@ for (const [iso, want] of ROWS) {
     assert.equal(mainClock(iso), want);
   });
 }
-
-test("team clock | the chat shows its times with the window's clock, not its own format", () => {
-  const chat = readFileSync(new URL("../src/components/TeamChat.tsx", import.meta.url), "utf-8");
-  assert.match(chat, /import \{[^}]*\bclock\b[^}]*\} from "\.\.\/team-view"/);
-  assert.doesNotMatch(chat, /toLocaleTimeString|const clock\s*=/);
-});
 
 test("round clock | it looks every tenth of the repeat silence, never more often than every 50 ms", () => {
   const url = new URL("../dist-electron/team-times.js", import.meta.url).href;

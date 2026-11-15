@@ -1,27 +1,14 @@
+import type { GpuLoad,LoadedModel } from '../shared/ipc-types';
+export type { GpuLoad,LoadedModel } from '../shared/ipc-types';
 // Read-only probes of a machine for `aya machines` (docs/machines.md).
 
-import { lastStderrLine, requireSshTarget, runProcess, runSsh, sshFailure } from "./ssh";
 import type { ApiState } from "./machines-api";
+import { lastStderrLine,requireSshTarget,runProcess,runSsh,sshFailure } from "./ssh";
 
 export const PROBE_DEADLINE_MS = 10_000;
 const MAX_PROBE_OUTPUT_BYTES = 1_000_000;
 // Ollama's keep_alive -1 shows an expiry this far out; anything later reads as pinned.
 const PINNED_AFTER_YEAR = 2100;
-
-export interface GpuLoad {
-  name: string;
-  utilPct: number | null;
-  memUsedMiB: number | null;
-  memTotalMiB: number | null;
-}
-
-export interface LoadedModel {
-  name: string;
-  /** Ollama's /api/ps size_vram, which can understate actual GPU memory use. */
-  vramBytes: number | null;
-  expiresAt: string | null;
-  pinned: boolean;
-}
 
 export interface OllamaState {
   up: boolean;
