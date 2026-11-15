@@ -542,6 +542,8 @@ let quitConfirmed = false;
 let quitConfirmPending = false;
 let ordinaryQuitAnnounced = false;
 let ordinaryQuitAnnouncementPending = false;
+let quitDiagnosticsFlushed = false;
+let quitDiagnosticsFlushPending = false;
 
 const ayaWeb = createAyaWeb({
   watchConfig: notify => startConfigWatcher({ isDestroyed: () => false, webContents: { send: (_channel, value) => notify(value.slice) } }),
@@ -1373,6 +1375,25 @@ app.on("before-quit", (event) => {
         return ok;
       }).finally(()=>{
         ordinaryQuitAnnounced=true;ordinaryQuitAnnouncementPending=false;app.quit();
+      });
+    }
+    return;
+  }
+  // The installed-build handover logs immediately before retrying app.quit().
+  // Give those async writes a bounded chance to finish before main exits.
+  if (!quitDiagnosticsFlushed) {
+    event.preventDefault();
+    if (!quitDiagnosticsFlushPending) {
+      quitDiagnosticsFlushPending = true;
+      let timer: ReturnType<typeof setTimeout>;
+      void Promise.race([
+        diagnosticsLog.flush(),
+        new Promise<void>(resolve => { timer = setTimeout(resolve, 500); }),
+      ]).finally(() => {
+        clearTimeout(timer);
+        quitDiagnosticsFlushed = true;
+        quitDiagnosticsFlushPending = false;
+        app.quit();
       });
     }
     return;
