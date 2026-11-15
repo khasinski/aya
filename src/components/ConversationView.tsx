@@ -10,6 +10,7 @@ import type { GuiProgress } from '../../shared/gui-progress';
 import { guiSupportedAgent } from '../agentPreset';
 import { appendMessageDeltas,createTextDeltaBuffer,scheduleConversationFrame } from '../conversation-deltas';
 import { conversationSaveDelay } from '../conversation-save-delay';
+import { movedUpFromFollowedPosition, wheelTargetsConversation } from '../conversation-scroll';
 import { activityDuration,activityKind,activityPhases,phaseText,shortDuration,type ActivityKind } from '../gui-activity';
 import { followUpHint,parseFollowUpPreference,pasteBecomesAttachment,recallStep,sendAction,sendLabel,sentPromptText,stashStep,withQuote,type FollowUpPreference,type Recall } from '../gui-composer';
 import { reviewCommentsBlock,terminalExcerptBlock,withContextBlock } from '../gui-context';
@@ -162,6 +163,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const [showJump, setShowJump] = useState(false);
   const follow = useRef(true);
   const lastFollowTop = useRef<number | null>(null);
+  const followHeld = useRef(false);
   const scrollViewport = useRef<HTMLDivElement>(null);
   const scrollContent = useRef<HTMLDivElement>(null);
   const dispatching = useRef(false);
@@ -198,9 +200,11 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const planWasOn = useRef(false);   // leaving plan mode must be said to Codex once
   const [findQuery, setFindQuery] = useState('');
   const [findIndex, setFindIndex] = useState(-1);
+  const [findNavigationRevision, setFindNavigationRevision] = useState(0);
+  const navigateFind = (index: number) => { setFindIndex(index); setFindNavigationRevision(n => n + 1); };
   const [findCount, setFindCount] = useState(0);
   const findInput = useRef<HTMLInputElement>(null);
-  const findRanges = useRef<Range[]>([]);
+  const findTarget = useRef<Element | null>(null);
   const messagesRoot = useRef<HTMLDivElement | null>(null);
   const [stash, setStashValue] = useState<string[]>(() => { try { const saved: unknown = JSON.parse(localStorage.getItem(guiStashKey(terminal.id)) || '[]'); return Array.isArray(saved) ? saved.filter((v): v is string => typeof v === 'string').slice(-20) : []; } catch { return []; } });
   const setStash = (next: string[]) => { setStashValue(next); try { if (next.length) localStorage.setItem(guiStashKey(terminal.id), JSON.stringify(next)); else localStorage.removeItem(guiStashKey(terminal.id)); } catch { /* kept until reload */ } };
@@ -477,7 +481,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       // A user scroll can change scrollTop before its scroll event runs. Do
       // not overwrite it when a streaming update commits in that interval.
       // A lower maximum means the browser clamped the position after a resize.
-      if (previousTop !== null && viewport.scrollTop < previousTop - 4 && maxTop >= previousTop - 4 && maxTop - viewport.scrollTop >= 80) {
+      if (movedUpFromFollowedPosition(viewport.scrollTop, maxTop, previousTop)) {
         follow.current = false;
         setShowJump(true);
         return;
@@ -487,18 +491,38 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       setShowJump(false);
     }
   }, []);
+  const pauseFollowing = useCallback(() => {
+    followHeld.current = true;
+    follow.current = false;
+    setShowJump(true);
+  }, []);
+  const resumeFollowing = useCallback(() => {
+    followHeld.current = false;
+    follow.current = true;
+    lastFollowTop.current = null;
+    setShowJump(false);
+    scrollToLatest();
+  }, [scrollToLatest]);
   useEffect(() => { if (findOpen) { findInput.current?.focus(); findInput.current?.select(); } }, [findOpen]);
   useEffect(() => {
-    if (!findOpen || !messagesRoot.current) { paintFind([], -1); findRanges.current = []; setFindCount(0); return; }
+    if (!findOpen || !messagesRoot.current) { paintFind([], -1); findTarget.current = null; setFindCount(0); return; }
     const ranges = collectFindRanges(messagesRoot.current, findQuery);
-    findRanges.current = ranges;
     setFindCount(ranges.length);
     const index = ranges.length === 0 ? -1 : Math.min(Math.max(findIndex, 0), ranges.length - 1);
     if (index !== findIndex) setFindIndex(index);
     paintFind(ranges, index);
-    ranges[index]?.startContainer.parentElement?.scrollIntoView({ block: 'center' });
+    findTarget.current = ranges[index]?.startContainer.parentElement ?? null;
     return () => paintFind([], -1);
   }, [findOpen, findQuery, findIndex, messages, activities]);
+  // Streaming repaints the highlights, but only a search/navigation action
+  // should move the reader. Keep that action separate from content updates.
+  useEffect(() => {
+    if (!findOpen) return;
+    const match = findTarget.current;
+    if (!match) return;
+    pauseFollowing();
+    match.scrollIntoView({ block: 'center' });
+  }, [findOpen, findNavigationRevision, pauseFollowing]);
   const reportedStatus = useRef<GuiPaneStatus | null>(null);
   const turnRanHere = useRef(false);   // a turn restored from disk is history, not news
   useEffect(() => {
@@ -586,7 +610,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     dispatching.current = true;
     if (queuedId) setPendingQueuedId(queuedId);
     const sentAtTurnRevision = turnRevision.current;
-    setBusy(true); setTurnOutcome(null); setActivities([]); if (followSent) { follow.current = true; lastFollowTop.current = null; }
+    setBusy(true); setTurnOutcome(null); setActivities([]); if (followSent) { followHeld.current = false; follow.current = true; lastFollowTop.current = null; }
     const messageId = crypto.randomUUID();
     setMessages(old => [...old, { id: messageId, type: 'user', delivery: 'sending', text: text + (files.length ? `\n\n${files.map(a => `📎 ${a.name}`).join(' · ')}` : '') }]);
     try {
@@ -748,10 +772,23 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       <button className="aya-gui-icon-button" disabled={goalPending} aria-label="Clear goal" title="Clear goal" onClick={() => void command('goal', 'clear').catch(fail)}><span className="aya-gui-icon" aria-hidden="true">close</span></button>
     </div>}
     {goalDetails?.status === 'blocked' && <div className="aya-gui-goal-reason" aria-label="Goal block reason"><strong>Why blocked</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{goalDetails.reason || 'The agent did not provide a reason. Ask it what is blocking this goal.'}</ReactMarkdown></div>}
-    <div className="aya-gui-body"><main>{findOpen && <div className="aya-gui-find" role="search"><input ref={findInput} type="search" aria-label="Find in conversation" placeholder="Find in conversation" value={findQuery} onChange={e => { setFindQuery(e.target.value); setFindIndex(0); }} onKeyDown={e => {
+    <div className="aya-gui-body"><main>{findOpen && <div className="aya-gui-find" role="search"><input ref={findInput} type="search" aria-label="Find in conversation" placeholder="Find in conversation" value={findQuery} onChange={e => { setFindQuery(e.target.value); navigateFind(0); }} onKeyDown={e => {
         if (e.key === 'Escape') { e.preventDefault(); onCloseFind?.(); composer.current?.focus(); }
-        else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); setFindIndex(stepMatch(findIndex, findCount, e.shiftKey ? -1 : 1)); }
-      }} /><small role="status" aria-label="Find results">{findStatus(findQuery, findIndex, findCount)}</small><button type="button" aria-label="Previous match" disabled={!findCount} onClick={() => setFindIndex(stepMatch(findIndex, findCount, -1))}>↑</button><button type="button" aria-label="Next match" disabled={!findCount} onClick={() => setFindIndex(stepMatch(findIndex, findCount, 1))}>↓</button><button type="button" aria-label="Close find" onClick={() => { onCloseFind?.(); composer.current?.focus(); }}>×</button></div>}<div className="aya-gui-scroll-area"><div ref={node => { scrollViewport.current = node; messagesRoot.current = node; }} onMouseUp={() => { const selection = window.getSelection(); const text = selection?.toString() ?? ''; const node = selection?.anchorNode; const inside = node && (node instanceof Element ? node : node.parentElement)?.closest('article.assistant'); if (!selection || selection.isCollapsed || !text.trim() || !inside) { setQuote(null); return; } const rect = selection.getRangeAt(0).getBoundingClientRect(); setQuote({ text, left: Math.max(8, rect.right - 110), top: rect.bottom + 6 }); }} className="aya-gui-messages" aria-label={`Conversation with ${agentLabel}`} onScroll={e => { const node = e.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; if (follow.current) lastFollowTop.current = node.scrollTop; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
+        else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); navigateFind(stepMatch(findIndex, findCount, e.shiftKey ? -1 : 1)); }
+      }} /><small role="status" aria-label="Find results">{findStatus(findQuery, findIndex, findCount)}</small><button type="button" aria-label="Previous match" disabled={!findCount} onClick={() => navigateFind(stepMatch(findIndex, findCount, -1))}>↑</button><button type="button" aria-label="Next match" disabled={!findCount} onClick={() => navigateFind(stepMatch(findIndex, findCount, 1))}>↓</button><button type="button" aria-label="Close find" onClick={() => { onCloseFind?.(); composer.current?.focus(); }}>×</button></div>}<div className="aya-gui-scroll-area"><div ref={node => { scrollViewport.current = node; messagesRoot.current = node; }} onMouseUp={() => { const selection = window.getSelection(); const text = selection?.toString() ?? ''; const node = selection?.anchorNode; const inside = node && (node instanceof Element ? node : node.parentElement)?.closest('article.assistant'); if (!selection || selection.isCollapsed || !text.trim() || !inside) { setQuote(null); return; } const rect = selection.getRangeAt(0).getBoundingClientRect(); setQuote({ text, left: Math.max(8, rect.right - 110), top: rect.bottom + 6 }); }} className="aya-gui-messages" tabIndex={0} aria-label={`Conversation with ${agentLabel}`} onWheel={e => {
+        if (e.ctrlKey || !e.deltaY || !wheelTargetsConversation(e.target, e.currentTarget, e.deltaY)) return;
+        if (e.deltaY < 0) pauseFollowing();
+        else followHeld.current = false;
+      }} onPointerDown={() => { followHeld.current = false; }} onTouchStart={() => { followHeld.current = false; }} onKeyDown={e => {
+        const target = e.target;
+        if (e.defaultPrevented || !(target instanceof HTMLElement) || target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+        if (e.key === 'End' && !e.shiftKey && !e.altKey && wheelTargetsConversation(target, e.currentTarget, 1)) {
+          e.preventDefault();
+          resumeFollowing();
+          return;
+        }
+        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) followHeld.current = false;
+      }} onScroll={e => { const node = e.currentTarget; const maximum = Math.max(0, node.scrollHeight - node.clientHeight); follow.current = !followHeld.current && maximum - node.scrollTop < 80 && !movedUpFromFollowedPosition(node.scrollTop, maximum, lastFollowTop.current); if (follow.current) lastFollowTop.current = node.scrollTop; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {messages.map((m, index) => (
         <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= messages.length - 12} keepMounted={Boolean(m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length)} findOpen={findOpen}>
@@ -761,6 +798,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
           agentLabel={agentLabel}
           queuedAnswer={queue.find(item => item.questionAnswer?.messageId === m.id)?.questionAnswer?.answers}
           loadConversationImage={loadConversationImage}
+          onExpandPlan={pauseFollowing}
           onAnswerMessageQuestions={handleAnswerMessageQuestions}
           onImplementPlan={m.id === messages[messages.length - 1]?.id && !busy && ready ? () => { setPlanMode(false); void send('Implement the plan.'); } : undefined}
         /></WindowedMessage>
@@ -771,7 +809,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
       </div><ConversationTurnTimer busy={busy} hidden={hidden} /></div>}
     </div></div>
-    {showJump && <button className="aya-gui-jump" onClick={() => { follow.current = true; lastFollowTop.current = null; setShowJump(false); scrollToLatest(); }}>Jump to latest ↓</button>}</div>
+    {showJump && <button className="aya-gui-jump" onClick={resumeFollowing}>Jump to latest ↓</button>}</div>
     {side && <aside className="aya-gui-side"><button aria-label="Close side question" onClick={() => { setSide(''); setSideQuestion(''); }}>×</button><strong>Side question</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
@@ -905,7 +943,7 @@ function paintFind(ranges: Range[], current: number) {
 }
 
 /** A plan the agent proposed in plan mode: collapsed when long, copyable, with a button that carries it out. */
-function PlanCard({ text, loadImage, onImplement }: { text: string; loadImage: (path: string) => Promise<unknown>; onImplement?: () => void }) {
+function PlanCard({ text, loadImage, onImplement, onExpand }: { text: string; loadImage: (path: string) => Promise<unknown>; onImplement?: () => void; onExpand: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const lines = text.split('\n');
@@ -917,7 +955,7 @@ function PlanCard({ text, loadImage, onImplement }: { text: string; loadImage: (
     </header>
     <ConversationMarkdown text={shown} loadImage={loadImage} />
     <footer>
-      {long && <button type="button" onClick={() => setExpanded(value => !value)}>{expanded ? 'Show less' : 'Show all'}</button>}
+      {long && <button type="button" onClick={() => { if (!expanded) onExpand(); setExpanded(value => !value); }}>{expanded ? 'Show less' : 'Show all'}</button>}
       {onImplement && <button type="button" className="aya-gui-send" onClick={onImplement}>Implement this plan</button>}
     </footer>
   </article>;
@@ -930,6 +968,7 @@ const ConversationMessageItem = memo(function ConversationMessageItem({
   loadConversationImage,
   onAnswerMessageQuestions,
   onImplementPlan,
+  onExpandPlan,
 }: {
   message: Message;
   agentBadge: string;
@@ -942,8 +981,9 @@ const ConversationMessageItem = memo(function ConversationMessageItem({
     answers: Record<string, string>,
   ) => Promise<void>;
   onImplementPlan?: () => void;
+  onExpandPlan: () => void;
 }) {
-  if (m.kind === 'plan') return <PlanCard text={m.text} loadImage={loadConversationImage} onImplement={onImplementPlan} />;
+  if (m.kind === 'plan') return <PlanCard text={m.text} loadImage={loadConversationImage} onImplement={onImplementPlan} onExpand={onExpandPlan} />;
   if (m.type === 'progress' && m.progress) {
     return m.progress.status === 'running' ? null : <TaskProgress progress={m.progress} />;
   }
