@@ -2,15 +2,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import * as net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const cli = resolve("bin/aya");
 
-async function run(args, stdin = "") {
+async function run(args, stdin = "", files = {}) {
   const dir = mkdtempSync(join(tmpdir(), "aya-present-"));
+  for (const [name, content] of Object.entries(files)) writeFileSync(join(dir, name), content);
   const socket = join(dir, "aya.sock");
   let request = null;
   const server = net.createServer((conn) => {
@@ -34,7 +35,7 @@ async function run(args, stdin = "") {
       child.on("close", (status) => done({ status, err }));
       child.stdin.end(stdin);
     });
-    return { ...result, request, dir };
+    return { ...result, request, dir: realpathSync(dir) };
   } finally {
     await new Promise((done) => server.close(done));
     rmSync(dir, { recursive: true, force: true });
@@ -42,11 +43,17 @@ async function run(args, stdin = "") {
 }
 
 test("present --html - reads stdin and opens by default", async () => {
-  const { status, request } = await run(["present", "--title", "Plan", "--html", "-"], "<h1>hi</h1>");
+  const { status, request, dir } = await run(["present", "--title", "Plan", "--html", "-"], "<h1>hi</h1>");
   assert.equal(status, 0);
   assert.equal(request.type, "artifact-present");
-  assert.deepEqual(request.input, { kind: "html", title: "Plan", html: "<h1>hi</h1>" });
+  assert.deepEqual(request.input, { kind: "html", title: "Plan", html: "<h1>hi</h1>", workspaceDir: dir });
   assert.equal(request.open, true);
+});
+
+test("present HTML preserves its base directory and explicit media declarations", async () => {
+  const { status, request, dir } = await run(["present", "--title", "Video", "--html", "report.html", "--asset", "clip.webm", "--asset", "clip.mp4"], "", { "report.html": "<video controls></video>" });
+  assert.equal(status, 0);
+  assert.deepEqual(request.input, { kind: "html", title: "Video", html: "<video controls></video>", workspaceDir: dir, htmlBaseDir: dir, assets: ["clip.webm", "clip.mp4"] });
 });
 
 test("present --table reads JSON, --id updates, --no-open stores", async () => {

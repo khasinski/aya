@@ -8,13 +8,14 @@ import type { Locator } from '@playwright/test';
 
 const run = promisify(execFile);
 const html = `<style>video{width:240px;display:block;margin:8px 0}</style><h2>Video demo</h2>
-<video id="mp4" controls preload="auto" src="../clip.mp4"></video><button onclick="document.querySelector('#mp4').play()">Play MP4</button>
+<video id="mp4" controls preload="auto" src="../clip.mp4"><track kind="captions" src="./captions.vtt" srclang="en" default></video><button onclick="document.querySelector('#mp4').play()">Play MP4</button>
 <video id="webm" controls preload="auto"><source src="../clip.webm" type="video/webm"></video><button onclick="document.querySelector('#webm').play()">Play WebM</button>
 <video id="dynamic" controls preload="auto"></video><script>document.querySelector('#dynamic').src=window.ayaWidget.asset('../clip.webm');</script>`;
 function prepare(project: string) {
   mkdirSync(join(project, 'reports'));
   for (const format of ['mp4', 'webm']) copyFileSync(resolve('tests/fixtures/artifact-video.' + format), join(project, 'clip.' + format));
   writeFileSync(join(project, 'reports/video.html'), html);
+  writeFileSync(join(project, 'reports/captions.vtt'), 'WEBVTT\n\n00:00.000 --> 00:03.000\nSynthetic video caption\n');
 }
 async function ready(video: Locator) {
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => ({ ready: node.readyState >= 2, error: node.error?.message || null })), { timeout: 10000 }).toEqual({ ready: true, error: null });
@@ -34,6 +35,12 @@ test('GUI video plays MP4/WebM, seeks, exports and survives reload without its o
     for (const id of ['mp4', 'webm', 'dynamic']) await ready(frame.locator('#' + id));
     await frame.getByRole('button', { name: 'Play MP4', exact: true }).click();
     await expect.poll(() => frame.locator('#mp4').evaluate((v: HTMLVideoElement) => v.currentTime)).toBeGreaterThan(.1);
+    await expect.poll(() => frame.locator('track').evaluate((track: HTMLTrackElement) => track.readyState)).toBe(2);
+    expect(await frame.locator('#mp4').evaluate((v: HTMLVideoElement) => {
+      const canvas = document.createElement('canvas'); canvas.width = 1; canvas.height = 1;
+      const context = canvas.getContext('2d')!; context.drawImage(v, 0, 0, 1, 1);
+      return context.getImageData(0, 0, 1, 1).data.length;
+    })).toBe(4);
     await frame.locator('#mp4').evaluate((v: HTMLVideoElement) => { v.pause(); v.currentTime = 1.5; });
     await expect.poll(() => frame.locator('#mp4').evaluate((v: HTMLVideoElement) => Math.abs(v.currentTime - 1.5))).toBeLessThan(.1);
     await frame.getByRole('button', { name: 'Play WebM', exact: true }).click();
@@ -49,7 +56,7 @@ test('GUI video plays MP4/WebM, seeks, exports and survives reload without its o
     await app.evaluate(({ dialog }, file) => { dialog.showSaveDialog = (async () => ({ canceled: false, filePath: file })) as typeof dialog.showSaveDialog; }, saved);
     await gui.getByRole('button', { name: 'Save ↓' }).click();
     await expect.poll(() => { try { return readFileSync(saved, 'utf8'); } catch { return ''; } }).toContain('saved.assets/');
-    expect(readdirSync(join(seed.root, 'saved.assets')).length).toBe(2);
+    expect(readdirSync(join(seed.root, 'saved.assets')).length).toBe(3);
     // Validate the portable export in a hidden sandboxed Electron window, never an external browser.
     const exportedWindow = app.waitForEvent('window');
     await app.evaluate(async ({ BrowserWindow }, file) => {

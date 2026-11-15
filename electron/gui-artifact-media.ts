@@ -69,7 +69,10 @@ export async function attachArtifactMedia(root: string, base: string, html: stri
   const replacements: { start: number; end: number; tag: string; attrs: Record<string, string>; keys: string[] }[] = [];
   const parser = new Parser({ onopentag(tag, attrs) {
     const keys = (['video', 'audio', 'source', 'track'].includes(tag) && attrs.src ? ['src'] : []).concat(tag === 'video' && attrs.poster ? ['poster'] : []);
-    if (keys.length) replacements.push({ start: parser.startIndex, end: parser.endIndex + 1, tag, attrs: { ...attrs }, keys });
+    const player = tag === 'video' || tag === 'audio';
+    // The sandbox has an opaque origin. Anonymous CORS permits caption tracks
+    // and canvas frame analysis against our explicitly attached, CORS-enabled media.
+    if (keys.length || player) replacements.push({ start: parser.startIndex, end: parser.endIndex + 1, tag, attrs: { ...(player ? { crossorigin: 'anonymous' } : {}), ...attrs }, keys });
   } }, { decodeEntities: true });
   parser.write(html); parser.end();
   const imported = new Map<string, GuiArtifactMedia>();
