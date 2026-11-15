@@ -166,15 +166,21 @@ test("grok: an unsafe id, a row without a cwd, a non-list or missing registry is
   await assert.rejects(readGrokSessionId(broken, [11]));
 });
 
-test("pollSession reports every read that finds something, and none after stop", async () => {
+test("pollSession reports every read that finds something, and none after stop", async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
   const seen = [];
   const reads = [null, "a", "a", "b"];
   const stop = pollSession(async () => reads.shift() ?? null, (id) => seen.push(id), 5);
-  await sleep(80);
+  t.after(stop);
+  for (let i = 0; i < 4; i++) {
+    t.mock.timers.tick(5);
+    await Promise.resolve();
+  }
   stop();
   const count = seen.length;
   assert.deepEqual(seen, ["a", "a", "b"]);
-  await sleep(30);
+  t.mock.timers.tick(100);
+  await Promise.resolve();
   assert.equal(seen.length, count);
 });
 
