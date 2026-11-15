@@ -94,7 +94,9 @@ Usage:
                                      Show a rich artifact in a window: --html
                                      <file|-> (widget), --image <file>, --table
                                      <json file|-> or --metric <value> with
-                                     --description; --id updates in place
+                                     --description; --id updates in place.
+                                     Local video/audio src files attach automatically;
+                                     --asset <path> attaches media for JS players
   aya artifact list [--json]         List this pane's artifacts
   aya artifact open <id>             Open an artifact's window again
   aya rules fetch <https-url> --agent <name> [--replace]
@@ -337,6 +339,7 @@ function requestFromArgs() {
     const path = require("node:path");
     const argv = process.argv.slice(4);
     const input = {};
+    input.workspaceDir = process.cwd();
     let open = true;
     const readSource = (name) => {
       if (name !== "-") return fs.readFileSync(name, "utf8");
@@ -367,7 +370,8 @@ function requestFromArgs() {
       else if (arg === "--id") input.artifactId = take(i++);
       else if (arg === "--no-open") open = false;
       else if (arg === "--description") input.description = take(i++);
-      else if (arg === "--html") { setKind("html"); input.html = readSource(take(i++)); }
+      else if (arg === "--html") { setKind("html"); const source = take(i++); input.html = readSource(source); if (source !== "-") input.htmlBaseDir = path.dirname(path.resolve(source)); }
+      else if (arg === "--asset") { (input.assets ||= []).push(take(i++)); }
       else if (arg === "--image") { setKind("image"); input.imagePath = path.resolve(take(i++)); }
       else if (arg === "--metric") { setKind("metric"); input.value = take(i++); }
       else if (arg === "--table") {

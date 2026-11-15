@@ -1,6 +1,7 @@
 import { BrowserWindow, Menu, dialog, type WebContents } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import type { GuiArtifact } from '../shared/codex-gui';
+import { exportArtifactMedia } from './gui-artifact-media';
 
 export async function saveGuiArtifact(artifact: GuiArtifact, contents: WebContents) {
   if (artifact.kind !== 'html' && artifact.kind !== 'image') throw Error('Only widgets and graphics can be saved');
@@ -9,7 +10,7 @@ export async function saveGuiArtifact(artifact: GuiArtifact, contents: WebConten
   if (!owner) throw Error('Window is closed');
   const result = await dialog.showSaveDialog(owner, { defaultPath: `${artifact.title.replace(/[^a-z0-9_-]/gi, '-').slice(0, 80)}.${extension}`, filters: [{ name: 'Artifact', extensions: [extension] }] });
   if (result.canceled || !result.filePath) return false;
-  await writeFile(result.filePath, artifact.kind === 'html' ? artifact.html : Buffer.from(artifact.dataUrl.split(',')[1], 'base64'));
+  await writeFile(result.filePath, artifact.kind === 'html' ? await exportArtifactMedia(artifact.html, artifact.media || [], result.filePath) : Buffer.from(artifact.dataUrl.split(',')[1], 'base64'));
   return true;
 }
 

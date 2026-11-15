@@ -5,16 +5,18 @@ import { realpath, stat, readFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { GuiArtifact } from '../shared/codex-gui';
+import { attachArtifactMedia } from './gui-artifact-media';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
 export const PRESENT_TOOL = {
   type: 'function', name: 'aya_present',
-  description: 'Display a rich artifact in Aya beside the conversation. Use for comparisons/tables, metric cards, a local PNG/JPEG/WebP/SVG image, or an interactive HTML widget. HTML supports inline JavaScript, SVG and canvas, with no network access. Supply html inline, or path to a self-contained workspace HTML file. The user can select a table row and ask a follow-up. Paths are relative to the workspace. Set open=true to open the drawer and select this artifact immediately. Do not print the artifact JSON in chat.',
+  description: 'Display a rich artifact in Aya beside the conversation. Use for tables, metrics, images, or HTML with inline JavaScript, SVG, canvas and local video. For video use <video controls src="./clip.mp4"> (MP4 or WebM, up to 256 MiB each). Local media in video/audio/source/track tags and video posters is copied into the artifact; paths resolve beside the HTML file or from the workspace for inline HTML. No network access or external iframe players. Set open=true to show it immediately. Do not print artifact JSON in chat.',
   inputSchema: {
     type: 'object', properties: {
       artifactId: { type: 'string', description: 'An existing ID returned by aya_present, to update that artifact without creating another card.' },
       html: { type: 'string', description: 'Self-contained HTML/CSS/JavaScript. Use inline scripts and styles, embedded data images, SVG or canvas. No network or file access. Call window.ayaWidget.suggest(text) to prepare a user follow-up; it is never sent automatically.' },
+      assets: { type: 'array', items: { type: 'string' }, description: 'Additional local media paths for JS-created players. Access their URLs with window.ayaWidget.asset(path). Static video/audio/source/track src and video poster files are attached automatically.' },
       open: { type: 'boolean', description: 'Open the drawer and select this artifact. Defaults to false.' },
       kind: { type: 'string', enum: ['table', 'metric', 'image', 'html'] }, title: { type: 'string' },
       columns: { type: 'array', items: { type: 'string' } },
@@ -43,11 +45,12 @@ export async function workspaceImage(root: string, file: string): Promise<string
   if (!mime) throw Error('Supported images: PNG, JPEG, WebP and SVG');
   return `data:${mime};base64,${data.toString('base64')}`;
 }
-export async function presentArtifact(root: string, args: unknown): Promise<GuiArtifact> {
+export async function presentArtifact(root: string, args: unknown, options: { htmlBaseDir?: string } = {}): Promise<GuiArtifact> {
   const value = object(args), title = text(value.title).slice(0, 200), id = randomUUID();
   if (!title) throw Error('Artifact title is required');
   if (value.kind === 'html') {
     let html = value.html;
+    let base = options.htmlBaseDir || root;
     if (typeof html !== 'string' && typeof value.path === 'string') {
       const rootPath = await realpath(root), file = await realpath(path.resolve(root, value.path));
       const relative = path.relative(rootPath, file);
@@ -55,9 +58,12 @@ export async function presentArtifact(root: string, args: unknown): Promise<GuiA
       const info = await stat(file);
       if (!info.isFile() || info.size > 2 * 1024 * 1024) throw Error('HTML widgets must be regular files under 2 MiB');
       html = await readFile(file, 'utf8');
+      base = path.dirname(file);
     }
     if (typeof html !== 'string' || !html.trim() || Buffer.byteLength(html, 'utf8') > 2 * 1024 * 1024) throw Error('HTML widgets require 1–2097152 bytes of self-contained HTML');
-    return { id, kind: 'html', title, html };
+    if (value.assets !== undefined && (!Array.isArray(value.assets) || !value.assets.every(asset => typeof asset === 'string'))) throw Error('Artifact assets must be an array of local media paths');
+    const content = await attachArtifactMedia(root, base, html, value.assets as string[] | undefined);
+    return { id, kind: 'html', title, ...content };
   }
   if (value.kind === 'metric') return { id, kind: 'metric', title, value: text(value.value).slice(0, 100), description: text(value.description).slice(0, 2000) };
   if (value.kind === 'image') {

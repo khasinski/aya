@@ -152,7 +152,7 @@ function HtmlWidget({ artifact, onSuggest, onPreview }: { artifact: Extract<GuiA
   return <div className="aya-widget-shell">
     {!loaded && !error && <div className="aya-widget-loading" role="status">Preparing preview<span>…</span></div>}
     {error && <div className="aya-widget-error" role="alert">{error}<button onClick={() => { setError(''); setLoaded(false); setAttempt(attempt + 1); }}>Reload preview</button></div>}
-    {previewUrl && <iframe key={`${artifact.id}:${artifact.revision}:${previewUrl}:${attempt}`} ref={frame} title={artifact.title} src={previewUrl} sandbox="allow-scripts" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" referrerPolicy="no-referrer" style={{ height, visibility: loaded ? 'visible' : 'hidden' }} />}
+    {previewUrl && <iframe key={`${artifact.id}:${artifact.revision}:${previewUrl}:${attempt}`} ref={frame} title={artifact.title} src={previewUrl} sandbox="allow-scripts" allowFullScreen allow="fullscreen; camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" referrerPolicy="no-referrer" style={{ height, visibility: loaded ? 'visible' : 'hidden' }} />}
     <div className="aya-widget-footnote">Interactive preview <span>·</span> Actions prepare a message for you to review</div>
   </div>;
 }

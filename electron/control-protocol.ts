@@ -139,6 +139,9 @@ function parseArtifactInput(value: unknown): TuiArtifactInput {
   return {
     kind, title,
     ...(typeof value.html === "string" ? { html: value.html } : {}),
+    ...(optionalString(value.htmlBaseDir) ? { htmlBaseDir: optionalString(value.htmlBaseDir) } : {}),
+    ...(optionalString(value.workspaceDir) ? { workspaceDir: optionalString(value.workspaceDir) } : {}),
+    ...(strings(value.assets) ? { assets: strings(value.assets) } : {}),
     ...(optionalString(value.imagePath) ? { imagePath: optionalString(value.imagePath) } : {}),
     ...(strings(value.columns) ? { columns: strings(value.columns) } : {}),
     ...(rows ? { rows } : {}),

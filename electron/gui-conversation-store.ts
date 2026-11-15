@@ -7,6 +7,7 @@ import { readStoredJson, readStoredText } from './stored-json';
 import { LatestSnapshotWriter } from './latest-snapshot-writer';
 import { mapConcurrent } from './bounded-map';
 import type { DeferredGuiArtifact, GuiArtifact } from '../shared/codex-gui';
+import { collectUnusedArtifactMedia } from './gui-artifact-media';
 export interface ConversationSnapshot { cwd: string; configDir?: string; agent?: string; threadId?: string; view?: Record<string, unknown> }
 const writes = new Map<string, Promise<void>>();
 const writers = new Map<string, LatestSnapshotWriter<ConversationSnapshot>>();
@@ -16,7 +17,7 @@ const activeStorage = new Set<Promise<unknown>>();
 let collection: Promise<{ removed: number; aborted: boolean }> | null = null;
 let collectionScheduled = false;
 let nextCollectionAt = 0;
-function scheduleCollection() {
+export function scheduleConversationAssetCollection() {
   if (collectionScheduled || Date.now() < nextCollectionAt) return;
   collectionScheduled = true;
   setTimeout(() => {
@@ -142,7 +143,7 @@ export function saveConversation(id: string, value: ConversationSnapshot) {
       if (Buffer.byteLength(data) > SNAPSHOT_LIMIT) throw Error('Conversation text exceeds the 32 MB local history limit');
       // Referenced assets are fully committed before publishing the new snapshot.
       await writeFileAtomic(file(id), data, 0o600);
-      scheduleCollection();
+      scheduleConversationAssetCollection();
     }));
     writers.set(id, writer);
   }
@@ -233,17 +234,23 @@ export function collectUnusedConversationAssets(now = Date.now()): Promise<{ rem
       }
     } catch { return { removed: 0, aborted: true }; }
     let assets: string[];
-    try { assets = await readdir(path.join(root, 'assets')); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { removed: 0, aborted: false }; throw error; }
+    try { assets = await readdir(path.join(root, 'assets')); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') assets = []; else throw error; }
     let removed = 0;
+    const retainedMedia = new Set<string>();
     for (const name of assets.filter(n => /^[a-f0-9]{64}\.json$/.test(n))) {
-      if (referenced.has(name.slice(0, -5))) continue;
       const target = path.join(root, 'assets', name);
       try {
         const info = await stat(target);
-        if (now - info.mtimeMs < 7 * 24 * 60 * 60 * 1000) continue;
-        await unlink(target); removed++;
+        if (!referenced.has(name.slice(0, -5)) && now - info.mtimeMs >= 7 * 24 * 60 * 60 * 1000) {
+          await unlink(target); removed++; continue;
+        }
+        const artifact = await readStoredJson(target, ASSET_LIMIT) as { media?: { hash?: unknown }[] };
+        if (Array.isArray(artifact?.media)) for (const media of artifact.media) {
+          if (typeof media?.hash === 'string' && /^[a-f0-9]{64}$/.test(media.hash)) retainedMedia.add(media.hash);
+        }
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
+    removed += await collectUnusedArtifactMedia(retainedMedia, now);
     return { removed, aborted: false };
   });
   collection = task;

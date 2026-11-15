@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Play local MP4/WebM video in HTML artifacts in GUI and TUI, with controls, seeking and fullscreen. Attach media
+  automatically from HTML paths or explicitly for JS-created players; preserve copies outside conversation snapshots.
+  HTML exports include portable sibling media files. Show readable errors for blocked or unplayable media.
+
 ## v0.16.0 - 2026-11-11
 
 - Experimental per-project Kanban board (Settings > Kanban board): opens as a pane alongside terminals and in split
