@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+## v0.17.0 - 2026-11-15
+
 - Play local MP4/WebM video in HTML artifacts in GUI and TUI, with controls, seeking and fullscreen. Attach media
   automatically from HTML paths or explicitly for JS-created players; preserve copies outside conversation snapshots.
   HTML exports include portable sibling media files. Show readable errors for blocked or unplayable media.
+
+- Move Kanban access into the terminal header and remove boards from terminal lists and counts.
+- Expand Kanban cards with Markdown descriptions and images, priorities, labels, search and quick filters.
+  Add a searchable archive with card restoration and undo for deletion; improve card ordering and pane claim sync.
+- Reorder Kanban columns from the UI or `aya board column move`. Keep assignment menus within the window.
+- Notify the previous agent when its task is withdrawn, deleted, released or reassigned. Persist pending notices
+  across restarts and cancel a pending initial task prompt when its card is withdrawn during terminal startup (#323).
 
 ## v0.16.0 - 2026-11-11
 
