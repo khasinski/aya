@@ -17,6 +17,8 @@ const board = {
   archivedCards: [card("t-2", "Old task", { archivedAt: at })],
 };
 const boardTab = { presetId: "board", name: "Board" };
+/** How long a board already on screen may take to render after a reload. */
+const BOARD_SHOWS_WITHIN_MS = 3_000;
 const LAYOUTS = ["classic", "projects-left", "stacked"] as const;
 const PANES = [
   { name: "split", seed: { rightTab: boardTab } },
@@ -42,7 +44,10 @@ for (const layout of LAYOUTS) {
         // Layouts that show panes as tabs keep the board behind its Kanban tab.
         const launcher = window.getByRole("button", { name: "Kanban", exact: true });
         await expect(launcher).toBeVisible();
-        if (!(await toggle.isVisible())) await launcher.click();
+        // Give the board time to show before opening its tab: a check at one instant raced
+        // its first render, and the launcher click then hid an active board.
+        const shown = await toggle.waitFor({ state: "visible", timeout: BOARD_SHOWS_WITHIN_MS }).then(() => true, () => false);
+        if (!shown) await launcher.click();
         await expect(toggle).toBeVisible();
 
         // Typed text adds a match count and changes the button label, so compare
