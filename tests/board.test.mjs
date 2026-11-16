@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { envWithoutAya } from "./helpers/env.mjs";
+import { FIXED_RULES } from "../shared/board-columns.cjs";
 
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { registerBoardIpc } = await import("../dist-electron/ipc/board-ipc.js");
@@ -487,6 +488,36 @@ test("starting a card on a board without In Progress leaves it in its column", a
     const board = await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
     assert.equal(board.cards[0].columnId, "todo");
     assert.equal(board.cards[0].claim?.paneId, "pane-1");
+  } finally { fx.cleanup(); }
+});
+
+test("aya board columns gives each column's meaning and the fixed rules, for agents", async () => {
+  const fx = makeFixture();
+  try {
+    await addBoardColumn(fx.home, fx.project, "Backlog");
+    await addBoardColumn(fx.home, fx.project, "Blocked");
+    await renameBoardColumn(fx.home, fx.project, "review", "Code review");
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    // The definitions stay literal here: they are the text agents read.
+    assert.equal((await handleBoardRequest({ argv: ["columns"] }, "pane-1", deps)).output, [
+      "Columns on demo:",
+      "- todo (Todo): Waiting to be started.",
+      "- in-progress (In Progress): Being worked on by the pane that claimed it.",
+      "- review (Code review): Work is finished and waits for a check.",
+      "- done (Done): Finished work; cards here can be archived.",
+      "- backlog (Backlog): Waiting to be started, kept for later.",
+      "- blocked (Blocked): custom column, no built-in meaning.",
+      "",
+      "Fixed rules (Aya enforces these; they cannot be changed):",
+      ...FIXED_RULES.map((rule) => `- ${rule}`),
+      "",
+    ].join("\n"));
+    const json = JSON.parse((await handleBoardRequest({ argv: ["columns", "--json"] }, "pane-1", deps)).output);
+    assert.equal(json.projectSlug, "demo");
+    assert.deepEqual(json.columns.find((c) => c.id === "blocked"), { id: "blocked", title: "Blocked", definition: null });
+    assert.deepEqual(json.columns.find((c) => c.id === "review"), { id: "review", title: "Code review", definition: "Work is finished and waits for a check." });
+    assert.deepEqual(json.fixedRules, [...FIXED_RULES]);
+    await assert.rejects(handleBoardRequest({ argv: ["columns", "extra"] }, "pane-1", deps), /usage: aya board/);
   } finally { fx.cleanup(); }
 });
 
