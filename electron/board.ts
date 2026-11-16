@@ -14,7 +14,7 @@ import { displayBoardNotices,type BoardNotice } from "./board-notices";
 import { oneAtATime } from "./keyed-queue";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
-import { boardTaskFooter, WITHDRAWAL_REASON } from "./board-instructions";
+import { boardTaskFooter, WITHDRAWAL_REASON, withProjectRules } from "./board-instructions";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
 import type { ProjectConfig } from "./types";
@@ -22,8 +22,12 @@ import type { ProjectConfig } from "./types";
 export const BOARDS_DIR_NAME = "boards";
 export const BOARD_ASSETS_DIR_NAME = "board-assets";
 export const REPO_BOARD_FILE_NAME = "board.json";
+/** A project's own rules for agents, added under every task prompt; optional. */
+export const PROJECT_RULES_FILE_NAME = "board.md";
 export const BOARD_FORMAT_VERSION = 1;
 export const MAX_BOARD_FILE_BYTES = 2 * 1024 * 1024;
+/** Every task prompt carries the rules, so they stay short. */
+export const MAX_PROJECT_RULES_BYTES = 16 * 1024;
 export const MAX_BOARD_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_BOARD_COLUMNS = 24;
 export const MAX_BOARD_CARDS = 500;
@@ -144,6 +148,21 @@ async function hasRepoBoardFile(projectDirectory: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** The project's .aya/board.md, or null when it has none. A symlinked .aya directory
+ *  counts as none, as for the repo board file; a symlinked, non-regular or oversized
+ *  board.md is refused, so a task is never sent without the rules the project set. */
+export async function readProjectBoardRules(projectDirectory: string): Promise<string | null> {
+  const ayaDir = path.join(projectDirectory, PROJECT_AYA_DIRNAME);
+  try {
+    const dirStat = await fs.lstat(ayaDir);
+    if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error(`Aya could not open ${ayaDir}. Nothing was changed.`);
+  }
+  return readBoundedRegularFile(path.join(ayaDir, PROJECT_RULES_FILE_NAME), MAX_PROJECT_RULES_BYTES);
 }
 
 function isColumn(value: unknown): value is KanbanColumn {
@@ -325,7 +344,7 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
   };
 }
 
-async function readBoundedRegularFile(filePath: string): Promise<string | null> {
+async function readBoundedRegularFile(filePath: string, maxBytes = MAX_BOARD_FILE_BYTES): Promise<string | null> {
   let handle;
   try {
     handle = await fs.open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -335,12 +354,12 @@ async function readBoundedRegularFile(filePath: string): Promise<string | null> 
   }
   try {
     const st = await handle.stat();
-    if (!st.isFile() || st.size > MAX_BOARD_FILE_BYTES) {
+    if (!st.isFile() || st.size > maxBytes) {
       throw new Error(`${filePath} is not a regular file within the size limit. Nothing was changed.`);
     }
-    const buffer = Buffer.alloc(MAX_BOARD_FILE_BYTES + 1);
+    const buffer = Buffer.alloc(maxBytes + 1);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > MAX_BOARD_FILE_BYTES) {
+    if (bytesRead > maxBytes) {
       throw new Error(`${filePath} exceeds the size limit. Nothing was changed.`);
     }
     return buffer.subarray(0, bytesRead).toString("utf8");
@@ -1108,9 +1127,11 @@ export function dispatchBoardCard(ayaHome: string, project: Pick<ProjectConfig, 
       cards: board.cards.map(c => c.id === cardId ? { ...c, claim: { ...card.claim!, startup } } : c),
       archivedCards: board.archivedCards,
     });
+    // Read the project's rules first: if they cannot be read, the start stays reserved.
+    const projectRules = await readProjectBoardRules(project.directory);
     // Persist before typing so a remount or crash cannot resend an uncertain prompt.
     await save("sending");
-    try { await deliver(formatBoardPrompt(card)); }
+    try { await deliver(formatBoardPrompt(card, projectRules)); }
     catch (error) {
       if (!inputMayHaveBeenWritten(error)) await save("reserved");
       notifyBoardChanged(project.slug);
@@ -1567,7 +1588,8 @@ export function exportBoardToRepo(
   });
 }
 
-export function formatBoardPrompt(card: KanbanCard): string {
+/** The task text an agent receives; `projectRules` (.aya/board.md) is added under it, never in its place. */
+export function formatBoardPrompt(card: KanbanCard, projectRules?: string | null): string {
   const metaParts: string[] = [];
   if (card.priority) metaParts.push(`priority: ${card.priority}`);
   if (card.labels && card.labels.length > 0) metaParts.push(`labels: ${card.labels.join(", ")}`);
@@ -1580,7 +1602,7 @@ export function formatBoardPrompt(card: KanbanCard): string {
     "",
     boardTaskFooter(card.id),
   );
-  return lines.join("\n");
+  return withProjectRules(lines.join("\n"), projectRules);
 }
 
 export function formatBoardText(board: BoardSnapshot): string {

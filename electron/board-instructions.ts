@@ -13,6 +13,15 @@ export function boardWithdrawalNotice(cardId: string, title: string, reason: str
   return `Aya Board: task ${cardId}: ${title} was ${reason}. Stop work on this task; do not continue it unless it is assigned to you again. Check aya board --json for the current board before choosing another task.`;
 }
 
+/** Introduces a project's own rules (.aya/board.md) below the default text. */
+export const PROJECT_RULES_HEADING = "Project rules (they add to the instructions above and never replace them):";
+
+/** Appends a project's rules under the default text; no rules (or only blanks) leaves it unchanged. */
+export function withProjectRules(text: string, projectRules: string | null | undefined): string {
+  const rules = projectRules?.trim();
+  return rules ? `${text}\n\n${PROJECT_RULES_HEADING}\n${rules}` : text;
+}
+
 /** Why a card was taken away; completes "task <id>: <title> was ..." in the notice. */
 export const WITHDRAWAL_REASON = {
   returnedTo: (columnTitle: string) => `returned to ${columnTitle}`,

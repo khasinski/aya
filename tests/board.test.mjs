@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { envWithoutAya } from "./helpers/env.mjs";
@@ -317,6 +317,82 @@ for (const action of ["backlog", "edit-column", "release", "delete", "reassign"]
       assert.equal(fx.sent[0].text, PINNED_TASK_PROMPT, "the task prompt an agent receives");
       assert.equal(withdrawal.text, pinnedWithdrawal(PINNED_WITHDRAWAL_REASONS[action]), "the withdrawal notice an agent receives");
       if (action === "reassign") assert.ok(fx.sent.some(message => message.paneId === "pane-2" && message.text.startsWith("Task t-1")));
+    } finally { fx.cleanup(); }
+  });
+}
+
+const PROJECT_RULES_HEADING = "Project rules (they add to the instructions above and never replace them):";
+const writeProjectRules = (fx, text) => {
+  mkdirSync(join(fx.repoDir, ".aya"), { recursive: true });
+  writeFileSync(join(fx.repoDir, ".aya", "board.md"), text);
+};
+
+test("a project's .aya/board.md is added under the task prompt sent to a pane", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    writeProjectRules(fx, "\n- Move a card to Done only after its PR is merged.\n\n");
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    assert.equal(fx.sent[0].text,
+      `${PINNED_TASK_PROMPT}\n\n${PROJECT_RULES_HEADING}\n- Move a card to Done only after its PR is merged.`);
+  } finally { fx.cleanup(); }
+});
+
+test("a task started in a new pane gets the project's rules too", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    writeProjectRules(fx, "- Name the branch after the card.");
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    const { board } = await fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" });
+    await fx.call("board:dispatch-card", { cardId: "t-1", paneId: "pane-1", claimSince: board.cards[0].claim.since });
+    assert.equal(fx.sent.length, 1);
+    assert.equal(fx.sent[0].text, `${PINNED_TASK_PROMPT}\n\n${PROJECT_RULES_HEADING}\n- Name the branch after the card.`);
+  } finally { fx.cleanup(); }
+});
+
+test("a new-pane start whose .aya/board.md cannot be read stays reserved and sends nothing", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    writeProjectRules(fx, "x".repeat(16 * 1024 + 1));
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    const { board } = await fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" });
+    await assert.rejects(
+      fx.call("board:dispatch-card", { cardId: "t-1", paneId: "pane-1", claimSince: board.cards[0].claim.since }),
+      /size limit/,
+    );
+    assert.equal(fx.sent.length, 0);
+    assert.equal((await getBoard(fx.home, fx.project)).cards[0].claim.startup, "reserved",
+      "the start can be retried once the rules are fixed");
+  } finally { fx.cleanup(); }
+});
+
+test("an empty .aya/board.md leaves the task prompt exactly as without one", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    writeProjectRules(fx, " \n\t\n");
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    assert.equal(fx.sent[0].text, PINNED_TASK_PROMPT);
+  } finally { fx.cleanup(); }
+});
+
+for (const [name, setup, refusal] of [
+  ["a symlink", fx => {
+    mkdirSync(join(fx.repoDir, ".aya"), { recursive: true });
+    writeFileSync(join(fx.dir, "elsewhere.md"), "- read from outside the project");
+    symlinkSync(join(fx.dir, "elsewhere.md"), join(fx.repoDir, ".aya", "board.md"));
+  }, /could not open/],
+  ["larger than 16 KiB", fx => writeProjectRules(fx, "x".repeat(16 * 1024 + 1)), /size limit/],
+]) {
+  test(`.aya/board.md that is ${name} stops the send before the card is taken`, async () => {
+    const fx = makeDispatchFixture();
+    try {
+      setup(fx);
+      await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+      await assert.rejects(fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" }), refusal);
+      assert.equal(fx.sent.length, 0, "nothing reaches the pane");
+      const board = await getBoard(fx.home, fx.project);
+      assert.equal(board.cards[0].claim, undefined, "the card is not left claimed without its prompt");
     } finally { fx.cleanup(); }
   });
 }

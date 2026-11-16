@@ -51,3 +51,19 @@ actions are offered for terminal presets; native GUI presets are not supported.
 
 The assignment menu opens above a low card when needed, stays within the window,
 and scrolls if its list is long. Its position and height follow window resizing.
+
+## Project rules for agents
+
+A project can give agents its own rules in `.aya/board.md`. Aya adds the file's
+text under every task prompt it sends, after this line:
+
+> Project rules (they add to the instructions above and never replace them):
+
+Write rules that add to or narrow the text above them, never rules that
+contradict it. The task prompt suggests `aya board move <id> review` or `done`
+when finished, so "Move a card to Done only after its PR is merged" narrows it.
+
+Keep the file short: it goes out with every task, and a file over 16 KiB is
+refused. Aya does not follow a symlinked `board.md`. When the file cannot be
+read, the task is not sent and the card is not taken; fix the file and send the
+task again. A file with only blank lines adds nothing.
