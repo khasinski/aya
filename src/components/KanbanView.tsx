@@ -1,3 +1,4 @@
+import { BOARD_IMAGE_ACCEPT } from "../../shared/board-images.cjs";
 import {
   memo
 } from "react";
@@ -84,7 +85,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
+        accept={BOARD_IMAGE_ACCEPT}
         style={{ display: "none" }}
         onChange={(e) => {
           const file = e.target.files?.[0];

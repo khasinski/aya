@@ -20,6 +20,7 @@ import {
   STARTED_COLUMN_ID,
   isPendingColumn,
 } from "../shared/board-columns.cjs";
+import { BOARD_IMAGE_FORMATS, detectBoardImageFormat, listBoardImageFormats } from "../shared/board-images.cjs";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
 import type { ProjectConfig } from "./types";
@@ -28,8 +29,13 @@ export const BOARDS_DIR_NAME = "boards";
 export const BOARD_ASSETS_DIR_NAME = "board-assets";
 export const REPO_BOARD_FILE_NAME = "board.json";
 export const BOARD_FORMAT_VERSION = 1;
-export const MAX_BOARD_FILE_BYTES = 2 * 1024 * 1024;
-export const MAX_BOARD_IMAGE_BYTES = 8 * 1024 * 1024;
+const BYTES_PER_MB = 1024 * 1024;
+export const MAX_BOARD_FILE_BYTES = 2 * BYTES_PER_MB;
+export const MAX_BOARD_IMAGE_BYTES = 8 * BYTES_PER_MB;
+/** The image limit as users read it in messages. */
+const MAX_BOARD_IMAGE_MB = MAX_BOARD_IMAGE_BYTES / BYTES_PER_MB;
+/** A data URL of an accepted image format, in any letter case. */
+const BOARD_IMAGE_DATA_URL = new RegExp(`^data:(?:${BOARD_IMAGE_FORMATS.map((format) => format.mime).join("|")});base64,`, "i");
 export const MAX_BOARD_COLUMNS = 24;
 export const MAX_BOARD_CARDS = 500;
 export const MAX_COLUMN_TITLE_CHARS = 80;
@@ -1272,32 +1278,6 @@ export function syncBoardPaneName(
   });
 }
 
-function detectImageType(bytes: Buffer): { ext: string; mime: string } | null {
-  if (
-    bytes.length >= 8 &&
-    bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  ) {
-    return { ext: ".png", mime: "image/png" };
-  }
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return { ext: ".jpg", mime: "image/jpeg" };
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes.toString("ascii", 0, 4) === "RIFF" &&
-    bytes.toString("ascii", 8, 12) === "WEBP"
-  ) {
-    return { ext: ".webp", mime: "image/webp" };
-  }
-  if (
-    bytes.length >= 6 &&
-    (bytes.toString("ascii", 0, 6) === "GIF87a" || bytes.toString("ascii", 0, 6) === "GIF89a")
-  ) {
-    return { ext: ".gif", mime: "image/gif" };
-  }
-  return null;
-}
-
 export async function saveBoardImage(
   ayaHome: string,
   project: Pick<ProjectConfig, "slug" | "directory">,
@@ -1307,11 +1287,11 @@ export async function saveBoardImage(
   if (!stripped) throw new Error("Image data is empty.");
   const bytes = Buffer.from(stripped, "base64");
   if (bytes.length === 0 || bytes.length > MAX_BOARD_IMAGE_BYTES) {
-    throw new Error("Image must be between 1 byte and 8 MB.");
+    throw new Error(`Image must be between 1 byte and ${MAX_BOARD_IMAGE_MB} MB.`);
   }
-  const detected = detectImageType(bytes);
+  const detected = detectBoardImageFormat(bytes);
   if (!detected) {
-    throw new Error("Only PNG, JPEG, WebP, and GIF images are supported.");
+    throw new Error(`Only ${listBoardImageFormats("and")} images are supported.`);
   }
   const useRepo = await hasRepoBoardFile(project.directory);
   const baseName = input.name
@@ -1357,7 +1337,7 @@ export async function readBoardImageDataUrl(
   if (!trimmed || CONTROL_CHARS.test(trimmed)) {
     throw new Error("Invalid image path.");
   }
-  if (/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(trimmed)) {
+  if (BOARD_IMAGE_DATA_URL.test(trimmed)) {
     return trimmed;
   }
   const filePart = trimmed.startsWith("file://") ? decodeURIComponent(trimmed.slice(7)) : trimmed;
@@ -1368,14 +1348,14 @@ export async function readBoardImageDataUrl(
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_BOARD_IMAGE_BYTES) {
-      throw new Error("Image must be a regular file under 8 MB.");
+      throw new Error(`Image must be a regular file under ${MAX_BOARD_IMAGE_MB} MB.`);
     }
     const buffer = Buffer.alloc(stat.size);
     const { bytesRead } = await handle.read(buffer, 0, stat.size, 0);
     const bytes = buffer.subarray(0, bytesRead);
-    const detected = detectImageType(bytes);
+    const detected = detectBoardImageFormat(bytes);
     if (!detected) {
-      throw new Error("Unsupported image format (use PNG, JPEG, WebP, or GIF).");
+      throw new Error(`Unsupported image format (use ${listBoardImageFormats("or")}).`);
     }
     return `data:${detected.mime};base64,${bytes.toString("base64")}`;
   } finally {
