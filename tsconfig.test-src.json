@@ -20,6 +20,7 @@
     "src/preference-codecs.ts",
     "src/project-timeline.ts",
     "src/attention.ts",
+    "src/components/kanban-search.ts",
     "src/components/TerminalStatusDot.tsx",
     "src/components/TerminalView.tsx",
     "src/components/TeamsModal.tsx",
