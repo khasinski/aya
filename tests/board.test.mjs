@@ -1106,3 +1106,39 @@ test("searchBoard, matchesBoardQuery, and aya board search CLI across active and
     fx.cleanup();
   }
 });
+
+// Pins the bytes a board without a backlog is saved with today: format, key
+// order and fields after archive, unarchive, column rename and column delete.
+// The backlog must leave such boards exactly like this.
+test("a board without a backlog is saved byte for byte as before", async () => {
+  const fx = makeFixture();
+  try {
+    const at = "2026-11-12T10:00:00.000Z";
+    mkdirSync(join(fx.home, "boards"), { recursive: true });
+    writeFileSync(join(fx.home, "boards", "demo.json"), JSON.stringify({
+      version: 1,
+      columns: [{ id: "todo", title: "Todo" }, { id: "in-progress", title: "In Progress" }, { id: "done", title: "Done" }],
+      cards: [
+        { id: "t-1", columnId: "todo", title: "First", description: "Body", priority: "high", labels: ["bug"], createdAt: at, updatedAt: at },
+        { id: "t-2", columnId: "done", title: "Second", assignee: "Ann", createdAt: at, updatedAt: at },
+      ],
+      archivedCards: [{ id: "t-3", columnId: "done", title: "Third", createdAt: at, updatedAt: at, archivedAt: at }],
+    }));
+    await archiveBoardCard(fx.home, fx.project, "t-2", new Date("2026-11-16T10:00:00.000Z"));
+    await unarchiveBoardCard(fx.home, fx.project, "t-3", undefined, new Date("2026-11-16T11:00:00.000Z"));
+    await renameBoardColumn(fx.home, fx.project, "todo", "To do");
+    await deleteBoardColumn(fx.home, fx.project, "in-progress");
+    const expected = {
+      version: 1,
+      columns: [{ id: "todo", title: "To do" }, { id: "done", title: "Done" }],
+      cards: [
+        { id: "t-1", columnId: "todo", title: "First", description: "Body", priority: "high", labels: ["bug"], createdAt: at, updatedAt: at },
+        { id: "t-3", columnId: "done", title: "Third", createdAt: at, updatedAt: "2026-11-16T11:00:00.000Z" },
+      ],
+      archivedCards: [
+        { id: "t-2", columnId: "done", title: "Second", assignee: "Ann", archivedAt: "2026-11-16T10:00:00.000Z", createdAt: at, updatedAt: "2026-11-16T10:00:00.000Z" },
+      ],
+    };
+    assert.equal(readFileSync(join(fx.home, "boards", "demo.json"), "utf8"), `${JSON.stringify(expected, null, 2)}\n`);
+  } finally { fx.cleanup(); }
+});
