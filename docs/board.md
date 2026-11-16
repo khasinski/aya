@@ -52,6 +52,16 @@ actions are offered for terminal presets; native GUI presets are not supported.
 The assignment menu opens above a low card when needed, stays within the window,
 and scrolls if its list is long. Its position and height follow window resizing.
 
+## Terminology
+
+The board is also called the Kanban board in the UI. The CLI command is `aya board`.
+
+- Todo: the card is not assigned to work.
+- In Progress: the card has a claim (a pane took it) and work is running.
+- Review: the work is finished and waits for a check.
+- Done: the work is accepted.
+- Claim: the pane that took the card. Returning the card to Todo or Backlog removes the claim (see "Withdrawing an agent's task").
+
 ## Project rules for agents
 
 A project can give agents its own rules in `.aya/board.md`. Aya adds the file's
@@ -72,3 +82,11 @@ Keep the file short: it goes out with every task, and a file over 16 KiB is
 refused. Aya does not follow a symlinked `board.md`. When the file cannot be
 read, the task is not sent and the card is not taken; fix the file and send the
 task again. A file with only blank lines adds nothing.
+
+## Planned changes (not implemented)
+
+These items are tracked on the board, not in this file:
+- A Kanban tab in Settings that shows the board's defaults, fixed rules and limits; the On/Off switch stays in General.
+- Short definitions shown on the four default column headers.
+- A glossary of states in one place, and an opt-in card template with Required, Nice to have and Acceptance criterion fields. Default behaviour stays unchanged.
+- A harness that validates card fields.
