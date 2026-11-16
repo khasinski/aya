@@ -90,3 +90,13 @@ These items are tracked on the board, not in this file:
 - Short definitions shown on the four default column headers.
 - A glossary of states in one place, and an opt-in card template with Required, Nice to have and Acceptance criterion fields. Default behaviour stays unchanged.
 - A harness that validates card fields.
+
+## Default values (current main)
+
+These defaults describe the target state too. Planned changes are opt-in and must not change them.
+
+- Kanban board (Settings > General, "Experimental"): off by default (`KANBAN_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
+- Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `electron/board.ts`).
+- New card: goes into the first column; priority and labels are optional and are omitted when not given; description starts empty; no assignee.
+- Card description limit: 4000 characters (`MAX_CARD_DESCRIPTION_CHARS`).
+- Priorities: `low`, `medium`, `high`, `urgent`. Search tokens: `p0` = urgent, `p1` = high, `p2` = medium, `p3` = low.
