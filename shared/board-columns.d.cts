@@ -5,6 +5,7 @@ export const COLUMN_IDS: {
   readonly review: "review";
   readonly done: "done";
 };
+export const COLUMN_TITLES: { readonly [id: string]: string };
 export const FINISHED_COLUMN_TITLE: "Done";
 export const DEFAULT_BOARD_COLUMNS: readonly { readonly id: string; readonly title: string }[];
 export const PENDING_COLUMN_IDS: readonly string[];

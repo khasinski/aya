@@ -12,16 +12,24 @@ const COLUMN_IDS = Object.freeze({
 });
 exports.COLUMN_IDS = COLUMN_IDS;
 
+/** The title each built-in column gets when Aya creates it. */
+const COLUMN_TITLES = Object.freeze({
+  [COLUMN_IDS.todo]: "Todo",
+  [COLUMN_IDS.backlog]: "Backlog",
+  [COLUMN_IDS.inProgress]: "In Progress",
+  [COLUMN_IDS.review]: "Review",
+  [COLUMN_IDS.done]: "Done",
+});
+exports.COLUMN_TITLES = COLUMN_TITLES;
+
 /** The title of the column that holds finished work, also matched on other columns. */
-exports.FINISHED_COLUMN_TITLE = "Done";
+exports.FINISHED_COLUMN_TITLE = COLUMN_TITLES[COLUMN_IDS.done];
 
 /** The columns a new board starts with, in order. */
-exports.DEFAULT_BOARD_COLUMNS = Object.freeze([
-  Object.freeze({ id: COLUMN_IDS.todo, title: "Todo" }),
-  Object.freeze({ id: COLUMN_IDS.inProgress, title: "In Progress" }),
-  Object.freeze({ id: COLUMN_IDS.review, title: "Review" }),
-  Object.freeze({ id: COLUMN_IDS.done, title: exports.FINISHED_COLUMN_TITLE }),
-]);
+exports.DEFAULT_BOARD_COLUMNS = Object.freeze(
+  [COLUMN_IDS.todo, COLUMN_IDS.inProgress, COLUMN_IDS.review, COLUMN_IDS.done]
+    .map((id) => Object.freeze({ id, title: COLUMN_TITLES[id] })),
+);
 
 /** Where a card waits for work: a claimed card moved back here loses its claim,
  *  and a card started from here moves to the started column. */
