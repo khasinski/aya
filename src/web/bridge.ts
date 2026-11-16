@@ -125,6 +125,8 @@ export function createWebAya(transport: WebTransport): AyaApi {
     moveBoardCard: inv("board:move-card"),
     deleteBoardCard: inv("board:delete-card"),
     clearBoardColumn: inv("board:clear-column"),
+    moveBoardCardToBacklog: inv("board:move-to-backlog"),
+    restoreBacklogCard: inv("board:restore-from-backlog"),
     restoreBoardCards: inv("board:restore-cards"),
     claimBoardCard: inv("board:claim-card"),
     releaseBoardCard: inv("board:release-card"),

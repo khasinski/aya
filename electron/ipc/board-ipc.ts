@@ -6,6 +6,8 @@ import {
   claimBoardCard,
   clearBoardColumn,
   deleteBoardCard,
+  moveBoardCardToBacklog,
+  restoreBacklogCard,
   deleteBoardColumn,
   deliverBoardWithdrawal,
   dispatchBoardCard,
@@ -136,6 +138,22 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
     const cardId = requireString(req.cardId, "board:delete-card.cardId");
     const archive = req.archive === true;
     const { board } = await deleteBoardCard(ayaHome, project, cardId, { archive });
+    return board;
+  });
+
+  ipcMain.handle("board:move-to-backlog", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:move-to-backlog");
+    const project = await localProject(deps, req.projectSlug);
+    const cardId = requireString(req.cardId, "board:move-to-backlog.cardId");
+    const { board } = await moveBoardCardToBacklog(ayaHome, project, cardId);
+    return board;
+  });
+
+  ipcMain.handle("board:restore-from-backlog", async (_event, rawReq: unknown) => {
+    const req = requireRecord(rawReq, "board:restore-from-backlog");
+    const project = await localProject(deps, req.projectSlug);
+    const cardId = requireString(req.cardId, "board:restore-from-backlog.cardId");
+    const { board } = await restoreBacklogCard(ayaHome, project, cardId);
     return board;
   });
 

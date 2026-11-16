@@ -392,6 +392,11 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary: "List, archive, restore or search archived cards, or permanently clear the archive.",
   },
   {
+    command: "board backlog",
+    usage: "aya board backlog [list|id|restore id] [--json] [--project slug]",
+    summary: "List the backlog, take a card off the board into it, or put a backlog card back on the board.",
+  },
+  {
     command: "board clear",
     usage: "aya board clear [column] [--project slug]",
     summary: "Archive every card on the board, or in the specified column.",
