@@ -65,10 +65,6 @@ test("the chat recognizes the delivery test main types and the word it asks back
   }
 });
 
-test("Settings shows the columns a new board really starts with", () => {
-  assert.deepEqual([...mirrors.DEFAULT_BOARD_COLUMN_TITLES], board.DEFAULT_BOARD_COLUMNS.map((column) => column.title));
-});
-
 test("Settings lists the board limits main enforces", () => {
   for (const name of [
     "MAX_BOARD_COLUMNS", "MAX_BOARD_CARDS", "MAX_CARD_TITLE_CHARS", "MAX_COLUMN_TITLE_CHARS", "MAX_CARD_DESCRIPTION_CHARS",

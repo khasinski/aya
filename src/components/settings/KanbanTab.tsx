@@ -1,5 +1,10 @@
 import {
-  DEFAULT_BOARD_COLUMN_TITLES,
+  COLUMN_TITLES,
+  DEFAULT_BOARD_COLUMNS,
+  PENDING_COLUMN_IDS,
+  STARTED_COLUMN_ID,
+} from "../../../shared/board-columns.cjs";
+import {
   MAX_ASSIGNEE_CHARS,
   MAX_BOARD_CARDS,
   MAX_BOARD_COLUMNS,
@@ -16,8 +21,10 @@ import { SettingsHeader, SettingsRow } from "./parts";
 
 const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
+const pendingTitles = PENDING_COLUMN_IDS.map((id) => COLUMN_TITLES[id]).join(" or ");
 
-/** The board's defaults and limits, read only. Shown while the Kanban board (General) is on. */
+/** The board's defaults, fixed rules and limits, read only. Shown while the Kanban board (General) is on.
+ *  The fixed rules are enforced by electron/board.ts and cannot be turned off. */
 export function KanbanTab() {
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
@@ -25,7 +32,7 @@ export function KanbanTab() {
         What every project board starts with. These cannot be changed here yet.
       </SettingsHeader>
       <div className="aya-settings-general">
-        <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMN_TITLES.join(", "))}>
+        <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "))}>
           Add, rename and reorder columns on the board itself.
         </SettingsRow>
         <SettingsRow icon="add_card" title="New cards" control={value("First column")}>
@@ -39,7 +46,14 @@ export function KanbanTab() {
           Optional on each card.
         </SettingsRow>
       </div>
-      <section className="aya-settings-limits" aria-label="Kanban limits">
+      <section className="aya-settings-box" aria-label="Kanban fixed rules">
+        <h3>Fixed rules</h3>
+        <ul>
+          <li>Moving a claimed card back to {pendingTitles} removes its claim and asks its pane to stop work on it.</li>
+          <li>Starting a card from {pendingTitles} moves it to {COLUMN_TITLES[STARTED_COLUMN_ID]}, when the board has that column.</li>
+        </ul>
+      </section>
+      <section className="aya-settings-box" aria-label="Kanban limits">
         <h3>Limits</h3>
         <ul>
           <li>A board holds up to {count(MAX_BOARD_COLUMNS)} columns and {count(MAX_BOARD_CARDS)} cards.</li>

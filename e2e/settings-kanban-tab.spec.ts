@@ -1,13 +1,15 @@
 import type { ElectronApplication, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
+import { COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, PENDING_COLUMN_IDS, STARTED_COLUMN_ID } from "../shared/board-columns.cjs";
 import {
-  DEFAULT_BOARD_COLUMN_TITLES, MAX_ASSIGNEE_CHARS, MAX_BOARD_CARDS, MAX_BOARD_COLUMNS, MAX_BOARD_IMAGE_BYTES,
+  MAX_ASSIGNEE_CHARS, MAX_BOARD_CARDS, MAX_BOARD_COLUMNS, MAX_BOARD_IMAGE_BYTES,
   MAX_CARD_DESCRIPTION_CHARS, MAX_CARD_LABEL_CHARS, MAX_CARD_LABELS, MAX_CARD_TITLE_CHARS, MAX_COLUMN_TITLE_CHARS,
 } from "../src/main-mirrors";
 import { mib } from "../src/units";
 
 const count = (n: number) => n.toLocaleString("en-US");
+const pendingTitles = PENDING_COLUMN_IDS.map((id) => COLUMN_TITLES[id]).join(" or ");
 
 // The Kanban switch stays in General. Turning it on adds a Kanban tab to Settings
 // that shows the board's defaults; turning it off removes the tab again.
@@ -49,7 +51,10 @@ test("turning Kanban on adds a Kanban tab with the board defaults, turning it of
   await setKanban(settings, true);
   await settingsTab(settings, "Kanban").click();
   const pane = settings.getByTestId("settings-kanban");
-  await expect(pane).toContainText(DEFAULT_BOARD_COLUMN_TITLES.join(", "));
+  await expect(pane).toContainText(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "));
+  const rules = pane.getByLabel("Kanban fixed rules");
+  await expect(rules).toContainText(`Moving a claimed card back to ${pendingTitles} removes its claim and asks its pane to stop work on it.`);
+  await expect(rules).toContainText(`Starting a card from ${pendingTitles} moves it to ${COLUMN_TITLES[STARTED_COLUMN_ID]}, when the board has that column.`);
   await expect(pane).toContainText("First column");
   await expect(pane).toContainText("Urgent (P0), High (P1), Medium (P2), Low (P3)");
   const limits = pane.getByLabel("Kanban limits");

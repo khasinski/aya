@@ -20,9 +20,6 @@ export const GROK_USAGE_WINDOW_DAYS = 7;
 /** electron/usage-grok.ts USD_PER_GROK_TICK: Grok cost ticks are 1e-10 USD. */
 export const USD_PER_GROK_TICK = 1e-10;
 
-/** electron/board.ts DEFAULT_BOARD_COLUMNS titles: the columns a new board starts with. */
-export const DEFAULT_BOARD_COLUMN_TITLES = ["Todo", "In Progress", "Review", "Done"] as const;
-
 /** electron/board.ts MAX_CARD_DESCRIPTION_CHARS. */
 export const MAX_CARD_DESCRIPTION_CHARS = 16_000;
 
