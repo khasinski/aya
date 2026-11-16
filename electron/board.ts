@@ -14,6 +14,12 @@ import { displayBoardNotices,type BoardNotice } from "./board-notices";
 import { oneAtATime } from "./keyed-queue";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
+import {
+  DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
+  FINISHED_COLUMN_ID,
+  STARTED_COLUMN_ID,
+  isPendingColumn,
+} from "../shared/board-columns.cjs";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
 import type { ProjectConfig } from "./types";
@@ -63,12 +69,8 @@ interface StoredBoard {
   archivedCards?: KanbanCard[];
 }
 
-export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = [
-  { id: "todo", title: "Todo" },
-  { id: "in-progress", title: "In Progress" },
-  { id: "review", title: "Review" },
-  { id: "done", title: "Done" },
-];
+/** The columns a new board starts with; defined in the column dictionary (shared/board-columns.cjs). */
+export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = DICTIONARY_COLUMNS;
 
 type BoardChangeListener = (projectSlug: string) => void;
 const listeners = new Set<BoardChangeListener>();
@@ -93,10 +95,6 @@ async function notifyTaskWithdrawal(ayaHome: string, projectSlug: string, card: 
   for (const listener of withdrawalListeners) {
     await listener({ ayaHome, projectSlug, card, claim: card.claim, reason });
   }
-}
-
-function isPendingColumn(id: string): boolean {
-  return id === "todo" || id === "backlog";
 }
 
 async function withdrawToPendingColumn(ayaHome: string, projectSlug: string, target: KanbanCard, updated: KanbanCard, column: KanbanColumn, actorPaneId?: string): Promise<void> {
@@ -1063,7 +1061,7 @@ export function claimBoardCard(
     const iso = (claimant.now ?? new Date()).toISOString();
     if (held && !isOwn) await notifyTaskWithdrawal(ayaHome, project.slug, target, `reassigned to ${paneName}`);
     // Starting a pending task advances it regardless of the visual column order.
-    const inProgress = current.columns.find((c) => c.id === "in-progress");
+    const inProgress = current.columns.find((c) => c.id === STARTED_COLUMN_ID);
     const nextColumnId =
       isPendingColumn(target.columnId) && inProgress ? inProgress.id : target.columnId;
     const updated: KanbanCard = {
@@ -2011,7 +2009,7 @@ export async function handleBoardRequest(
   }
 
   if (sub === "clear") {
-    const colQuery = rest.join(" ").trim() || "done";
+    const colQuery = rest.join(" ").trim() || FINISHED_COLUMN_ID;
     const { deleted } = await clearBoardColumn(deps.ayaHome, project, colQuery, {
       archive: true,
       now: now(),

@@ -10,6 +10,7 @@
 // (native dialogs, window chrome, updater, Settings-only queries) is a typed
 // no-op, exactly as Aya Web stubs the calls a browser session can't make.
 
+import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS, STARTED_COLUMN_ID, isPendingColumn } from "../../shared/board-columns.cjs";
 import type {
   AyaApi,
   BoardSnapshot,
@@ -226,12 +227,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
           projectSlug,
           source: "user",
           filePath: `~/.aya/boards/${projectSlug}.json`,
-          columns: [
-            { id: "todo", title: "Todo" },
-            { id: "in-progress", title: "In Progress" },
-            { id: "review", title: "Review" },
-            { id: "done", title: "Done" },
-          ],
+          columns: DEFAULT_BOARD_COLUMNS.map((column) => ({ ...column })),
           cards: [],
         };
         d.boardsBySlug.set(projectSlug, b);
@@ -252,7 +248,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
           ...b.cards,
           {
             id: req.id ?? `t-${nextNum}`,
-            columnId: req.columnId ?? b.columns[0]?.id ?? "todo",
+            columnId: req.columnId ?? b.columns[0]?.id ?? COLUMN_IDS.todo,
             title: req.title.trim(),
             ...(req.description?.trim() ? { description: req.description.trim() } : {}),
             ...(req.assignee?.trim() ? { assignee: req.assignee.trim() } : {}),
@@ -287,7 +283,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
             if (req.assignee && req.assignee.trim()) updated.assignee = req.assignee.trim();
             else delete updated.assignee;
           }
-          if (req.columnId !== undefined && req.columnId !== c.columnId && ["todo", "backlog"].includes(req.columnId)) delete updated.claim;
+          if (req.columnId !== undefined && req.columnId !== c.columnId && isPendingColumn(req.columnId)) delete updated.claim;
           if (req.priority !== undefined) {
             if (req.priority) updated.priority = req.priority;
             else delete updated.priority;
@@ -307,7 +303,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       const target = b.cards.find((c) => c.id === req.cardId);
       if (!target) return b as never;
       const updated = { ...target, columnId: req.columnId, updatedAt: new Date().toISOString() };
-      if (req.columnId !== target.columnId && ["todo", "backlog"].includes(req.columnId)) delete updated.claim;
+      if (req.columnId !== target.columnId && isPendingColumn(req.columnId)) delete updated.claim;
       const next: BoardSnapshot = {
         ...b,
         cards: [...b.cards.filter((c) => c.id !== req.cardId), updated],
@@ -345,14 +341,14 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     claimBoardCard: async (req) => {
       const b = await api.getBoard(req.projectSlug);
       const nowIso = new Date().toISOString();
-      const hasInProgress = b.columns.some((col) => col.id === "in-progress");
+      const hasInProgress = b.columns.some((col) => col.id === STARTED_COLUMN_ID);
       const next: BoardSnapshot = {
         ...b,
         cards: b.cards.map((c) =>
           c.id === req.cardId
             ? {
                 ...c,
-                columnId: ["todo", "backlog"].includes(c.columnId) && hasInProgress ? "in-progress" : c.columnId,
+                columnId: isPendingColumn(c.columnId) && hasInProgress ? STARTED_COLUMN_ID : c.columnId,
                 assignee: req.paneName,
                 claim: { paneId: req.paneId, paneName: req.paneName, since: nowIso },
                 updatedAt: nowIso,

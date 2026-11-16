@@ -1,3 +1,4 @@
+import { DEFAULT_BOARD_COLUMNS } from "../../shared/board-columns.cjs";
 import {
   useCallback,
   useEffect,
@@ -79,12 +80,7 @@ export interface Props {
 }
 
 export function columnDotClass(colId: string): string {
-  if (
-    colId === "todo" ||
-    colId === "in-progress" ||
-    colId === "review" ||
-    colId === "done"
-  ) {
+  if (DEFAULT_BOARD_COLUMNS.some((column) => column.id === colId)) {
     return `aya-kanban-column-dot aya-kanban-column-dot--${colId}`;
   }
   return "aya-kanban-column-dot";

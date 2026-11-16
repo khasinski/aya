@@ -1,3 +1,4 @@
+import { isFinishedColumn } from "../../shared/board-columns.cjs";
 import "./kanban.css";
 import { extractChecklistProgress, KanbanCardMarkdown, livePaneDotInfo } from './KanbanCardContent';
 import { columnDotClass, PRIORITY_OPTIONS, type KanbanViewModel } from './useKanbanBoard';
@@ -156,8 +157,7 @@ export function KanbanColumns(props: KanbanColumnsProps) {
         ? allColCards.filter((c) => matchesCardFilter(c, false))
         : allColCards;
       const isCollapsed = Boolean(collapsedCols[col.id]);
-      const isDoneColumn =
-        col.id === "done" || col.title.toLowerCase() === "done";
+      const isDoneColumn = isFinishedColumn(col);
       const isDropTarget = dropTargetColId === col.id;
       const prevCol = colIndex > 0 ? board.columns[colIndex - 1] : null;
       const nextCol =
