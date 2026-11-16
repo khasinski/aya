@@ -461,6 +461,47 @@ test("reordering a claimed card within Todo on a board without In Progress does 
   } finally { fx.cleanup(); }
 });
 
+// Column ids stay literal in these tests: they are the contract that board files
+// store and that `aya board` users type.
+for (const columnId of ["review", "done"]) {
+  test(`moving a claimed card to ${columnId} keeps its claim and sends no stop message`, async () => {
+    const fx = makeDispatchFixture();
+    try {
+      await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+      await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+      const moved = await fx.call("board:move-card", { cardId: "t-1", columnId });
+      await fx.flush();
+      assert.equal(moved.cards[0].columnId, columnId);
+      assert.equal(moved.cards[0].claim?.paneId, "pane-1");
+      assert.equal(fx.sent.length, 1, "only the task prompt reached the pane");
+    } finally { fx.cleanup(); }
+  });
+}
+
+test("starting a card on a board without In Progress leaves it in its column", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await deleteBoardColumn(fx.home, fx.project, "in-progress");
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    const board = await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    assert.equal(board.cards[0].columnId, "todo");
+    assert.equal(board.cards[0].claim?.paneId, "pane-1");
+  } finally { fx.cleanup(); }
+});
+
+test("aya board clear without a column archives the Done column", async () => {
+  const fx = makeFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Finished", columnId: "done" });
+    await addBoardCard(fx.home, fx.project, { title: "Still to do" });
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    await handleBoardRequest({ argv: ["clear"] }, "pane-1", deps);
+    const board = await getBoard(fx.home, fx.project);
+    assert.deepEqual(board.cards.map((c) => c.title), ["Still to do"]);
+    assert.deepEqual(board.archivedCards.map((c) => c.title), ["Finished"]);
+  } finally { fx.cleanup(); }
+});
+
 for (const repo of [false, true]) {
   test(`column order persists in ${repo ? "repo" : "user"} storage without changing cards or claims`, async () => {
     const fx = makeFixture();
