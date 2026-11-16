@@ -51,6 +51,10 @@ export function KanbanTab() {
         <ul>
           <li>Moving a claimed card back to {pendingTitles} removes its claim and asks its pane to stop work on it.</li>
           <li>Starting a card from {pendingTitles} moves it to {COLUMN_TITLES[STARTED_COLUMN_ID]}, when the board has that column.</li>
+          <li>A card another pane holds is taken over only by Send to pane on the board or aya board claim with --replace.</li>
+          <li>From a pane, aya board releases only that pane&apos;s cards unless --force is given.</li>
+          <li>Taking over, releasing, deleting or archiving a claimed card asks the pane that held it to stop work on it, unless that pane made the change.</li>
+          <li>Closing a terminal tab releases every card it held.</li>
         </ul>
       </section>
       <section className="aya-settings-box" aria-label="Kanban limits">

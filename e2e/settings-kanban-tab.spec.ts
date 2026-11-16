@@ -55,6 +55,12 @@ test("turning Kanban on adds a Kanban tab with the board defaults, turning it of
   const rules = pane.getByLabel("Kanban fixed rules");
   await expect(rules).toContainText(`Moving a claimed card back to ${pendingTitles} removes its claim and asks its pane to stop work on it.`);
   await expect(rules).toContainText(`Starting a card from ${pendingTitles} moves it to ${COLUMN_TITLES[STARTED_COLUMN_ID]}, when the board has that column.`);
+  for (const rule of [
+    "A card another pane holds is taken over only by Send to pane on the board or aya board claim with --replace.",
+    "From a pane, aya board releases only that pane's cards unless --force is given.",
+    "Taking over, releasing, deleting or archiving a claimed card asks the pane that held it to stop work on it, unless that pane made the change.",
+    "Closing a terminal tab releases every card it held.",
+  ]) await expect(rules).toContainText(rule);
   await expect(pane).toContainText("First column");
   await expect(pane).toContainText("Urgent (P0), High (P1), Medium (P2), Low (P3)");
   const limits = pane.getByLabel("Kanban limits");
