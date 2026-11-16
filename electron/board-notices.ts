@@ -2,6 +2,7 @@ import { constants, promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { boardWithdrawalNotice } from "./board-instructions";
 import { oneAtATime } from "./keyed-queue";
 import { HOLD_BUSY } from "./pane-holds";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
@@ -114,7 +115,7 @@ export function createBoardNotices(deps: {
         await edit(deps.home, notices => notices.map(n => n.id === notice.id ? { ...n, state: "sending" } : n));
         try {
           await deps.send(notice,
-            `Aya Board: task ${notice.cardId}: ${notice.title} was ${notice.reason}. Stop work on this task; do not continue it unless it is assigned to you again. Check aya board --json for the current board before choosing another task.`);
+            boardWithdrawalNotice(notice.cardId, notice.title, notice.reason));
         } catch (error) {
           const state = inputMayHaveBeenWritten(error) ? "typed" : "pending";
           await edit(deps.home, notices => notices.map(n => n.id === notice.id ? { ...n, state } : n));
