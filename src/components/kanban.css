@@ -1041,10 +1041,11 @@
   color: var(--aya-pane-strong);
 }
 
+/* Same width with and without focus: a wider box re-wrapped the toolbar on
+   focus, and the blur on mousedown moved buttons from under the pointer. */
 .aya-kanban-search-input:focus {
   outline: none;
   border-color: #58a6ff;
-  width: 210px;
 }
 
 .aya-kanban-search-clear {
