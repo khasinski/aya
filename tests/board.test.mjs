@@ -273,6 +273,22 @@ test("returning a dispatched card to Todo tells its agent to stop that task", as
   } finally { fx.cleanup(); }
 });
 
+// The exact words an agent receives. A change here changes what every agent is told,
+// so it has to be deliberate: update these strings in the same commit.
+const PINNED_TASK_PROMPT =
+  "Task t-1: Existing task\n\n" +
+  "Use `aya board` to inspect or update the board (e.g. `aya board move t-1 review` or `aya board move t-1 done` when finished).";
+const PINNED_WITHDRAWAL_REASONS = {
+  backlog: "returned to Backlog",
+  "edit-column": "returned to Todo",
+  release: "released from your pane",
+  delete: "removed from the board",
+  reassign: "reassigned to Codex 2",
+};
+const pinnedWithdrawal = reason =>
+  `Aya Board: task t-1: Existing task was ${reason}. Stop work on this task; do not continue it unless it is assigned to you again. ` +
+  "Check aya board --json for the current board before choosing another task.";
+
 for (const action of ["backlog", "edit-column", "release", "delete", "reassign"]) {
   test(`withdrawing a dispatched card through ${action} notifies the original pane`, async () => {
     const fx = makeDispatchFixture();
@@ -298,6 +314,8 @@ for (const action of ["backlog", "edit-column", "release", "delete", "reassign"]
       assert.equal(fx.sent.length, action === "reassign" ? 3 : 2);
       const withdrawal = fx.sent.find(message => message.text.includes("Stop work on this task"));
       assert.equal(withdrawal.paneId, "pane-1");
+      assert.equal(fx.sent[0].text, PINNED_TASK_PROMPT, "the task prompt an agent receives");
+      assert.equal(withdrawal.text, pinnedWithdrawal(PINNED_WITHDRAWAL_REASONS[action]), "the withdrawal notice an agent receives");
       if (action === "reassign") assert.ok(fx.sent.some(message => message.paneId === "pane-2" && message.text.startsWith("Task t-1")));
     } finally { fx.cleanup(); }
   });
@@ -679,6 +697,18 @@ test("saveBoardImage and readBoardImageDataUrl store and load PNG assets", async
   } finally {
     fx.cleanup();
   }
+});
+
+test("the task prompt keeps its exact wording with a description, priority and labels", () => {
+  const prompt = formatBoardPrompt({
+    id: "t-9", title: "Fix crash", description: "Line one\nLine two", priority: "urgent", labels: ["bug", "ui"],
+  });
+  assert.equal(
+    prompt,
+    "Task t-9: Fix crash (priority: urgent · labels: bug, ui)\n\n" +
+      "Line one\nLine two\n\n" +
+      "Use `aya board` to inspect or update the board (e.g. `aya board move t-9 review` or `aya board move t-9 done` when finished).",
+  );
 });
 
 test("card priority, labels, clearBoardColumn, and restoreBoardCards (Undo)", async () => {
