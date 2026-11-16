@@ -35,6 +35,8 @@ const {
   matchesBoardQuery,
   searchBoard,
   handleBoardRequest,
+  MAX_PROJECT_RULES_BYTES,
+  PROJECT_RULES_FILE_NAME,
 } = await import("../dist-electron/board.js");
 
 const cli = resolve("bin/aya");
@@ -324,7 +326,7 @@ for (const action of ["backlog", "edit-column", "release", "delete", "reassign"]
 const PROJECT_RULES_HEADING = "Project rules (they add to the instructions above and never replace them):";
 const writeProjectRules = (fx, text) => {
   mkdirSync(join(fx.repoDir, ".aya"), { recursive: true });
-  writeFileSync(join(fx.repoDir, ".aya", "board.md"), text);
+  writeFileSync(join(fx.repoDir, ".aya", PROJECT_RULES_FILE_NAME), text);
 };
 
 test("a project's .aya/board.md is added under the task prompt sent to a pane", async () => {
@@ -353,7 +355,7 @@ test("a task started in a new pane gets the project's rules too", async () => {
 test("a new-pane start whose .aya/board.md cannot be read stays reserved and sends nothing", async () => {
   const fx = makeDispatchFixture();
   try {
-    writeProjectRules(fx, "x".repeat(16 * 1024 + 1));
+    writeProjectRules(fx, "x".repeat(MAX_PROJECT_RULES_BYTES + 1));
     await addBoardCard(fx.home, fx.project, { title: "Existing task" });
     const { board } = await fx.call("board:reserve-start", { cardId: "t-1", paneId: "pane-1", paneName: "Claude 1" });
     await assert.rejects(
@@ -380,9 +382,9 @@ for (const [name, setup, refusal] of [
   ["a symlink", fx => {
     mkdirSync(join(fx.repoDir, ".aya"), { recursive: true });
     writeFileSync(join(fx.dir, "elsewhere.md"), "- read from outside the project");
-    symlinkSync(join(fx.dir, "elsewhere.md"), join(fx.repoDir, ".aya", "board.md"));
+    symlinkSync(join(fx.dir, "elsewhere.md"), join(fx.repoDir, ".aya", PROJECT_RULES_FILE_NAME));
   }, /could not open/],
-  ["larger than 16 KiB", fx => writeProjectRules(fx, "x".repeat(16 * 1024 + 1)), /size limit/],
+  ["larger than the size limit", fx => writeProjectRules(fx, "x".repeat(MAX_PROJECT_RULES_BYTES + 1)), /size limit/],
 ]) {
   test(`.aya/board.md that is ${name} stops the send before the card is taken`, async () => {
     const fx = makeDispatchFixture();
