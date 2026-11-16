@@ -9,6 +9,7 @@ import * as localSummary from "../dist-electron/local-summary-errors.js";
 import * as validation from "../dist-electron/validation.js";
 import * as teams from "../dist-electron/team-definition.js";
 import * as usageGrok from "../dist-electron/usage-grok.js";
+import * as board from "../dist-electron/board.js";
 import { TeamRunner } from "../dist-electron/team-runner.js";
 import { TeamStore, teamDir } from "../dist-electron/team-store.js";
 import { teamChat } from "../dist-test/team-chat.js";
@@ -62,4 +63,14 @@ test("the chat recognizes the delivery test main types and the word it asks back
   } finally {
     cleanup();
   }
+});
+
+test("Settings shows the columns a new board really starts with", () => {
+  assert.deepEqual([...mirrors.DEFAULT_BOARD_COLUMN_TITLES], ["Todo", "In Progress", "Review", "Done"]);
+  assert.deepEqual([...mirrors.DEFAULT_BOARD_COLUMN_TITLES], board.DEFAULT_BOARD_COLUMNS.map((column) => column.title));
+});
+
+test("Settings shows the card description limit main enforces", () => {
+  assert.equal(mirrors.MAX_CARD_DESCRIPTION_CHARS, 16_000);
+  assert.equal(mirrors.MAX_CARD_DESCRIPTION_CHARS, board.MAX_CARD_DESCRIPTION_CHARS);
 });
