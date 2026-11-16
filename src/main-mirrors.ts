@@ -25,3 +25,13 @@ export const DEFAULT_BOARD_COLUMN_TITLES = ["Todo", "In Progress", "Review", "Do
 
 /** electron/board.ts MAX_CARD_DESCRIPTION_CHARS. */
 export const MAX_CARD_DESCRIPTION_CHARS = 16_000;
+
+/** electron/board.ts limits on a board and its cards; Settings > Kanban lists them. */
+export const MAX_BOARD_COLUMNS = 24;
+export const MAX_BOARD_CARDS = 500;
+export const MAX_CARD_TITLE_CHARS = 200;
+export const MAX_COLUMN_TITLE_CHARS = 80;
+export const MAX_CARD_LABELS = 12;
+export const MAX_CARD_LABEL_CHARS = 32;
+export const MAX_ASSIGNEE_CHARS = 120;
+export const MAX_BOARD_IMAGE_BYTES = 8 * 1024 * 1024;

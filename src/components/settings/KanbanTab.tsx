@@ -1,10 +1,23 @@
-import { DEFAULT_BOARD_COLUMN_TITLES, MAX_CARD_DESCRIPTION_CHARS } from "../../main-mirrors";
+import {
+  DEFAULT_BOARD_COLUMN_TITLES,
+  MAX_ASSIGNEE_CHARS,
+  MAX_BOARD_CARDS,
+  MAX_BOARD_COLUMNS,
+  MAX_BOARD_IMAGE_BYTES,
+  MAX_CARD_DESCRIPTION_CHARS,
+  MAX_CARD_LABEL_CHARS,
+  MAX_CARD_LABELS,
+  MAX_CARD_TITLE_CHARS,
+  MAX_COLUMN_TITLE_CHARS,
+} from "../../main-mirrors";
+import { mib } from "../../units";
 import { PRIORITY_OPTIONS } from "../useKanbanBoard";
 import { SettingsHeader, SettingsRow } from "./parts";
 
 const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
+const count = (n: number) => n.toLocaleString("en-US");
 
-/** The board's defaults, read only. Shown while the Kanban board (General) is on. */
+/** The board's defaults and limits, read only. Shown while the Kanban board (General) is on. */
 export function KanbanTab() {
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
@@ -25,12 +38,18 @@ export function KanbanTab() {
         >
           Optional on each card.
         </SettingsRow>
-        <SettingsRow
-          icon="notes"
-          title="Card description"
-          control={value(`Up to ${MAX_CARD_DESCRIPTION_CHARS.toLocaleString("en-US")} characters`)}
-        />
       </div>
+      <section className="aya-settings-limits" aria-label="Kanban limits">
+        <h3>Limits</h3>
+        <ul>
+          <li>A board holds up to {count(MAX_BOARD_COLUMNS)} columns and {count(MAX_BOARD_CARDS)} cards.</li>
+          <li>Card title: up to {count(MAX_CARD_TITLE_CHARS)} characters. Column title: up to {count(MAX_COLUMN_TITLE_CHARS)} characters.</li>
+          <li>Card description: up to {count(MAX_CARD_DESCRIPTION_CHARS)} characters.</li>
+          <li>Labels: up to {count(MAX_CARD_LABELS)} per card, {count(MAX_CARD_LABEL_CHARS)} characters each.</li>
+          <li>Assignee: up to {count(MAX_ASSIGNEE_CHARS)} characters.</li>
+          <li>Images in a card: up to {mib(MAX_BOARD_IMAGE_BYTES)} MiB each.</li>
+        </ul>
+      </section>
     </section>
   );
 }

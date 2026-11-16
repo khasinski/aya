@@ -1,6 +1,13 @@
 import type { ElectronApplication, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
+import {
+  DEFAULT_BOARD_COLUMN_TITLES, MAX_ASSIGNEE_CHARS, MAX_BOARD_CARDS, MAX_BOARD_COLUMNS, MAX_BOARD_IMAGE_BYTES,
+  MAX_CARD_DESCRIPTION_CHARS, MAX_CARD_LABEL_CHARS, MAX_CARD_LABELS, MAX_CARD_TITLE_CHARS, MAX_COLUMN_TITLE_CHARS,
+} from "../src/main-mirrors";
+import { mib } from "../src/units";
+
+const count = (n: number) => n.toLocaleString("en-US");
 
 // The Kanban switch stays in General. Turning it on adds a Kanban tab to Settings
 // that shows the board's defaults; turning it off removes the tab again.
@@ -42,10 +49,18 @@ test("turning Kanban on adds a Kanban tab with the board defaults, turning it of
   await setKanban(settings, true);
   await settingsTab(settings, "Kanban").click();
   const pane = settings.getByTestId("settings-kanban");
-  await expect(pane).toContainText("Todo, In Progress, Review, Done");
+  await expect(pane).toContainText(DEFAULT_BOARD_COLUMN_TITLES.join(", "));
   await expect(pane).toContainText("First column");
   await expect(pane).toContainText("Urgent (P0), High (P1), Medium (P2), Low (P3)");
-  await expect(pane).toContainText("16,000 characters");
+  const limits = pane.getByLabel("Kanban limits");
+  for (const line of [
+    `A board holds up to ${count(MAX_BOARD_COLUMNS)} columns and ${count(MAX_BOARD_CARDS)} cards.`,
+    `Card title: up to ${count(MAX_CARD_TITLE_CHARS)} characters. Column title: up to ${count(MAX_COLUMN_TITLE_CHARS)} characters.`,
+    `Card description: up to ${count(MAX_CARD_DESCRIPTION_CHARS)} characters.`,
+    `Labels: up to ${count(MAX_CARD_LABELS)} per card, ${count(MAX_CARD_LABEL_CHARS)} characters each.`,
+    `Assignee: up to ${count(MAX_ASSIGNEE_CHARS)} characters.`,
+    `Images in a card: up to ${mib(MAX_BOARD_IMAGE_BYTES)} MiB each.`,
+  ]) await expect(limits).toContainText(line);
   await expect(pane.getByRole("button")).toHaveCount(0);
   await window.screenshot({ path: testInfo.outputPath("settings-kanban-tab.png") });
 

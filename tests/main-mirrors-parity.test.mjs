@@ -66,11 +66,15 @@ test("the chat recognizes the delivery test main types and the word it asks back
 });
 
 test("Settings shows the columns a new board really starts with", () => {
-  assert.deepEqual([...mirrors.DEFAULT_BOARD_COLUMN_TITLES], ["Todo", "In Progress", "Review", "Done"]);
   assert.deepEqual([...mirrors.DEFAULT_BOARD_COLUMN_TITLES], board.DEFAULT_BOARD_COLUMNS.map((column) => column.title));
 });
 
-test("Settings shows the card description limit main enforces", () => {
-  assert.equal(mirrors.MAX_CARD_DESCRIPTION_CHARS, 16_000);
-  assert.equal(mirrors.MAX_CARD_DESCRIPTION_CHARS, board.MAX_CARD_DESCRIPTION_CHARS);
+test("Settings lists the board limits main enforces", () => {
+  for (const name of [
+    "MAX_BOARD_COLUMNS", "MAX_BOARD_CARDS", "MAX_CARD_TITLE_CHARS", "MAX_COLUMN_TITLE_CHARS", "MAX_CARD_DESCRIPTION_CHARS",
+    "MAX_CARD_LABELS", "MAX_CARD_LABEL_CHARS", "MAX_ASSIGNEE_CHARS", "MAX_BOARD_IMAGE_BYTES",
+  ]) {
+    assert.equal(typeof board[name], "number", `${name} exists in electron/board.ts`);
+    assert.equal(mirrors[name], board[name], name);
+  }
 });

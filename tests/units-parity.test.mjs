@@ -19,6 +19,9 @@ const CASES = [
   ["gibFromMiB", 24_564, "24.0"],
   ["gibFromMiB", 9_190, "9.0"],
   ["gibFromMiB", null, "?"],
+  // A Kanban card image limit of 8 MiB.
+  ["mib", 8_388_608, "8.0"],
+  ["mib", null, "?"],
 ];
 
 for (const [fn, input, want] of CASES) {
