@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { test, expect } from "./fixtures";
 import { envWithoutAya } from "./helpers/env";
@@ -53,6 +53,10 @@ for (const layout of ["projects-left", "stacked", "classic"]) {
       await expect(launcher).toHaveAttribute("aria-description", "No cards");
       await project("e2e-proj").click();
       await expect(launcher).toHaveAttribute("aria-description", "Backlog: 2");
+      // Wait for the debounced selection writer before reloading; otherwise a slow
+      // machine reloads first and restores the previously saved project.
+      await expect.poll(() => JSON.parse(readFileSync(join(seeded.ayaHome, "projects-state.json"), "utf8")).activeProject)
+        .toBe("e2e-proj");
       await window.reload();
       await expect(launcher).toHaveAttribute("aria-description", "Backlog: 2");
     });
