@@ -226,6 +226,8 @@ export function App() {
     setHarnessSearchEnabled,
     kanbanEnabled,
     setKanbanEnabled,
+    kanbanBacklogEnabled,
+    setKanbanBacklogEnabled,
     terminalSoundsEnabled,
     setTerminalSoundsEnabled,
     statusRailCollapsed,
@@ -1273,6 +1275,7 @@ export function App() {
             findInPaneFor={findInPaneFor}
             closeFindPane={closeFindPane}
             harnessSearchEnabled={harnessSearchEnabled}
+            kanbanBacklogEnabled={kanbanBacklogEnabled}
             openSettings={openSettings}
             closeProject={closeProject}
             restartTerminal={restartTerminal}
@@ -1626,6 +1629,8 @@ export function App() {
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           kanbanEnabled={kanbanEnabled}
           onKanbanEnabledChange={setKanbanEnabled}
+          kanbanBacklogEnabled={kanbanBacklogEnabled}
+          onKanbanBacklogEnabledChange={setKanbanBacklogEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}
           onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
           terminalSoundOverrides={terminalSoundOverrides}

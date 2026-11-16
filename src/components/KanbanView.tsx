@@ -11,8 +11,9 @@ import { matchesSearchQuery } from "./kanban-search";
 import { PRIORITY_OPTIONS, useKanbanBoard, type Props } from './useKanbanBoard';
 export const KanbanView = memo(function KanbanView(props: Props) {
   const model = useKanbanBoard(props);
-  // The drawer is a shelf: tabs (Archive today) and a search of its own.
+  // The drawer is a shelf: an Archive tab, a Backlog tab when it is on, and a search of its own.
   const [shelfQuery, setShelfQuery] = useState("");
+  const [shelfTab, setShelfTab] = useState<"archive" | "backlog">("archive");
   const {
     terminal,
     hidden,
@@ -59,6 +60,8 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     saveAndInsertImageFile,
     handleArchiveCard,
     handleRestoreArchivedCard,
+    handleMoveToBacklog,
+    handleRestoreBacklogCard,
     handleDeleteArchivedCard,
     handleEmptyArchive,
     startEditCard,
@@ -69,19 +72,31 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     siblingMap,
     launchablePresets,
     archivedCards,
+    backlogCards,
+    showBacklog,
+    backlogEnabled,
     boardFilterOptions,
     hasActiveFilter,
     clearAllFilters,
     filteredArchivedCards,
+    filteredBacklogCards,
     headerNode,
     activeMenuCard,
     showFilterStrip
   } = model;
   // The shelf search uses the board filter's query language and narrows on top of it.
   const shelfSearching = shelfQuery.trim() !== "";
-  const drawerCards = shelfSearching
+  const archiveMatches = shelfSearching
     ? filteredArchivedCards.filter((card) => matchesSearchQuery(card, shelfQuery, true))
     : filteredArchivedCards;
+  const backlogMatches = shelfSearching
+    ? filteredBacklogCards.filter((card) => matchesSearchQuery(card, shelfQuery, false))
+    : filteredBacklogCards;
+  const onBacklogTab = showBacklog && shelfTab === "backlog";
+  const drawerCards = onBacklogTab ? backlogMatches : archiveMatches;
+  const shelfName = onBacklogTab ? "backlog" : "archive";
+  const tabCount = (matches: readonly unknown[], total: readonly unknown[]) =>
+    hasActiveFilter || shelfSearching ? `${matches.length}/${total.length}` : total.length;
   return (
     <section
       data-testid="kanban-pane"
@@ -322,7 +337,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                   Shelf
                 </span>
                 <div className="aya-kanban-archive-actions">
-                  {archivedCards.length > 0 &&
+                  {!onBacklogTab && archivedCards.length > 0 &&
                     (confirmEmptyArchive ? (
                       <button
                         type="button"
@@ -369,20 +384,34 @@ export const KanbanView = memo(function KanbanView(props: Props) {
 
               <div className="aya-kanban-shelf-bar">
                 <div role="tablist" aria-label="Shelf" className="aya-kanban-shelf-tabs">
-                  <button type="button" role="tab" aria-selected="true" className="aya-kanban-shelf-tab aya-kanban-shelf-tab--active">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={!onBacklogTab}
+                    className={`aya-kanban-shelf-tab${onBacklogTab ? "" : " aya-kanban-shelf-tab--active"}`}
+                    onClick={() => setShelfTab("archive")}
+                  >
                     Archive
-                    <span className="aya-kanban-column-count">
-                      {hasActiveFilter || shelfSearching
-                        ? `${drawerCards.length}/${archivedCards.length}`
-                        : archivedCards.length}
-                    </span>
+                    <span className="aya-kanban-column-count">{tabCount(archiveMatches, archivedCards)}</span>
                   </button>
+                  {showBacklog && (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={onBacklogTab}
+                      className={`aya-kanban-shelf-tab${onBacklogTab ? " aya-kanban-shelf-tab--active" : ""}`}
+                      onClick={() => { setShelfTab("backlog"); setConfirmEmptyArchive(false); }}
+                    >
+                      Backlog
+                      <span className="aya-kanban-column-count">{tabCount(backlogMatches, backlogCards)}</span>
+                    </button>
+                  )}
                 </div>
                 <input
                   type="search"
                   className="aya-kanban-shelf-search"
-                  aria-label="Search the archive"
-                  placeholder="Search the archive (#label, @owner, p1)"
+                  aria-label={`Search the ${shelfName}`}
+                  placeholder={`Search the ${shelfName} (#label, @owner, p1)`}
                   value={shelfQuery}
                   onChange={(e) => setShelfQuery(e.target.value)}
                 />
@@ -390,9 +419,13 @@ export const KanbanView = memo(function KanbanView(props: Props) {
               <div className="aya-kanban-archive-list">
                 {drawerCards.length === 0 ? (
                   <div className="aya-kanban-empty-col">
-                    {hasActiveFilter || shelfSearching
-                      ? "No matching archived cards"
-                      : "Archive is empty. Use Archive on the Done column to move completed cards here."}
+                    {onBacklogTab
+                      ? hasActiveFilter || shelfSearching
+                        ? "No matching backlog cards"
+                        : "Backlog is empty. Use Move to backlog in a card's menu to keep a card off the board."
+                      : hasActiveFilter || shelfSearching
+                        ? "No matching archived cards"
+                        : "Archive is empty. Use Archive on the Done column to move completed cards here."}
                   </div>
                 ) : (
                   drawerCards.map((card) => {
@@ -407,8 +440,9 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                       Boolean(card.description) &&
                       (card.description!.length > 180 ||
                         card.description!.split(/\r?\n/).length > 4);
-                    const archivedDate = card.archivedAt
-                      ? new Date(card.archivedAt).toLocaleDateString(undefined, {
+                    const shelvedAt = onBacklogTab ? card.updatedAt : card.archivedAt;
+                    const archivedDate = shelvedAt
+                      ? new Date(shelvedAt).toLocaleDateString(undefined, {
                         month: "short",
                         day: "numeric",
                       })
@@ -417,7 +451,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                     return (
                       <div
                         key={card.id}
-                        data-testid={`kanban-archived-card-${card.id}`}
+                        data-testid={onBacklogTab ? `kanban-backlog-card-${card.id}` : `kanban-archived-card-${card.id}`}
                         className="aya-kanban-card aya-kanban-card--archived"
                         onMouseLeave={() => {
                           if (confirmDeleteCardId === card.id) {
@@ -446,7 +480,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                               className="aya-kanban-archive-restore-btn"
                               title={`Restore ${card.id} to ${origCol ? origCol.title : "board"
                                 }`}
-                              onClick={() => void handleRestoreArchivedCard(card)}
+                              onClick={() => void (onBacklogTab ? handleRestoreBacklogCard(card.id) : handleRestoreArchivedCard(card))}
                             >
                               ↩ Restore
                             </button>
@@ -471,9 +505,9 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                                 title={
                                   shiftDeleteReady
                                     ? "Permanently delete card (Shift held)"
-                                    : "Permanently delete from archive (hold Shift to skip confirmation)"
+                                    : `Permanently delete from ${shelfName} (hold Shift to skip confirmation)`
                                 }
-                                aria-label={`Delete archived card ${card.id}`}
+                                aria-label={onBacklogTab ? `Delete backlog card ${card.id}` : `Delete archived card ${card.id}`}
                                 onClick={(e) => {
                                   if (e.shiftKey || shiftDeleteReady) {
                                     void handleDeleteArchivedCard(card.id);
@@ -781,6 +815,17 @@ export const KanbanView = memo(function KanbanView(props: Props) {
             <span className="aya-kanban-popover-icon">⇣</span>
             <span>Archive card</span>
           </button>
+          {backlogEnabled && (
+            <button
+              type="button"
+              role="menuitem"
+              className="aya-kanban-popover-item"
+              onClick={() => void handleMoveToBacklog(activeMenuCard.id)}
+            >
+              <span className="aya-kanban-popover-icon">⇥</span>
+              <span>Move to backlog</span>
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

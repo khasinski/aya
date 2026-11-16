@@ -72,7 +72,9 @@ test("turning Kanban on adds a Kanban tab with the board defaults, turning it of
     `Assignee: up to ${count(MAX_ASSIGNEE_CHARS)} characters.`,
     `Images in a card: up to ${mib(MAX_BOARD_IMAGE_BYTES)} MiB each.`,
   ]) await expect(limits).toContainText(line);
-  await expect(pane.getByRole("button")).toHaveCount(0);
+  // The only control is the Backlog switch, off by default; everything else is read only.
+  await expect(pane.getByRole("button")).toHaveCount(2);
+  await expect(pane.getByLabel("Backlog", { exact: true }).getByRole("button", { name: "Off", exact: true })).toHaveClass(/aya-settings-segment--active/);
   await window.screenshot({ path: testInfo.outputPath("settings-kanban-tab.png") });
 
   await setKanban(settings, false);

@@ -78,6 +78,8 @@ export interface Props {
   }>;
   onFocusTerminal?: (terminalId: string) => void;
   onSplitRight?: (terminalId: string) => void;
+  /** Settings > Kanban > Backlog: cards can be moved to a Backlog tab on the shelf. */
+  backlogEnabled?: boolean;
 }
 
 export function columnDotClass(colId: string): string {
@@ -102,6 +104,7 @@ export function useKanbanBoard({
   onCreateWorktrees,
   onFocusTerminal,
   onSplitRight,
+  backlogEnabled = false,
 }: Props) {
 
   const [board, setBoard] = useState<BoardSnapshot | null>(null);
@@ -720,6 +723,22 @@ export function useKanbanBoard({
     }
   };
 
+  // No Undo here: the card waits on the shelf's Backlog tab, and Restore puts it back.
+  const handleMoveToBacklog = async (cardId: string) => {
+    setCardMenu(null);
+    setConfirmDeleteCardId(null);
+    await runAction(() =>
+      window.aya.moveBoardCardToBacklog({ projectSlug: terminal.projectSlug, cardId }),
+    );
+  };
+
+  const handleRestoreBacklogCard = async (cardId: string) => {
+    setConfirmDeleteCardId(null);
+    await runAction(() =>
+      window.aya.restoreBacklogCard({ projectSlug: terminal.projectSlug, cardId }),
+    );
+  };
+
   const handleDeleteArchivedCard = async (cardId: string) => {
     setConfirmDeleteCardId(null);
     await runAction(() =>
@@ -987,6 +1006,13 @@ export function useKanbanBoard({
     () => board?.archivedCards ?? [],
     [board?.archivedCards],
   );
+  const backlogCards = useMemo(
+    () => board?.backlogCards ?? [],
+    [board?.backlogCards],
+  );
+  // The Backlog tab shows while the setting is on, and whenever cards are in it,
+  // so turning the setting off never hides cards.
+  const showBacklog = backlogEnabled || backlogCards.length > 0;
 
   // Collect distinct assignees/claims and labels on the board for quick filter bar
   const boardFilterOptions = useMemo(() => {
@@ -1144,6 +1170,13 @@ export function useKanbanBoard({
         : archivedCards,
     [archivedCards, hasActiveFilter, matchesCardFilter],
   );
+  const filteredBacklogCards = useMemo(
+    () =>
+      hasActiveFilter
+        ? backlogCards.filter((c) => matchesCardFilter(c, false))
+        : backlogCards,
+    [backlogCards, hasActiveFilter, matchesCardFilter],
+  );
 
   const headerNode = (
     <div className="aya-pane-header">
@@ -1210,7 +1243,7 @@ export function useKanbanBoard({
                 Save to .aya/board.json
               </button>
             )}
-            {(archivedCards.length > 0 || archiveOpen) && (
+            {(archivedCards.length > 0 || backlogCards.length > 0 || archiveOpen) && (
               <button
                 type="button"
                 data-testid="kanban-archive-toggle"
@@ -1222,13 +1255,23 @@ export function useKanbanBoard({
                   setConfirmEmptyArchive(false);
                 }}
               >
-                <span>
-                  Archive (
-                  {hasActiveFilter
-                    ? `${filteredArchivedCards.length}/${archivedCards.length}`
-                    : archivedCards.length}
-                  )
-                </span>
+                {showBacklog ? (
+                  <span>
+                    Shelf (
+                    {hasActiveFilter
+                      ? `${filteredArchivedCards.length + filteredBacklogCards.length}/${archivedCards.length + backlogCards.length}`
+                      : archivedCards.length + backlogCards.length}
+                    )
+                  </span>
+                ) : (
+                  <span>
+                    Archive (
+                    {hasActiveFilter
+                      ? `${filteredArchivedCards.length}/${archivedCards.length}`
+                      : archivedCards.length}
+                    )
+                  </span>
+                )}
               </button>
             )}
           </>
@@ -1385,6 +1428,8 @@ export function useKanbanBoard({
     handleArchiveCard,
     handleRestoreArchivedCard,
     handleDeleteArchivedCard,
+    handleMoveToBacklog,
+    handleRestoreBacklogCard,
     handleEmptyArchive,
     handleCreateCard,
     startEditCard,
@@ -1401,6 +1446,9 @@ export function useKanbanBoard({
     siblingMap,
     launchablePresets,
     archivedCards,
+    backlogCards,
+    showBacklog,
+    backlogEnabled,
     boardFilterOptions,
     hasActiveFilter,
     matchesCardFilter,
@@ -1408,6 +1456,7 @@ export function useKanbanBoard({
     renderDescriptionToolbar,
     renderPriorityAndLabelsRow,
     filteredArchivedCards,
+    filteredBacklogCards,
     headerNode,
     activeMenuCard,
     showFilterStrip,
