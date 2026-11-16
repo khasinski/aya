@@ -66,7 +66,7 @@ The search does not filter the board itself.
 
 ## Backlog
 
-Settings > Kanban > Backlog (Experimental) applies to every project. When it is
+Settings > Kanban > Backlog applies to every project. When it is
 on:
 - each card's menu has Move to backlog;
 - the shelf has a Backlog tab.
@@ -146,7 +146,7 @@ These defaults describe the target state too. Planned changes are opt-in and mus
 - Kanban board (Settings > General, "Experimental"): off by default (`KANBAN_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
 - Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `shared/board-columns.cjs`).
 - Shelf (the Archive button): an Archive tab and its own search; no Backlog tab.
-- Backlog (Settings > Kanban, "Experimental"): off by default (`KANBAN_BACKLOG_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
+- Backlog (Settings > Kanban): off by default (`KANBAN_BACKLOG_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
 - New card: goes into the first column; priority and labels are optional and are omitted when not given; description starts empty; no assignee.
 - Card description limit: 16,000 characters (`MAX_CARD_DESCRIPTION_CHARS`).
 - Priorities: `low`, `medium`, `high`, `urgent`. Search tokens: `p0` = urgent, `p1` = high, `p2` = medium, `p3` = low.

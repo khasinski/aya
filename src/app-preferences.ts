@@ -37,7 +37,7 @@ export const GITHUB_LINK_CODEC = boolPreference(false);
 export const HARNESS_SEARCH_CODEC = boolPreference(false);
 // Experimental: built-in per-project Kanban board alongside terminals.
 export const KANBAN_CODEC = boolPreference(false);
-// Experimental: cards can be moved to a Backlog tab on the shelf; off keeps the board as it was.
+// Settings > Kanban > Backlog: cards can be moved to a Backlog tab on the shelf; off keeps the board as it was.
 export const KANBAN_BACKLOG_CODEC = boolPreference(false);
 // Waiting/done chimes default on; the settings toggle is an opt-out.
 export const TERMINAL_SOUNDS_CODEC = boolPreference(true);

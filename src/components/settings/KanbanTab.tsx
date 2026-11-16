@@ -31,7 +31,7 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
       <div className="aya-settings-general">
         <SettingsRow
           icon="inventory_2"
-          title={<>Backlog <span className="aya-settings-experimental">Experimental</span></>}
+          title="Backlog"
           control={(
             <div className="aya-settings-segmented" aria-label="Backlog">
               {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
@@ -47,7 +47,7 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
             </div>
           )}
         >
-          Adds Move to backlog to each card's menu and a Backlog tab to the shelf, for cards kept off the board for later. Restore puts a card back in its column. Applies to every project.
+          Adds Move to backlog to each card's menu and a Backlog tab to the shelf.
         </SettingsRow>
         <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "))}>
           Add, rename and reorder columns on the board itself.
