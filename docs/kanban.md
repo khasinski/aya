@@ -63,6 +63,11 @@ Write rules that add to or narrow the text above them, never rules that
 contradict it. The task prompt suggests `aya board move <id> review` or `done`
 when finished, so "Move a card to Done only after its PR is merged" narrows it.
 
+Two rules hold on every board, and no project rule changes them, so do not write
+rules against them: moving a claimed card back to Todo or Backlog removes its
+claim and asks its pane to stop, and starting a card from Todo or Backlog moves
+it to In Progress (see "Withdrawing an agent's task" above).
+
 Keep the file short: it goes out with every task, and a file over 16 KiB is
 refused. Aya does not follow a symlinked `board.md`. When the file cannot be
 read, the task is not sent and the card is not taken; fix the file and send the
