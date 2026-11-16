@@ -51,3 +51,14 @@ actions are offered for terminal presets; native GUI presets are not supported.
 
 The assignment menu opens above a low card when needed, stays within the window,
 and scrolls if its list is long. Its position and height follow window resizing.
+
+## Shelf
+
+The Archive button opens the shelf, a drawer beside the board. Today it has one
+tab, Archive, with the cards archived from the board. A Backlog tab is planned as
+an opt-in in Settings > Kanban; boards without it keep only the Archive tab.
+
+The shelf has its own search box. It uses the same query as the board filter
+(text, `#label`, `@owner`, `p0`-`p3`, `col:name`) and narrows the shelf on top
+of the board filter. The tab shows how many cards match, for example `1/2`.
+The search does not filter the board itself.

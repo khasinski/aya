@@ -1482,3 +1482,36 @@
   background: rgba(88, 166, 255, 0.22);
   color: var(--aya-pane-strong);
 }
+
+/* Shelf: the board drawer's tabs (Archive today) and its own search. */
+.aya-kanban-shelf-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--aya-pane-header-border);
+}
+.aya-kanban-shelf-tabs { display: flex; gap: 4px; }
+.aya-kanban-shelf-tab {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: default;
+}
+.aya-kanban-shelf-tab--active { border-color: var(--aya-pane-header-border); background: var(--aya-pane-header-bg); }
+.aya-kanban-shelf-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--aya-pane-header-border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+}
