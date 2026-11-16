@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { KANBAN_STORAGE_KEY, LAYOUT_MODE_STORAGE_KEY } from "../src/storage-keys";
 
 // The board drawer is a shelf: an Archive tab (Backlog comes later, opt-in)
 // and a search of its own in the board filter's query language. The toolbar
@@ -65,3 +66,39 @@ test("the board filter still narrows the shelf, and the shelf search narrows fur
   await expect(drawer.getByTestId("kanban-archived-card-t-3")).toBeVisible();
   await expect(drawer.getByRole("tab", { name: /Archive/ })).toHaveText("Archive1/2");
 });
+
+// The shelf in every window layout (all experimental), with the board as half
+// of a split and as the only pane. Stacked puts the board toolbar in the title
+// bar, and the tab layouts keep the board behind its Kanban tab.
+const boardTab = { presetId: "board", name: "Board" };
+for (const layout of ["classic", "projects-left", "stacked"] as const) {
+  for (const pane of [
+    { name: "split", seed: { rightTab: boardTab } },
+    { name: "single", seed: { singleTab: boardTab, split: false } },
+  ] as const) {
+    test.describe(`${layout} ${pane.name}`, () => {
+      test.use({ seedOptions: { ...pane.seed, ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) } } });
+
+      test("the shelf opens and searches its archive", async ({ window }, testInfo) => {
+        await window.evaluate((keys) => {
+          localStorage.setItem(keys.layout, keys.value);
+          localStorage.setItem(keys.kanban, "1");
+        }, { layout: LAYOUT_MODE_STORAGE_KEY, value: layout, kanban: KANBAN_STORAGE_KEY });
+        await window.reload();
+        const toggle = window.getByTestId("kanban-archive-toggle");
+        const launcher = window.getByRole("button", { name: "Kanban", exact: true });
+        await expect(launcher).toBeVisible();
+        if (!(await toggle.isVisible())) await launcher.click();
+        await toggle.click();
+        const drawer = window.getByTestId("kanban-archive-drawer");
+        await expect(drawer.locator(".aya-kanban-archive-title")).toHaveText("Shelf");
+        await expect(drawer.getByRole("tab", { name: /Archive/ })).toHaveText("Archive2");
+        await drawer.getByRole("searchbox", { name: "Search the archive" }).fill("login");
+        await expect(drawer.getByTestId("kanban-archived-card-t-2")).toBeVisible();
+        await expect(drawer.getByTestId("kanban-archived-card-t-3")).toHaveCount(0);
+        await expect(drawer.getByRole("tab", { name: /Archive/ })).toHaveText("Archive1/2");
+        await window.screenshot({ path: testInfo.outputPath(`shelf-${layout}-${pane.name}.png`) });
+      });
+    });
+  }
+}
