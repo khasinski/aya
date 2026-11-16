@@ -14,6 +14,7 @@ import { displayBoardNotices,type BoardNotice } from "./board-notices";
 import { oneAtATime } from "./keyed-queue";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
+import { boardTaskFooter, WITHDRAWAL_REASON } from "./board-instructions";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
 import type { ProjectConfig } from "./types";
@@ -101,7 +102,7 @@ function isPendingColumn(id: string): boolean {
 
 async function withdrawToPendingColumn(ayaHome: string, projectSlug: string, target: KanbanCard, updated: KanbanCard, column: KanbanColumn, actorPaneId?: string): Promise<void> {
   if (!target.claim || target.columnId === column.id || !isPendingColumn(column.id)) return;
-  await notifyTaskWithdrawal(ayaHome, projectSlug, target, `returned to ${column.title}`, actorPaneId);
+  await notifyTaskWithdrawal(ayaHome, projectSlug, target, WITHDRAWAL_REASON.returnedTo(column.title), actorPaneId);
   delete updated.claim;
 }
 
@@ -762,7 +763,7 @@ export function archiveBoardCard(
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
     const target = resolveCard(current.cards, cardId);
-    await notifyTaskWithdrawal(ayaHome, project.slug, target, "removed from the board", actorPaneId);
+    await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.removed, actorPaneId);
     const nowIso = (now ?? new Date()).toISOString();
     const archived: KanbanCard = {
       ...target,
@@ -857,7 +858,7 @@ export function deleteBoardCard(
         ayaHome,
         project.slug,
         activeTarget,
-        "removed from the board",
+        WITHDRAWAL_REASON.removed,
         options?.actorPaneId,
       );
       const cards = current.cards.filter((c) => c.id !== activeTarget.id);
@@ -924,7 +925,7 @@ export function clearBoardColumn(
         ayaHome,
         project.slug,
         card,
-        "removed from the board",
+        WITHDRAWAL_REASON.removed,
         options?.actorPaneId,
       );
     }
@@ -1061,7 +1062,7 @@ export function claimBoardCard(
       );
     }
     const iso = (claimant.now ?? new Date()).toISOString();
-    if (held && !isOwn) await notifyTaskWithdrawal(ayaHome, project.slug, target, `reassigned to ${paneName}`);
+    if (held && !isOwn) await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.reassignedTo(paneName));
     // Starting a pending task advances it regardless of the visual column order.
     const inProgress = current.columns.find((c) => c.id === "in-progress");
     const nextColumnId =
@@ -1179,7 +1180,7 @@ export function releaseBoardCard(
       );
     }
     if (!caller.paneId || caller.paneId !== previous.paneId) {
-      await notifyTaskWithdrawal(ayaHome, project.slug, target, "released from your pane");
+      await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.released);
     }
     const updated: KanbanCard = {
       ...target,
@@ -1577,7 +1578,7 @@ export function formatBoardPrompt(card: KanbanCard): string {
   }
   lines.push(
     "",
-    `Use \`aya board\` to inspect or update the board (e.g. \`aya board move ${card.id} review\` or \`aya board move ${card.id} done\` when finished).`,
+    boardTaskFooter(card.id),
   );
   return lines.join("\n");
 }
