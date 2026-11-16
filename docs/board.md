@@ -93,7 +93,7 @@ These items are tracked on the board, not in this file:
 
 ## Default values (current main)
 
-These defaults describe the target state too. Planned changes are opt-in and must not change them.
+These defaults describe the target state too. Planned changes are opt-in and must not change them. A value that is the default is listed only here and is not repeated elsewhere in this document; the rest of the document describes only non-default behaviour.
 
 - Kanban board (Settings > General, "Experimental"): off by default (`KANBAN_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
 - Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `electron/board.ts`).
