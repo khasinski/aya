@@ -23,6 +23,7 @@ import {
   isPendingColumn,
 } from "../shared/board-columns.cjs";
 import { BOARD_IMAGE_FORMATS, detectBoardImageFormat, listBoardImageFormats } from "../shared/board-images.cjs";
+import { boardTaskFooter, WITHDRAWAL_REASON, withProjectRules } from "./board-instructions";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
 import type { ProjectConfig } from "./types";
@@ -30,9 +31,13 @@ import type { ProjectConfig } from "./types";
 export const BOARDS_DIR_NAME = "boards";
 export const BOARD_ASSETS_DIR_NAME = "board-assets";
 export const REPO_BOARD_FILE_NAME = "board.json";
+/** A project's own rules for agents, added under every task prompt; optional. */
+export const PROJECT_RULES_FILE_NAME = "board.md";
 export const BOARD_FORMAT_VERSION = 1;
 const BYTES_PER_MB = 1024 * 1024;
 export const MAX_BOARD_FILE_BYTES = 2 * BYTES_PER_MB;
+/** Every task prompt carries the rules, so they stay short. */
+export const MAX_PROJECT_RULES_BYTES = 16 * 1024;
 export const MAX_BOARD_IMAGE_BYTES = 8 * BYTES_PER_MB;
 /** The image limit as users read it in messages. */
 const MAX_BOARD_IMAGE_MB = MAX_BOARD_IMAGE_BYTES / BYTES_PER_MB;
@@ -107,7 +112,7 @@ async function notifyTaskWithdrawal(ayaHome: string, projectSlug: string, card: 
 
 async function withdrawToPendingColumn(ayaHome: string, projectSlug: string, target: KanbanCard, updated: KanbanCard, column: KanbanColumn, actorPaneId?: string): Promise<void> {
   if (!target.claim || target.columnId === column.id || !isPendingColumn(column.id)) return;
-  await notifyTaskWithdrawal(ayaHome, projectSlug, target, `returned to ${column.title}`, actorPaneId);
+  await notifyTaskWithdrawal(ayaHome, projectSlug, target, WITHDRAWAL_REASON.returnedTo(column.title), actorPaneId);
   delete updated.claim;
 }
 
@@ -149,6 +154,21 @@ async function hasRepoBoardFile(projectDirectory: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** The project's .aya/board.md, or null when it has none. A symlinked .aya directory
+ *  counts as none, as for the repo board file; a symlinked, non-regular or oversized
+ *  board.md is refused, so a task is never sent without the rules the project set. */
+export async function readProjectBoardRules(projectDirectory: string): Promise<string | null> {
+  const ayaDir = path.join(projectDirectory, PROJECT_AYA_DIRNAME);
+  try {
+    const dirStat = await fs.lstat(ayaDir);
+    if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error(`Aya could not open ${ayaDir}. Nothing was changed.`);
+  }
+  return readBoundedRegularFile(path.join(ayaDir, PROJECT_RULES_FILE_NAME), MAX_PROJECT_RULES_BYTES);
 }
 
 function isColumn(value: unknown): value is KanbanColumn {
@@ -330,7 +350,7 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
   };
 }
 
-async function readBoundedRegularFile(filePath: string): Promise<string | null> {
+async function readBoundedRegularFile(filePath: string, maxBytes = MAX_BOARD_FILE_BYTES): Promise<string | null> {
   let handle;
   try {
     handle = await fs.open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -340,12 +360,12 @@ async function readBoundedRegularFile(filePath: string): Promise<string | null> 
   }
   try {
     const st = await handle.stat();
-    if (!st.isFile() || st.size > MAX_BOARD_FILE_BYTES) {
+    if (!st.isFile() || st.size > maxBytes) {
       throw new Error(`${filePath} is not a regular file within the size limit. Nothing was changed.`);
     }
-    const buffer = Buffer.alloc(MAX_BOARD_FILE_BYTES + 1);
+    const buffer = Buffer.alloc(maxBytes + 1);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > MAX_BOARD_FILE_BYTES) {
+    if (bytesRead > maxBytes) {
       throw new Error(`${filePath} exceeds the size limit. Nothing was changed.`);
     }
     return buffer.subarray(0, bytesRead).toString("utf8");
@@ -768,7 +788,7 @@ export function archiveBoardCard(
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
     const target = resolveCard(current.cards, cardId);
-    await notifyTaskWithdrawal(ayaHome, project.slug, target, "removed from the board", actorPaneId);
+    await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.removed, actorPaneId);
     const nowIso = (now ?? new Date()).toISOString();
     const archived: KanbanCard = {
       ...target,
@@ -863,7 +883,7 @@ export function deleteBoardCard(
         ayaHome,
         project.slug,
         activeTarget,
-        "removed from the board",
+        WITHDRAWAL_REASON.removed,
         options?.actorPaneId,
       );
       const cards = current.cards.filter((c) => c.id !== activeTarget.id);
@@ -930,7 +950,7 @@ export function clearBoardColumn(
         ayaHome,
         project.slug,
         card,
-        "removed from the board",
+        WITHDRAWAL_REASON.removed,
         options?.actorPaneId,
       );
     }
@@ -1067,7 +1087,7 @@ export function claimBoardCard(
       );
     }
     const iso = (claimant.now ?? new Date()).toISOString();
-    if (held && !isOwn) await notifyTaskWithdrawal(ayaHome, project.slug, target, `reassigned to ${paneName}`);
+    if (held && !isOwn) await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.reassignedTo(paneName));
     // Starting a pending task advances it regardless of the visual column order.
     const inProgress = current.columns.find((c) => c.id === STARTED_COLUMN_ID);
     const nextColumnId =
@@ -1113,9 +1133,11 @@ export function dispatchBoardCard(ayaHome: string, project: Pick<ProjectConfig, 
       cards: board.cards.map(c => c.id === cardId ? { ...c, claim: { ...card.claim!, startup } } : c),
       archivedCards: board.archivedCards,
     });
+    // Read the project's rules first: if they cannot be read, the start stays reserved.
+    const projectRules = await readProjectBoardRules(project.directory);
     // Persist before typing so a remount or crash cannot resend an uncertain prompt.
     await save("sending");
-    try { await deliver(formatBoardPrompt(card)); }
+    try { await deliver(formatBoardPrompt(card, projectRules)); }
     catch (error) {
       if (!inputMayHaveBeenWritten(error)) await save("reserved");
       notifyBoardChanged(project.slug);
@@ -1185,7 +1207,7 @@ export function releaseBoardCard(
       );
     }
     if (!caller.paneId || caller.paneId !== previous.paneId) {
-      await notifyTaskWithdrawal(ayaHome, project.slug, target, "released from your pane");
+      await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.released);
     }
     const updated: KanbanCard = {
       ...target,
@@ -1546,7 +1568,8 @@ export function exportBoardToRepo(
   });
 }
 
-export function formatBoardPrompt(card: KanbanCard): string {
+/** The task text an agent receives; `projectRules` (.aya/board.md) is added under it, never in its place. */
+export function formatBoardPrompt(card: KanbanCard, projectRules?: string | null): string {
   const metaParts: string[] = [];
   if (card.priority) metaParts.push(`priority: ${card.priority}`);
   if (card.labels && card.labels.length > 0) metaParts.push(`labels: ${card.labels.join(", ")}`);
@@ -1557,9 +1580,9 @@ export function formatBoardPrompt(card: KanbanCard): string {
   }
   lines.push(
     "",
-    `Use \`aya board\` to inspect or update the board (e.g. \`aya board move ${card.id} review\` or \`aya board move ${card.id} done\` when finished).`,
+    boardTaskFooter(card.id),
   );
-  return lines.join("\n");
+  return withProjectRules(lines.join("\n"), projectRules);
 }
 
 export function formatBoardText(board: BoardSnapshot): string {

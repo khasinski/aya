@@ -17,6 +17,7 @@ import {
   notifyBoardChanged,
   onBoardTaskWithdrawal,
   readBoardImageDataUrl,
+  readProjectBoardRules,
   releaseBoardCard,
   releaseBoardClaimsForPane,
   renameBoardColumn,
@@ -271,12 +272,14 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
     const targetId = requireString(req.targetId, "board:send-to-pane.targetId");
     const target = project.tabs.find((tab) => tab.id === targetId);
     if (!target) throw new Error("Choose a pane from this project.");
+    // Before the claim: rules that cannot be read must not leave the card taken without its prompt.
+    const projectRules = await readProjectBoardRules(project.directory);
     const { board, card } = await claimBoardCard(ayaHome, project, cardId, {
       paneId: target.id,
       paneName: target.name,
       replace: true,
     });
-    const prompt = formatBoardPrompt(card);
+    const prompt = formatBoardPrompt(card, projectRules);
     await deps.sendToPane(project.slug, target.id, prompt);
     return board;
   });
