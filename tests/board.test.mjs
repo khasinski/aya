@@ -35,6 +35,7 @@ const {
   matchesBoardQuery,
   searchBoard,
   handleBoardRequest,
+  MAX_BOARD_IMAGE_BYTES,
 } = await import("../dist-electron/board.js");
 
 const cli = resolve("bin/aya");
@@ -720,6 +721,53 @@ test("saveBoardImage and readBoardImageDataUrl store and load PNG assets", async
   } finally {
     fx.cleanup();
   }
+});
+
+// The four accepted formats, recognised by their first bytes; the MIME types and
+// messages stay literal here as the contract users and agents see.
+const MINIMAL_IMAGES = [
+  ["image/jpeg", ".jpg", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10])],
+  ["image/webp", ".webp", Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBPVP8 ")])],
+  ["image/gif", ".gif", Buffer.from("GIF87a\x01\x00\x01\x00", "latin1")],
+  ["image/gif", ".gif", Buffer.from("GIF89a\x01\x00\x01\x00", "latin1")],
+];
+const BMP = Buffer.concat([Buffer.from("BM"), Buffer.alloc(30)]);
+
+test("JPEG, WebP and GIF board images are saved with their own extension and read back", async () => {
+  const fx = makeFixture();
+  try {
+    for (const [mime, ext, bytes] of MINIMAL_IMAGES) {
+      const saved = await saveBoardImage(fx.home, fx.project, { dataBase64: bytes.toString("base64"), name: "shot" });
+      assert.ok(saved.path.endsWith(ext), `${mime} saved as ${saved.path}`);
+      assert.equal(await readBoardImageDataUrl(fx.home, fx.project, saved.path), `data:${mime};base64,${bytes.toString("base64")}`);
+    }
+  } finally { fx.cleanup(); }
+});
+
+test("a board image in another format, empty or too large is refused with its reason", async () => {
+  const fx = makeFixture();
+  try {
+    await assert.rejects(saveBoardImage(fx.home, fx.project, { dataBase64: BMP.toString("base64") }),
+      { message: "Only PNG, JPEG, WebP, and GIF images are supported." });
+    await assert.rejects(saveBoardImage(fx.home, fx.project, { dataBase64: "data:image/png;base64," }),
+      { message: "Image data is empty." });
+    await assert.rejects(saveBoardImage(fx.home, fx.project, { dataBase64: Buffer.alloc(MAX_BOARD_IMAGE_BYTES + 1, 1).toString("base64") }),
+      { message: "Image must be between 1 byte and 8 MB." });
+    writeFileSync(join(fx.repoDir, "picture.bmp"), BMP);
+    await assert.rejects(readBoardImageDataUrl(fx.home, fx.project, "picture.bmp"),
+      { message: "Unsupported image format (use PNG, JPEG, WebP, or GIF)." });
+  } finally { fx.cleanup(); }
+});
+
+test("only data URLs of the four image formats are passed through as they are", async () => {
+  const fx = makeFixture();
+  try {
+    for (const url of ["data:image/png;base64,AAAA", "data:image/jpeg;base64,AAAA", "data:image/webp;base64,AAAA",
+      "data:image/gif;base64,AAAA", "DATA:IMAGE/PNG;BASE64,AAAA"]) {
+      assert.equal(await readBoardImageDataUrl(fx.home, fx.project, url), url);
+    }
+    await assert.rejects(readBoardImageDataUrl(fx.home, fx.project, "data:image/bmp;base64,AAAA"));
+  } finally { fx.cleanup(); }
 });
 
 test("card priority, labels, clearBoardColumn, and restoreBoardCards (Undo)", async () => {
