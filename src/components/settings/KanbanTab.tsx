@@ -1,9 +1,4 @@
-import {
-  COLUMN_TITLES,
-  DEFAULT_BOARD_COLUMNS,
-  PENDING_COLUMN_IDS,
-  STARTED_COLUMN_ID,
-} from "../../../shared/board-columns.cjs";
+import { DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
 import {
   MAX_ASSIGNEE_CHARS,
   MAX_BOARD_CARDS,
@@ -21,7 +16,6 @@ import { SettingsHeader, SettingsRow } from "./parts";
 
 const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
-const pendingTitles = PENDING_COLUMN_IDS.map((id) => COLUMN_TITLES[id]).join(" or ");
 
 /** The board's defaults, fixed rules and limits, read only. Shown while the Kanban board (General) is on.
  *  The fixed rules are enforced by electron/board.ts and cannot be turned off. */
@@ -49,12 +43,7 @@ export function KanbanTab() {
       <section className="aya-settings-box" aria-label="Kanban fixed rules">
         <h3>Fixed rules</h3>
         <ul>
-          <li>Moving a claimed card back to {pendingTitles} removes its claim and asks its pane to stop work on it.</li>
-          <li>Starting a card from {pendingTitles} moves it to {COLUMN_TITLES[STARTED_COLUMN_ID]}, when the board has that column.</li>
-          <li>A card another pane holds is taken over only by Send to pane on the board or aya board claim with --replace.</li>
-          <li>From a pane, aya board releases only that pane&apos;s cards unless --force is given.</li>
-          <li>Taking over, releasing, deleting or archiving a claimed card asks the pane that held it to stop work on it, unless that pane made the change.</li>
-          <li>Closing a terminal tab releases every card it held.</li>
+          {FIXED_RULES.map((rule) => <li key={rule}>{rule}</li>)}
         </ul>
       </section>
       <section className="aya-settings-box" aria-label="Kanban limits">

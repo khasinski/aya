@@ -47,3 +47,24 @@ exports.isPendingColumn = (id) => exports.PENDING_COLUMN_IDS.includes(id);
 exports.isFinishedColumn = (column) =>
   column.id === exports.FINISHED_COLUMN_ID ||
   column.title.toLowerCase() === exports.FINISHED_COLUMN_TITLE.toLowerCase();
+
+/** What each built-in column means, by id; agents read it through `aya board columns`. */
+exports.COLUMN_DEFINITIONS = Object.freeze({
+  [COLUMN_IDS.todo]: "Waiting to be started.",
+  [COLUMN_IDS.backlog]: "Waiting to be started, kept for later.",
+  [COLUMN_IDS.inProgress]: "Being worked on by the pane that claimed it.",
+  [COLUMN_IDS.review]: "Work is finished and waits for a check.",
+  [COLUMN_IDS.done]: "Finished work; cards here can be archived.",
+});
+
+const pendingTitles = exports.PENDING_COLUMN_IDS.map((id) => COLUMN_TITLES[id]).join(" or ");
+
+/** What electron/board.ts always enforces on cards; Settings > Kanban and `aya board columns` show it. */
+exports.FIXED_RULES = Object.freeze([
+  `Moving a claimed card back to ${pendingTitles} removes its claim and asks its pane to stop work on it.`,
+  `Starting a card from ${pendingTitles} moves it to ${COLUMN_TITLES[exports.STARTED_COLUMN_ID]}, when the board has that column.`,
+  "A card another pane holds is taken over only by Send to pane on the board or aya board claim with --replace.",
+  "From a pane, aya board releases only that pane's cards unless --force is given.",
+  "Taking over, releasing, deleting or archiving a claimed card asks the pane that held it to stop work on it, unless that pane made the change.",
+  "Closing a terminal tab releases every card it held.",
+]);
