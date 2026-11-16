@@ -74,7 +74,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     archivedCards,
     backlogCards,
     showBacklog,
-    backlogEnabled,
+    backlogOn,
     boardFilterOptions,
     hasActiveFilter,
     clearAllFilters,
@@ -815,7 +815,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
             <span className="aya-kanban-popover-icon">⇣</span>
             <span>Archive card</span>
           </button>
-          {backlogEnabled && (
+          {backlogOn && (
             <button
               type="button"
               role="menuitem"

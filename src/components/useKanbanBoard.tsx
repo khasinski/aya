@@ -1,4 +1,4 @@
-import { DEFAULT_BOARD_COLUMNS } from "../../shared/board-columns.cjs";
+import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS } from "../../shared/board-columns.cjs";
 import {
   useCallback,
   useEffect,
@@ -1010,9 +1010,10 @@ export function useKanbanBoard({
     () => board?.backlogCards ?? [],
     [board?.backlogCards],
   );
-  // The Backlog tab shows while the setting is on, and whenever cards are in it,
-  // so turning the setting off never hides cards.
-  const showBacklog = backlogEnabled || backlogCards.length > 0;
+  // The backlog is on with the setting, or on a board that has a Backlog column.
+  const backlogOn = backlogEnabled || (board?.columns ?? []).some((c) => c.id === COLUMN_IDS.backlog);
+  // Its tab also shows whenever cards are in it, so turning it off never hides cards.
+  const showBacklog = backlogOn || backlogCards.length > 0;
 
   // Collect distinct assignees/claims and labels on the board for quick filter bar
   const boardFilterOptions = useMemo(() => {
@@ -1448,7 +1449,7 @@ export function useKanbanBoard({
     archivedCards,
     backlogCards,
     showBacklog,
-    backlogEnabled,
+    backlogOn,
     boardFilterOptions,
     hasActiveFilter,
     matchesCardFilter,

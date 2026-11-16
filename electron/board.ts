@@ -16,6 +16,7 @@ import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
 import {
   COLUMN_DEFINITIONS,
+  COLUMN_IDS,
   DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
   FIXED_RULES,
   FINISHED_COLUMN_ID,
@@ -89,6 +90,37 @@ interface StoredBoard {
 /** On disk a backlog card stays in `cards` with `"shelf": "backlog"`. An Aya that
  *  does not know the field drops it and shows the card on the board, so nothing is lost. */
 export const BACKLOG_SHELF = "backlog";
+
+/** Settings > Kanban > Backlog, kept in the Aya home so the CLI sees it too.
+ *  No file means off; turning it off removes the file. */
+export const KANBAN_SETTINGS_FILE_NAME = "kanban.json";
+export const BACKLOG_OFF_MESSAGE = "The backlog is off (Settings > Kanban > Backlog).";
+
+export async function readBacklogSetting(ayaHome: string): Promise<boolean> {
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(path.join(ayaHome, KANBAN_SETTINGS_FILE_NAME), "utf8"));
+    return typeof parsed === "object" && parsed !== null && (parsed as { backlog?: unknown }).backlog === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function setBacklogSetting(ayaHome: string, enabled: boolean): Promise<boolean> {
+  const file = path.join(ayaHome, KANBAN_SETTINGS_FILE_NAME);
+  if (enabled) {
+    await fs.mkdir(ayaHome, { recursive: true, mode: 0o700 });
+    await writeFileAtomic(file, `${JSON.stringify({ backlog: true }, null, 2)}\n`, 0o600);
+  } else {
+    await fs.rm(file, { force: true });
+  }
+  return enabled;
+}
+
+/** The backlog is on for a board when the setting is on or the board has a Backlog column.
+ *  Otherwise nothing about it is shown to agents, and nothing can be moved into it. */
+export async function backlogActive(ayaHome: string, columns: readonly KanbanColumn[]): Promise<boolean> {
+  return columns.some((c) => c.id === COLUMN_IDS.backlog) || readBacklogSetting(ayaHome);
+}
 
 /** The columns a new board starts with; defined in the column dictionary (shared/board-columns.cjs). */
 export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = DICTIONARY_COLUMNS;
@@ -892,6 +924,7 @@ export function moveBoardCardToBacklog(
 ): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
+    if (!(await backlogActive(ayaHome, current.columns))) throw new Error(BACKLOG_OFF_MESSAGE);
     const target = resolveCard(current.cards, cardId);
     await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.movedToBacklog, actorPaneId);
     const shelved: KanbanCard = { ...target, updatedAt: (now ?? new Date()).toISOString() };
@@ -1879,8 +1912,11 @@ function formatSearchCardLine(card: KanbanCard, prefixLabel: string): string {
 
 // ---- CLI (`aya board ...`) ----
 
+/** Shown only where the backlog is on, so a board without it never mentions it. */
+const BACKLOG_USAGE = "usage: aya board backlog [list|id|restore id] [--json] [--project slug]";
+
 const BOARD_USAGE =
-  "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | backlog [list|id|restore id] [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
+  "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
 
 export interface BoardControlRequest {
   argv: string[];
@@ -1946,7 +1982,10 @@ export async function handleBoardRequest(
     const jsonFlag = sub === "--json" || rest.includes("--json");
     const extra = (sub === "--json" ? rest : rest.filter((a) => a !== "--json"));
     if (extra.length > 0) throw new Error(BOARD_USAGE);
-    const board = await getBoard(deps.ayaHome, project);
+    const loaded = await getBoard(deps.ayaHome, project);
+    // Where the backlog is off, agents see the board exactly as before it existed.
+    const { backlogCards, ...withoutBacklog } = loaded;
+    const board = backlogCards && (await backlogActive(deps.ayaHome, loaded.columns)) ? loaded : withoutBacklog;
     return {
       output: jsonFlag ? `${JSON.stringify(board, null, 2)}\n` : formatBoardText(board),
     };
@@ -2211,7 +2250,7 @@ export async function handleBoardRequest(
     throw new Error(BOARD_USAGE);
   }
 
-  if (sub === "backlog") {
+  if (sub === "backlog" && (await backlogActive(deps.ayaHome, (await getBoard(deps.ayaHome, project)).columns))) {
     const [action, ...more] = rest;
     if (action === undefined || action === "list" || action === "ls" || action === "--json") {
       const board = await getBoard(deps.ayaHome, project);
@@ -2230,7 +2269,7 @@ export async function handleBoardRequest(
       return { output: `${lines.join("\n")}\n` };
     }
     if (action === "restore") {
-      if (more.length !== 1 || more[0].startsWith("-")) throw new Error(BOARD_USAGE);
+      if (more.length !== 1 || more[0].startsWith("-")) throw new Error(BACKLOG_USAGE);
       const { card } = await restoreBacklogCard(deps.ayaHome, project, more[0], now());
       return { output: `restored ${card.id} to ${card.columnId}: ${card.title}\n` };
     }
@@ -2238,7 +2277,7 @@ export async function handleBoardRequest(
       const { card } = await moveBoardCardToBacklog(deps.ayaHome, project, action, now(), callerId);
       return { output: `moved ${card.id} to the backlog: ${card.title}\n` };
     }
-    throw new Error(BOARD_USAGE);
+    throw new Error(BACKLOG_USAGE);
   }
 
   if (sub === "claim") {

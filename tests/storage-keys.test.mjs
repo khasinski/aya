@@ -17,7 +17,6 @@ const EXPECTED = {
   WORKTREES_STORAGE_KEY: "aya:worktrees",
   HARNESS_SEARCH_STORAGE_KEY: "aya:harness-search",
   KANBAN_STORAGE_KEY: "aya:kanban",
-  KANBAN_BACKLOG_STORAGE_KEY: "aya:kanban-backlog",
   TERMINAL_SOUNDS_STORAGE_KEY: "aya:terminal-sounds",
   STATUS_RAIL_COLLAPSED_STORAGE_KEY: "aya:status-rail-collapsed",
   SOUND_OVERRIDES_STORAGE_KEY: "aya:terminal-sound-overrides",

@@ -392,11 +392,6 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary: "List, archive, restore or search archived cards, or permanently clear the archive.",
   },
   {
-    command: "board backlog",
-    usage: "aya board backlog [list|id|restore id] [--json] [--project slug]",
-    summary: "List the backlog, take a card off the board into it, or put a backlog card back on the board.",
-  },
-  {
     command: "board clear",
     usage: "aya board clear [column] [--project slug]",
     summary: "Archive every card on the board, or in the specified column.",
@@ -458,13 +453,24 @@ export interface CapabilitiesDocument {
   conventions: string[];
 }
 
+/** Listed only while Settings > Kanban > Backlog is on, so agents never hear of it otherwise. */
+export const BACKLOG_CAPABILITY: Capability = {
+  command: "board backlog",
+  usage: "aya board backlog [list|id|restore id] [--json] [--project slug]",
+  summary: "List the backlog, take a card off the board into it, or put a backlog card back on the board.",
+};
+
 export function capabilitiesDocument(caller: {
   terminalId?: string;
-}): CapabilitiesDocument {
+}, options: { backlog?: boolean } = {}): CapabilitiesDocument {
+  const archiveAt = AYA_CAPABILITIES.findIndex((c) => c.command === "board archive");
+  const commands = options.backlog
+    ? [...AYA_CAPABILITIES.slice(0, archiveAt + 1), BACKLOG_CAPABILITY, ...AYA_CAPABILITIES.slice(archiveAt + 1)]
+    : AYA_CAPABILITIES;
   return {
     insideAya: Boolean(caller.terminalId),
     ...(caller.terminalId ? { terminalId: caller.terminalId } : {}),
-    commands: AYA_CAPABILITIES,
+    commands,
     conventions: [
       "Panes are named by their Aya tab name, resolved within your own project; a name two panes share is rejected, not guessed.",
       "status and notify attach to your own pane through AYA_TERMINAL_ID, which Aya sets in every pane.",

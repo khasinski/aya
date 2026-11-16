@@ -136,8 +136,6 @@ Usage:
                                      Archive all cards in a column (default: done)
   aya board archive [list|id|restore id [col]|clear|search query] [--project slug]
                                      List, archive, restore, clear or search archived cards
-  aya board backlog [list|id|restore id] [--json] [--project slug]
-                                     List the backlog, or move a card off the board into it and back
   aya board claim id [--replace] [--project slug]
                                      Claim a card for this terminal
   aya board release id [--force] [--project slug]

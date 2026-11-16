@@ -7,7 +7,6 @@ import {
   GITHUB_LINK_CODEC,
   HARNESS_SEARCH_CODEC,
   KANBAN_CODEC,
-  KANBAN_BACKLOG_CODEC,
   TERMINAL_SOUNDS_CODEC,
   STATUS_RAIL_COLLAPSED_CODEC,
   SOUND_OVERRIDES_CODEC,
@@ -19,7 +18,6 @@ import {
   CUSTOM_DONE_SOUND_STORAGE_KEY,
   CUSTOM_WAITING_SOUND_STORAGE_KEY,
   HARNESS_SEARCH_STORAGE_KEY,
-  KANBAN_BACKLOG_STORAGE_KEY,
   KANBAN_STORAGE_KEY,
   LAYOUT_MODE_STORAGE_KEY,
   MAC_OPTION_KEY_STORAGE_KEY,
@@ -58,8 +56,6 @@ export function useAppPreferences() {
     usePersistentPreference(HARNESS_SEARCH_STORAGE_KEY, HARNESS_SEARCH_CODEC);
   const [kanbanEnabled, setKanbanEnabled] =
     usePersistentPreference(KANBAN_STORAGE_KEY, KANBAN_CODEC);
-  const [kanbanBacklogEnabled, setKanbanBacklogEnabled] =
-    usePersistentPreference(KANBAN_BACKLOG_STORAGE_KEY, KANBAN_BACKLOG_CODEC);
   const [terminalSoundsEnabled, setTerminalSoundsEnabled] =
     usePersistentPreference(TERMINAL_SOUNDS_STORAGE_KEY, TERMINAL_SOUNDS_CODEC);
   const [statusRailCollapsed, setStatusRailCollapsed] = usePersistentPreference(
@@ -94,8 +90,6 @@ export function useAppPreferences() {
     setHarnessSearchEnabled,
     kanbanEnabled,
     setKanbanEnabled,
-    kanbanBacklogEnabled,
-    setKanbanBacklogEnabled,
     terminalSoundsEnabled,
     setTerminalSoundsEnabled,
     statusRailCollapsed,

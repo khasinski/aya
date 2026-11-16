@@ -33,6 +33,8 @@ interface Derived {
   gitBySlug: Map<string, ProjectGitInfo>;
   teamsBySlug: Map<string, TeamSummary[]>;
   boardsBySlug: Map<string, BoardSnapshot>;
+  /** Settings > Kanban > Backlog in the emulator; off until set. */
+  boardBacklogSetting?: boolean;
   tabsById: Map<string, { tab: EmTab; projectSlug: string; cwd: string }>;
   /** Rendered lines of each tab's content -> its Apple-Intelligence summary.
    *  Used by summarizeLocal to re-apply a terminal summary after App's prune
@@ -319,6 +321,11 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       };
       d.boardsBySlug.set(req.projectSlug, next);
       return next as never;
+    },
+    getBoardBacklogSetting: async () => d.boardBacklogSetting === true,
+    setBoardBacklogSetting: async (req) => {
+      d.boardBacklogSetting = req.enabled;
+      return req.enabled;
     },
     moveBoardCardToBacklog: async (req) => {
       const b = await api.getBoard(req.projectSlug);

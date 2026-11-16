@@ -10,8 +10,6 @@ export const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
 export const WORKTREES_STORAGE_KEY = "aya:worktrees";
 export const HARNESS_SEARCH_STORAGE_KEY = "aya:harness-search";
 export const KANBAN_STORAGE_KEY = "aya:kanban";
-// Settings > Kanban > Backlog: a Backlog tab on the board shelf.
-export const KANBAN_BACKLOG_STORAGE_KEY = "aya:kanban-backlog";
 export const TERMINAL_SOUNDS_STORAGE_KEY = "aya:terminal-sounds";
 export const STATUS_RAIL_COLLAPSED_STORAGE_KEY = "aya:status-rail-collapsed";
 export const SOUND_OVERRIDES_STORAGE_KEY = "aya:terminal-sound-overrides";

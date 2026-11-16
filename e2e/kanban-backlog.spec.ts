@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
@@ -41,7 +41,8 @@ async function setBacklog(window: Page, app: ElectronApplication, on: boolean) {
 test.describe("backlog off (default)", () => {
   test.use({ seedOptions: seed(board) });
 
-  test("the card menu has no Move to backlog and the shelf has only Archive", async ({ window }) => {
+  test("the card menu has no Move to backlog and the shelf has only Archive", async ({ window, seeded }) => {
+    expect(existsSync(join(seeded.ayaHome, "kanban.json"))).toBe(false);
     await openCardMenu(window, "t-1");
     await expect(window.getByRole("menuitem", { name: /Move to backlog/ })).toHaveCount(0);
     await window.keyboard.press("Escape");
@@ -59,6 +60,9 @@ test.describe("backlog on", () => {
 
   test("Move to backlog takes a card off the board, and Restore puts it back", async ({ window, app, seeded }, testInfo) => {
     await setBacklog(window, app, true);
+    // The setting lives where the CLI reads it too.
+    await expect.poll(() => existsSync(join(seeded.ayaHome, "kanban.json"))).toBe(true);
+    expect(JSON.parse(readFileSync(join(seeded.ayaHome, "kanban.json"), "utf8"))).toEqual({ backlog: true });
     await openCardMenu(window, "t-1");
     await window.getByRole("menuitem", { name: /Move to backlog/ }).click();
     await expect(window.getByTestId("kanban-card-t-1")).toHaveCount(0);
@@ -105,5 +109,16 @@ test.describe("backlog off with cards already in it", () => {
     await expect(drawer.getByTestId("kanban-backlog-card-t-1")).toBeVisible();
     await openCardMenu(window, "t-2");
     await expect(window.getByRole("menuitem", { name: /Move to backlog/ })).toHaveCount(0);
+  });
+});
+
+test.describe("backlog off, board with a Backlog column", () => {
+  test.use({ seedOptions: seed({ ...board, columns: [{ id: "todo", title: "Todo" }, { id: "backlog", title: "Backlog" }, { id: "done", title: "Done" }] }) });
+
+  test("a Backlog column turns the backlog on for that board", async ({ window }) => {
+    await openCardMenu(window, "t-1");
+    await window.getByRole("menuitem", { name: /Move to backlog/ }).click();
+    await expect(window.getByTestId("kanban-card-t-1")).toHaveCount(0);
+    await expect(window.getByTestId("kanban-archive-toggle")).toHaveText("Shelf (2)");
   });
 });
