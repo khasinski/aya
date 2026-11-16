@@ -66,10 +66,17 @@ The search does not filter the board itself.
 
 ## Backlog
 
-Settings > Kanban > Backlog applies to every project. When it is
-on:
+The backlog is on when Settings > Kanban > Backlog is on, which applies to
+every project. It is also on for a board that has a Backlog column. The setting
+is kept in `~/.aya/kanban.json`, which exists only while it is on. When the
+backlog is on:
 - each card's menu has Move to backlog;
 - the shelf has a Backlog tab.
+
+Until it is on, nothing an agent reads mentions the backlog. That covers the
+board usage, `aya capabilities`, `aya board` and `aya board --json`.
+`aya board backlog` fails like any unknown command, and nothing can be moved
+into the backlog.
 
 Move to backlog takes the card off the board. Like archiving, it removes the
 card's claim and asks the pane that held it to stop. Restore on the Backlog tab
@@ -79,7 +86,7 @@ column was deleted.
 The Backlog tab also shows when the setting is off but cards are in the
 backlog, so turning it off never hides cards.
 
-Agents use `aya board backlog`:
+Where it is on, agents use `aya board backlog`:
 
 ```sh
 aya board backlog            # list (--json for JSON)
@@ -88,13 +95,13 @@ aya board backlog restore t-12
 aya board remove t-12        # delete a backlog card
 ```
 
-`aya board` shows a Backlog line when the backlog has cards. `aya board --json`
-has a `backlogCards` list only then.
+Where it is on and has cards, `aya board` shows a Backlog line and
+`aya board --json` has a `backlogCards` list.
 
 The backlog is not a column. A column named Backlog (for example from
 `aya board column add Backlog`) is shown on the board, and the rules about
-"Todo or Backlog" in this document mean that column. The backlog keeps cards
-off the board.
+"Todo or Backlog" in this document mean that column. Adding that column also
+turns the backlog on for the board. The backlog keeps cards off the board.
 
 In the board file a backlog card stays in `cards` with `"shelf": "backlog"`. An
 Aya version without the backlog ignores the field and shows the card on the
@@ -146,7 +153,7 @@ These defaults describe the target state too. Planned changes are opt-in and mus
 - Kanban board (Settings > General, "Experimental"): off by default (`KANBAN_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
 - Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `shared/board-columns.cjs`).
 - Shelf (the Archive button): an Archive tab and its own search; no Backlog tab.
-- Backlog (Settings > Kanban): off by default (`KANBAN_BACKLOG_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
+- Backlog (Settings > Kanban): off by default, with no `~/.aya/kanban.json` (`readBacklogSetting` in `electron/board.ts`). A board with a Backlog column has it on.
 - New card: goes into the first column; priority and labels are optional and are omitted when not given; description starts empty; no assignee.
 - Card description limit: 16,000 characters (`MAX_CARD_DESCRIPTION_CHARS`).
 - Priorities: `low`, `medium`, `high`, `urgent`. Search tokens: `p0` = urgent, `p1` = high, `p2` = medium, `p3` = low.
