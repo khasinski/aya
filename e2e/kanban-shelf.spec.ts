@@ -71,6 +71,8 @@ test("the board filter still narrows the shelf, and the shelf search narrows fur
 // of a split and as the only pane. Stacked puts the board toolbar in the title
 // bar, and the tab layouts keep the board behind its Kanban tab.
 const boardTab = { presetId: "board", name: "Board" };
+/** How long a board already on screen may take to render after a reload. */
+const BOARD_SHOWS_WITHIN_MS = 3_000;
 for (const layout of ["classic", "projects-left", "stacked"] as const) {
   for (const pane of [
     { name: "split", seed: { rightTab: boardTab } },
@@ -88,7 +90,10 @@ for (const layout of ["classic", "projects-left", "stacked"] as const) {
         const toggle = window.getByTestId("kanban-archive-toggle");
         const launcher = window.getByRole("button", { name: "Kanban", exact: true });
         await expect(launcher).toBeVisible();
-        if (!(await toggle.isVisible())) await launcher.click();
+        // Give the board time to show before opening its tab: a check at one instant raced
+        // its first render, and the launcher click then hid an active board.
+        const shown = await toggle.waitFor({ state: "visible", timeout: BOARD_SHOWS_WITHIN_MS }).then(() => true, () => false);
+        if (!shown) await launcher.click();
         await toggle.click();
         const drawer = window.getByTestId("kanban-archive-drawer");
         await expect(drawer.locator(".aya-kanban-archive-title")).toHaveText("Shelf");
