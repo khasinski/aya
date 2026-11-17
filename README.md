@@ -475,6 +475,12 @@ teams window, each role's pane list offers the same: open panes, labelled
 with the role they already play ("shell 1 (plays tester)"), and `New: <preset>`; **Apply panes** applies
 the picks.
 
+### Use the Kanban board
+
+Settings > General > Kanban board (Experimental) adds a board to each project.
+Agents use it with `aya board`. Columns, rules, the shelf and the backlog:
+[docs/board.md](docs/board.md).
+
 ### Open remote projects
 
 The remote flow is SSH-based and early. From the new-project dialog, enter
