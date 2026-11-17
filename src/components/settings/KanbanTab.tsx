@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, FIXED_RULES, isBacklogColumn } from "../../../shared/board-columns.cjs";
+import { BACKLOG_COLUMN, DEFAULT_BOARD_COLUMNS, FIXED_RULES, isBacklogColumn } from "../../../shared/board-columns.cjs";
 import type { ProjectConfig } from "../../types";
 import {
   MAX_ASSIGNEE_CHARS,
@@ -45,7 +45,7 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
   }, [projectSlug]);
   const createBacklogColumn = () => {
     if (!projectSlug) return;
-    void window.aya.addBoardColumn({ projectSlug, title: COLUMN_TITLES[COLUMN_IDS.backlog] })
+    void window.aya.addBoardColumn({ projectSlug, title: BACKLOG_COLUMN.title })
       .then((board) => setHasBacklogColumn(board.columns.some(isBacklogColumn)))
       .catch(() => undefined);
   };

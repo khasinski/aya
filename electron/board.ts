@@ -15,9 +15,9 @@ import { oneAtATime } from "./keyed-queue";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
 import {
+  BACKLOG_COLUMN,
   COLUMN_DEFINITIONS,
   COLUMN_IDS,
-  COLUMN_TITLES,
   isBacklogColumn,
   DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
   FIXED_RULES,
@@ -330,10 +330,10 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
       // number of columns there is no room, so they return to the first
       // column, where a card added without a column would land. A Backlog
       // column the user placed elsewhere is left where it is.
-      let markedTarget: string = COLUMN_IDS.backlog;
+      let markedTarget: string = BACKLOG_COLUMN.id;
       if (!columns.some(isBacklogColumn)) {
         if (columns.length < MAX_BOARD_COLUMNS) {
-          columns.unshift({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
+          columns.unshift({ ...BACKLOG_COLUMN });
         } else {
           markedTarget = fallbackColumn(columns)!.id;
         }
