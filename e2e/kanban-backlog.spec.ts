@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
+import { MAX_BOARD_COLUMNS } from "../shared/board-limits.cjs";
 
 // The backlog is a board's Backlog column. Move to backlog in a card's menu is offered
 // when the board has that column. Settings > Kanban > Move backlog to shelf (off by
@@ -73,6 +74,28 @@ test.describe("no Backlog column", () => {
     await settings.locator(".aya-settings-general-row").filter({ hasText: "Move backlog to shelf" }).screenshot({ path: testInfo.outputPath("settings-with-column.png") });
     await settings.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(window.getByTestId("kanban-column-backlog")).toBeVisible();
+  });
+});
+
+test.describe("a full board", () => {
+  const full = Array.from({ length: MAX_BOARD_COLUMNS }, (_, i) => ({ id: `c-${i}`, title: `C ${i}` }));
+  test.use({ seedOptions: seed({ version: 1, columns: full, cards: [card("t-1", "Now", { columnId: "c-0" })] }) });
+
+  test("Create backlog column says why it failed, in place of its note", async ({ window, app, seeded }, testInfo) => {
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await settings.getByTestId("settings-tab").filter({ hasText: "General" }).click();
+    await settings.getByLabel("Kanban board").getByRole("button", { name: "On", exact: true }).click();
+    await settings.getByTestId("settings-tab").filter({ hasText: "Kanban" }).click();
+    const create = settings.getByRole("button", { name: "Create backlog column", exact: true });
+    const note = settings.getByText("Creates the Backlog column in e2e");
+    await expect(note).toBeVisible();
+    await create.click();
+    await expect(settings.getByRole("alert")).toHaveText(`The board already has the maximum of ${MAX_BOARD_COLUMNS} columns.`);
+    await expect(note).toHaveCount(0);
+    await expect(settings.getByLabel("Move backlog to shelf", { exact: true }).getByRole("button", { name: "On", exact: true })).toBeDisabled();
+    expect(boardFile(seeded.ayaHome).columns).toHaveLength(MAX_BOARD_COLUMNS);
+    await settings.locator(".aya-settings-general-row").filter({ hasText: "Move backlog to shelf" }).screenshot({ path: testInfo.outputPath("settings-create-failed.png") });
   });
 });
 

@@ -15,9 +15,9 @@ import { oneAtATime } from "./keyed-queue";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
 import {
+  BACKLOG_COLUMN,
   COLUMN_DEFINITIONS,
   COLUMN_IDS,
-  COLUMN_TITLES,
   isBacklogColumn,
   DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
   FIXED_RULES,
@@ -310,6 +310,30 @@ function normalizeStoredCard(c: KanbanCard, includeArchivedAt: boolean): KanbanC
   };
 }
 
+/** Cards saved with the first backlog version's shelf mark need the Backlog column back.
+ *  With room for it the column is re-added (as the board's FIRST column, like Create adds it)
+ *  and the cards land there; on a board that already has the maximum number of columns there
+ *  is no room, so they return to the first column, where a card added without a column would
+ *  land. A Backlog column the user placed elsewhere is left where it is.
+ *  Changes `record.cards` and `columns`. */
+function migrateLegacyBacklogShelf(record: Record<string, unknown>, columns: KanbanColumn[], fileLabel: string): void {
+  if (!Array.isArray(record.cards)) return;
+  const marked = (c: unknown) => typeof c === "object" && c !== null && "shelf" in c;
+  if (!record.cards.some(marked)) return;
+  if (!record.cards.every((c) => !marked(c) || (c as { shelf: unknown }).shelf === LEGACY_BACKLOG_SHELF)) {
+    throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
+  }
+  let markedTarget: string = BACKLOG_COLUMN.id;
+  if (!columns.some(isBacklogColumn)) {
+    if (columns.length < MAX_BOARD_COLUMNS) {
+      columns.unshift({ ...BACKLOG_COLUMN });
+    } else {
+      markedTarget = fallbackColumn(columns)!.id;
+    }
+  }
+  record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: markedTarget } : c));
+}
+
 function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
   let parsed: unknown;
   try {
@@ -331,29 +355,7 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
     throw new Error(`${fileLabel} has invalid column definitions; nothing was changed.`);
   }
   const columns = record.columns.map((c) => ({ id: c.id, title: c.title.trim() }));
-  if (Array.isArray(record.cards)) {
-    const marked = (c: unknown) => typeof c === "object" && c !== null && "shelf" in c;
-    if (record.cards.some(marked)) {
-      if (!record.cards.every((c) => !marked(c) || (c as { shelf: unknown }).shelf === LEGACY_BACKLOG_SHELF)) {
-        throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
-      }
-      // Shelf-marked cards need the Backlog column back. With room for it the
-      // column is re-added (as the board's FIRST column, like Create adds it)
-      // and the cards land there; on a board that already has the maximum
-      // number of columns there is no room, so they return to the first
-      // column, where a card added without a column would land. A Backlog
-      // column the user placed elsewhere is left where it is.
-      let markedTarget: string = COLUMN_IDS.backlog;
-      if (!columns.some(isBacklogColumn)) {
-        if (columns.length < MAX_BOARD_COLUMNS) {
-          columns.unshift({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
-        } else {
-          markedTarget = fallbackColumn(columns)!.id;
-        }
-      }
-      record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: markedTarget } : c));
-    }
-  }
+  migrateLegacyBacklogShelf(record, columns, fileLabel);
   const colIds = new Set(columns.map((c) => c.id));
   if (colIds.size !== columns.length) {
     throw new Error(`${fileLabel} has duplicate column ids; nothing was changed.`);

@@ -58,7 +58,7 @@ export function useAppPreferences() {
     usePersistentPreference(HARNESS_SEARCH_STORAGE_KEY, HARNESS_SEARCH_CODEC);
   const [kanbanEnabled, setKanbanEnabled] =
     usePersistentPreference(KANBAN_STORAGE_KEY, KANBAN_CODEC);
-  const [kanbanBacklogEnabled, setKanbanBacklogEnabled] =
+  const [kanbanBacklogOnShelf, setKanbanBacklogOnShelf] =
     usePersistentPreference(KANBAN_BACKLOG_SHELF_STORAGE_KEY, KANBAN_BACKLOG_SHELF_CODEC);
   const [terminalSoundsEnabled, setTerminalSoundsEnabled] =
     usePersistentPreference(TERMINAL_SOUNDS_STORAGE_KEY, TERMINAL_SOUNDS_CODEC);
@@ -94,8 +94,8 @@ export function useAppPreferences() {
     setHarnessSearchEnabled,
     kanbanEnabled,
     setKanbanEnabled,
-    kanbanBacklogEnabled,
-    setKanbanBacklogEnabled,
+    kanbanBacklogOnShelf,
+    setKanbanBacklogOnShelf,
     terminalSoundsEnabled,
     setTerminalSoundsEnabled,
     statusRailCollapsed,

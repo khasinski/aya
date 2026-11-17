@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, FIXED_RULES, isBacklogColumn } from "../../../shared/board-columns.cjs";
+import { DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
+import { useBacklogColumn } from "../../hooks/useBacklogColumn";
 import type { ProjectConfig } from "../../types";
 import {
   MAX_ASSIGNEE_CHARS,
@@ -25,30 +25,13 @@ const count = (n: number) => n.toLocaleString("en-US");
 /** The project Create backlog column works on. */
 export type KanbanProject = Pick<ProjectConfig, "slug" | "name">;
 
-export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
-  backlogEnabled: boolean;
-  onBacklogEnabledChange: (enabled: boolean) => void;
+export function KanbanTab({ backlogOnShelf, onBacklogOnShelfChange, project }: {
+  backlogOnShelf: boolean;
+  onBacklogOnShelfChange: (enabled: boolean) => void;
   /** The project whose board Create backlog column adds to; null when there is none. */
   project: KanbanProject | null;
 }) {
-  const projectSlug = project?.slug ?? null;
-  // Whether the current project's board has a Backlog column; null until known.
-  const [hasBacklogColumn, setHasBacklogColumn] = useState<boolean | null>(null);
-  useEffect(() => {
-    let live = true;
-    setHasBacklogColumn(null);
-    if (!projectSlug) return;
-    void window.aya.getBoard(projectSlug)
-      .then((board) => { if (live) setHasBacklogColumn(board.columns.some(isBacklogColumn)); })
-      .catch(() => undefined);
-    return () => { live = false; };
-  }, [projectSlug]);
-  const createBacklogColumn = () => {
-    if (!projectSlug) return;
-    void window.aya.addBoardColumn({ projectSlug, title: COLUMN_TITLES[COLUMN_IDS.backlog] })
-      .then((board) => setHasBacklogColumn(board.columns.some(isBacklogColumn)))
-      .catch(() => undefined);
-  };
+  const { hasBacklogColumn, createBacklogColumn, createError } = useBacklogColumn(project?.slug ?? null);
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
@@ -69,7 +52,9 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
                 >
                   Create backlog column
                 </button>
-                {hasBacklogColumn === true ? (
+                {createError ? (
+                  <span className="aya-settings-errors" role="alert">{createError}</span>
+                ) : hasBacklogColumn === true ? (
                   <span className="aya-settings-kanban-create-note">The board already has a Backlog column</span>
                 ) : (
                   project && hasBacklogColumn === false &&
@@ -82,8 +67,8 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
                     key={label}
                     type="button"
                     disabled={enabled && hasBacklogColumn !== true}
-                    className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
-                    onClick={() => onBacklogEnabledChange(enabled)}
+                    className={`aya-settings-segment ${backlogOnShelf === enabled ? "aya-settings-segment--active" : ""}`}
+                    onClick={() => onBacklogOnShelfChange(enabled)}
                   >
                     {label}
                   </button>

@@ -71,8 +71,8 @@ export interface Props {
   }>;
   onFocusTerminal?: (terminalId: string) => void;
   onSplitRight?: (terminalId: string) => void;
-  /** Settings > Kanban > Backlog: cards can be moved to a Backlog tab on the shelf. */
-  backlogEnabled?: boolean;
+  /** Settings > Kanban > Move backlog to shelf: the Backlog column shows in the shelf, not on the board. */
+  backlogOnShelf?: boolean;
 }
 
 export function columnDotClass(colId: string): string {
@@ -97,7 +97,7 @@ export function useKanbanBoard({
   onCreateWorktrees,
   onFocusTerminal,
   onSplitRight,
-  backlogEnabled = false,
+  backlogOnShelf = false,
 }: Props) {
 
   const [board, setBoard] = useState<BoardSnapshot | null>(null);
@@ -455,7 +455,7 @@ export function useKanbanBoard({
         // The shortcut targets the first column the board actually shows, so it
         // skips the Backlog column while it sits on the shelf.
         const visibleColumns = (board?.columns ?? []).filter(
-          (col) => !(backlogEnabled && isBacklogColumn(col)),
+          (col) => !(backlogOnShelf && isBacklogColumn(col)),
         );
         const targetCol =
           visibleColumns.find((col) => !collapsedCols[col.id]) ??
@@ -484,7 +484,7 @@ export function useKanbanBoard({
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focusin", onFocusIn);
     };
-  }, [backlogEnabled, board, collapsedCols, handleUndoDelete, hidden, openAddCard, undoState]);
+  }, [backlogOnShelf, board, collapsedCols, handleUndoDelete, hidden, openAddCard, undoState]);
 
   const insertIntoDescription = useCallback(
     (
@@ -1012,7 +1012,7 @@ export function useKanbanBoard({
   // only changes where it shows: in the shelf instead of on the board.
   const hasBacklogColumn = (board?.columns ?? []).some(isBacklogColumn);
   // The Backlog tab shows when the column is on the shelf.
-  const showBacklog = backlogEnabled && hasBacklogColumn;
+  const showBacklog = backlogOnShelf && hasBacklogColumn;
   // Move to backlog is offered on a board that has a Backlog column.
   const canMoveToBacklog = hasBacklogColumn;
   const backlogCards = useMemo(

@@ -1156,7 +1156,7 @@ test("cards saved with the first version's shelf mark load into the Backlog colu
       cards: [{ id: "t-1", columnId: "todo", title: "Kept", createdAt: at, updatedAt: at, shelf: "backlog" },
         { id: "t-2", columnId: "todo", title: "Now", createdAt: at, updatedAt: at }] }));
     const board = await getBoard(fx.home, fx.project);
-    assert.deepEqual(board.columns.map((c) => c.id), ["backlog", "todo"]);
+    assert.deepEqual(board.columns.map((c) => [c.id, c.title]), [["backlog", "Backlog"], ["todo", "Todo"]]);
     assert.deepEqual(board.cards.map((c) => [c.id, c.columnId]), [["t-1", "backlog"], ["t-2", "todo"]]);
     await moveBoardCard(fx.home, fx.project, "t-2", "todo");
     const file = JSON.parse(readFileSync(backlogFile(fx), "utf8"));
