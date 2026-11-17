@@ -6,9 +6,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import "./kanban.css";
-import { KanbanCardMarkdown, livePaneDotInfo } from './KanbanCardContent';
+import { livePaneDotInfo } from './KanbanCardContent';
 import { KanbanColumns } from './KanbanColumns';
 import { matchesSearchQuery } from "./kanban-search";
+import { ShelfRow } from './ShelfRow';
+import type { KanbanCard, KanbanColumn } from "../types";
 import { PRIORITY_OPTIONS, useKanbanBoard, type Props } from './useKanbanBoard';
 export const KanbanView = memo(function KanbanView(props: Props) {
   const model = useKanbanBoard(props);
@@ -40,10 +42,6 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     setFilterPriority,
     filterLabel,
     setFilterLabel,
-    expandedCards,
-    setExpandedCards,
-    confirmDeleteCardId,
-    setConfirmDeleteCardId,
     shiftDeleteReady,
     archiveOpen,
     setArchiveOpen,
@@ -63,7 +61,6 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     handleRestoreArchivedCard,
     handleMoveToBacklog,
     handleRestoreBacklogCard,
-    handleDeleteArchivedCard,
     handleEmptyArchive,
     startEditCard,
     handleQuickSetPriority,
@@ -97,6 +94,26 @@ export const KanbanView = memo(function KanbanView(props: Props) {
   const onBacklogTab = showBacklog && shelfTab === "backlog";
   const drawerCards = onBacklogTab ? backlogMatches : archiveMatches;
   const shelfName = onBacklogTab ? "backlog" : "archive";
+  // What a shelf row shows and does differs only by tab; the rest of the row is ShelfRow.
+  const shelf = onBacklogTab
+    ? {
+      testIdPrefix: "kanban-backlog-card-",
+      noMatchText: "No matching backlog cards",
+      emptyText: "Backlog is empty. Use Move to backlog in a card's menu to keep a card off the board.",
+      shelvedAt: (card: KanbanCard) => card.updatedAt,
+      restore: (card: KanbanCard) => handleRestoreBacklogCard(card.id),
+      restoreColumn: () => boardColumns[0],
+      deleteLabel: "Delete backlog card",
+    }
+    : {
+      testIdPrefix: "kanban-archived-card-",
+      noMatchText: "No matching archived cards",
+      emptyText: "Archive is empty. Use Archive on the Done column to move completed cards here.",
+      shelvedAt: (card: KanbanCard) => card.archivedAt,
+      restore: (card: KanbanCard) => handleRestoreArchivedCard(card),
+      restoreColumn: (origCol: KanbanColumn | undefined) => origCol,
+      deleteLabel: "Delete archived card",
+    };
   const tabCount = (matches: readonly unknown[], total: readonly unknown[]) =>
     hasActiveFilter || shelfSearching ? `${matches.length}/${total.length}` : total.length;
   return (
@@ -421,151 +438,26 @@ export const KanbanView = memo(function KanbanView(props: Props) {
               <div className="aya-kanban-archive-list">
                 {drawerCards.length === 0 ? (
                   <div className="aya-kanban-empty-col">
-                    {onBacklogTab
-                      ? hasActiveFilter || shelfSearching
-                        ? "No matching backlog cards"
-                        : "Backlog is empty. Use Move to backlog in a card's menu to keep a card off the board."
-                      : hasActiveFilter || shelfSearching
-                        ? "No matching archived cards"
-                        : "Archive is empty. Use Archive on the Done column to move completed cards here."}
+                    {hasActiveFilter || shelfSearching ? shelf.noMatchText : shelf.emptyText}
                   </div>
                 ) : (
                   drawerCards.map((card) => {
-                    const priorityMeta = card.priority
-                      ? PRIORITY_OPTIONS.find((p) => p.value === card.priority)
-                      : null;
                     const origCol = board.columns.find(
                       (c) => c.id === card.columnId,
                     );
-                    const isExpanded = Boolean(expandedCards[card.id]);
-                    const isLongDesc =
-                      Boolean(card.description) &&
-                      (card.description!.length > 180 ||
-                        card.description!.split(/\r?\n/).length > 4);
-                    const shelvedAt = onBacklogTab ? card.updatedAt : card.archivedAt;
-                    const archivedDate = shelvedAt
-                      ? new Date(shelvedAt).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                      })
-                      : null;
-
                     return (
-                      <div
+                      <ShelfRow
                         key={card.id}
-                        data-testid={onBacklogTab ? `kanban-backlog-card-${card.id}` : `kanban-archived-card-${card.id}`}
-                        className="aya-kanban-card aya-kanban-card--archived"
-                        onMouseLeave={() => {
-                          if (confirmDeleteCardId === card.id) {
-                            setConfirmDeleteCardId(null);
-                          }
-                        }}
-                      >
-                        <div className="aya-kanban-card-meta">
-                          <div className="aya-kanban-card-meta-left">
-                            <span className="aya-kanban-card-id">{card.id}</span>
-                            {priorityMeta && (
-                              <span
-                                className={`aya-kanban-priority-badge aya-kanban-priority-badge--${priorityMeta.value}`}
-                              >
-                                {priorityMeta.short}
-                              </span>
-                            )}
-                            <span className="aya-kanban-archive-meta">
-                              {origCol ? origCol.title : card.columnId}
-                              {archivedDate ? ` · ${archivedDate}` : ""}
-                            </span>
-                          </div>
-                          <div className="aya-kanban-card-quick aya-kanban-card-quick--visible">
-                            <button
-                              type="button"
-                              className="aya-kanban-archive-restore-btn"
-                              title={`Restore ${card.id} to ${(onBacklogTab ? boardColumns[0] : origCol)?.title ?? "board"}`}
-                              onClick={() => void (onBacklogTab ? handleRestoreBacklogCard(card.id) : handleRestoreArchivedCard(card))}
-                            >
-                              ↩ Restore
-                            </button>
-                            {confirmDeleteCardId === card.id ? (
-                              <button
-                                type="button"
-                                className="aya-kanban-delete-confirm"
-                                title="Confirm permanent deletion"
-                                onClick={() =>
-                                  void handleDeleteArchivedCard(card.id)
-                                }
-                              >
-                                Delete?
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className={`aya-kanban-iconbtn aya-kanban-iconbtn--danger${shiftDeleteReady
-                                  ? " aya-kanban-iconbtn--shift-ready"
-                                  : ""
-                                  }`}
-                                title={
-                                  shiftDeleteReady
-                                    ? "Permanently delete card (Shift held)"
-                                    : `Permanently delete from ${shelfName} (hold Shift to skip confirmation)`
-                                }
-                                aria-label={onBacklogTab ? `Delete backlog card ${card.id}` : `Delete archived card ${card.id}`}
-                                onClick={(e) => {
-                                  if (e.shiftKey || shiftDeleteReady) {
-                                    void handleDeleteArchivedCard(card.id);
-                                  } else {
-                                    setConfirmDeleteCardId(card.id);
-                                  }
-                                }}
-                              >
-                                {shiftDeleteReady ? "⌫" : "×"}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="aya-kanban-card-title">{card.title}</div>
-
-                        {card.labels && card.labels.length > 0 && (
-                          <div className="aya-kanban-card-labels">
-                            {card.labels.map((lbl) => (
-                              <span key={lbl} className="aya-kanban-label-pill">
-                                #{lbl}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        {card.description && (
-                          <div className="aya-kanban-card-desc-wrap">
-                            <div
-                              className={`aya-kanban-card-desc${isExpanded
-                                ? " aya-kanban-card-desc--expanded"
-                                : ""
-                                }`}
-                            >
-                              <KanbanCardMarkdown
-                                projectSlug={terminal.projectSlug}
-                                text={card.description}
-                                onPreviewImage={setPreviewImage}
-                              />
-                            </div>
-                            {isLongDesc && (
-                              <button
-                                type="button"
-                                className="aya-kanban-desc-toggle"
-                                onClick={() =>
-                                  setExpandedCards((prev) => ({
-                                    ...prev,
-                                    [card.id]: !prev[card.id],
-                                  }))
-                                }
-                              >
-                                {isExpanded ? "Show less" : "Show more"}
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                        {...model}
+                        card={card}
+                        columnLabel={origCol ? origCol.title : card.columnId}
+                        testIdPrefix={shelf.testIdPrefix}
+                        shelvedAt={shelf.shelvedAt(card)}
+                        onRestore={() => void shelf.restore(card)}
+                        restoreTitle={`Restore ${card.id} to ${shelf.restoreColumn(origCol)?.title ?? "board"}`}
+                        deleteLabel={`${shelf.deleteLabel} ${card.id}`}
+                        deleteTitle={`Permanently delete from ${shelfName} (hold Shift to skip confirmation)`}
+                      />
                     );
                   })
                 )}
