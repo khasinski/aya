@@ -1724,6 +1724,8 @@ export function matchesBoardQuery(
     }
     if (token.startsWith("p:") || token.startsWith("priority:")) {
       const rawP = token.slice(token.indexOf(":") + 1);
+      // An empty priority token is ignored, as the board filter does.
+      if (!rawP) continue;
       const mapped = PRIORITY_QUERY_TOKENS[rawP];
       if (mapped) {
         if (card.priority !== mapped) return false;

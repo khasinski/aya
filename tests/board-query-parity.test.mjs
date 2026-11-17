@@ -4,10 +4,9 @@
 // both and pins what each returns, so neither side changes what users get
 // without this table changing too.
 //
-// The two sides differ in one place, marked KNOWN DIFFERENCE below: an empty
-// priority token ("p:" or "priority:"). The board filter ignores it and keeps
-// every card; aya board search keeps only cards without a priority. Until that
-// is decided, the two implementations stay separate.
+// An empty priority token ("p:" or "priority:") is ignored on both sides, as
+// the board filter always did; aya board search used to keep only cards without
+// a priority.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -31,7 +30,7 @@ const renderer = (query, archived) =>
 const cli = (query, archived) =>
   CARDS.filter((c) => (archived === undefined ? matchesBoardQuery(c, query) : matchesBoardQuery(c, query, { isArchived: archived }))).map((c) => c.id);
 
-// `want`: both sides return it. `renderer` and `cli`: a KNOWN DIFFERENCE, each side's result.
+// `want`: both sides return it.
 // `archived`: the archived flag the caller passes; without it, each side reads card.archivedAt.
 const ROWS = [
   { query: "", want: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-6"] },
@@ -63,10 +62,10 @@ const ROWS = [
   { query: "priority:low", want: ["t-2"] },
   { query: "priority:URGENT", want: ["t-3"] },
   { query: "p:none", want: [] },
-  // KNOWN DIFFERENCE: an empty priority token.
-  { query: "p:", renderer: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-6"], cli: ["t-4", "t-6"] },
-  { query: "priority:", renderer: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-6"], cli: ["t-4", "t-6"] },
-  { query: "p: #auth", renderer: ["t-1", "t-4"], cli: ["t-4"] },
+  // An empty priority token is ignored.
+  { query: "p:", want: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-6"] },
+  { query: "priority:", want: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-6"] },
+  { query: "p: #auth", want: ["t-1", "t-4"] },
   { query: "urgent", want: ["t-3"] },
   { query: "medium", want: ["t-5"] },
   { query: "col:done", want: ["t-2", "t-4"] },
@@ -93,18 +92,10 @@ const ROWS = [
 
 for (const row of ROWS) {
   const name = `${JSON.stringify(row.query)}${row.archived === undefined ? "" : ` (archived: ${row.archived})`}`;
-  if (row.want) {
-    test(`board filter and aya board search agree on ${name}`, () => {
-      assert.deepEqual(renderer(row.query, row.archived), row.want, "board filter");
-      assert.deepEqual(cli(row.query, row.archived), row.want, "aya board search");
-    });
-  } else {
-    test(`KNOWN DIFFERENCE on ${name}: the board filter and aya board search return different cards`, () => {
-      assert.notDeepEqual(row.renderer, row.cli);
-      assert.deepEqual(renderer(row.query, row.archived), row.renderer, "board filter");
-      assert.deepEqual(cli(row.query, row.archived), row.cli, "aya board search");
-    });
-  }
+  test(`board filter and aya board search agree on ${name}`, () => {
+    assert.deepEqual(renderer(row.query, row.archived), row.want, "board filter");
+    assert.deepEqual(cli(row.query, row.archived), row.want, "aya board search");
+  });
 }
 
 test("the table covers every token kind of the query language", () => {
