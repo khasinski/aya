@@ -358,6 +358,12 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: "board columns",
+    usage: "aya board columns [--json] [--project slug]",
+    summary: "List the board's columns with what each one means, and the rules Aya always enforces on cards.",
+    notes: ["Read it before moving a card; custom columns have no built-in meaning."],
+  },
+  {
     command: "board add",
     usage: "aya board add title [--column col] [--description text] [--assignee name] [--priority low|medium|high|urgent] [--labels a,b] [--project slug]",
     summary: "Add a card to the project's Kanban board (defaults to its current first column).",

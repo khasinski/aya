@@ -15,7 +15,9 @@ import { oneAtATime } from "./keyed-queue";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
 import {
+  COLUMN_DEFINITIONS,
   DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
+  FIXED_RULES,
   FINISHED_COLUMN_ID,
   STARTED_COLUMN_ID,
   isPendingColumn,
@@ -1757,7 +1759,7 @@ function formatSearchCardLine(card: KanbanCard, prefixLabel: string): string {
 // ---- CLI (`aya board ...`) ----
 
 const BOARD_USAGE =
-  "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
+  "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
 
 export interface BoardControlRequest {
   argv: string[];
@@ -1894,6 +1896,26 @@ export async function handleBoardRequest(
     }
     return { output: `${lines.join("\n")}\n` };
   };
+
+  if (sub === "columns") {
+    const jsonFlag = rest.includes("--json");
+    if (rest.some((a) => a !== "--json")) throw new Error(BOARD_USAGE);
+    const board = await getBoard(deps.ayaHome, project);
+    const columns = board.columns.map((c) => ({ id: c.id, title: c.title, definition: COLUMN_DEFINITIONS[c.id] ?? null }));
+    if (jsonFlag) {
+      return { output: `${JSON.stringify({ projectSlug: board.projectSlug, columns, fixedRules: FIXED_RULES }, null, 2)}\n` };
+    }
+    return {
+      output: [
+        `Columns on ${board.projectSlug}:`,
+        ...columns.map((c) => `- ${c.id} (${c.title}): ${c.definition ?? "custom column, no built-in meaning."}`),
+        "",
+        "Fixed rules (Aya enforces these; they cannot be changed):",
+        ...FIXED_RULES.map((rule) => `- ${rule}`),
+        "",
+      ].join("\n"),
+    };
+  }
 
   if (sub === "search" || sub === "find") {
     return runSearchCommand(rest, "all");

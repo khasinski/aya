@@ -122,6 +122,8 @@ Usage:
                                      Show the project's Kanban board
   aya board search query [--archive|--active] [--json] [--project slug]
                                      Search active and archived Kanban cards
+  aya board columns [--json] [--project slug]
+                                     What each column means, and the rules Aya enforces
   aya board add title [--column col] [--description text] [--assignee name] [--priority low|medium|high|urgent] [--labels a,b] [--project slug]
                                      Add a card to the project's Kanban board
   aya board move id column [--project slug]
