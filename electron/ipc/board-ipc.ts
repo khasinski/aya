@@ -6,9 +6,6 @@ import {
   claimBoardCard,
   clearBoardColumn,
   deleteBoardCard,
-  moveCardToBacklog,
-  readBacklogSetting,
-  setBacklogSetting,
   deleteBoardColumn,
   deliverBoardWithdrawal,
   dispatchBoardCard,
@@ -139,22 +136,6 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
     const cardId = requireString(req.cardId, "board:delete-card.cardId");
     const archive = req.archive === true;
     const { board } = await deleteBoardCard(ayaHome, project, cardId, { archive });
-    return board;
-  });
-
-  ipcMain.handle("board:get-backlog-setting", async () => readBacklogSetting(ayaHome));
-
-  ipcMain.handle("board:set-backlog-setting", async (_event, rawReq: unknown) => {
-    const req = requireRecord(rawReq, "board:set-backlog-setting");
-    if (typeof req.enabled !== "boolean") throw new Error("board:set-backlog-setting.enabled must be a boolean");
-    return setBacklogSetting(ayaHome, req.enabled);
-  });
-
-  ipcMain.handle("board:move-to-backlog", async (_event, rawReq: unknown) => {
-    const req = requireRecord(rawReq, "board:move-to-backlog");
-    const project = await localProject(deps, req.projectSlug);
-    const cardId = requireString(req.cardId, "board:move-to-backlog.cardId");
-    const { board } = await moveCardToBacklog(ayaHome, project, cardId);
     return board;
   });
 

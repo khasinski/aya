@@ -74,7 +74,7 @@ test("turning Kanban on adds a Kanban tab with the board defaults, turning it of
   ]) await expect(limits).toContainText(line);
   // The only control is the Backlog switch, off by default; everything else is read only.
   await expect(pane.getByRole("button")).toHaveCount(2);
-  await expect(pane.getByLabel("Backlog", { exact: true }).getByRole("button", { name: "Off", exact: true })).toHaveClass(/aya-settings-segment--active/);
+  await expect(pane.getByLabel("Move backlog to shelf", { exact: true }).getByRole("button", { name: "Off", exact: true })).toHaveClass(/aya-settings-segment--active/);
   await window.screenshot({ path: testInfo.outputPath("settings-kanban-tab.png") });
 
   await setKanban(settings, false);

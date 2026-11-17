@@ -87,31 +87,6 @@ interface StoredBoard {
 /** The columns a new board starts with; defined in the column dictionary (shared/board-columns.cjs). */
 export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = DICTIONARY_COLUMNS;
 
-/** Settings > Kanban > Backlog, kept in the Aya home so the CLI sees it too.
- *  No file means off; turning it off removes the file. */
-export const KANBAN_SETTINGS_FILE_NAME = "kanban.json";
-export const BACKLOG_OFF_MESSAGE = "The backlog is off (Settings > Kanban > Backlog).";
-
-export async function readBacklogSetting(ayaHome: string): Promise<boolean> {
-  try {
-    const parsed: unknown = JSON.parse(await fs.readFile(path.join(ayaHome, KANBAN_SETTINGS_FILE_NAME), "utf8"));
-    return typeof parsed === "object" && parsed !== null && (parsed as { backlog?: unknown }).backlog === true;
-  } catch {
-    return false;
-  }
-}
-
-export async function setBacklogSetting(ayaHome: string, enabled: boolean): Promise<boolean> {
-  const file = path.join(ayaHome, KANBAN_SETTINGS_FILE_NAME);
-  if (enabled) {
-    await fs.mkdir(ayaHome, { recursive: true, mode: 0o700 });
-    await writeFileAtomic(file, `${JSON.stringify({ backlog: true }, null, 2)}\n`, 0o600);
-  } else {
-    await fs.rm(file, { force: true });
-  }
-  return enabled;
-}
-
 /** The first backlog version kept cards off the board with this mark; such cards now
  *  belong in the Backlog column (added at the end when missing) and the mark is dropped. */
 const LEGACY_BACKLOG_SHELF = "backlog";
@@ -662,13 +637,9 @@ export function addBoardCard(
     const assignee = cleanAssignee(input.assignee);
     const priority = cleanPriority(input.priority);
     const labels = cleanLabels(input.labels);
-    // With the backlog on, its column is in the shelf, so a new card never lands there unasked.
-    const firstColumn = (await readBacklogSetting(ayaHome))
-      ? current.columns.find((c) => c.id !== COLUMN_IDS.backlog) ?? current.columns[0]
-      : current.columns[0];
     const column = input.columnId
       ? resolveColumn(current.columns, input.columnId)
-      : firstColumn;
+      : current.columns[0];
     if (!column) throw new Error("The board has no columns.");
     const iso = (input.now ?? new Date()).toISOString();
     const existingIds = new Set(
@@ -897,24 +868,6 @@ export function unarchiveBoardCard(
     notifyBoardChanged(project.slug);
     return { board, card: restored };
   });
-}
-
-/** Settings > Kanban > Backlog: Move to backlog puts the card in the Backlog column, adding
- *  that column at the end of the board the first time. The board shows it in the shelf.
- *  A claimed card loses its claim, as on any return to Backlog. */
-export async function moveCardToBacklog(
-  ayaHome: string,
-  project: Pick<ProjectConfig, "slug" | "directory">,
-  cardId: string,
-  now?: Date,
-  actorPaneId?: string,
-): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
-  if (!(await readBacklogSetting(ayaHome))) throw new Error(BACKLOG_OFF_MESSAGE);
-  if (!(await getBoard(ayaHome, project)).columns.some((c) => c.id === COLUMN_IDS.backlog)) {
-    const { column } = await addBoardColumn(ayaHome, project, COLUMN_TITLES[COLUMN_IDS.backlog]);
-    if (column.id !== COLUMN_IDS.backlog) throw new Error(`Aya could not add the Backlog column (got "${column.id}").`);
-  }
-  return moveBoardCard(ayaHome, project, cardId, COLUMN_IDS.backlog, undefined, now, actorPaneId);
 }
 
 export function deleteBoardCard(

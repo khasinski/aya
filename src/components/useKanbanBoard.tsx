@@ -728,7 +728,7 @@ export function useKanbanBoard({
     setCardMenu(null);
     setConfirmDeleteCardId(null);
     await runAction(() =>
-      window.aya.moveBoardCardToBacklog({ projectSlug: terminal.projectSlug, cardId }),
+      window.aya.moveBoardCard({ projectSlug: terminal.projectSlug, cardId, columnId: COLUMN_IDS.backlog }),
     );
   };
 
@@ -1009,10 +1009,13 @@ export function useKanbanBoard({
     () => board?.archivedCards ?? [],
     [board?.archivedCards],
   );
-  // Settings > Kanban > Backlog: the Backlog column moves from the board to the shelf.
-  // Off, it is an ordinary column on the board, cards and all.
-  const backlogOn = backlogEnabled;
+  // The backlog is the board's Backlog column. Settings > Kanban > Move backlog to shelf
+  // only changes where it shows: in the shelf instead of on the board.
+  const hasBacklogColumn = (board?.columns ?? []).some((c) => c.id === COLUMN_IDS.backlog);
+  const backlogOn = backlogEnabled && hasBacklogColumn;
   const showBacklog = backlogOn;
+  // Move to backlog is offered on a board that has a Backlog column.
+  const canMoveToBacklog = hasBacklogColumn;
   const backlogCards = useMemo(
     () => (backlogOn ? (board?.cards ?? []).filter((c) => c.columnId === COLUMN_IDS.backlog) : []),
     [board?.cards, backlogOn],
@@ -1458,6 +1461,7 @@ export function useKanbanBoard({
     backlogCards,
     showBacklog,
     backlogOn,
+    canMoveToBacklog,
     boardColumns,
     boardFilterOptions,
     hasActiveFilter,

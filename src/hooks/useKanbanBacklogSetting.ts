@@ -1,21 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { KANBAN_BACKLOG_SHELF_CODEC } from "../app-preferences";
+import { KANBAN_BACKLOG_SHELF_STORAGE_KEY } from "../storage-keys";
+import { usePersistentPreference } from "./usePersistentPreference";
 
-/** Settings > Kanban > Backlog. The main process keeps it, not this window's storage,
- *  so the CLI and every window see the same value. Off until the main process says on. */
+/** Settings > Kanban > Move backlog to shelf: a view preference, off by default. */
 export function useKanbanBacklogSetting(): [boolean, (enabled: boolean) => void] {
-  const [enabled, setEnabledState] = useState(false);
-  useEffect(() => {
-    let live = true;
-    void window.aya.getBoardBacklogSetting?.().then((on) => {
-      if (live) setEnabledState(on === true);
-    }).catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, []);
-  const setEnabled = useCallback((next: boolean) => {
-    setEnabledState(next);
-    void window.aya.setBoardBacklogSetting({ enabled: next }).catch(() => setEnabledState(!next));
-  }, []);
-  return [enabled, setEnabled];
+  return usePersistentPreference(KANBAN_BACKLOG_SHELF_STORAGE_KEY, KANBAN_BACKLOG_SHELF_CODEC);
 }

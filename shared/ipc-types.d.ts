@@ -1025,10 +1025,6 @@ export interface AyaApi {
   moveBoardCard(req: { projectSlug: string; cardId: string; columnId: string; index?: number }): Promise<BoardSnapshot>;
   deleteBoardCard(req: { projectSlug: string; cardId: string; archive?: boolean }): Promise<BoardSnapshot>;
   clearBoardColumn(req: { projectSlug: string; columnId: string; archive?: boolean }): Promise<BoardSnapshot>;
-  /** Settings > Kanban > Backlog, kept by the main process so the CLI sees it too. */
-  getBoardBacklogSetting(): Promise<boolean>;
-  setBoardBacklogSetting(req: { enabled: boolean }): Promise<boolean>;
-  moveBoardCardToBacklog(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
   restoreBoardCards(req: { projectSlug: string; entries: Array<{ card: KanbanCard; index?: number }> }): Promise<BoardSnapshot>;
   claimBoardCard(req: { projectSlug: string; cardId: string; paneId?: string; paneName: string; replace?: boolean }): Promise<BoardSnapshot>;
   releaseBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;

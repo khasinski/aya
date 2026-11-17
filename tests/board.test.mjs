@@ -39,11 +39,6 @@ const {
   MAX_BOARD_IMAGE_BYTES,
   MAX_PROJECT_RULES_BYTES,
   PROJECT_RULES_FILE_NAME,
-  KANBAN_SETTINGS_FILE_NAME,
-  BACKLOG_OFF_MESSAGE,
-  readBacklogSetting,
-  setBacklogSetting,
-  moveCardToBacklog,
 } = await import("../dist-electron/board.js");
 
 const cli = resolve("bin/aya");
@@ -1148,73 +1143,8 @@ test("a board without a backlog is saved byte for byte as before", async () => {
   } finally { fx.cleanup(); }
 });
 
-test("the backlog setting is off with no file, and turning it off removes the file", async () => {
-  const fx = makeFixture();
-  try {
-    const file = join(fx.home, KANBAN_SETTINGS_FILE_NAME);
-    assert.equal(await readBacklogSetting(fx.home), false);
-    await setBacklogSetting(fx.home, true);
-    assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { backlog: true });
-    assert.equal(await readBacklogSetting(fx.home), true);
-    await setBacklogSetting(fx.home, false);
-    assert.equal(existsSync(file), false);
-  } finally { fx.cleanup(); }
-});
-
-// Backlog: one Backlog column. Off, it is an ordinary column; on, the board shows it in the shelf.
+// The backlog is the Backlog column; only the UI decides where it shows.
 const backlogFile = (fx) => join(fx.home, "boards", "demo.json");
-
-test("with the backlog off, Move to backlog is refused and no column is added", async () => {
-  const fx = makeFixture();
-  try {
-    await addBoardCard(fx.home, fx.project, { title: "One" });
-    await assert.rejects(moveCardToBacklog(fx.home, fx.project, "t-1"), { message: BACKLOG_OFF_MESSAGE });
-    assert.ok(!(await getBoard(fx.home, fx.project)).columns.some((c) => c.id === "backlog"));
-  } finally { fx.cleanup(); }
-});
-
-test("with the backlog on, Move to backlog adds the Backlog column at the end once and moves the card there", async () => {
-  const fx = makeFixture();
-  try {
-    await setBacklogSetting(fx.home, true);
-    for (const title of ["One", "Two"]) await addBoardCard(fx.home, fx.project, { title });
-    await moveCardToBacklog(fx.home, fx.project, "t-1");
-    await moveCardToBacklog(fx.home, fx.project, "t-2");
-    const board = await getBoard(fx.home, fx.project);
-    assert.deepEqual(board.columns.map((c) => c.id), ["todo", "in-progress", "review", "done", "backlog"]);
-    assert.deepEqual(board.cards.map((c) => [c.id, c.columnId]), [["t-1", "backlog"], ["t-2", "backlog"]]);
-    assert.ok(!JSON.parse(readFileSync(backlogFile(fx), "utf8")).cards.some((c) => "shelf" in c));
-  } finally { fx.cleanup(); }
-});
-
-test("an existing Backlog column is used where it is, not added again", async () => {
-  const fx = makeFixture();
-  try {
-    await addBoardColumn(fx.home, fx.project, "Backlog");
-    await moveBoardColumn(fx.home, fx.project, "backlog", { before: "todo" });
-    await setBacklogSetting(fx.home, true);
-    await addBoardCard(fx.home, fx.project, { title: "One" });
-    await moveCardToBacklog(fx.home, fx.project, "t-1");
-    const board = await getBoard(fx.home, fx.project);
-    assert.deepEqual(board.columns.map((c) => c.id), ["backlog", "todo", "in-progress", "review", "done"]);
-    assert.equal(board.cards[0].columnId, "backlog");
-  } finally { fx.cleanup(); }
-});
-
-test("a new card skips a first Backlog column while the backlog is on, and lands in it while off", async () => {
-  const fx = makeFixture();
-  try {
-    await addBoardColumn(fx.home, fx.project, "Backlog");
-    await moveBoardColumn(fx.home, fx.project, "backlog", { before: "todo" });
-    const { card: off } = await addBoardCard(fx.home, fx.project, { title: "Off" });
-    assert.equal(off.columnId, "backlog", "as on main: the first column");
-    await setBacklogSetting(fx.home, true);
-    const { card: on } = await addBoardCard(fx.home, fx.project, { title: "On" });
-    assert.equal(on.columnId, "todo");
-    const { card: asked } = await addBoardCard(fx.home, fx.project, { title: "Asked", columnId: "backlog" });
-    assert.equal(asked.columnId, "backlog");
-  } finally { fx.cleanup(); }
-});
 
 test("cards saved with the first version's shelf mark load into the Backlog column", async () => {
   const fx = makeFixture();
@@ -1233,32 +1163,5 @@ test("cards saved with the first version's shelf mark load into the Backlog colu
     writeFileSync(backlogFile(fx), JSON.stringify({ version: 1, columns: [{ id: "todo", title: "Todo" }],
       cards: [{ id: "t-1", columnId: "todo", title: "A", createdAt: at, updatedAt: at, shelf: "attic" }] }));
     await assert.rejects(getBoard(fx.home, fx.project), /invalid card entries/);
-  } finally { fx.cleanup(); }
-});
-
-test("Move to backlog of a claimed card drops the claim and asks its pane to stop", async () => {
-  const fx = makeDispatchFixture();
-  try {
-    await setBacklogSetting(fx.home, true);
-    await addBoardCard(fx.home, fx.project, { title: "Claimed task" });
-    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
-    const board = await fx.call("board:move-to-backlog", { cardId: "t-1" });
-    await fx.flush();
-    assert.deepEqual(board.cards.map((c) => [c.id, c.columnId, c.claim]), [["t-1", "backlog", undefined]]);
-    assert.ok(fx.sent.some((m) => m.paneId === "pane-1" && m.text.includes("t-1: Claimed task was returned to Backlog")));
-  } finally { fx.cleanup(); }
-});
-
-test("agents read nothing about a backlog unless the board has a Backlog column", async () => {
-  const fx = makeFixture();
-  try {
-    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
-    const run = async (...argv) => (await handleBoardRequest({ argv, projectSlug: "demo" }, undefined, deps)).output;
-    await addBoardCard(fx.home, fx.project, { title: "One" });
-    await setBacklogSetting(fx.home, true);
-    assert.doesNotMatch(await run(), /backlog/i, "the setting alone adds nothing an agent reads");
-    await moveCardToBacklog(fx.home, fx.project, "t-1");
-    assert.match(await run(), /## Backlog \(backlog\) \[1\]/, "after Move to backlog, an ordinary column");
-    assert.equal(await run("move", "t-1", "todo"), "moved t-1 to todo\n");
   } finally { fx.cleanup(); }
 });

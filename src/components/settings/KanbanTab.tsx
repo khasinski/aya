@@ -18,7 +18,7 @@ const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
 
 /** The board's option, defaults, fixed rules and limits. Shown while the Kanban board (General) is on.
- *  Only Backlog can be changed; the fixed rules are enforced by electron/board.ts. */
+ *  Only where the Backlog column shows can be changed; the fixed rules are enforced by electron/board.ts. */
 export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
   backlogEnabled: boolean;
   onBacklogEnabledChange: (enabled: boolean) => void;
@@ -26,14 +26,14 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
-        What every project board starts with. Only Backlog can be changed here.
+        What every project board starts with. Only the setting below can be changed here.
       </SettingsHeader>
       <div className="aya-settings-general">
         <SettingsRow
           icon="inventory_2"
-          title="Backlog"
+          title="Move backlog to shelf"
           control={(
-            <div className="aya-settings-segmented" aria-label="Backlog">
+            <div className="aya-settings-segmented" aria-label="Move backlog to shelf">
               {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
                 <button
                   key={label}
@@ -47,7 +47,7 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
             </div>
           )}
         >
-          Adds Move to backlog to each card's menu and shows the Backlog column in the shelf instead of on the board.
+          Shows a board's Backlog column in the shelf instead of on the board.
         </SettingsRow>
         <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "))}>
           Add, rename and reorder columns on the board itself.
