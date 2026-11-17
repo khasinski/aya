@@ -4,7 +4,7 @@ In Settings → Presets, select a **Codex**, **Claude Code**, **Pi**, or **Antig
 
 - **Codex (`codex`)**: `codex app-server --listen stdio://` (`CODEX_HOME`, dynamic tools `aya_present`, `aya_open_artifact`, `aya_progress`).
 - **Pi (`pi`)**: `pi --mode rpc` (`PI_CODING_AGENT_DIR`, bundled Aya Pi extension registering `aya_present`, `aya_open_artifact`, `aya_progress` and interactive `extension_ui_request` tool approvals).
-- **Claude Code (`claude`)**: `claude --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool=stdio` (`CLAUDE_CONFIG_DIR`, in-band SDK MCP server `aya` for `aya_present`, `aya_open_artifact`, `aya_progress` and `can_use_tool` interactive approvals/questions).
+- **Claude Code (`claude`)**: `claude --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool=stdio --chrome` (`CLAUDE_CONFIG_DIR`, in-band SDK MCP server `aya` for `aya_present`, `aya_open_artifact`, `aya_progress` and `can_use_tool` interactive approvals/questions).
 - **Antigravity (`agy`)**: `agy --input-format stream-json --output-format stream-json` (`ANTIGRAVITY_GEMINI_DIR`, `step_update` streaming, `denied_actions` permission prompts, `ask_question` prompts, and `aya_present` / `aya_open_artifact` / `aya_progress` tool steps).
 
 ## Conversation
@@ -106,3 +106,26 @@ Codex also lists native CLI history through app-server `thread/list` and reads c
 - `@ Context` inserts unsent diff review comments or the recent output of another terminal in the project into the draft. Comments inserted this way are not marked as sent, and terminal output works only for xterm panes.
 
 Only Codex has side chat and plan mode so far.
+
+## Claude in Chrome
+
+Claude GUI starts with `--chrome`, so Chrome tools are available when the extension,
+account and organization policy allow them. Install and sign in to the Claude in
+Chrome extension and use a Claude subscription signed in through Claude Code;
+API keys and setup tokens do not authenticate the browser extension.
+
+Use `/chrome` or `/chrome status` to inspect the actual connection and paired browser.
+`/chrome on`, `/chrome off` and `/chrome reconnect` use Claude Code's native MCP
+controls. Stop a running turn before changing its browser connection. Site permissions
+remain managed by the extension, and normal tool approvals still apply. Older Claude
+Code versions that lack these controls show an explicit update/reconnect error.
+
+## Claude usage
+
+`/usage` reads Claude Code's native usage data without sending a model prompt. It
+shows account-wide plan utilization and reset times separately from the current
+session's API-equivalent cost and per-model input, output and cache token counts.
+The cost estimate is not an extra subscription charge. Unknown or unavailable
+limits are labelled as unavailable, rather than zero. The command works during
+a running turn, skips the expensive local transcript-behavior scan and requires
+a Claude Code version supporting the native `get_usage` control request.

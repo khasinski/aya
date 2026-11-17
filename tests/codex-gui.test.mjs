@@ -452,6 +452,63 @@ test('Claude GUI preserves the terminal login for the default directory and sele
   }
 });
 
+test('Claude GUI enables Chrome at startup, controls its connection, and reads status during a turn', async t => {
+  const events = [], session = new ClaudeGuiSession(event => events.push(event), claudeFixture);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  const args = events.find(event => event.method === 'fixture/config').params.args;
+  assert.ok(args.includes('--chrome'));
+  assert.ok(!args.includes('--dangerously-skip-permissions'));
+  assert.match((await session.command('chrome', '')).text, /Connection: Connected/);
+  assert.match((await session.command('chrome', 'off')).text, /Connection: Not connected/);
+  assert.match((await session.command('chrome', 'on')).text, /Connection: Connected/);
+  assert.match((await session.command('chrome', 'reconnect')).text, /Connection: Connected/);
+  await assert.rejects(session.command('chrome', 'unknown'), /Usage:/);
+  await session.send('wait');
+  assert.match((await session.command('chrome', 'status')).text, /Connection: Connected/);
+  await assert.rejects(session.command('chrome', 'off'), /Stop the current turn/);
+  await session.interrupt();
+});
+
+test('Claude GUI prevents a new turn or another Chrome command from racing a connection change', async t => {
+  const session = new ClaudeGuiSession(() => {}, process.execPath, [claudeFixture, '--slow-chrome']);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  const changing = session.command('chrome', 'on');
+  await assert.rejects(session.send('wait'), /Wait for the Chrome command/);
+  await assert.rejects(session.command('chrome', 'status'), /Wait for the Chrome command/);
+  assert.match((await changing).text, /Connection: Connected/);
+  await session.send('wait');
+  await session.interrupt();
+});
+
+test('Claude usage reads native limits without a model turn, including while the agent works', async t => {
+  const events = [], session = new ClaudeGuiSession(event => events.push(event), process.execPath, [claudeFixture]);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  const usage = await session.command('usage', '');
+  assert.match(usage.text, /5-hour window: 37\.5% used/);
+  assert.match(usage.text, /7-day window: 80% used/);
+  assert.match(usage.text, /\$0\.1250 USD/);
+  assert.match(usage.text, /1,200 input/);
+  assert.equal(events.some(event => event.method === 'turn/started'), false);
+  assert.deepEqual(events.find(event => event.method === 'fixture/usage').params, { skipBehaviors: true });
+  await assert.rejects(session.command('usage', 'extra'), /Usage: \/usage/);
+  await session.send('wait');
+  assert.equal(session.running, true);
+  assert.match((await session.command('usage', '')).text, /37\.5% used/);
+  assert.equal(session.running, true);
+  await session.interrupt();
+});
+
+test('Claude usage reports an unsupported CLI without sending the command to the model', async t => {
+  const events = [], session = new ClaudeGuiSession(event => events.push(event), process.execPath, [claudeFixture, '--usage-unsupported']);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  await assert.rejects(session.command('usage', ''), /Unknown control request: get_usage.*update Claude Code/);
+  assert.equal(events.some(event => event.method === 'turn/started'), false);
+});
+
 for (const unsafeMode of [undefined, false, true]) {
   test(`Pi GUI command approvals follow skip permissions (${unsafeMode})`, async t => {
     const inherited = process.env.AYA_PI_SKIP_PERMISSIONS;

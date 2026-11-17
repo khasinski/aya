@@ -547,7 +547,7 @@ for (const agentSpec of [
       await prompt.fill('/help'); await prompt.press('Enter');
       if (agentSpec.agent === 'claude') await expect(gui.locator('.aya-gui-side')).toContainText('/btw');
       else await expect(gui.locator('.aya-gui-side')).not.toContainText('/btw');
-      await gui.getByRole('button', { name: 'Close side question' }).click();
+      await gui.getByRole('button', { name: 'Close Help' }).click();
       await prompt.fill('/btw Quick check');
       await prompt.press('Enter');
       if (agentSpec.agent === 'pi' || agentSpec.agent === 'antigravity') await expect(gui.getByRole('alert')).toContainText(`${agentSpec.label} does not support side questions`);

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `/usage` in Claude GUI with native account-wide plan limits, reset times, and current-session cost and token usage.
+
+- Enable Claude GUI's Chrome integration at startup and add `/chrome` status, on, off and reconnect commands using Claude Code's native browser controls.
+
 ## v0.18.1 - 2026-11-15
 
 - Fix native clicks on the Kanban launcher and on Kanban header controls in the Stacked layout.

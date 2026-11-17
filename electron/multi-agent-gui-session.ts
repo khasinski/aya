@@ -1,5 +1,7 @@
 import { GuiProtocolWriter } from './gui-protocol-writer';
 import { GuiJsonLines } from './gui-json-lines';
+import { claudeChromeCommand } from './claude-chrome';
+import { formatClaudeUsage } from './claude-usage';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat, readFile, mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
@@ -838,6 +840,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private cachedModels: Record<string, unknown>[] = [];
   private handledQuestionToolIds = new Set<string>();
   private pendingAssistantQuestions: unknown[] | null = null;
+  private chromeCommandPending = false;
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -855,13 +858,14 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private controlRequest(
     subtype: string,
     payload: Record<string, unknown> = {},
+    timeoutMs = 60000,
   ): Promise<Record<string, unknown>> {
     const requestId = `claude-${++this.nextId}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingControl.delete(requestId);
         reject(Error(`${subtype} response timed out; the agent may still be working`));
-      }, 60000);
+      }, timeoutMs);
       timer.unref();
       this.pendingControl.set(requestId, { resolve, reject, timer });
       try {
@@ -904,6 +908,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       'stream-json',
       '--include-partial-messages',
       '--permission-prompt-tool=stdio',
+      '--chrome',
       ...(resumeThreadId ? ['--resume', resumeThreadId] : ['--session-id', this.threadId]),
     ]), ...(unsafeMode ? ['--dangerously-skip-permissions'] : [])];
     // Explicitly setting even ~/.claude changes Claude's macOS Keychain account.
@@ -982,6 +987,22 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
   async command(name: string, argument: string): Promise<Record<string, unknown>> {
     if (!this.threadId) throw Error('Connect to Claude first');
+    if (name === 'usage') {
+      if (argument.trim()) throw Error('Usage: /usage');
+      let response: Record<string, unknown>;
+      try { response = await this.controlRequest('get_usage', { skip_behaviors: true }, 10000); }
+      catch (error) { throw Error(`Could not read Claude usage: ${error instanceof Error ? error.message : String(error)}. If unsupported, update Claude Code and reconnect.`); }
+      return { text: formatClaudeUsage(response.response) };
+    }
+    if (name === 'chrome') {
+      if (this.busy && !['', 'status'].includes(argument.trim().toLowerCase())) throw Error('Stop the current turn before changing the Chrome connection.');
+      if (this.chromeCommandPending) throw Error('Wait for the Chrome command to finish.');
+      this.chromeCommandPending = true;
+      try {
+        return await claudeChromeCommand(argument, async (subtype, payload) =>
+          object((await this.controlRequest(subtype, payload, subtype === 'get_chrome_dialog' ? 10000 : 60000)).response));
+      } finally { this.chromeCommandPending = false; }
+    }
     if (name === 'goal') return this.handleGoalCommand(argument);
     if (name === 'compact') {
       await this.send(`/compact ${argument}`.trim());
@@ -999,7 +1020,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       };
     }
     throw Error(
-      `Unsupported command /${name}. Use /goal, /btw or /compact. Other CLI commands remain available in Terminal mode.`,
+      `Unsupported command /${name}. Use /goal, /btw, /compact, /chrome or /usage. Other CLI commands remain available in Terminal mode.`,
     );
   }
 
@@ -1024,6 +1045,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   ) {
     if (!this.threadId) throw Error('Connect to Claude first');
     if (this.busy) throw Error('Claude is working; stop the current turn first');
+    if (this.chromeCommandPending) throw Error('Wait for the Chrome command to finish before sending a message.');
     if (!prompt.trim() || prompt.length > 100000) {
       throw Error('Prompt must contain 1–100000 characters');
     }

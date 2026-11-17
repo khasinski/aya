@@ -7,6 +7,8 @@ for (const agent of ['codex', 'claude', 'pi', 'antigravity']) {
     assert.ok(commands.every(command => command.name && command.description));
     assert.equal(new Set(commands.map(command => command.name)).size, commands.length);
     assert.equal(commands.some(command => command.name === 'btw'), ['codex', 'claude'].includes(agent));
+    assert.equal(commands.some(command => command.name === 'chrome'), agent === 'claude');
+    assert.equal(commands.some(command => command.name === 'usage'), agent === 'claude');
     assert.equal(guiCapabilities(agent).steer, agent !== 'antigravity');
     assert.ok(!commands.some(command => /requires a completed turn/.test(command.description)));
   });
