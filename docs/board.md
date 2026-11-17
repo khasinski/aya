@@ -54,10 +54,9 @@ and scrolls if its list is long. Its position and height follow window resizing.
 
 ## Shelf
 
-The Archive button opens the shelf, a drawer beside the board. It has an
-Archive tab with the cards archived from the board, and a Backlog tab when the
-backlog is on (see "Backlog"). With the Backlog tab the button reads
-"Shelf (n)".
+The Archive button opens the shelf, a drawer beside the board, with an Archive
+tab and sometimes a Backlog tab (see "Backlog"). With the Backlog tab the button
+reads "Shelf (n)".
 
 The shelf has its own search box. It uses the same query as the board filter
 (text, `#label`, `@owner`, `p0`-`p3`, `col:name`) and narrows the shelf on top
@@ -66,58 +65,30 @@ The search does not filter the board itself.
 
 ## Backlog
 
-Settings > Kanban > Backlog turns the backlog on for every project. The setting
-is kept in `~/.aya/kanban.json`, which exists only while it is on. Each board has
-one backlog:
+Settings > Kanban > Backlog: off by default, applies to every project. Stored in `~/.aya/kanban.json`, which exists only while it is on.
 
-| Setting | Backlog column on the board | Backlog |
+| Setting | Board has a Backlog column | Move to backlog |
 |---|---|---|
-| off | no | none; nothing mentions it |
-| off | yes | none; the column is an ordinary column |
-| on | no | the shelf: Move to backlog takes the card off the board into the Backlog tab |
-| on | yes | the column: Move to backlog puts the card in the Backlog column; no Backlog tab |
+| off | any | not available; a Backlog column is an ordinary column |
+| on | no | takes the card off the board to the Backlog tab on the shelf |
+| on | yes | puts the card in the Backlog column; the shelf has no Backlog tab |
 
-Where the backlog is on, each card's menu has Move to backlog.
+- A claimed card loses its claim, and its pane is asked to stop.
+- Restore on the Backlog tab: the card goes to the end of its column, or to the first column if its column is gone.
+- Cards already on the shelf keep the Backlog tab visible, whatever the setting.
+- While the setting is off, agents see nothing about a backlog: not in the usage, `aya capabilities`, `aya board` or `--json`. `aya board backlog` is an unknown command.
+- "Todo or Backlog" elsewhere in this document means the Backlog column.
 
-Until it is on, nothing an agent reads mentions the backlog. That covers the
-board usage, `aya capabilities`, `aya board` and `aya board --json`.
-`aya board backlog` fails like any unknown command, and nothing can be moved
-into the backlog.
-
-On the shelf, Move to backlog takes the card off the board. Like archiving, it
-removes the card's claim and asks the pane that held it to stop. Moving a
-claimed card into a Backlog column does the same, as any return to Backlog does.
-Restore on the Backlog tab puts the card back at the end of its column, or in
-the first column if that column was deleted.
-
-Cards already off the board keep the Backlog tab showing, in every state. This
-covers turning the setting off and adding a Backlog column later, so the user
-never loses sight of them. Agents see them only while the backlog is on.
-
-Where it is on, agents use `aya board backlog`:
+Agents, while the setting is on:
 
 ```sh
-aya board backlog            # list (--json for JSON)
-aya board backlog t-12       # move a card off the board into the backlog
-aya board backlog restore t-12
-aya board remove t-12        # delete a backlog card
+aya board backlog               # list the Backlog column and the shelf (--json)
+aya board backlog t-12          # move t-12 to the board's backlog
+aya board backlog restore t-12  # put a shelf card back on the board
+aya board remove t-12           # delete a card
 ```
 
-`aya board backlog` lists the Backlog column's cards and any cards off the
-board. `aya board backlog <id>` moves a card to the board's backlog: the column
-or the shelf. Where the backlog is on and cards are off the board, `aya board`
-shows a Backlog line and `aya board --json` has a `backlogCards` list.
-
-The backlog is not a column. A column named Backlog (for example from
-`aya board column add Backlog`) is shown on the board, and the rules about
-"Todo or Backlog" in this document mean that column. With the setting on, that
-column is the board's backlog (see the table above). Without it, the board's
-backlog is the shelf, which keeps cards off the board.
-
-In the board file a backlog card stays in `cards` with `"shelf": "backlog"`. An
-Aya version without the backlog ignores the field and shows the card on the
-board, so the card is not lost. A board with no backlog cards is saved exactly
-as before.
+File: a shelf card stays in `cards` with `"shelf": "backlog"`. An older Aya ignores the field and shows the card on the board. A board with no shelf cards is saved exactly as before.
 
 ## Terminology
 
