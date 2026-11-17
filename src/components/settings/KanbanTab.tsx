@@ -25,9 +25,9 @@ const count = (n: number) => n.toLocaleString("en-US");
 /** The project Create backlog column works on. */
 export type KanbanProject = Pick<ProjectConfig, "slug" | "name">;
 
-export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
-  backlogEnabled: boolean;
-  onBacklogEnabledChange: (enabled: boolean) => void;
+export function KanbanTab({ backlogOnShelf, onBacklogOnShelfChange, project }: {
+  backlogOnShelf: boolean;
+  onBacklogOnShelfChange: (enabled: boolean) => void;
   /** The project whose board Create backlog column adds to; null when there is none. */
   project: KanbanProject | null;
 }) {
@@ -82,8 +82,8 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
                     key={label}
                     type="button"
                     disabled={enabled && hasBacklogColumn !== true}
-                    className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
-                    onClick={() => onBacklogEnabledChange(enabled)}
+                    className={`aya-settings-segment ${backlogOnShelf === enabled ? "aya-settings-segment--active" : ""}`}
+                    onClick={() => onBacklogOnShelfChange(enabled)}
                   >
                     {label}
                   </button>

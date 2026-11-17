@@ -49,8 +49,8 @@ interface Props {
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   kanbanEnabled: boolean;
   onKanbanEnabledChange: (enabled: boolean) => void;
-  kanbanBacklogEnabled: boolean;
-  onKanbanBacklogEnabledChange: (enabled: boolean) => void;
+  kanbanBacklogOnShelf: boolean;
+  onKanbanBacklogOnShelfChange: (enabled: boolean) => void;
   /** The active local project, for Kanban > Create backlog column. */
   kanbanProject: KanbanProject | null;
   terminalSoundsEnabled: boolean;
@@ -107,8 +107,8 @@ export function SettingsModal({
   onHarnessSearchEnabledChange,
   kanbanEnabled,
   onKanbanEnabledChange,
-  kanbanBacklogEnabled,
-  onKanbanBacklogEnabledChange,
+  kanbanBacklogOnShelf,
+  onKanbanBacklogOnShelfChange,
   kanbanProject,
   terminalSoundsEnabled,
   onTerminalSoundsEnabledChange,
@@ -369,7 +369,7 @@ export function SettingsModal({
 
             {activeTab === "updates" && <UpdatesTab isWeb={isWeb} />}
             {activeTab === "kanban" && kanbanEnabled && (
-              <KanbanTab backlogEnabled={kanbanBacklogEnabled} onBacklogEnabledChange={onKanbanBacklogEnabledChange} project={kanbanProject} />
+              <KanbanTab backlogOnShelf={kanbanBacklogOnShelf} onBacklogOnShelfChange={onKanbanBacklogOnShelfChange} project={kanbanProject} />
             )}
 
             {activeTab === "machines" && (
