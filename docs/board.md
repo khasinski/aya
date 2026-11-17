@@ -1,14 +1,15 @@
 # Kanban column order
 
-Adding a column to an existing Aya Board puts it at the end. To change the order,
-use the left and right arrow buttons in each column header. The arrow at the
-corresponding edge is disabled. The buttons also work with keyboard focus and
-Enter or Space.
+Adding a column to an existing Aya Board puts it at the end, except the Backlog
+column: a newly created Backlog column is always FIRST. A second Backlog column
+is refused. To change the order, use the left and right arrow buttons in each
+column header. The arrow at the corresponding edge is disabled. The buttons also
+work with keyboard focus and Enter or Space.
 
 Agents can reorder columns through the CLI:
 
 ```sh
-aya board column add Backlog
+aya board column add Backlog   # goes first, refused when the board has it
 aya board column move backlog --before todo
 aya board column move backlog --after done --project my-project
 ```
@@ -77,7 +78,9 @@ Settings > Kanban has Create backlog column, which adds the column to the curren
 | off | on the board |
 | on | in the shelf, as the Backlog tab; Restore there moves a card to the first column on the board |
 
-Cards saved by the first backlog version (`"shelf": "backlog"`) load into the Backlog column, which is added at the end when missing.
+Cards saved by the first backlog version (`"shelf": "backlog"`) load into the Backlog column, which is added first when missing. On a board that already has the maximum number of columns they fall back to the first column.
+
+A card added without a column (`aya board add`) lands in the board's first column - in Backlog when it exists, so in the shelf's Backlog tab while Move backlog to shelf is on.
 
 ## Terminology
 

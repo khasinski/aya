@@ -68,6 +68,7 @@ test.describe("no Backlog column", () => {
     await create.click();
     await expect(create).toBeDisabled();
     await expect(on).toBeEnabled();
+    await expect(settings.getByText("The board already has a Backlog column")).toBeVisible();
     expect(boardFile(seeded.ayaHome).columns.map((c: { id: string }) => c.id)).toEqual(["backlog", "todo", "done"]);
     await settings.locator(".aya-settings-general-row").filter({ hasText: "Move backlog to shelf" }).screenshot({ path: testInfo.outputPath("settings-with-column.png") });
     await settings.getByRole("button", { name: "Cancel", exact: true }).click();

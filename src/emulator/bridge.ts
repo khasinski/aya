@@ -381,9 +381,14 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/^-+|-+$/g, "") || `col-${b.columns.length + 1}`;
+      if (id === "backlog" && b.columns.some((c) => c.id === "backlog")) {
+        throw new Error("The board already has a Backlog column.");
+      }
+      // Backlog is the board's FIRST column, like electron/board.ts adds it.
+      const column = { id, title: req.title.trim() };
       const next: BoardSnapshot = {
         ...b,
-        columns: [...b.columns, { id, title: req.title.trim() }],
+        columns: id === "backlog" ? [column, ...b.columns] : [...b.columns, column],
       };
       d.boardsBySlug.set(req.projectSlug, next);
       return next as never;

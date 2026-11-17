@@ -89,7 +89,8 @@ interface StoredBoard {
 export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = DICTIONARY_COLUMNS;
 
 /** The first backlog version kept cards off the board with this mark; such cards now
- *  belong in the Backlog column (added at the end when missing) and the mark is dropped. */
+ *  belong in the Backlog column (added first when missing, or they fall back to the
+ *  first column on a full board) and the mark is dropped. */
 const LEGACY_BACKLOG_SHELF = "backlog";
 
 type BoardChangeListener = (projectSlug: string) => void;
@@ -334,7 +335,7 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
         if (columns.length < MAX_BOARD_COLUMNS) {
           columns.unshift({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
         } else {
-          markedTarget = columns[0].id;
+          markedTarget = fallbackColumn(columns)!.id;
         }
       }
       record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: markedTarget } : c));
@@ -858,7 +859,7 @@ export function unarchiveBoardCard(
     }
     const col = columnQuery
       ? resolveColumn(current.columns, columnQuery)
-      : current.columns.find((c) => c.id === target.columnId) ?? current.columns[0];
+      : current.columns.find((c) => c.id === target.columnId) ?? fallbackColumn(current.columns);
     if (!col) throw new Error("The board has no columns.");
     const nowIso = (now ?? new Date()).toISOString();
     const restored: KanbanCard = {
@@ -1015,6 +1016,14 @@ export function clearBoardColumn(
   });
 }
 
+/** The fallback column for a card whose column is gone (Undo delete, Restore
+ *  from Archive, the full-board migration): the first column the board SHOWS,
+ *  so the card never hides in a Backlog column that sits on the shelf. The
+ *  Backlog column itself is only used when it is the only one. */
+function fallbackColumn(columns: readonly KanbanColumn[]): KanbanColumn | undefined {
+  return columns.find((c) => !isBacklogColumn(c)) ?? columns[0];
+}
+
 export function restoreBoardCards(
   ayaHome: string,
   project: Pick<ProjectConfig, "slug" | "directory">,
@@ -1024,7 +1033,7 @@ export function restoreBoardCards(
     const current = await loadBoardUnlocked(ayaHome, project);
     if (entries.length === 0) return current;
     const colIds = new Set(current.columns.map((c) => c.id));
-    const fallbackColId = current.columns[0]?.id;
+    const fallbackColId = fallbackColumn(current.columns)?.id;
     if (!fallbackColId) return current;
     const nextCards = [...current.cards];
     const existingIds = new Set(nextCards.map((c) => c.id.toLowerCase()));

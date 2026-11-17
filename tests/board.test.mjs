@@ -1223,3 +1223,27 @@ test("a card added without a column lands in the board's first column, Backlog w
     assert.equal(card.columnId, "backlog");
   } finally { fx.cleanup(); }
 });
+
+test("undo delete and restore from archive fall back to the first column that is not Backlog", async () => {
+  const fx = makeFixture();
+  try {
+    const at = "2026-11-12T10:00:00.000Z";
+    await addBoardColumn(fx.home, fx.project, "Backlog");
+    await moveBoardColumn(fx.home, fx.project, "backlog", { after: "done" });
+    // A card in a column that is then removed (here by hand in the file).
+    const boardPath = join(fx.home, "boards", "demo.json");
+    const board = JSON.parse(readFileSync(boardPath, "utf8"));
+    board.columns = board.columns.filter((c) => c.id !== "review");
+    board.archivedCards = [{ id: "t-9", columnId: "review", title: "Lost column", createdAt: at, updatedAt: at, archivedAt: at }];
+    writeFileSync(boardPath, JSON.stringify(board));
+    // Undo delete: the archived card's column is gone, so it must not hide in
+    // the Backlog column (first in a fresh board); it goes to the first shown
+    // column instead.
+    const { card } = await unarchiveBoardCard(fx.home, fx.project, "t-9");
+    assert.equal(card.columnId, "todo");
+    const deleted = await deleteBoardCard(fx.home, fx.project, card.id);
+    const restored = await restoreBoardCards(fx.home, fx.project, [{ card: deleted.deleted }]);
+    const again = restored.cards.find((c) => c.id === card.id);
+    assert.equal(again.columnId, "todo");
+  } finally { fx.cleanup(); }
+});

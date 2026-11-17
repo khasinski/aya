@@ -20,22 +20,15 @@ for (const repo of [false, true]) {
       ...(repo ? { projectFiles: { ".aya/board.json": existingBoard } } : { ayaHomeFiles: { "boards/e2e-proj.json": existingBoard } }),
     } });
 
-    test("add Backlog, move it first with GUI, then reorder from CLI and reload", async ({ window, seeded }, testInfo) => {
+    test("add Backlog (it goes first), reorder with GUI and CLI, and reload", async ({ window, seeded }, testInfo) => {
       const titles = window.locator(".aya-kanban-column-title");
       const initialOrder = ["Todo", "In Progress", "Review", "Done"];
       await expect(titles).toHaveText(initialOrder);
       await window.getByRole("button", { name: "+ Column", exact: true }).click();
       await window.getByPlaceholder("Column name…").fill("Backlog");
       await window.getByPlaceholder("Column name…").press("Enter");
-      await expect(titles).toHaveText([...initialOrder, "Backlog"]);
-      await expect(window.getByRole("button", { name: "Move column Backlog right", exact: true })).toBeDisabled();
-
-      for (let index = 3; index >= 0; index--) {
-        await window.getByRole("button", { name: "Move column Backlog left", exact: true }).click();
-        const expected = [...initialOrder];
-        expected.splice(index, 0, "Backlog");
-        await expect(titles).toHaveText(expected);
-      }
+      // A newly created Backlog column is always FIRST (Justyna's rule).
+      await expect(titles).toHaveText(["Backlog", ...initialOrder]);
       await expect(window.getByRole("button", { name: "Move column Backlog left", exact: true })).toBeDisabled();
       await expect(window.getByTestId("kanban-column-backlog")).toBeInViewport({ ratio: 0.95 });
       await expect(window.getByTestId("kanban-column-todo")).toContainText("Existing task");
