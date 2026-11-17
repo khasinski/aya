@@ -14,7 +14,7 @@ import {
 } from "../../main-mirrors";
 import { mib } from "../../units";
 import { PRIORITY_OPTIONS } from "../useKanbanBoard";
-import { SettingsHeader, SettingsRow } from "./parts";
+import { OnOffSwitch, SettingsHeader, SettingsRow } from "./parts";
 
 const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
@@ -76,19 +76,12 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
                     <span className="aya-settings-kanban-create-note">Creates the Backlog column in {project.name}</span>
                 )}
               </span>
-              <div className="aya-settings-segmented" aria-label="Move backlog to shelf">
-                {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    disabled={enabled && hasBacklogColumn !== true}
-                    className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
-                    onClick={() => onBacklogEnabledChange(enabled)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <OnOffSwitch
+                label="Move backlog to shelf"
+                value={backlogEnabled}
+                onChange={onBacklogEnabledChange}
+                disabled={(enabled) => enabled && hasBacklogColumn !== true}
+              />
             </div>
           )}
         >
