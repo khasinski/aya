@@ -35,6 +35,7 @@ const {
   matchesBoardQuery,
   searchBoard,
   handleBoardRequest,
+  MAX_BOARD_IMAGE_BYTES,
   MAX_PROJECT_RULES_BYTES,
   PROJECT_RULES_FILE_NAME,
 } = await import("../dist-electron/board.js");
@@ -557,6 +558,47 @@ test("reordering a claimed card within Todo on a board without In Progress does 
   } finally { fx.cleanup(); }
 });
 
+// Column ids stay literal in these tests: they are the contract that board files
+// store and that `aya board` users type.
+for (const columnId of ["review", "done"]) {
+  test(`moving a claimed card to ${columnId} keeps its claim and sends no stop message`, async () => {
+    const fx = makeDispatchFixture();
+    try {
+      await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+      await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+      const moved = await fx.call("board:move-card", { cardId: "t-1", columnId });
+      await fx.flush();
+      assert.equal(moved.cards[0].columnId, columnId);
+      assert.equal(moved.cards[0].claim?.paneId, "pane-1");
+      assert.equal(fx.sent.length, 1, "only the task prompt reached the pane");
+    } finally { fx.cleanup(); }
+  });
+}
+
+test("starting a card on a board without In Progress leaves it in its column", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await deleteBoardColumn(fx.home, fx.project, "in-progress");
+    await addBoardCard(fx.home, fx.project, { title: "Existing task" });
+    const board = await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    assert.equal(board.cards[0].columnId, "todo");
+    assert.equal(board.cards[0].claim?.paneId, "pane-1");
+  } finally { fx.cleanup(); }
+});
+
+test("aya board clear without a column archives the Done column", async () => {
+  const fx = makeFixture();
+  try {
+    await addBoardCard(fx.home, fx.project, { title: "Finished", columnId: "done" });
+    await addBoardCard(fx.home, fx.project, { title: "Still to do" });
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    await handleBoardRequest({ argv: ["clear"] }, "pane-1", deps);
+    const board = await getBoard(fx.home, fx.project);
+    assert.deepEqual(board.cards.map((c) => c.title), ["Still to do"]);
+    assert.deepEqual(board.archivedCards.map((c) => c.title), ["Finished"]);
+  } finally { fx.cleanup(); }
+});
+
 for (const repo of [false, true]) {
   test(`column order persists in ${repo ? "repo" : "user"} storage without changing cards or claims`, async () => {
     const fx = makeFixture();
@@ -775,6 +817,53 @@ test("saveBoardImage and readBoardImageDataUrl store and load PNG assets", async
   } finally {
     fx.cleanup();
   }
+});
+
+// The four accepted formats, recognised by their first bytes; the MIME types and
+// messages stay literal here as the contract users and agents see.
+const MINIMAL_IMAGES = [
+  ["image/jpeg", ".jpg", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10])],
+  ["image/webp", ".webp", Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBPVP8 ")])],
+  ["image/gif", ".gif", Buffer.from("GIF87a\x01\x00\x01\x00", "latin1")],
+  ["image/gif", ".gif", Buffer.from("GIF89a\x01\x00\x01\x00", "latin1")],
+];
+const BMP = Buffer.concat([Buffer.from("BM"), Buffer.alloc(30)]);
+
+test("JPEG, WebP and GIF board images are saved with their own extension and read back", async () => {
+  const fx = makeFixture();
+  try {
+    for (const [mime, ext, bytes] of MINIMAL_IMAGES) {
+      const saved = await saveBoardImage(fx.home, fx.project, { dataBase64: bytes.toString("base64"), name: "shot" });
+      assert.ok(saved.path.endsWith(ext), `${mime} saved as ${saved.path}`);
+      assert.equal(await readBoardImageDataUrl(fx.home, fx.project, saved.path), `data:${mime};base64,${bytes.toString("base64")}`);
+    }
+  } finally { fx.cleanup(); }
+});
+
+test("a board image in another format, empty or too large is refused with its reason", async () => {
+  const fx = makeFixture();
+  try {
+    await assert.rejects(saveBoardImage(fx.home, fx.project, { dataBase64: BMP.toString("base64") }),
+      { message: "Only PNG, JPEG, WebP, and GIF images are supported." });
+    await assert.rejects(saveBoardImage(fx.home, fx.project, { dataBase64: "data:image/png;base64," }),
+      { message: "Image data is empty." });
+    await assert.rejects(saveBoardImage(fx.home, fx.project, { dataBase64: Buffer.alloc(MAX_BOARD_IMAGE_BYTES + 1, 1).toString("base64") }),
+      { message: "Image must be between 1 byte and 8 MB." });
+    writeFileSync(join(fx.repoDir, "picture.bmp"), BMP);
+    await assert.rejects(readBoardImageDataUrl(fx.home, fx.project, "picture.bmp"),
+      { message: "Unsupported image format (use PNG, JPEG, WebP, or GIF)." });
+  } finally { fx.cleanup(); }
+});
+
+test("only data URLs of the four image formats are passed through as they are", async () => {
+  const fx = makeFixture();
+  try {
+    for (const url of ["data:image/png;base64,AAAA", "data:image/jpeg;base64,AAAA", "data:image/webp;base64,AAAA",
+      "data:image/gif;base64,AAAA", "DATA:IMAGE/PNG;BASE64,AAAA"]) {
+      assert.equal(await readBoardImageDataUrl(fx.home, fx.project, url), url);
+    }
+    await assert.rejects(readBoardImageDataUrl(fx.home, fx.project, "data:image/bmp;base64,AAAA"));
+  } finally { fx.cleanup(); }
 });
 
 test("the task prompt keeps its exact wording with a description, priority and labels", () => {
