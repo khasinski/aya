@@ -10,7 +10,7 @@
 // (native dialogs, window chrome, updater, Settings-only queries) is a typed
 // no-op, exactly as Aya Web stubs the calls a browser session can't make.
 
-import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS, STARTED_COLUMN_ID, isPendingColumn } from "../../shared/board-columns.cjs";
+import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, STARTED_COLUMN_ID, isPendingColumn } from "../../shared/board-columns.cjs";
 import type {
   AyaApi,
   BoardSnapshot,
@@ -329,34 +329,11 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     },
     moveBoardCardToBacklog: async (req) => {
       const b = await api.getBoard(req.projectSlug);
-      const target = b.cards.find((c) => c.id === req.cardId);
-      if (!target || d.boardBacklogSetting !== true) return b as never;
-      if (b.columns.some((c) => c.id === COLUMN_IDS.backlog)) {
-        return api.moveBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId, columnId: COLUMN_IDS.backlog }) as never;
+      if (d.boardBacklogSetting !== true || !b.cards.some((c) => c.id === req.cardId)) return b as never;
+      if (!b.columns.some((c) => c.id === COLUMN_IDS.backlog)) {
+        d.boardsBySlug.set(req.projectSlug, { ...b, columns: [...b.columns, { id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] }] });
       }
-      const shelved = { ...target, updatedAt: new Date().toISOString() };
-      delete shelved.claim;
-      const next: BoardSnapshot = {
-        ...b,
-        cards: b.cards.filter((c) => c.id !== req.cardId),
-        backlogCards: [shelved, ...(b.backlogCards ?? [])],
-      };
-      d.boardsBySlug.set(req.projectSlug, next);
-      return next as never;
-    },
-    restoreBacklogCard: async (req) => {
-      const b = await api.getBoard(req.projectSlug);
-      const target = (b.backlogCards ?? []).find((c) => c.id === req.cardId);
-      if (!target) return b as never;
-      const columnId = b.columns.some((c) => c.id === target.columnId) ? target.columnId : b.columns[0].id;
-      const backlog = (b.backlogCards ?? []).filter((c) => c.id !== req.cardId);
-      const next: BoardSnapshot = {
-        ...b,
-        cards: [...b.cards, { ...target, columnId, updatedAt: new Date().toISOString() }],
-        ...(backlog.length ? { backlogCards: backlog } : { backlogCards: undefined }),
-      };
-      d.boardsBySlug.set(req.projectSlug, next);
-      return next as never;
+      return api.moveBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId, columnId: COLUMN_IDS.backlog }) as never;
     },
     clearBoardColumn: async (req) => {
       const b = await api.getBoard(req.projectSlug);

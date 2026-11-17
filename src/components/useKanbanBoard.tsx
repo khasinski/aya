@@ -732,10 +732,13 @@ export function useKanbanBoard({
     );
   };
 
+  // Back on the board in its first visible column; the card does not remember where it came from.
   const handleRestoreBacklogCard = async (cardId: string) => {
     setConfirmDeleteCardId(null);
+    const columnId = boardColumns[0]?.id;
+    if (!columnId) return;
     await runAction(() =>
-      window.aya.restoreBacklogCard({ projectSlug: terminal.projectSlug, cardId }),
+      window.aya.moveBoardCard({ projectSlug: terminal.projectSlug, cardId, columnId }),
     );
   };
 
@@ -1006,17 +1009,19 @@ export function useKanbanBoard({
     () => board?.archivedCards ?? [],
     [board?.archivedCards],
   );
-  const backlogCards = useMemo(
-    () => board?.backlogCards ?? [],
-    [board?.backlogCards],
-  );
-  // One board, one backlog (electron/board.ts backlogMode): off until the setting is on; then a
-  // board's Backlog column if it has one (Move to backlog goes there), otherwise the shelf.
-  const hasBacklogColumn = (board?.columns ?? []).some((c) => c.id === COLUMN_IDS.backlog);
+  // Settings > Kanban > Backlog: the Backlog column moves from the board to the shelf.
+  // Off, it is an ordinary column on the board, cards and all.
   const backlogOn = backlogEnabled;
-  // The shelf tab is for boards without that column, and shows whenever cards are already
-  // off the board, so turning the setting off never hides them.
-  const showBacklog = (backlogEnabled && !hasBacklogColumn) || backlogCards.length > 0;
+  const showBacklog = backlogOn;
+  const backlogCards = useMemo(
+    () => (backlogOn ? (board?.cards ?? []).filter((c) => c.columnId === COLUMN_IDS.backlog) : []),
+    [board?.cards, backlogOn],
+  );
+  // The columns drawn on the board: all of them, or all but Backlog while it is on the shelf.
+  const boardColumns = useMemo(
+    () => (backlogOn ? (board?.columns ?? []).filter((c) => c.id !== COLUMN_IDS.backlog) : (board?.columns ?? [])),
+    [board?.columns, backlogOn],
+  );
 
   // Collect distinct assignees/claims and labels on the board for quick filter bar
   const boardFilterOptions = useMemo(() => {
@@ -1453,6 +1458,7 @@ export function useKanbanBoard({
     backlogCards,
     showBacklog,
     backlogOn,
+    boardColumns,
     boardFilterOptions,
     hasActiveFilter,
     matchesCardFilter,

@@ -154,7 +154,6 @@ export const WEB_BRIDGE_INVOKE_CHANNELS = [
   "board:rename-column",
   "board:reserve-start",
   "board:restore-cards",
-  "board:restore-from-backlog",
   "board:save-image",
   "board:send-to-pane",
   "board:set-backlog-setting",

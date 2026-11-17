@@ -128,7 +128,6 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getBoardBacklogSetting: inv("board:get-backlog-setting"),
     setBoardBacklogSetting: inv("board:set-backlog-setting"),
     moveBoardCardToBacklog: inv("board:move-to-backlog"),
-    restoreBacklogCard: inv("board:restore-from-backlog"),
     restoreBoardCards: inv("board:restore-cards"),
     claimBoardCard: inv("board:claim-card"),
     releaseBoardCard: inv("board:release-card"),

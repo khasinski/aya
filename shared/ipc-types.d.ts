@@ -242,8 +242,6 @@ export interface BoardSnapshot {
   columns: KanbanColumn[];
   cards: KanbanCard[];
   archivedCards?: KanbanCard[];
-  /** Cards kept off the board for later; present only when there are any. */
-  backlogCards?: KanbanCard[];
   notices?: Array<{ id: string; cardId: string; paneName: string; state: "pending" | "sending" | "typed" }>;
 }
 
@@ -1031,7 +1029,6 @@ export interface AyaApi {
   getBoardBacklogSetting(): Promise<boolean>;
   setBoardBacklogSetting(req: { enabled: boolean }): Promise<boolean>;
   moveBoardCardToBacklog(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
-  restoreBacklogCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;
   restoreBoardCards(req: { projectSlug: string; entries: Array<{ card: KanbanCard; index?: number }> }): Promise<BoardSnapshot>;
   claimBoardCard(req: { projectSlug: string; cardId: string; paneId?: string; paneName: string; replace?: boolean }): Promise<BoardSnapshot>;
   releaseBoardCard(req: { projectSlug: string; cardId: string }): Promise<BoardSnapshot>;

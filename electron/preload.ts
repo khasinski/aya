@@ -222,7 +222,6 @@ const api: AyaApi = {
   getBoardBacklogSetting: () => ipcRenderer.invoke("board:get-backlog-setting"),
   setBoardBacklogSetting: (req) => ipcRenderer.invoke("board:set-backlog-setting", req),
   moveBoardCardToBacklog: (req) => ipcRenderer.invoke("board:move-to-backlog", req),
-  restoreBacklogCard: (req) => ipcRenderer.invoke("board:restore-from-backlog", req),
   restoreBoardCards: (req) => ipcRenderer.invoke("board:restore-cards", req),
   claimBoardCard: (req) => ipcRenderer.invoke("board:claim-card", req),
   releaseBoardCard: (req) => ipcRenderer.invoke("board:release-card", req),

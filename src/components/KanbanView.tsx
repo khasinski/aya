@@ -75,6 +75,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     backlogCards,
     showBacklog,
     backlogOn,
+    boardColumns,
     boardFilterOptions,
     hasActiveFilter,
     clearAllFilters,
@@ -325,7 +326,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
         </div>
       ) : (
         <div className="aya-kanban-body">
-          <KanbanColumns {...model} board={board} />
+          <KanbanColumns {...model} board={boardColumns === board.columns ? board : { ...board, columns: boardColumns }} />
 
           {archiveOpen && (
             <aside
@@ -478,8 +479,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                             <button
                               type="button"
                               className="aya-kanban-archive-restore-btn"
-                              title={`Restore ${card.id} to ${origCol ? origCol.title : "board"
-                                }`}
+                              title={`Restore ${card.id} to ${onBacklogTab ? boardColumns[0]?.title ?? "board" : origCol ? origCol.title : "board"}`}
                               onClick={() => void (onBacklogTab ? handleRestoreBacklogCard(card.id) : handleRestoreArchivedCard(card))}
                             >
                               ↩ Restore
