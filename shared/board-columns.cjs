@@ -25,6 +25,10 @@ exports.COLUMN_TITLES = COLUMN_TITLES;
 /** The title of the column that holds finished work, also matched on other columns. */
 exports.FINISHED_COLUMN_TITLE = COLUMN_TITLES[COLUMN_IDS.done];
 
+/** The Backlog column as Aya creates it: Create backlog column in Settings > Kanban,
+ *  and the load of cards saved with the first backlog version's shelf mark. */
+exports.BACKLOG_COLUMN = Object.freeze({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
+
 /** The columns a new board starts with, in order. */
 exports.DEFAULT_BOARD_COLUMNS = Object.freeze(
   [COLUMN_IDS.todo, COLUMN_IDS.inProgress, COLUMN_IDS.review, COLUMN_IDS.done]
