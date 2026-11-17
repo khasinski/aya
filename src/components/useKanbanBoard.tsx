@@ -1,4 +1,5 @@
 import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS, isBacklogColumn } from "../../shared/board-columns.cjs";
+import { PRIORITY_OPTIONS } from "../../shared/board-priorities.cjs";
 import {
   useCallback,
   useEffect,
@@ -28,16 +29,8 @@ import { cleanIpcError, parseLabelsInput, readFileAsDataUrl, toggleLabelInDraft,
 
 export { extractChecklistProgress, toggleMarkdownTaskItem } from './KanbanCardContent';
 
-export const PRIORITY_OPTIONS: ReadonlyArray<{
-  value: KanbanPriority;
-  label: string;
-  short: string;
-}> = [
-    { value: "urgent", label: "Urgent", short: "P0" },
-    { value: "high", label: "High", short: "P1" },
-    { value: "medium", label: "Medium", short: "P2" },
-    { value: "low", label: "Low", short: "P3" },
-  ];
+/** The board's priorities, highest first; shared/board-priorities.cjs defines them. */
+export { PRIORITY_OPTIONS };
 
 export const QUICK_LABELS: readonly string[] = [
   "bug",

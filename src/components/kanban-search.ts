@@ -1,4 +1,5 @@
-import type { KanbanCard, KanbanPriority } from "../types";
+import { PRIORITY_QUERY_TOKENS, PRIORITY_SHORT_TOKENS } from "../../shared/board-priorities.cjs";
+import type { KanbanCard } from "../types";
 
 /** The board filter's query language, shared by the board filter and the archive shelf search:
  *  #label, label:/tag:, @owner, assignee:/owner:, p0-p3, p:/priority:, col:/column:,
@@ -11,16 +12,6 @@ export function matchesSearchQuery(card: KanbanCard, query: string, isArchivedCa
     typeof isArchivedCard === "boolean"
       ? isArchivedCard
       : Boolean(card.archivedAt);
-  const priorityTokenMap: Record<string, KanbanPriority> = {
-    p0: "urgent",
-    urgent: "urgent",
-    p1: "high",
-    high: "high",
-    p2: "medium",
-    medium: "medium",
-    p3: "low",
-    low: "low",
-  };
   const tokens = q.split(/\s+/).filter(Boolean);
   for (const token of tokens) {
     if (token.startsWith("#") && token.length > 1) {
@@ -58,19 +49,14 @@ export function matchesSearchQuery(card: KanbanCard, query: string, isArchivedCa
       }
       continue;
     }
-    if (
-      token === "p0" ||
-      token === "p1" ||
-      token === "p2" ||
-      token === "p3"
-    ) {
-      if (card.priority !== priorityTokenMap[token]) return false;
+    if (PRIORITY_SHORT_TOKENS.includes(token)) {
+      if (card.priority !== PRIORITY_QUERY_TOKENS[token]) return false;
       continue;
     }
     if (token.startsWith("p:") || token.startsWith("priority:")) {
       const rawP = token.slice(token.indexOf(":") + 1);
       if (rawP) {
-        const mapped = priorityTokenMap[rawP];
+        const mapped = PRIORITY_QUERY_TOKENS[rawP];
         if (mapped) {
           if (card.priority !== mapped) return false;
         } else if ((card.priority?.toLowerCase() ?? "") !== rawP) {

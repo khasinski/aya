@@ -39,6 +39,7 @@ import {
   MAX_COLUMN_TITLE_CHARS,
   MAX_PROJECT_RULES_BYTES,
 } from "../shared/board-limits.cjs";
+import { PRIORITY_QUERY_TOKENS, PRIORITY_SHORT_TOKENS, PRIORITY_VALUES } from "../shared/board-priorities.cjs";
 import { BYTES_PER_MIB } from "../shared/units.cjs";
 import { boardTaskFooter, WITHDRAWAL_REASON, withProjectRules } from "./board-instructions";
 import { callerProject } from "./team-author";
@@ -75,12 +76,8 @@ const ID_RE = /^[a-z0-9_-]{1,64}$/i;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const serial = oneAtATime();
 
-export const VALID_KANBAN_PRIORITIES: readonly KanbanPriority[] = [
-  "low",
-  "medium",
-  "high",
-  "urgent",
-];
+/** The priorities a card accepts, lowest first; shared/board-priorities.cjs defines them. */
+export const VALID_KANBAN_PRIORITIES: readonly KanbanPriority[] = PRIORITY_VALUES;
 
 export interface BoardSnapshot {
   version: 1;
@@ -1685,17 +1682,6 @@ export function formatBoardText(board: BoardSnapshot): string {
   return `${lines.join("\n")}\n`;
 }
 
-const PRIORITY_TOKEN_MAP: Record<string, KanbanPriority> = {
-  p0: "urgent",
-  urgent: "urgent",
-  p1: "high",
-  high: "high",
-  p2: "medium",
-  medium: "medium",
-  p3: "low",
-  low: "low",
-};
-
 export function matchesBoardQuery(
   card: KanbanCard,
   rawQuery: string,
@@ -1732,13 +1718,13 @@ export function matchesBoardQuery(
       if (!assigneeMatch && !claimMatch) return false;
       continue;
     }
-    if (token in PRIORITY_TOKEN_MAP && (token === "p0" || token === "p1" || token === "p2" || token === "p3")) {
-      if (card.priority !== PRIORITY_TOKEN_MAP[token]) return false;
+    if (token in PRIORITY_QUERY_TOKENS && PRIORITY_SHORT_TOKENS.includes(token)) {
+      if (card.priority !== PRIORITY_QUERY_TOKENS[token]) return false;
       continue;
     }
     if (token.startsWith("p:") || token.startsWith("priority:")) {
       const rawP = token.slice(token.indexOf(":") + 1);
-      const mapped = PRIORITY_TOKEN_MAP[rawP];
+      const mapped = PRIORITY_QUERY_TOKENS[rawP];
       if (mapped) {
         if (card.priority !== mapped) return false;
         continue;
@@ -1823,8 +1809,10 @@ function formatSearchCardLine(card: KanbanCard, prefixLabel: string): string {
 
 // ---- CLI (`aya board ...`) ----
 
+/** The priorities as the usage lists them. */
+const PRIORITY_CHOICES = PRIORITY_VALUES.join("|");
 const BOARD_USAGE =
-  "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
+  `usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <${PRIORITY_CHOICES}>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <${PRIORITY_CHOICES}|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]`;
 
 export interface BoardControlRequest {
   argv: string[];
