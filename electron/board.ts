@@ -18,6 +18,7 @@ import {
   COLUMN_DEFINITIONS,
   COLUMN_IDS,
   COLUMN_TITLES,
+  isBacklogColumn,
   DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
   FIXED_RULES,
   FINISHED_COLUMN_ID,
@@ -322,7 +323,7 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
       if (!record.cards.every((c) => !marked(c) || (c as { shelf: unknown }).shelf === LEGACY_BACKLOG_SHELF)) {
         throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
       }
-      if (!columns.some((c) => c.id === COLUMN_IDS.backlog)) {
+      if (!columns.some(isBacklogColumn)) {
         if (columns.length >= MAX_BOARD_COLUMNS) throw new Error(`${fileLabel} has an invalid columns list; nothing was changed.`);
         columns.push({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
       }

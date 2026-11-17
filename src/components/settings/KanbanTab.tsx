@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
+import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, FIXED_RULES, isBacklogColumn } from "../../../shared/board-columns.cjs";
+import type { ProjectConfig } from "../../types";
 import {
   MAX_ASSIGNEE_CHARS,
   MAX_BOARD_CARDS,
@@ -20,11 +21,14 @@ const count = (n: number) => n.toLocaleString("en-US");
 
 /** The board's option, defaults, fixed rules and limits. Shown while the Kanban board (General) is on.
  *  Only where the Backlog column shows can be changed; the fixed rules are enforced by electron/board.ts. */
+/** The project Create backlog column works on. */
+export type KanbanProject = Pick<ProjectConfig, "slug" | "name">;
+
 export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
   backlogEnabled: boolean;
   onBacklogEnabledChange: (enabled: boolean) => void;
   /** The project whose board Create backlog column adds to; null when there is none. */
-  project: { slug: string; name: string } | null;
+  project: KanbanProject | null;
 }) {
   const projectSlug = project?.slug ?? null;
   // Whether the current project's board has a Backlog column; null until known.
@@ -34,14 +38,14 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
     setHasBacklogColumn(null);
     if (!projectSlug) return;
     void window.aya.getBoard(projectSlug)
-      .then((board) => { if (live) setHasBacklogColumn(board.columns.some((c) => c.id === COLUMN_IDS.backlog)); })
+      .then((board) => { if (live) setHasBacklogColumn(board.columns.some(isBacklogColumn)); })
       .catch(() => undefined);
     return () => { live = false; };
   }, [projectSlug]);
   const createBacklogColumn = () => {
     if (!projectSlug) return;
     void window.aya.addBoardColumn({ projectSlug, title: COLUMN_TITLES[COLUMN_IDS.backlog] })
-      .then((board) => setHasBacklogColumn(board.columns.some((c) => c.id === COLUMN_IDS.backlog)))
+      .then((board) => setHasBacklogColumn(board.columns.some(isBacklogColumn)))
       .catch(() => undefined);
   };
   return (

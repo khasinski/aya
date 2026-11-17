@@ -1387,7 +1387,8 @@
   cursor: pointer;
 }
 .aya-modal-btn:hover { background: var(--bg); border-color: var(--border-strong); }
-.aya-modal-btn:disabled {
+.aya-modal-btn:disabled,
+.aya-settings-segment:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -3626,8 +3627,4 @@ select.aya-modal-input {
 .aya-settings-kanban-create-note {
   font-size: 11px;
   color: var(--fg-secondary);
-}
-.aya-settings-segment:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }

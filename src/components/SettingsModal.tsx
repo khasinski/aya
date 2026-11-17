@@ -13,7 +13,7 @@ import type { SettingsTab } from "../settings-tabs";
 import { MachinesSettings } from "./MachinesSettings";
 import { DiagnosticsTab } from "./settings/DiagnosticsTab";
 import { UpdatesTab } from "./settings/UpdatesTab";
-import { KanbanTab } from "./settings/KanbanTab";
+import { KanbanTab, type KanbanProject } from "./settings/KanbanTab";
 import { SettingsHeader, SettingsIcon } from "./settings/parts";
 import { GeneralTab } from "./settings/GeneralTab";
 import { useAgentHooks } from "./settings/useAgentHooks";
@@ -52,7 +52,7 @@ interface Props {
   kanbanBacklogEnabled: boolean;
   onKanbanBacklogEnabledChange: (enabled: boolean) => void;
   /** The active local project, for Kanban > Create backlog column. */
-  kanbanProject: { slug: string; name: string } | null;
+  kanbanProject: KanbanProject | null;
   terminalSoundsEnabled: boolean;
   onTerminalSoundsEnabledChange: (enabled: boolean) => void;
   terminalSoundOverrides: Record<string, boolean>;

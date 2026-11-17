@@ -89,7 +89,6 @@ import {
   projectSplitTree,
 } from "./split-tree";
 import { useAppPreferences, useAppPreferenceActions } from "./hooks/useAppPreferences";
-import { useKanbanBacklogSetting } from "./hooks/useKanbanBacklogSetting";
 import { useProjectTimeline, usePtyTimelineEvents } from "./hooks/useProjectTimeline";
 import { waitingPanesOf } from "./team-view";
 import { calculateProjectBadges } from "./project-badges";
@@ -227,6 +226,8 @@ export function App() {
     setHarnessSearchEnabled,
     kanbanEnabled,
     setKanbanEnabled,
+    kanbanBacklogEnabled,
+    setKanbanBacklogEnabled,
     terminalSoundsEnabled,
     setTerminalSoundsEnabled,
     statusRailCollapsed,
@@ -238,7 +239,6 @@ export function App() {
     customDoneSound,
     setCustomDoneSound,
   } = useAppPreferences();
-  const [kanbanBacklogEnabled, setKanbanBacklogEnabled] = useKanbanBacklogSetting();
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const terminalsRef = useRef(terminals);
   const projectsRef = useRef(projects);
@@ -1631,7 +1631,7 @@ export function App() {
           onKanbanEnabledChange={setKanbanEnabled}
           kanbanBacklogEnabled={kanbanBacklogEnabled}
           onKanbanBacklogEnabledChange={setKanbanBacklogEnabled}
-          kanbanProject={activeProject && !activeProject.remote ? { slug: activeProject.slug, name: activeProject.name } : null}
+          kanbanProject={activeProject && !activeProject.remote ? activeProject : null}
           terminalSoundsEnabled={terminalSoundsEnabled}
           onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
           terminalSoundOverrides={terminalSoundOverrides}

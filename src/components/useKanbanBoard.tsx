@@ -1,4 +1,4 @@
-import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS } from "../../shared/board-columns.cjs";
+import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS, isBacklogColumn } from "../../shared/board-columns.cjs";
 import {
   useCallback,
   useEffect,
@@ -1011,19 +1011,19 @@ export function useKanbanBoard({
   );
   // The backlog is the board's Backlog column. Settings > Kanban > Move backlog to shelf
   // only changes where it shows: in the shelf instead of on the board.
-  const hasBacklogColumn = (board?.columns ?? []).some((c) => c.id === COLUMN_IDS.backlog);
-  const backlogOn = backlogEnabled && hasBacklogColumn;
-  const showBacklog = backlogOn;
+  const hasBacklogColumn = (board?.columns ?? []).some(isBacklogColumn);
+  // The Backlog tab shows when the column is on the shelf.
+  const showBacklog = backlogEnabled && hasBacklogColumn;
   // Move to backlog is offered on a board that has a Backlog column.
   const canMoveToBacklog = hasBacklogColumn;
   const backlogCards = useMemo(
-    () => (backlogOn ? (board?.cards ?? []).filter((c) => c.columnId === COLUMN_IDS.backlog) : []),
-    [board?.cards, backlogOn],
+    () => (showBacklog ? (board?.cards ?? []).filter((c) => c.columnId === COLUMN_IDS.backlog) : []),
+    [board?.cards, showBacklog],
   );
   // The columns drawn on the board: all of them, or all but Backlog while it is on the shelf.
   const boardColumns = useMemo(
-    () => (backlogOn ? (board?.columns ?? []).filter((c) => c.id !== COLUMN_IDS.backlog) : (board?.columns ?? [])),
-    [board?.columns, backlogOn],
+    () => (showBacklog ? (board?.columns ?? []).filter((c) => !isBacklogColumn(c)) : (board?.columns ?? [])),
+    [board?.columns, showBacklog],
   );
 
   // Collect distinct assignees/claims and labels on the board for quick filter bar
@@ -1460,7 +1460,6 @@ export function useKanbanBoard({
     archivedCards,
     backlogCards,
     showBacklog,
-    backlogOn,
     canMoveToBacklog,
     boardColumns,
     boardFilterOptions,
