@@ -232,6 +232,9 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const [goalDetails, setGoalDetails] = useState<GoalDetails | null>(null);
   const [goalPending, setGoalPending] = useState(false);
   const [side, setSide] = useState('');
+  const [sideTitle, setSideTitle] = useState('Side question');
+  const sideRevision = useRef(0);
+  const closeSide = () => { sideRevision.current++; setSide(''); setSideQuestion(''); };
   const [importNotice, setImportNotice] = useState('');
   const [history, setHistory] = useState<{ id: string; title: string; updatedAt: number; current: boolean }[] | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
@@ -564,6 +567,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     setMessages(old => [...old, { id: crypto.randomUUID(), type: 'settings', title: 'Reasoning effort changed', text: `${effort || 'Default'} → ${next || 'Default'}. Applies to the next turn.` }]);
   };
   const command = async (name: string, argument: string) => {
+    const revision = ['status', 'help', 'btw', 'chrome', 'usage'].includes(name) ? ++sideRevision.current : sideRevision.current;
     if (name === 'resume') { await openHistory(argument); return; }
     if (name === 'new' || name === 'clear') { await switchConversation(); return; }
     if (name === 'model') {
@@ -577,21 +581,29 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (argument.trim()) { setPrompt(''); await send(argument.trim()); }
       return;
     }
-    if (name === 'status') { setSide(`${agentLabel} · ${model}\n${busy ? 'Working' : ready ? 'Ready' : 'Disconnected'}\nWorkspace: ${terminal.cwd}\nGoal: ${goal || 'None'}\nQueued messages: ${queue.length}`); return; }
-    if (name === 'help') { setSide('Available commands:\n\n' + availableCommands.map(item => `- /${item.name} — ${item.description}`).join('\n')); return; }
-    if (!['goal', 'btw', 'compact', 'plan'].includes(name)) throw Error(`Unknown GUI command /${name}. Use /help.`);
+    if (name === 'status') { setSideTitle('Status'); setSide(`${agentLabel} · ${model}\n${busy ? 'Working' : ready ? 'Ready' : 'Disconnected'}\nWorkspace: ${terminal.cwd}\nGoal: ${goal || 'None'}\nQueued messages: ${queue.length}`); return; }
+    if (name === 'help') { setSideTitle('Help'); setSide('Available commands:\n\n' + availableCommands.map(item => `- /${item.name} — ${item.description}`).join('\n')); return; }
+    const nativeDetails = guiAgent === 'claude' && ['chrome', 'usage'].includes(name);
+    if (!['goal', 'btw', 'compact', 'plan'].includes(name) && !nativeDetails) throw Error(`Unknown GUI command /${name}. Use /help.`);
     if (name === 'btw') {
       if (!capabilities.sideQuestions) throw Error(`${agentLabel} does not support side questions in GUI mode. Send a regular message instead.`);
       if (!argument.trim()) throw Error('Usage: /btw your side question');
       if (sideQuestion) throw Error('A side question is already pending. Close it to cancel before asking another.');
       setSideQuestion(argument);
+      setSideTitle('Side question');
       setSide(`${busy && !capabilities.sideWhileWorking ? 'Waiting for the current turn to finish…' : 'Answering…'}\n\n${argument}`);
       return;
     }
     if (name === 'goal') setGoalPending(true);
+    if (nativeDetails) { setSideTitle(name === 'usage' ? 'Usage' : 'Chrome'); setSide(name === 'usage' ? 'Checking usage…' : 'Checking Chrome connection…'); }
     try {
       const result = await invoke('command', { name, argument });
       if (name === 'goal') applyGoal(argument === 'clear' ? null : obj(result).goal ?? result);
+      if (nativeDetails && revision === sideRevision.current) setSide(str(obj(result).text));
+    } catch (error) {
+      if (nativeDetails && revision !== sideRevision.current) return;
+      if (nativeDetails) setSide('');
+      throw error;
     } finally { if (name === 'goal') setGoalPending(false); }
   };
   useEffect(() => {
@@ -746,8 +758,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         } else {
           if (drawer) closeArtifacts();
           if (side || sideQuestion) {
-            setSide('');
-            setSideQuestion('');
+            closeSide();
           }
         }
       }
@@ -810,7 +821,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       </div><ConversationTurnTimer busy={busy} hidden={hidden} /></div>}
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={resumeFollowing}>Jump to latest ↓</button>}</div>
-    {side && <aside className="aya-gui-side"><button aria-label="Close side question" onClick={() => { setSide(''); setSideQuestion(''); }}>×</button><strong>Side question</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
+    {side && <aside className="aya-gui-side"><button aria-label={`Close ${sideTitle.toLowerCase()}`} onClick={closeSide}>×</button><strong>{sideTitle}</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
       {requests.map((request, index) => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} active={index === 0 && !hidden} promptEmpty={!prompt} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}

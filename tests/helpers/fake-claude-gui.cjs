@@ -7,6 +7,7 @@ let progressId = '';
 let progressStep = 0;
 let holdProgress = false;
 let currentModel = 'fake-claude';
+let chromeConnected = process.argv.includes('--chrome');
 
 const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 
@@ -51,6 +52,36 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (message.type === 'control_request') {
     const req = message.request || {};
     const subtype = req.subtype;
+    if (subtype === 'get_usage') {
+      if (req.skip_behaviors !== true) throw Error('Usage must not scan transcript history');
+      write({ method: 'fixture/usage', params: { skipBehaviors: req.skip_behaviors } });
+      if (process.argv.includes('--usage-unsupported')) {
+        write({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Unknown control request: get_usage' } });
+        return;
+      }
+      const reply = () => write({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: {
+        session: { total_cost_usd: 0.125, total_api_duration_ms: 1200, total_duration_ms: 2400, total_lines_added: 3, total_lines_removed: 1,
+          model_usage: { 'fake-claude': { inputTokens: 1200, outputTokens: 300, cacheReadInputTokens: 400, cacheCreationInputTokens: 0 } } },
+        subscription_type: 'max', rate_limits_available: true,
+        rate_limits: { five_hour: { utilization: 37.5, resets_at: '2026-11-18T18:00:00Z' }, seven_day: { utilization: 80, resets_at: null } }, behaviors: null,
+      } } });
+      if (process.env.AYA_FAKE_USAGE_DELAY_MS) setTimeout(reply, Number(process.env.AYA_FAKE_USAGE_DELAY_MS));
+      else reply();
+      return;
+    }
+    if (['get_chrome_dialog', 'mcp_toggle', 'mcp_reconnect'].includes(subtype)) {
+      let response = {};
+      if (subtype === 'get_chrome_dialog') response = {
+        allowed: true, subscriber: true, wsl: false, installed: true,
+        connected: chromeConnected, enabled_by_default: true, paired_browser: 'Test browser',
+      };
+      else if (req.serverName !== 'claude-in-chrome') throw Error('Wrong Chrome server');
+      else chromeConnected = subtype === 'mcp_reconnect' || req.enabled === true;
+      const reply = () => write({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response } });
+      if (subtype === 'get_chrome_dialog' && process.argv.includes('--slow-chrome')) setTimeout(reply, 100);
+      else reply();
+      return;
+    }
     if (subtype === 'initialize') {
       write({
         method: 'fixture/config',

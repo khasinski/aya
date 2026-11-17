@@ -11,6 +11,8 @@ const common = [
 exports.guiCommands = agent => [
   ...common,
   ...(agent === 'codex' ? [{ name: 'plan', description: 'Plan before acting: the next turns propose a plan instead of editing. Toggle, or add a request.' }] : []),
+  ...(agent === 'claude' ? [{ name: 'chrome', description: 'Chrome connection status; use on, off or reconnect to control this conversation’s browser connection.' }] : []),
+  ...(agent === 'claude' ? [{ name: 'usage', description: 'Show account-wide plan limits and reset times, plus current session cost and tokens.' }] : []),
   ...(agent === 'pi' || agent === 'antigravity' ? [] : [{ name: 'btw', description: agent === 'codex' ? 'Ask a side question; answered right away, even while Codex works.' : 'Ask a side question; waits for the current turn to finish.' }]),
 ];
 
