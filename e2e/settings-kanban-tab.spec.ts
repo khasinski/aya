@@ -5,7 +5,7 @@ import { COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, PENDING_COLUMN_IDS, STARTED_COLUM
 import {
   MAX_ASSIGNEE_CHARS, MAX_BOARD_CARDS, MAX_BOARD_COLUMNS, MAX_BOARD_IMAGE_BYTES,
   MAX_CARD_DESCRIPTION_CHARS, MAX_CARD_LABEL_CHARS, MAX_CARD_LABELS, MAX_CARD_TITLE_CHARS, MAX_COLUMN_TITLE_CHARS,
-} from "../src/main-mirrors";
+} from "../shared/board-limits.cjs";
 import { mib } from "../src/units";
 
 const count = (n: number) => n.toLocaleString("en-US");

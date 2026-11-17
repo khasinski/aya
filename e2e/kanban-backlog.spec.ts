@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
-import { MAX_BOARD_COLUMNS } from "../src/main-mirrors";
+import { MAX_BOARD_COLUMNS } from "../shared/board-limits.cjs";
 
 // The backlog is a board's Backlog column. Move to backlog in a card's menu is offered
 // when the board has that column. Settings > Kanban > Move backlog to shelf (off by

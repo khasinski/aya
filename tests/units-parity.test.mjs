@@ -30,3 +30,9 @@ for (const [fn, input, want] of CASES) {
     assert.equal(main[fn](input), want);
   });
 }
+
+test("a KiB is 1024 bytes and a MiB is 1024 KiB, for every limit written in them", async () => {
+  const { BYTES_PER_KIB, BYTES_PER_MIB } = await import("../shared/units.cjs");
+  assert.equal(BYTES_PER_KIB, 1024);
+  assert.equal(BYTES_PER_MIB, 1_048_576);
+});
