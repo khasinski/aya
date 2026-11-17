@@ -51,8 +51,8 @@ interface Props {
   findInPaneFor: string | null;
   closeFindPane: () => void;
   harnessSearchEnabled: boolean;
-  /** Settings > Kanban > Backlog: cards can be moved to a Backlog tab on the shelf. */
-  kanbanBacklogEnabled?: boolean;
+  /** Settings > Kanban > Move backlog to shelf: the Backlog column shows in the shelf, not on the board. */
+  kanbanBacklogOnShelf?: boolean;
   openSettings: (tab?: SettingsTab) => void;
   closeProject: (slug: string) => void;
   restartTerminal: (terminalId: string) => void;
@@ -105,7 +105,7 @@ export const PaneGrid = memo(function PaneGrid({
   findInPaneFor,
   closeFindPane,
   harnessSearchEnabled,
-  kanbanBacklogEnabled = false,
+  kanbanBacklogOnShelf = false,
   openSettings,
   closeProject,
   restartTerminal,
@@ -233,7 +233,7 @@ export const PaneGrid = memo(function PaneGrid({
           return (
             <LocalErrorBoundary key={terminal.id} label="Board" className={errorPaneClass} onActivate={activatePane} style={paneStyle}><KanbanView
               terminal={terminal}
-              backlogEnabled={kanbanBacklogEnabled}
+              backlogOnShelf={kanbanBacklogOnShelf}
               paneStyle={paneStyle}
               isActivePane={isSplit && activeLeafId === leafId}
               onActivatePane={() =>

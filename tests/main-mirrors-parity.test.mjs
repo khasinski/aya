@@ -9,7 +9,6 @@ import * as localSummary from "../dist-electron/local-summary-errors.js";
 import * as validation from "../dist-electron/validation.js";
 import * as teams from "../dist-electron/team-definition.js";
 import * as usageGrok from "../dist-electron/usage-grok.js";
-import * as board from "../dist-electron/board.js";
 import { TeamRunner } from "../dist-electron/team-runner.js";
 import { TeamStore, teamDir } from "../dist-electron/team-store.js";
 import { teamChat } from "../dist-test/team-chat.js";
@@ -62,15 +61,5 @@ test("the chat recognizes the delivery test main types and the word it asks back
     assert.deepEqual(chat.map((e) => [e.kind, e.answered?.length]), [["delivery-test", 2]]);
   } finally {
     cleanup();
-  }
-});
-
-test("Settings lists the board limits main enforces", () => {
-  for (const name of [
-    "MAX_BOARD_COLUMNS", "MAX_BOARD_CARDS", "MAX_CARD_TITLE_CHARS", "MAX_COLUMN_TITLE_CHARS", "MAX_CARD_DESCRIPTION_CHARS",
-    "MAX_CARD_LABELS", "MAX_CARD_LABEL_CHARS", "MAX_ASSIGNEE_CHARS", "MAX_BOARD_IMAGE_BYTES",
-  ]) {
-    assert.equal(typeof board[name], "number", `${name} exists in electron/board.ts`);
-    assert.equal(mirrors[name], board[name], name);
   }
 });

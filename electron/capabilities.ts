@@ -1,6 +1,11 @@
 // Agents learn the CLI from this list, not a copied skill file, so it ships with
 // the CLI it describes (#117); tests/aya-capabilities.test.mjs pins `aya help` to it.
 
+import { PRIORITY_VALUES } from "../shared/board-priorities.cjs";
+
+/** The priorities as a usage lists them. */
+const PRIORITY_CHOICES = PRIORITY_VALUES.join("|");
+
 export interface Capability {
   /** The subcommand words, e.g. "pane send". */
   command: string;
@@ -365,7 +370,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "board add",
-    usage: "aya board add title [--column col] [--description text] [--assignee name] [--priority low|medium|high|urgent] [--labels a,b] [--project slug]",
+    usage: `aya board add title [--column col] [--description text] [--assignee name] [--priority ${PRIORITY_CHOICES}] [--labels a,b] [--project slug]`,
     summary: "Add a card to the project's Kanban board (defaults to its current first column).",
     example: 'aya board add "Fix race in reconnect" --column todo --description "Check pty-host retry"',
   },
@@ -378,7 +383,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "board edit",
-    usage: "aya board edit id [--title title] [--description text] [--assignee name] [--priority low|medium|high|urgent|none] [--labels a,b|none] [--project slug]",
+    usage: `aya board edit id [--title title] [--description text] [--assignee name] [--priority ${PRIORITY_CHOICES}|none] [--labels a,b|none] [--project slug]`,
     summary: "Update a card's title, description, assignee, priority or labels; none clears an optional field.",
   },
   {

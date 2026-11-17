@@ -6,6 +6,7 @@ import { boardWithdrawalNotice } from "./board-instructions";
 import { oneAtATime } from "./keyed-queue";
 import { HOLD_BUSY } from "./pane-holds";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
+import { BYTES_PER_MIB } from "../shared/units.cjs";
 
 export interface BoardNotice {
   id: string;
@@ -19,6 +20,8 @@ export interface BoardNotice {
 }
 const serial = oneAtATime();
 const file = (home: string) => join(home, "board-notices.json");
+/** Notices are a short queue; a larger file is refused unread. */
+const MAX_NOTICES_FILE_BYTES = 2 * BYTES_PER_MIB;
 
 /** The control path invokes this protection under its input lock, before paste and Enter. */
 export function createBoardInputProtection<T>(automatic: boolean,
@@ -43,7 +46,7 @@ async function read(home: string): Promise<BoardNotice[]> {
   }
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error("Invalid board notification file.");
+    if (!stat.isFile() || stat.size > MAX_NOTICES_FILE_BYTES) throw new Error("Invalid board notification file.");
     const notices: unknown = JSON.parse(await handle.readFile("utf8"));
     if (!Array.isArray(notices) || !notices.every(n => n &&
       ["id", "projectSlug", "cardId", "paneId", "paneName", "title", "reason"].every(k => typeof n[k] === "string") &&
