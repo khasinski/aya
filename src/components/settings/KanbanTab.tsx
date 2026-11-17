@@ -31,7 +31,7 @@ export function KanbanTab({ backlogOnShelf, onBacklogOnShelfChange, project }: {
   /** The project whose board Create backlog column adds to; null when there is none. */
   project: KanbanProject | null;
 }) {
-  const { hasBacklogColumn, createBacklogColumn } = useBacklogColumn(project?.slug ?? null);
+  const { hasBacklogColumn, createBacklogColumn, createError } = useBacklogColumn(project?.slug ?? null);
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
@@ -52,7 +52,9 @@ export function KanbanTab({ backlogOnShelf, onBacklogOnShelfChange, project }: {
                 >
                   Create backlog column
                 </button>
-                {hasBacklogColumn === true ? (
+                {createError ? (
+                  <span className="aya-settings-errors" role="alert">{createError}</span>
+                ) : hasBacklogColumn === true ? (
                   <span className="aya-settings-kanban-create-note">The board already has a Backlog column</span>
                 ) : (
                   project && hasBacklogColumn === false &&
