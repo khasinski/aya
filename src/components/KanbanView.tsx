@@ -1,14 +1,18 @@
 import { BOARD_IMAGE_ACCEPT } from "../../shared/board-images.cjs";
 import {
-  memo
+  memo,
+  useState,
 } from "react";
 import { createPortal } from "react-dom";
 import "./kanban.css";
 import { KanbanCardMarkdown, livePaneDotInfo } from './KanbanCardContent';
 import { KanbanColumns } from './KanbanColumns';
+import { matchesSearchQuery } from "./kanban-search";
 import { PRIORITY_OPTIONS, useKanbanBoard, type Props } from './useKanbanBoard';
 export const KanbanView = memo(function KanbanView(props: Props) {
   const model = useKanbanBoard(props);
+  // The drawer is a shelf: tabs (Archive today) and a search of its own.
+  const [shelfQuery, setShelfQuery] = useState("");
   const {
     terminal,
     hidden,
@@ -72,7 +76,13 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     headerNode,
     activeMenuCard,
     showFilterStrip
-  } = model; return (
+  } = model;
+  // The shelf search uses the board filter's query language and narrows on top of it.
+  const shelfSearching = shelfQuery.trim() !== "";
+  const drawerCards = shelfSearching
+    ? filteredArchivedCards.filter((card) => matchesSearchQuery(card, shelfQuery, true))
+    : filteredArchivedCards;
+  return (
     <section
       data-testid="kanban-pane"
       data-terminal-id={terminal.id}
@@ -309,12 +319,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
             >
               <div className="aya-kanban-archive-header">
                 <span className="aya-kanban-archive-title">
-                  Archive
-                  <span className="aya-kanban-column-count">
-                    {hasActiveFilter
-                      ? `${filteredArchivedCards.length}/${archivedCards.length}`
-                      : archivedCards.length}
-                  </span>
+                  Shelf
                 </span>
                 <div className="aya-kanban-archive-actions">
                   {archivedCards.length > 0 &&
@@ -362,15 +367,35 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                 </div>
               </div>
 
+              <div className="aya-kanban-shelf-bar">
+                <div role="tablist" aria-label="Shelf" className="aya-kanban-shelf-tabs">
+                  <button type="button" role="tab" aria-selected="true" className="aya-kanban-shelf-tab aya-kanban-shelf-tab--active">
+                    Archive
+                    <span className="aya-kanban-column-count">
+                      {hasActiveFilter || shelfSearching
+                        ? `${drawerCards.length}/${archivedCards.length}`
+                        : archivedCards.length}
+                    </span>
+                  </button>
+                </div>
+                <input
+                  type="search"
+                  className="aya-kanban-shelf-search"
+                  aria-label="Search the archive"
+                  placeholder="Search the archive (#label, @owner, p1)"
+                  value={shelfQuery}
+                  onChange={(e) => setShelfQuery(e.target.value)}
+                />
+              </div>
               <div className="aya-kanban-archive-list">
-                {filteredArchivedCards.length === 0 ? (
+                {drawerCards.length === 0 ? (
                   <div className="aya-kanban-empty-col">
-                    {hasActiveFilter
+                    {hasActiveFilter || shelfSearching
                       ? "No matching archived cards"
                       : "Archive is empty. Use Archive on the Done column to move completed cards here."}
                   </div>
                 ) : (
-                  filteredArchivedCards.map((card) => {
+                  drawerCards.map((card) => {
                     const priorityMeta = card.priority
                       ? PRIORITY_OPTIONS.find((p) => p.value === card.priority)
                       : null;

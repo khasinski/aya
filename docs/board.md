@@ -52,6 +52,16 @@ actions are offered for terminal presets; native GUI presets are not supported.
 The assignment menu opens above a low card when needed, stays within the window,
 and scrolls if its list is long. Its position and height follow window resizing.
 
+## Shelf
+
+The Archive button opens the shelf, a drawer beside the board. It has one tab,
+Archive, with the cards archived from the board.
+
+The shelf has its own search box. It uses the same query as the board filter
+(text, `#label`, `@owner`, `p0`-`p3`, `col:name`) and narrows the shelf on top
+of the board filter. The tab shows how many cards match, for example `1/2`.
+The search does not filter the board itself.
+
 ## Terminology
 
 The board is also called the Kanban board in the UI. The CLI command is `aya board`.
@@ -86,7 +96,7 @@ task again. A file with only blank lines adds nothing.
 ## Planned changes (not implemented)
 
 These items are tracked on the board, not in this file:
-- A Kanban tab in Settings that shows the board's defaults, fixed rules and limits; the On/Off switch stays in General.
+- Backlog as a status like Archive, opt-in in Settings > Kanban. When it is on, the shelf gets a Backlog tab; boards without it stay as they are.
 - Short definitions shown on the four default column headers.
 - A glossary of states in one place, and an opt-in card template with Required, Nice to have and Acceptance criterion fields. Default behaviour stays unchanged.
 - A harness that validates card fields.
@@ -96,7 +106,8 @@ These items are tracked on the board, not in this file:
 These defaults describe the target state too. Planned changes are opt-in and must not change them. A value that is the default is listed only here and is not repeated elsewhere in this document; the rest of the document describes only non-default behaviour.
 
 - Kanban board (Settings > General, "Experimental"): off by default (`KANBAN_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
-- Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `electron/board.ts`).
+- Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `shared/board-columns.cjs`).
+- Shelf (the Archive button): an Archive tab and its own search; no Backlog tab.
 - New card: goes into the first column; priority and labels are optional and are omitted when not given; description starts empty; no assignee.
 - Card description limit: 16,000 characters (`MAX_CARD_DESCRIPTION_CHARS`).
 - Priorities: `low`, `medium`, `high`, `urgent`. Search tokens: `p0` = urgent, `p1` = high, `p2` = medium, `p3` = low.
