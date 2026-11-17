@@ -112,13 +112,85 @@ test.describe("backlog off with cards already in it", () => {
   });
 });
 
-test.describe("backlog off, board with a Backlog column", () => {
-  test.use({ seedOptions: seed({ ...board, columns: [{ id: "todo", title: "Todo" }, { id: "backlog", title: "Backlog" }, { id: "done", title: "Done" }] }) });
+// One board, one backlog: a Backlog column is just a column until the setting is on;
+// then it is that board's backlog, and the shelf has no Backlog tab for it.
+const withBacklogColumn = (extra: Record<string, unknown> = {}) =>
+  seed({ ...board, columns: [{ id: "todo", title: "Todo" }, { id: "backlog", title: "Backlog" }, { id: "done", title: "Done" }], ...extra });
 
-  test("a Backlog column turns the backlog on for that board", async ({ window }) => {
+test.describe("backlog off, board with a Backlog column", () => {
+  test.use({ seedOptions: withBacklogColumn() });
+
+  test("the column is just a column: no Move to backlog, no Backlog tab", async ({ window, seeded }) => {
+    expect(existsSync(join(seeded.ayaHome, "kanban.json"))).toBe(false);
+    await expect(window.getByTestId("kanban-column-backlog")).toBeVisible();
+    await openCardMenu(window, "t-1");
+    await expect(window.getByRole("menuitem", { name: /Move to backlog/ })).toHaveCount(0);
+    await window.keyboard.press("Escape");
+    const toggle = window.getByTestId("kanban-archive-toggle");
+    await expect(toggle).toHaveText("Archive (1)");
+    await toggle.click();
+    await expect(window.getByTestId("kanban-archive-drawer").getByRole("tab", { name: /Backlog/ })).toHaveCount(0);
+  });
+});
+
+test.describe("backlog on, board with a Backlog column", () => {
+  test.use({ seedOptions: withBacklogColumn() });
+
+  test("Move to backlog puts the card in the Backlog column and the shelf gets no Backlog tab", async ({ window, app, seeded }, testInfo) => {
+    await setBacklog(window, app, true);
+    await openCardMenu(window, "t-1");
+    await window.getByRole("menuitem", { name: /Move to backlog/ }).click();
+    await expect(window.getByTestId("kanban-column-backlog").getByTestId("kanban-card-t-1")).toBeVisible();
+    const file = JSON.parse(readFileSync(join(seeded.ayaHome, "boards", "e2e-proj.json"), "utf8"));
+    expect(file.cards.map((c: { id: string; columnId: string; shelf?: string }) => [c.id, c.columnId, c.shelf ?? null]))
+      .toEqual([["t-2", "todo", null], ["t-1", "backlog", null]]);
+    const toggle = window.getByTestId("kanban-archive-toggle");
+    await expect(toggle).toHaveText("Archive (1)");
+    await toggle.click();
+    await expect(window.getByTestId("kanban-archive-drawer").getByRole("tab")).toHaveCount(1);
+    await window.screenshot({ path: testInfo.outputPath("backlog-column.png") });
+  });
+});
+
+test.describe("backlog on, cards already off the board, then a Backlog column", () => {
+  test.use({ seedOptions: withBacklogColumn({ cards: [card("t-1", "Later idea", { shelf: "backlog" }), card("t-2", "Now")] }) });
+
+  test("new moves go to the column; the card already off the board stays on the shelf until restored", async ({ window, app }) => {
+    await setBacklog(window, app, true);
+    await openCardMenu(window, "t-2");
+    await window.getByRole("menuitem", { name: /Move to backlog/ }).click();
+    await expect(window.getByTestId("kanban-column-backlog").getByTestId("kanban-card-t-2")).toBeVisible();
+    const toggle = window.getByTestId("kanban-archive-toggle");
+    await expect(toggle).toHaveText("Shelf (2)");
+    await toggle.click();
+    const drawer = window.getByTestId("kanban-archive-drawer");
+    await drawer.getByRole("tab", { name: /Backlog/ }).click();
+    await drawer.getByTestId("kanban-backlog-card-t-1").getByRole("button", { name: /Restore/ }).click();
+    await expect(window.getByTestId("kanban-column-todo").getByTestId("kanban-card-t-1")).toBeVisible();
+    await expect(drawer.getByRole("tab", { name: /Backlog/ })).toHaveCount(0);
+  });
+});
+
+test.describe("backlog turned off again with cards off the board", () => {
+  test.use({ seedOptions: seed(board) });
+
+  test("the setting file goes, the menu item goes, and the user still sees the cards", async ({ window, app, seeded }) => {
+    await setBacklog(window, app, true);
     await openCardMenu(window, "t-1");
     await window.getByRole("menuitem", { name: /Move to backlog/ }).click();
     await expect(window.getByTestId("kanban-card-t-1")).toHaveCount(0);
-    await expect(window.getByTestId("kanban-archive-toggle")).toHaveText("Shelf (2)");
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await settings.getByTestId("settings-tab").filter({ hasText: "Kanban" }).click();
+    await settings.getByLabel("Backlog", { exact: true }).getByRole("button", { name: "Off", exact: true }).click();
+    await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect.poll(() => existsSync(join(seeded.ayaHome, "kanban.json"))).toBe(false);
+    await openCardMenu(window, "t-2");
+    await expect(window.getByRole("menuitem", { name: /Move to backlog/ })).toHaveCount(0);
+    await window.keyboard.press("Escape");
+    await window.getByTestId("kanban-archive-toggle").click();
+    const drawer = window.getByTestId("kanban-archive-drawer");
+    await drawer.getByRole("tab", { name: /Backlog/ }).click();
+    await expect(drawer.getByTestId("kanban-backlog-card-t-1")).toBeVisible();
   });
 });

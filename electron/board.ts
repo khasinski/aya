@@ -116,10 +116,15 @@ export async function setBacklogSetting(ayaHome: string, enabled: boolean): Prom
   return enabled;
 }
 
-/** The backlog is on for a board when the setting is on or the board has a Backlog column.
- *  Otherwise nothing about it is shown to agents, and nothing can be moved into it. */
-export async function backlogActive(ayaHome: string, columns: readonly KanbanColumn[]): Promise<boolean> {
-  return columns.some((c) => c.id === COLUMN_IDS.backlog) || readBacklogSetting(ayaHome);
+/** One board, one backlog. Off until the setting is on; nothing about it is shown to agents
+ *  then, and a Backlog column is just a column. When it is on, a board with a Backlog column
+ *  uses that column as its backlog; a board without one gets the shelf. */
+export type BacklogMode = "off" | "column" | "shelf";
+export const BACKLOG_IS_COLUMN_MESSAGE = "This board's backlog is its Backlog column.";
+
+export async function backlogMode(ayaHome: string, columns: readonly KanbanColumn[]): Promise<BacklogMode> {
+  if (!(await readBacklogSetting(ayaHome))) return "off";
+  return columns.some((c) => c.id === COLUMN_IDS.backlog) ? "column" : "shelf";
 }
 
 /** The columns a new board starts with; defined in the column dictionary (shared/board-columns.cjs). */
@@ -924,7 +929,8 @@ export function moveBoardCardToBacklog(
 ): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
-    if (!(await backlogActive(ayaHome, current.columns))) throw new Error(BACKLOG_OFF_MESSAGE);
+    const mode = await backlogMode(ayaHome, current.columns);
+    if (mode !== "shelf") throw new Error(mode === "off" ? BACKLOG_OFF_MESSAGE : BACKLOG_IS_COLUMN_MESSAGE);
     const target = resolveCard(current.cards, cardId);
     await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.movedToBacklog, actorPaneId);
     const shelved: KanbanCard = { ...target, updatedAt: (now ?? new Date()).toISOString() };
@@ -939,6 +945,24 @@ export function moveBoardCardToBacklog(
     notifyBoardChanged(project.slug);
     return { board, card: shelved };
   });
+}
+
+/** Move to backlog from the card menu, IPC and CLI: into the board's Backlog column when it
+ *  has one, otherwise off the board onto the shelf. Refused while the backlog is off. */
+export async function sendCardToBacklog(
+  ayaHome: string,
+  project: Pick<ProjectConfig, "slug" | "directory">,
+  cardId: string,
+  now?: Date,
+  actorPaneId?: string,
+): Promise<{ board: BoardSnapshot; card: KanbanCard; to: "column" | "shelf" }> {
+  const mode = await backlogMode(ayaHome, (await getBoard(ayaHome, project)).columns);
+  if (mode === "off") throw new Error(BACKLOG_OFF_MESSAGE);
+  if (mode === "column") {
+    const moved = await moveBoardCard(ayaHome, project, cardId, COLUMN_IDS.backlog, undefined, now, actorPaneId);
+    return { ...moved, to: "column" };
+  }
+  return { ...(await moveBoardCardToBacklog(ayaHome, project, cardId, now, actorPaneId)), to: "shelf" };
 }
 
 /** Puts a backlog card back on the board, at the end of its column (or the first column). */
@@ -1985,7 +2009,7 @@ export async function handleBoardRequest(
     const loaded = await getBoard(deps.ayaHome, project);
     // Where the backlog is off, agents see the board exactly as before it existed.
     const { backlogCards, ...withoutBacklog } = loaded;
-    const board = backlogCards && (await backlogActive(deps.ayaHome, loaded.columns)) ? loaded : withoutBacklog;
+    const board = backlogCards && (await backlogMode(deps.ayaHome, loaded.columns)) !== "off" ? loaded : withoutBacklog;
     return {
       output: jsonFlag ? `${JSON.stringify(board, null, 2)}\n` : formatBoardText(board),
     };
@@ -2250,18 +2274,24 @@ export async function handleBoardRequest(
     throw new Error(BOARD_USAGE);
   }
 
-  if (sub === "backlog" && (await backlogActive(deps.ayaHome, (await getBoard(deps.ayaHome, project)).columns))) {
+  const backlogBoard = sub === "backlog" ? await getBoard(deps.ayaHome, project) : null;
+  const cliBacklogMode = backlogBoard ? await backlogMode(deps.ayaHome, backlogBoard.columns) : "off";
+  if (backlogBoard && cliBacklogMode !== "off") {
     const [action, ...more] = rest;
     if (action === undefined || action === "list" || action === "ls" || action === "--json") {
-      const board = await getBoard(deps.ayaHome, project);
-      const backlog = board.backlogCards ?? [];
+      // The Backlog column's cards (when it is the backlog) and any cards kept off the board.
+      const inColumn = cliBacklogMode === "column" ? backlogBoard.cards.filter((c) => c.columnId === COLUMN_IDS.backlog) : [];
+      const offBoard = backlogBoard.backlogCards ?? [];
       if (action === "--json" || more.includes("--json")) {
-        return { output: `${JSON.stringify(backlog, null, 2)}\n` };
+        return { output: `${JSON.stringify([...inColumn, ...offBoard], null, 2)}\n` };
       }
-      if (backlog.length === 0) return { output: `Backlog for ${board.projectSlug} is empty.\n` };
-      const lines = [`Backlog for ${board.projectSlug} [${backlog.length}]:`];
-      for (const c of backlog) {
-        const meta = [`returns to: ${c.columnId}`];
+      if (inColumn.length + offBoard.length === 0) return { output: `Backlog for ${backlogBoard.projectSlug} is empty.\n` };
+      const lines = [`Backlog for ${backlogBoard.projectSlug} [${inColumn.length + offBoard.length}]:`];
+      for (const [c, where] of [
+        ...inColumn.map((c) => [c, "in the Backlog column"] as const),
+        ...offBoard.map((c) => [c, `off the board, returns to: ${c.columnId}`] as const),
+      ]) {
+        const meta: string[] = [where];
         if (c.priority) meta.push(`priority: ${c.priority}`);
         if (c.labels && c.labels.length > 0) meta.push(`labels: ${c.labels.join(", ")}`);
         lines.push(`  ${c.id}  ${c.title}  [${meta.join(", ")}]`);
@@ -2274,8 +2304,8 @@ export async function handleBoardRequest(
       return { output: `restored ${card.id} to ${card.columnId}: ${card.title}\n` };
     }
     if (more.length === 0 && !action.startsWith("-")) {
-      const { card } = await moveBoardCardToBacklog(deps.ayaHome, project, action, now(), callerId);
-      return { output: `moved ${card.id} to the backlog: ${card.title}\n` };
+      const { card, to } = await sendCardToBacklog(deps.ayaHome, project, action, now(), callerId);
+      return { output: `moved ${card.id} to ${to === "column" ? "the Backlog column" : "the backlog"}: ${card.title}\n` };
     }
     throw new Error(BACKLOG_USAGE);
   }

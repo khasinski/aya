@@ -47,7 +47,7 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
             </div>
           )}
         >
-          Adds Move to backlog to each card's menu and a Backlog tab to the shelf.
+          Adds Move to backlog to each card's menu and a Backlog tab to the shelf. A board with a Backlog column uses that column.
         </SettingsRow>
         <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "))}>
           Add, rename and reorder columns on the board itself.

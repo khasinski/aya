@@ -330,7 +330,10 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     moveBoardCardToBacklog: async (req) => {
       const b = await api.getBoard(req.projectSlug);
       const target = b.cards.find((c) => c.id === req.cardId);
-      if (!target) return b as never;
+      if (!target || d.boardBacklogSetting !== true) return b as never;
+      if (b.columns.some((c) => c.id === COLUMN_IDS.backlog)) {
+        return api.moveBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId, columnId: COLUMN_IDS.backlog }) as never;
+      }
       const shelved = { ...target, updatedAt: new Date().toISOString() };
       delete shelved.claim;
       const next: BoardSnapshot = {

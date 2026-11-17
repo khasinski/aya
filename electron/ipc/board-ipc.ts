@@ -6,7 +6,7 @@ import {
   claimBoardCard,
   clearBoardColumn,
   deleteBoardCard,
-  moveBoardCardToBacklog,
+  sendCardToBacklog,
   readBacklogSetting,
   setBacklogSetting,
   restoreBacklogCard,
@@ -155,7 +155,7 @@ export function registerBoardIpc(deps: BoardIpcDeps) {
     const req = requireRecord(rawReq, "board:move-to-backlog");
     const project = await localProject(deps, req.projectSlug);
     const cardId = requireString(req.cardId, "board:move-to-backlog.cardId");
-    const { board } = await moveBoardCardToBacklog(ayaHome, project, cardId);
+    const { board } = await sendCardToBacklog(ayaHome, project, cardId);
     return board;
   });
 

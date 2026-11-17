@@ -1010,10 +1010,13 @@ export function useKanbanBoard({
     () => board?.backlogCards ?? [],
     [board?.backlogCards],
   );
-  // The backlog is on with the setting, or on a board that has a Backlog column.
-  const backlogOn = backlogEnabled || (board?.columns ?? []).some((c) => c.id === COLUMN_IDS.backlog);
-  // Its tab also shows whenever cards are in it, so turning it off never hides cards.
-  const showBacklog = backlogOn || backlogCards.length > 0;
+  // One board, one backlog (electron/board.ts backlogMode): off until the setting is on; then a
+  // board's Backlog column if it has one (Move to backlog goes there), otherwise the shelf.
+  const hasBacklogColumn = (board?.columns ?? []).some((c) => c.id === COLUMN_IDS.backlog);
+  const backlogOn = backlogEnabled;
+  // The shelf tab is for boards without that column, and shows whenever cards are already
+  // off the board, so turning the setting off never hides them.
+  const showBacklog = (backlogEnabled && !hasBacklogColumn) || backlogCards.length > 0;
 
   // Collect distinct assignees/claims and labels on the board for quick filter bar
   const boardFilterOptions = useMemo(() => {

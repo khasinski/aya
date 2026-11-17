@@ -457,7 +457,7 @@ export interface CapabilitiesDocument {
 export const BACKLOG_CAPABILITY: Capability = {
   command: "board backlog",
   usage: "aya board backlog [list|id|restore id] [--json] [--project slug]",
-  summary: "List the backlog, take a card off the board into it, or put a backlog card back on the board.",
+  summary: "List the backlog or move a card into it: the board's Backlog column if it has one, otherwise off the board. restore puts a card from off the board back.",
 };
 
 export function capabilitiesDocument(caller: {
