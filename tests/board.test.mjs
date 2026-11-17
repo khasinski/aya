@@ -1229,7 +1229,7 @@ test("undo delete and restore from archive fall back to the first column that is
   try {
     const at = "2026-11-12T10:00:00.000Z";
     await addBoardColumn(fx.home, fx.project, "Backlog");
-    await moveBoardColumn(fx.home, fx.project, "backlog", { after: "done" });
+    // Backlog stays FIRST (columns[0]); the fallback must skip it.
     // A card in a column that is then removed (here by hand in the file).
     const boardPath = join(fx.home, "boards", "demo.json");
     const board = JSON.parse(readFileSync(boardPath, "utf8"));
@@ -1237,12 +1237,14 @@ test("undo delete and restore from archive fall back to the first column that is
     board.archivedCards = [{ id: "t-9", columnId: "review", title: "Lost column", createdAt: at, updatedAt: at, archivedAt: at }];
     writeFileSync(boardPath, JSON.stringify(board));
     // Undo delete: the archived card's column is gone, so it must not hide in
-    // the Backlog column (first in a fresh board); it goes to the first shown
+    // the Backlog column (the board's first); it goes to the first shown
     // column instead.
     const { card } = await unarchiveBoardCard(fx.home, fx.project, "t-9");
     assert.equal(card.columnId, "todo");
     const deleted = await deleteBoardCard(fx.home, fx.project, card.id);
-    const restored = await restoreBoardCards(fx.home, fx.project, [{ card: deleted.deleted }]);
+    // The restored card's column is also gone (review was deleted), so
+    // restoreBoardCards exercises the fallback too.
+    const restored = await restoreBoardCards(fx.home, fx.project, [{ card: { ...deleted.deleted, columnId: "review" } }]);
     const again = restored.cards.find((c) => c.id === card.id);
     assert.equal(again.columnId, "todo");
   } finally { fx.cleanup(); }
