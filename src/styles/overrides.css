@@ -1387,7 +1387,8 @@
   cursor: pointer;
 }
 .aya-modal-btn:hover { background: var(--bg); border-color: var(--border-strong); }
-.aya-modal-btn:disabled {
+.aya-modal-btn:disabled,
+.aya-settings-segment:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -3615,3 +3616,15 @@ select.aya-modal-input {
 .aya-file-preview pre { overflow: auto; font-family: var(--font-mono); }
 .aya-file-preview pre [data-selected=true] { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .aya-file-preview :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Settings > Kanban: Create backlog column with a small note under it. */
+.aya-settings-kanban-create {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.aya-settings-kanban-create-note {
+  font-size: 11px;
+  color: var(--fg-secondary);
+}

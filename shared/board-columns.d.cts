@@ -12,6 +12,7 @@ export const PENDING_COLUMN_IDS: readonly string[];
 export const STARTED_COLUMN_ID: "in-progress";
 export const FINISHED_COLUMN_ID: "done";
 export function isPendingColumn(id: string): boolean;
+export function isBacklogColumn(column: { id: string }): boolean;
 export function isFinishedColumn(column: { id: string; title: string }): boolean;
 export const COLUMN_DEFINITIONS: { readonly [id: string]: string };
 export const FIXED_RULES: readonly string[];

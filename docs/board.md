@@ -1,14 +1,15 @@
 # Kanban column order
 
-Adding a column to an existing Aya Board puts it at the end. To change the order,
-use the left and right arrow buttons in each column header. The arrow at the
-corresponding edge is disabled. The buttons also work with keyboard focus and
-Enter or Space.
+Adding a column to an existing Aya Board puts it at the end, except the Backlog
+column: a newly created Backlog column is always FIRST. A second Backlog column
+is refused. To change the order, use the left and right arrow buttons in each
+column header. The arrow at the corresponding edge is disabled. The buttons also
+work with keyboard focus and Enter or Space.
 
 Agents can reorder columns through the CLI:
 
 ```sh
-aya board column add Backlog
+aya board column add Backlog   # goes first, refused when the board has it
 aya board column move backlog --before todo
 aya board column move backlog --after done --project my-project
 ```
@@ -55,8 +56,8 @@ and scrolls if its list is long. Its position and height follow window resizing.
 ## Shelf
 
 The Archive button opens the shelf, a drawer beside the board, with an Archive
-tab and sometimes a Backlog tab (see "Backlog"). With the Backlog tab the button
-reads "Shelf (n)".
+tab and, with Move backlog to shelf on, a Backlog tab (see "Backlog"). The button
+then reads "Shelf (n)".
 
 The shelf has its own search box. It uses the same query as the board filter
 (text, `#label`, `@owner`, `p0`-`p3`, `col:name`) and narrows the shelf on top
@@ -65,30 +66,21 @@ The search does not filter the board itself.
 
 ## Backlog
 
-Settings > Kanban > Backlog: off by default, applies to every project. Stored in `~/.aya/kanban.json`, which exists only while it is on.
+The backlog is a board's Backlog column (`aya board column add Backlog`). It is an ordinary column, so agents use it like any other: `aya board`, `aya board move <id> backlog`, `aya board add --column backlog`.
 
-| Setting | Board has a Backlog column | Move to backlog |
-|---|---|---|
-| off | any | not available; a Backlog column is an ordinary column |
-| on | no | takes the card off the board to the Backlog tab on the shelf |
-| on | yes | puts the card in the Backlog column; the shelf has no Backlog tab |
+- Move to backlog in a card's menu moves the card into that column. It is offered only on a board that has the column.
+- A claimed card moved there loses its claim, and its pane is asked to stop, as on any return to Backlog.
 
-- A claimed card loses its claim, and its pane is asked to stop.
-- Restore on the Backlog tab: the card goes to the end of its column, or to the first column if its column is gone.
-- Cards already on the shelf keep the Backlog tab visible, whatever the setting.
-- While the setting is off, agents see nothing about a backlog: not in the usage, `aya capabilities`, `aya board` or `--json`. `aya board backlog` is an unknown command.
-- "Todo or Backlog" elsewhere in this document means the Backlog column.
+Settings > Kanban has Create backlog column, which adds the column to the current project's board, and Move backlog to shelf (off by default, every project). The switch can be turned on once the board has the column, and it only changes where the column shows:
 
-Agents, while the setting is on:
+| Setting | Backlog column |
+|---|---|
+| off | on the board |
+| on | in the shelf, as the Backlog tab; Restore there moves a card to the first column on the board |
 
-```sh
-aya board backlog               # list the Backlog column and the shelf (--json)
-aya board backlog t-12          # move t-12 to the board's backlog
-aya board backlog restore t-12  # put a shelf card back on the board
-aya board remove t-12           # delete a card
-```
+Cards saved by the first backlog version (`"shelf": "backlog"`) load into the Backlog column, which is added first when missing. On a board that already has the maximum number of columns they fall back to the first column.
 
-File: a shelf card stays in `cards` with `"shelf": "backlog"`. An older Aya ignores the field and shows the card on the board. A board with no shelf cards is saved exactly as before.
+A card added without a column (`aya board add`) lands in the board's first column - in Backlog when it exists, so in the shelf's Backlog tab while Move backlog to shelf is on.
 
 ## Terminology
 
@@ -135,7 +127,7 @@ These defaults describe the target state too. Planned changes are opt-in and mus
 - Kanban board (Settings > General, "Experimental"): off by default (`KANBAN_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
 - Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `shared/board-columns.cjs`).
 - Shelf (the Archive button): an Archive tab and its own search; no Backlog tab.
-- Backlog (Settings > Kanban): off by default, with no `~/.aya/kanban.json` (`readBacklogSetting` and `backlogMode` in `electron/board.ts`). A Backlog column alone does not turn it on.
+- Move backlog to shelf (Settings > Kanban): off by default (`KANBAN_BACKLOG_SHELF_CODEC` in `src/app-preferences.ts`).
 - New card: goes into the first column; priority and labels are optional and are omitted when not given; description starts empty; no assignee.
 - Card description limit: 16,000 characters (`MAX_CARD_DESCRIPTION_CHARS`).
 - Priorities: `low`, `medium`, `high`, `urgent`. Search tokens: `p0` = urgent, `p1` = high, `p2` = medium, `p3` = low.

@@ -17,6 +17,8 @@ import { PROJECT_AYA_DIRNAME } from "./paths";
 import {
   COLUMN_DEFINITIONS,
   COLUMN_IDS,
+  COLUMN_TITLES,
+  isBacklogColumn,
   DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
   FIXED_RULES,
   FINISHED_COLUMN_ID,
@@ -74,8 +76,6 @@ export interface BoardSnapshot {
   cards: KanbanCard[];
   notices?: BoardNotice[];
   archivedCards?: KanbanCard[];
-  /** Cards kept off the board for later; present only when there are any. */
-  backlogCards?: KanbanCard[];
 }
 
 interface StoredBoard {
@@ -83,52 +83,15 @@ interface StoredBoard {
   columns: KanbanColumn[];
   cards: KanbanCard[];
   archivedCards?: KanbanCard[];
-  /** Required so every save names it: a save that left it out would drop the backlog. */
-  backlogCards: KanbanCard[];
-}
-
-/** On disk a backlog card stays in `cards` with `"shelf": "backlog"`. An Aya that
- *  does not know the field drops it and shows the card on the board, so nothing is lost. */
-export const BACKLOG_SHELF = "backlog";
-
-/** Settings > Kanban > Backlog, kept in the Aya home so the CLI sees it too.
- *  No file means off; turning it off removes the file. */
-export const KANBAN_SETTINGS_FILE_NAME = "kanban.json";
-export const BACKLOG_OFF_MESSAGE = "The backlog is off (Settings > Kanban > Backlog).";
-
-export async function readBacklogSetting(ayaHome: string): Promise<boolean> {
-  try {
-    const parsed: unknown = JSON.parse(await fs.readFile(path.join(ayaHome, KANBAN_SETTINGS_FILE_NAME), "utf8"));
-    return typeof parsed === "object" && parsed !== null && (parsed as { backlog?: unknown }).backlog === true;
-  } catch {
-    return false;
-  }
-}
-
-export async function setBacklogSetting(ayaHome: string, enabled: boolean): Promise<boolean> {
-  const file = path.join(ayaHome, KANBAN_SETTINGS_FILE_NAME);
-  if (enabled) {
-    await fs.mkdir(ayaHome, { recursive: true, mode: 0o700 });
-    await writeFileAtomic(file, `${JSON.stringify({ backlog: true }, null, 2)}\n`, 0o600);
-  } else {
-    await fs.rm(file, { force: true });
-  }
-  return enabled;
-}
-
-/** One board, one backlog. Off until the setting is on; nothing about it is shown to agents
- *  then, and a Backlog column is just a column. When it is on, a board with a Backlog column
- *  uses that column as its backlog; a board without one gets the shelf. */
-export type BacklogMode = "off" | "column" | "shelf";
-export const BACKLOG_IS_COLUMN_MESSAGE = "This board's backlog is its Backlog column.";
-
-export async function backlogMode(ayaHome: string, columns: readonly KanbanColumn[]): Promise<BacklogMode> {
-  if (!(await readBacklogSetting(ayaHome))) return "off";
-  return columns.some((c) => c.id === COLUMN_IDS.backlog) ? "column" : "shelf";
 }
 
 /** The columns a new board starts with; defined in the column dictionary (shared/board-columns.cjs). */
 export const DEFAULT_BOARD_COLUMNS: readonly KanbanColumn[] = DICTIONARY_COLUMNS;
+
+/** The first backlog version kept cards off the board with this mark; such cards now
+ *  belong in the Backlog column (added first when missing, or they fall back to the
+ *  first column on a full board) and the mark is dropped. */
+const LEGACY_BACKLOG_SHELF = "backlog";
 
 type BoardChangeListener = (projectSlug: string) => void;
 const listeners = new Set<BoardChangeListener>();
@@ -355,6 +318,29 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
     throw new Error(`${fileLabel} has invalid column definitions; nothing was changed.`);
   }
   const columns = record.columns.map((c) => ({ id: c.id, title: c.title.trim() }));
+  if (Array.isArray(record.cards)) {
+    const marked = (c: unknown) => typeof c === "object" && c !== null && "shelf" in c;
+    if (record.cards.some(marked)) {
+      if (!record.cards.every((c) => !marked(c) || (c as { shelf: unknown }).shelf === LEGACY_BACKLOG_SHELF)) {
+        throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
+      }
+      // Shelf-marked cards need the Backlog column back. With room for it the
+      // column is re-added (as the board's FIRST column, like Create adds it)
+      // and the cards land there; on a board that already has the maximum
+      // number of columns there is no room, so they return to the first
+      // column, where a card added without a column would land. A Backlog
+      // column the user placed elsewhere is left where it is.
+      let markedTarget: string = COLUMN_IDS.backlog;
+      if (!columns.some(isBacklogColumn)) {
+        if (columns.length < MAX_BOARD_COLUMNS) {
+          columns.unshift({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
+        } else {
+          markedTarget = fallbackColumn(columns)!.id;
+        }
+      }
+      record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: markedTarget } : c));
+    }
+  }
   const colIds = new Set(columns.map((c) => c.id));
   if (colIds.size !== columns.length) {
     throw new Error(`${fileLabel} has duplicate column ids; nothing was changed.`);
@@ -365,14 +351,9 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
   if (!record.cards.every((c) => isCard(c, colIds))) {
     throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
   }
-  const storedCards = record.cards as Array<KanbanCard & { shelf?: unknown }>;
-  if (!storedCards.every((c) => c.shelf === undefined || c.shelf === BACKLOG_SHELF)) {
-    throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
-  }
-  const cards = storedCards.filter((c) => c.shelf === undefined).map((c) => normalizeStoredCard(c, false));
-  const backlogCards = storedCards.filter((c) => c.shelf === BACKLOG_SHELF).map((c) => normalizeStoredCard(c, false));
-  const activeCardIds = new Set([...cards, ...backlogCards].map((c) => c.id.toLowerCase()));
-  if (activeCardIds.size !== cards.length + backlogCards.length) {
+  const cards = (record.cards as KanbanCard[]).map((c) => normalizeStoredCard(c, false));
+  const activeCardIds = new Set(cards.map((c) => c.id.toLowerCase()));
+  if (activeCardIds.size !== cards.length) {
     throw new Error(`${fileLabel} has duplicate card ids; nothing was changed.`);
   }
   let archivedCards: KanbanCard[] | undefined;
@@ -397,7 +378,6 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
     columns,
     cards,
     ...(archivedCards && archivedCards.length > 0 ? { archivedCards } : {}),
-    backlogCards,
   };
 }
 
@@ -430,7 +410,6 @@ function defaultStoredBoard(): StoredBoard {
     version: BOARD_FORMAT_VERSION,
     columns: DEFAULT_BOARD_COLUMNS.map((c) => ({ ...c })),
     cards: [],
-    backlogCards: [],
   };
 }
 
@@ -452,7 +431,6 @@ async function loadBoardUnlocked(
       cards: stored.cards,
       ...(notices.length ? { notices } : {}),
       archivedCards: stored.archivedCards ?? [],
-      ...(stored.backlogCards.length ? { backlogCards: stored.backlogCards } : {}),
     };
   }
   const filePath = userBoardFile(ayaHome, project.slug);
@@ -467,7 +445,6 @@ async function loadBoardUnlocked(
     cards: stored.cards,
     ...(notices.length ? { notices } : {}),
     archivedCards: stored.archivedCards ?? [],
-    ...(stored.backlogCards.length ? { backlogCards: stored.backlogCards } : {}),
   };
 }
 
@@ -487,18 +464,11 @@ async function saveBoardUnlocked(
   }
   const archivedCards =
     stored.archivedCards && stored.archivedCards.length > 0 ? stored.archivedCards : undefined;
-  // Backlog cards go after the board's cards, marked; without any, the file is as before.
-  const fileCards = stored.backlogCards.length
-    ? [...stored.cards, ...stored.backlogCards.map((c) => ({ ...c, shelf: BACKLOG_SHELF }))]
-    : stored.cards;
-  if (fileCards.length > MAX_BOARD_CARDS) {
-    throw new Error(`The board already has the maximum of ${MAX_BOARD_CARDS} cards.`);
-  }
   const text = `${JSON.stringify(
     {
       version: BOARD_FORMAT_VERSION,
       columns: stored.columns,
-      cards: fileCards,
+      cards: stored.cards,
       ...(archivedCards ? { archivedCards } : {}),
     },
     null,
@@ -518,7 +488,6 @@ async function saveBoardUnlocked(
     cards: stored.cards,
     ...(notices.length ? { notices } : {}),
     archivedCards: archivedCards ?? [],
-    ...(stored.backlogCards.length ? { backlogCards: stored.backlogCards } : {}),
   };
 }
 
@@ -672,7 +641,7 @@ export function addBoardCard(
 ): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
   return serial(project.slug, async () => {
     const current = await loadBoardUnlocked(ayaHome, project);
-    if (current.cards.length + (current.backlogCards?.length ?? 0) >= MAX_BOARD_CARDS) {
+    if (current.cards.length >= MAX_BOARD_CARDS) {
       throw new Error(`The board already has the maximum of ${MAX_BOARD_CARDS} cards.`);
     }
     const title = cleanCardTitle(input.title);
@@ -686,14 +655,14 @@ export function addBoardCard(
     if (!column) throw new Error("The board has no columns.");
     const iso = (input.now ?? new Date()).toISOString();
     const existingIds = new Set(
-      [...current.cards, ...(current.archivedCards ?? []), ...(current.backlogCards ?? [])].map((c) => c.id.toLowerCase()),
+      [...current.cards, ...(current.archivedCards ?? [])].map((c) => c.id.toLowerCase()),
     );
     const customId =
       input.id && ID_RE.test(input.id.trim()) && !existingIds.has(input.id.trim().toLowerCase())
         ? input.id.trim()
         : undefined;
     const card: KanbanCard = {
-      id: customId ?? nextCardId(current.cards, [...(current.archivedCards ?? []), ...(current.backlogCards ?? [])]),
+      id: customId ?? nextCardId(current.cards, current.archivedCards),
       columnId: column.id,
       title,
       ...(description ? { description } : {}),
@@ -722,7 +691,6 @@ export function addBoardCard(
       columns: current.columns,
       cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, card };
@@ -790,7 +758,6 @@ export function updateBoardCard(
       columns: current.columns,
       cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, card: updated };
@@ -836,7 +803,6 @@ export function moveBoardCard(
       columns: current.columns,
       cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, card: updated };
@@ -871,7 +837,6 @@ export function archiveBoardCard(
       columns: current.columns,
       cards,
       archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, archived };
@@ -889,12 +854,12 @@ export function unarchiveBoardCard(
     const current = await loadBoardUnlocked(ayaHome, project);
     const archivedList = current.archivedCards ?? [];
     const target = resolveCard(archivedList, cardId);
-    if (current.cards.length + (current.backlogCards?.length ?? 0) >= MAX_BOARD_CARDS) {
+    if (current.cards.length >= MAX_BOARD_CARDS) {
       throw new Error(`The board already has the maximum of ${MAX_BOARD_CARDS} cards.`);
     }
     const col = columnQuery
       ? resolveColumn(current.columns, columnQuery)
-      : current.columns.find((c) => c.id === target.columnId) ?? current.columns[0];
+      : current.columns.find((c) => c.id === target.columnId) ?? fallbackColumn(current.columns);
     if (!col) throw new Error("The board has no columns.");
     const nowIso = (now ?? new Date()).toISOString();
     const restored: KanbanCard = {
@@ -911,80 +876,6 @@ export function unarchiveBoardCard(
       columns: current.columns,
       cards,
       archivedCards,
-      backlogCards: current.backlogCards ?? [],
-    });
-    notifyBoardChanged(project.slug);
-    return { board, card: restored };
-  });
-}
-
-/** Takes a card off the board into the backlog (newest first). Like archiving, it
- *  drops the card's claim and asks the pane that held it to stop, unless that pane did it. */
-export function moveBoardCardToBacklog(
-  ayaHome: string,
-  project: Pick<ProjectConfig, "slug" | "directory">,
-  cardId: string,
-  now?: Date,
-  actorPaneId?: string,
-): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
-  return serial(project.slug, async () => {
-    const current = await loadBoardUnlocked(ayaHome, project);
-    const mode = await backlogMode(ayaHome, current.columns);
-    if (mode !== "shelf") throw new Error(mode === "off" ? BACKLOG_OFF_MESSAGE : BACKLOG_IS_COLUMN_MESSAGE);
-    const target = resolveCard(current.cards, cardId);
-    await notifyTaskWithdrawal(ayaHome, project.slug, target, WITHDRAWAL_REASON.movedToBacklog, actorPaneId);
-    const shelved: KanbanCard = { ...target, updatedAt: (now ?? new Date()).toISOString() };
-    delete shelved.claim;
-    const board = await saveBoardUnlocked(ayaHome, project, {
-      version: BOARD_FORMAT_VERSION,
-      columns: current.columns,
-      cards: current.cards.filter((c) => c.id !== target.id),
-      archivedCards: current.archivedCards,
-      backlogCards: [shelved, ...(current.backlogCards ?? [])],
-    });
-    notifyBoardChanged(project.slug);
-    return { board, card: shelved };
-  });
-}
-
-/** Move to backlog from the card menu, IPC and CLI: into the board's Backlog column when it
- *  has one, otherwise off the board onto the shelf. Refused while the backlog is off. */
-export async function sendCardToBacklog(
-  ayaHome: string,
-  project: Pick<ProjectConfig, "slug" | "directory">,
-  cardId: string,
-  now?: Date,
-  actorPaneId?: string,
-): Promise<{ board: BoardSnapshot; card: KanbanCard; to: "column" | "shelf" }> {
-  const mode = await backlogMode(ayaHome, (await getBoard(ayaHome, project)).columns);
-  if (mode === "off") throw new Error(BACKLOG_OFF_MESSAGE);
-  if (mode === "column") {
-    const moved = await moveBoardCard(ayaHome, project, cardId, COLUMN_IDS.backlog, undefined, now, actorPaneId);
-    return { ...moved, to: "column" };
-  }
-  return { ...(await moveBoardCardToBacklog(ayaHome, project, cardId, now, actorPaneId)), to: "shelf" };
-}
-
-/** Puts a backlog card back on the board, at the end of its column (or the first column). */
-export function restoreBacklogCard(
-  ayaHome: string,
-  project: Pick<ProjectConfig, "slug" | "directory">,
-  cardId: string,
-  now?: Date,
-): Promise<{ board: BoardSnapshot; card: KanbanCard }> {
-  return serial(project.slug, async () => {
-    const current = await loadBoardUnlocked(ayaHome, project);
-    const backlog = current.backlogCards ?? [];
-    const target = resolveCard(backlog, cardId);
-    const col = current.columns.find((c) => c.id === target.columnId) ?? current.columns[0];
-    if (!col) throw new Error("The board has no columns.");
-    const restored: KanbanCard = { ...target, columnId: col.id, updatedAt: (now ?? new Date()).toISOString() };
-    const board = await saveBoardUnlocked(ayaHome, project, {
-      version: BOARD_FORMAT_VERSION,
-      columns: current.columns,
-      cards: [...current.cards, restored],
-      archivedCards: current.archivedCards,
-      backlogCards: backlog.filter((c) => c.id !== target.id),
     });
     notifyBoardChanged(project.slug);
     return { board, card: restored };
@@ -1032,7 +923,6 @@ export function deleteBoardCard(
         columns: current.columns,
         cards,
         archivedCards: current.archivedCards,
-        backlogCards: current.backlogCards ?? [],
       });
       notifyBoardChanged(project.slug);
       return { board, deleted: activeTarget };
@@ -1043,21 +933,6 @@ export function deleteBoardCard(
       (/^\d+$/.test(trimmed)
         ? archivedList.find((c) => c.id.toLowerCase() === `t-${trimmed}`)
         : undefined);
-    const backlogList = current.backlogCards ?? [];
-    const backlogTarget = archivedTarget ? undefined :
-      backlogList.find((c) => c.id.toLowerCase() === lower) ??
-      (/^\d+$/.test(trimmed) ? backlogList.find((c) => c.id.toLowerCase() === `t-${trimmed}`) : undefined);
-    if (backlogTarget) {
-      const board = await saveBoardUnlocked(ayaHome, project, {
-        version: BOARD_FORMAT_VERSION,
-        columns: current.columns,
-        cards: current.cards,
-        archivedCards: current.archivedCards,
-        backlogCards: backlogList.filter((c) => c.id !== backlogTarget.id),
-      });
-      notifyBoardChanged(project.slug);
-      return { board, deleted: backlogTarget };
-    }
     if (archivedTarget) {
       const archivedCards = archivedList.filter((c) => c.id !== archivedTarget.id);
       const board = await saveBoardUnlocked(ayaHome, project, {
@@ -1065,7 +940,6 @@ export function deleteBoardCard(
         columns: current.columns,
         cards: current.cards,
         archivedCards,
-        backlogCards: current.backlogCards ?? [],
       });
       notifyBoardChanged(project.slug);
       return { board, deleted: archivedTarget };
@@ -1093,7 +967,6 @@ export function clearBoardColumn(
         columns: current.columns,
         cards: current.cards,
         archivedCards: [],
-        backlogCards: current.backlogCards ?? [],
       });
       notifyBoardChanged(project.slug);
       return { board, deleted };
@@ -1137,11 +1010,18 @@ export function clearBoardColumn(
       columns: current.columns,
       cards,
       archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, deleted };
   });
+}
+
+/** The fallback column for a card whose column is gone (Undo delete, Restore
+ *  from Archive, the full-board migration): the first column the board SHOWS,
+ *  so the card never hides in a Backlog column that sits on the shelf. The
+ *  Backlog column itself is only used when it is the only one. */
+function fallbackColumn(columns: readonly KanbanColumn[]): KanbanColumn | undefined {
+  return columns.find((c) => !isBacklogColumn(c)) ?? columns[0];
 }
 
 export function restoreBoardCards(
@@ -1153,21 +1033,21 @@ export function restoreBoardCards(
     const current = await loadBoardUnlocked(ayaHome, project);
     if (entries.length === 0) return current;
     const colIds = new Set(current.columns.map((c) => c.id));
-    const fallbackColId = current.columns[0]?.id;
+    const fallbackColId = fallbackColumn(current.columns)?.id;
     if (!fallbackColId) return current;
     const nextCards = [...current.cards];
-    const existingIds = new Set([...nextCards, ...(current.backlogCards ?? [])].map((c) => c.id.toLowerCase()));
+    const existingIds = new Set(nextCards.map((c) => c.id.toLowerCase()));
     const restoredIds = new Set<string>();
     const sorted = [...entries].sort((a, b) => (a.index ?? 999999) - (b.index ?? 999999));
     for (const entry of sorted) {
-      if (nextCards.length + (current.backlogCards?.length ?? 0) >= MAX_BOARD_CARDS) break;
+      if (nextCards.length >= MAX_BOARD_CARDS) break;
       const raw = entry.card;
       if (!raw || typeof raw.title !== "string" || !raw.title.trim()) continue;
       const colId = colIds.has(raw.columnId) ? raw.columnId : fallbackColId;
       const id =
         typeof raw.id === "string" && ID_RE.test(raw.id) && !existingIds.has(raw.id.toLowerCase())
           ? raw.id
-          : nextCardId(nextCards, [...(current.archivedCards ?? []), ...(current.backlogCards ?? [])]);
+          : nextCardId(nextCards, current.archivedCards);
       existingIds.add(id.toLowerCase());
       restoredIds.add(id.toLowerCase());
       if (typeof raw.id === "string") restoredIds.add(raw.id.toLowerCase());
@@ -1206,7 +1086,6 @@ export function restoreBoardCards(
       columns: current.columns,
       cards: nextCards,
       archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return board;
@@ -1270,7 +1149,6 @@ export function claimBoardCard(
       columns: current.columns,
       cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return {
@@ -1293,7 +1171,6 @@ export function dispatchBoardCard(ayaHome: string, project: Pick<ProjectConfig, 
       version: BOARD_FORMAT_VERSION, columns: board.columns,
       cards: board.cards.map(c => c.id === cardId ? { ...c, claim: { ...card.claim!, startup } } : c),
       archivedCards: board.archivedCards,
-      backlogCards: board.backlogCards ?? [],
     });
     // Read the project's rules first: if they cannot be read, the start stays reserved.
     const projectRules = await readProjectBoardRules(project.directory);
@@ -1334,7 +1211,7 @@ export function cancelBoardCardStart(ayaHome: string, project: Pick<ProjectConfi
     else delete updated.assignee;
     if (current.columns.some(c => c.id === previousColumn)) updated.columnId = previousColumn;
     const board = await saveBoardUnlocked(ayaHome, project, { version: BOARD_FORMAT_VERSION, columns: current.columns,
-      cards: current.cards.map(c => c.id === cardId ? updated : c), archivedCards: current.archivedCards, backlogCards: current.backlogCards ?? [] });
+      cards: current.cards.map(c => c.id === cardId ? updated : c), archivedCards: current.archivedCards });
     notifyBoardChanged(project.slug);
     return board;
   });
@@ -1382,7 +1259,6 @@ export function releaseBoardCard(
       columns: current.columns,
       cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, card: updated, previous };
@@ -1423,7 +1299,6 @@ export function releaseBoardClaimsForPane(
       columns: current.columns,
       cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return board;
@@ -1460,7 +1335,6 @@ export function syncBoardPaneName(
       columns: current.columns,
       cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return board;
@@ -1565,6 +1439,12 @@ export function addBoardColumn(
     const clean = cleanColumnTitle(title);
     const baseId = slugifyName(clean, "column");
     const existingIds = new Set(current.columns.map((c) => c.id.toLowerCase()));
+    // The Backlog column is unique: the shelf switch and the fixed rules key on
+    // its id, so a second one (backlog-2 from a stale Settings tab or a double
+    // click) would be a silent no-op column. Refuse it instead of suffixing.
+    if (baseId === COLUMN_IDS.backlog && existingIds.has(COLUMN_IDS.backlog)) {
+      throw new Error("The board already has a Backlog column.");
+    }
     let id = baseId;
     let idx = 2;
     while (existingIds.has(id.toLowerCase())) {
@@ -1572,12 +1452,16 @@ export function addBoardColumn(
       idx += 1;
     }
     const column: KanbanColumn = { id, title: clean };
+    // The Backlog column is the board's FIRST column (Justyna's call), so a
+    // card added without a column lands there; every other column is appended.
+    const columns = baseId === COLUMN_IDS.backlog
+      ? [column, ...current.columns]
+      : [...current.columns, column];
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
-      columns: [...current.columns, column],
+      columns,
       cards: current.cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, column };
@@ -1608,7 +1492,6 @@ export function moveBoardColumn(
       columns,
       cards: current.cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, column };
@@ -1632,7 +1515,6 @@ export function renameBoardColumn(
       columns,
       cards: current.cards,
       archivedCards: current.archivedCards,
-      backlogCards: current.backlogCards ?? [],
     });
     notifyBoardChanged(project.slug);
     return { board, column: updated };
@@ -1657,16 +1539,11 @@ export function deleteBoardColumn(
       );
     }
     const columns = current.columns.filter((c) => c.id !== target.id);
-    // A backlog card keeps the column it returns to; that column must exist in the file.
-    const backlogCards = (current.backlogCards ?? []).map((c) =>
-      c.columnId === target.id ? { ...c, columnId: columns[0].id } : c,
-    );
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
       columns,
       cards: current.cards,
       archivedCards: current.archivedCards,
-      backlogCards,
     });
     notifyBoardChanged(project.slug);
     return board;
@@ -1725,7 +1602,6 @@ export function exportBoardToRepo(
     };
     const cards = await migrateCardAssets(current.cards);
     const archivedCards = await migrateCardAssets(current.archivedCards ?? []);
-    const backlogCards = await migrateCardAssets(current.backlogCards ?? []);
     const board = await saveBoardUnlocked(
       ayaHome,
       project,
@@ -1734,7 +1610,6 @@ export function exportBoardToRepo(
         columns: current.columns,
         cards,
         archivedCards,
-        backlogCards,
       },
       "repo",
     );
@@ -1788,9 +1663,6 @@ export function formatBoardText(board: BoardSnapshot): string {
         }
       }
     }
-  }
-  if (board.backlogCards && board.backlogCards.length > 0) {
-    lines.push(`\n## Backlog [${board.backlogCards.length} kept off the board — run "aya board backlog" to view]`);
   }
   if (board.archivedCards && board.archivedCards.length > 0) {
     lines.push(`\n## Archive [${board.archivedCards.length} archived — run "aya board archive" to view]`);
@@ -1936,9 +1808,6 @@ function formatSearchCardLine(card: KanbanCard, prefixLabel: string): string {
 
 // ---- CLI (`aya board ...`) ----
 
-/** Shown only where the backlog is on, so a board without it never mentions it. */
-const BACKLOG_USAGE = "usage: aya board backlog [list|id|restore id] [--json] [--project slug]";
-
 const BOARD_USAGE =
   "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
 
@@ -2006,10 +1875,7 @@ export async function handleBoardRequest(
     const jsonFlag = sub === "--json" || rest.includes("--json");
     const extra = (sub === "--json" ? rest : rest.filter((a) => a !== "--json"));
     if (extra.length > 0) throw new Error(BOARD_USAGE);
-    const loaded = await getBoard(deps.ayaHome, project);
-    // Where the backlog is off, agents see the board exactly as before it existed.
-    const { backlogCards, ...withoutBacklog } = loaded;
-    const board = backlogCards && (await backlogMode(deps.ayaHome, loaded.columns)) !== "off" ? loaded : withoutBacklog;
+    const board = await getBoard(deps.ayaHome, project);
     return {
       output: jsonFlag ? `${JSON.stringify(board, null, 2)}\n` : formatBoardText(board),
     };
@@ -2272,42 +2138,6 @@ export async function handleBoardRequest(
       return { output: `archived ${archived.id}: ${archived.title}\n` };
     }
     throw new Error(BOARD_USAGE);
-  }
-
-  const backlogBoard = sub === "backlog" ? await getBoard(deps.ayaHome, project) : null;
-  const cliBacklogMode = backlogBoard ? await backlogMode(deps.ayaHome, backlogBoard.columns) : "off";
-  if (backlogBoard && cliBacklogMode !== "off") {
-    const [action, ...more] = rest;
-    if (action === undefined || action === "list" || action === "ls" || action === "--json") {
-      // The Backlog column's cards (when it is the backlog) and any cards kept off the board.
-      const inColumn = cliBacklogMode === "column" ? backlogBoard.cards.filter((c) => c.columnId === COLUMN_IDS.backlog) : [];
-      const offBoard = backlogBoard.backlogCards ?? [];
-      if (action === "--json" || more.includes("--json")) {
-        return { output: `${JSON.stringify([...inColumn, ...offBoard], null, 2)}\n` };
-      }
-      if (inColumn.length + offBoard.length === 0) return { output: `Backlog for ${backlogBoard.projectSlug} is empty.\n` };
-      const lines = [`Backlog for ${backlogBoard.projectSlug} [${inColumn.length + offBoard.length}]:`];
-      for (const [c, where] of [
-        ...inColumn.map((c) => [c, "in the Backlog column"] as const),
-        ...offBoard.map((c) => [c, `off the board, returns to: ${c.columnId}`] as const),
-      ]) {
-        const meta: string[] = [where];
-        if (c.priority) meta.push(`priority: ${c.priority}`);
-        if (c.labels && c.labels.length > 0) meta.push(`labels: ${c.labels.join(", ")}`);
-        lines.push(`  ${c.id}  ${c.title}  [${meta.join(", ")}]`);
-      }
-      return { output: `${lines.join("\n")}\n` };
-    }
-    if (action === "restore") {
-      if (more.length !== 1 || more[0].startsWith("-")) throw new Error(BACKLOG_USAGE);
-      const { card } = await restoreBacklogCard(deps.ayaHome, project, more[0], now());
-      return { output: `restored ${card.id} to ${card.columnId}: ${card.title}\n` };
-    }
-    if (more.length === 0 && !action.startsWith("-")) {
-      const { card, to } = await sendCardToBacklog(deps.ayaHome, project, action, now(), callerId);
-      return { output: `moved ${card.id} to ${to === "column" ? "the Backlog column" : "the backlog"}: ${card.title}\n` };
-    }
-    throw new Error(BACKLOG_USAGE);
   }
 
   if (sub === "claim") {

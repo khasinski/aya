@@ -1,4 +1,4 @@
-import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS } from "../../shared/board-columns.cjs";
+import { COLUMN_IDS, DEFAULT_BOARD_COLUMNS, isBacklogColumn } from "../../shared/board-columns.cjs";
 import {
   useCallback,
   useEffect,
@@ -459,9 +459,14 @@ export function useKanbanBoard({
       ) {
         e.preventDefault();
         e.stopPropagation();
+        // The shortcut targets the first column the board actually shows, so it
+        // skips the Backlog column while it sits on the shelf.
+        const visibleColumns = (board?.columns ?? []).filter(
+          (col) => !(backlogEnabled && isBacklogColumn(col)),
+        );
         const targetCol =
-          board.columns.find((col) => !collapsedCols[col.id]) ??
-          board.columns[0];
+          visibleColumns.find((col) => !collapsedCols[col.id]) ??
+          visibleColumns[0];
         if (targetCol) openAddCard(targetCol.id);
       }
     };
@@ -486,7 +491,7 @@ export function useKanbanBoard({
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focusin", onFocusIn);
     };
-  }, [board, collapsedCols, handleUndoDelete, hidden, openAddCard, undoState]);
+  }, [backlogEnabled, board, collapsedCols, handleUndoDelete, hidden, openAddCard, undoState]);
 
   const insertIntoDescription = useCallback(
     (
@@ -723,19 +728,23 @@ export function useKanbanBoard({
     }
   };
 
-  // No Undo here: the card waits on the shelf's Backlog tab, and Restore puts it back.
+  // No Undo here: the card lands in the Backlog column - or on the shelf's
+  // Backlog tab while Move backlog to shelf is on - and Restore puts it back.
   const handleMoveToBacklog = async (cardId: string) => {
     setCardMenu(null);
     setConfirmDeleteCardId(null);
     await runAction(() =>
-      window.aya.moveBoardCardToBacklog({ projectSlug: terminal.projectSlug, cardId }),
+      window.aya.moveBoardCard({ projectSlug: terminal.projectSlug, cardId, columnId: COLUMN_IDS.backlog }),
     );
   };
 
+  // Back on the board in its first visible column; the card does not remember where it came from.
   const handleRestoreBacklogCard = async (cardId: string) => {
     setConfirmDeleteCardId(null);
+    const columnId = boardColumns[0]?.id;
+    if (!columnId) return;
     await runAction(() =>
-      window.aya.restoreBacklogCard({ projectSlug: terminal.projectSlug, cardId }),
+      window.aya.moveBoardCard({ projectSlug: terminal.projectSlug, cardId, columnId }),
     );
   };
 
@@ -1006,17 +1015,22 @@ export function useKanbanBoard({
     () => board?.archivedCards ?? [],
     [board?.archivedCards],
   );
+  // The backlog is the board's Backlog column. Settings > Kanban > Move backlog to shelf
+  // only changes where it shows: in the shelf instead of on the board.
+  const hasBacklogColumn = (board?.columns ?? []).some(isBacklogColumn);
+  // The Backlog tab shows when the column is on the shelf.
+  const showBacklog = backlogEnabled && hasBacklogColumn;
+  // Move to backlog is offered on a board that has a Backlog column.
+  const canMoveToBacklog = hasBacklogColumn;
   const backlogCards = useMemo(
-    () => board?.backlogCards ?? [],
-    [board?.backlogCards],
+    () => (showBacklog ? (board?.cards ?? []).filter((c) => c.columnId === COLUMN_IDS.backlog) : []),
+    [board?.cards, showBacklog],
   );
-  // One board, one backlog (electron/board.ts backlogMode): off until the setting is on; then a
-  // board's Backlog column if it has one (Move to backlog goes there), otherwise the shelf.
-  const hasBacklogColumn = (board?.columns ?? []).some((c) => c.id === COLUMN_IDS.backlog);
-  const backlogOn = backlogEnabled;
-  // The shelf tab is for boards without that column, and shows whenever cards are already
-  // off the board, so turning the setting off never hides them.
-  const showBacklog = (backlogEnabled && !hasBacklogColumn) || backlogCards.length > 0;
+  // The columns drawn on the board: all of them, or all but Backlog while it is on the shelf.
+  const boardColumns = useMemo(
+    () => (showBacklog ? (board?.columns ?? []).filter((c) => !isBacklogColumn(c)) : (board?.columns ?? [])),
+    [board?.columns, showBacklog],
+  );
 
   // Collect distinct assignees/claims and labels on the board for quick filter bar
   const boardFilterOptions = useMemo(() => {
@@ -1452,7 +1466,8 @@ export function useKanbanBoard({
     archivedCards,
     backlogCards,
     showBacklog,
-    backlogOn,
+    canMoveToBacklog,
+    boardColumns,
     boardFilterOptions,
     hasActiveFilter,
     matchesCardFilter,

@@ -1,4 +1,6 @@
-import { DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
+import { useEffect, useState } from "react";
+import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, FIXED_RULES, isBacklogColumn } from "../../../shared/board-columns.cjs";
+import type { ProjectConfig } from "../../types";
 import {
   MAX_ASSIGNEE_CHARS,
   MAX_BOARD_CARDS,
@@ -18,36 +20,79 @@ const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
 
 /** The board's option, defaults, fixed rules and limits. Shown while the Kanban board (General) is on.
- *  Only Backlog can be changed; the fixed rules are enforced by electron/board.ts. */
-export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
+ *  Only the row below can be changed here (the switch and the Create button, both about the
+ *  current project's board); the fixed rules are enforced by electron/board.ts. */
+/** The project Create backlog column works on. */
+export type KanbanProject = Pick<ProjectConfig, "slug" | "name">;
+
+export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
   backlogEnabled: boolean;
   onBacklogEnabledChange: (enabled: boolean) => void;
+  /** The project whose board Create backlog column adds to; null when there is none. */
+  project: KanbanProject | null;
 }) {
+  const projectSlug = project?.slug ?? null;
+  // Whether the current project's board has a Backlog column; null until known.
+  const [hasBacklogColumn, setHasBacklogColumn] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    setHasBacklogColumn(null);
+    if (!projectSlug) return;
+    void window.aya.getBoard(projectSlug)
+      .then((board) => { if (live) setHasBacklogColumn(board.columns.some(isBacklogColumn)); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [projectSlug]);
+  const createBacklogColumn = () => {
+    if (!projectSlug) return;
+    void window.aya.addBoardColumn({ projectSlug, title: COLUMN_TITLES[COLUMN_IDS.backlog] })
+      .then((board) => setHasBacklogColumn(board.columns.some(isBacklogColumn)))
+      .catch(() => undefined);
+  };
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
-        What every project board starts with. Only Backlog can be changed here.
+        What every project board starts with. Only the row below can be changed here: the switch and the button.
       </SettingsHeader>
       <div className="aya-settings-general">
         <SettingsRow
           icon="inventory_2"
-          title="Backlog"
+          title="Move backlog to shelf"
           control={(
-            <div className="aya-settings-segmented" aria-label="Backlog">
-              {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
+            <div className="aya-settings-button-row">
+              <span className="aya-settings-kanban-create">
                 <button
-                  key={label}
                   type="button"
-                  className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
-                  onClick={() => onBacklogEnabledChange(enabled)}
+                  className="aya-modal-btn"
+                  disabled={hasBacklogColumn !== false}
+                  onClick={createBacklogColumn}
                 >
-                  {label}
+                  Create backlog column
                 </button>
-              ))}
+                {hasBacklogColumn === true ? (
+                  <span className="aya-settings-kanban-create-note">The board already has a Backlog column</span>
+                ) : (
+                  project && hasBacklogColumn === false &&
+                    <span className="aya-settings-kanban-create-note">Creates the Backlog column in {project.name}</span>
+                )}
+              </span>
+              <div className="aya-settings-segmented" aria-label="Move backlog to shelf">
+                {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    disabled={enabled && hasBacklogColumn !== true}
+                    className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
+                    onClick={() => onBacklogEnabledChange(enabled)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         >
-          Adds Move to backlog to each card's menu and a Backlog tab to the shelf. A board with a Backlog column uses that column.
+          Shows the board's Backlog column in the shelf instead of on the board. Needs a Backlog column.
         </SettingsRow>
         <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "))}>
           Add, rename and reorder columns on the board itself.

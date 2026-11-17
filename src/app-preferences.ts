@@ -37,6 +37,8 @@ export const GITHUB_LINK_CODEC = boolPreference(false);
 export const HARNESS_SEARCH_CODEC = boolPreference(false);
 // Experimental: built-in per-project Kanban board alongside terminals.
 export const KANBAN_CODEC = boolPreference(false);
+// Off keeps the Backlog column on the board, as before.
+export const KANBAN_BACKLOG_SHELF_CODEC = boolPreference(false);
 // Waiting/done chimes default on; the settings toggle is an opt-out.
 export const TERMINAL_SOUNDS_CODEC = boolPreference(true);
 // The status rail starts expanded - it only renders at all when something

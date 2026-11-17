@@ -13,7 +13,7 @@ import type { SettingsTab } from "../settings-tabs";
 import { MachinesSettings } from "./MachinesSettings";
 import { DiagnosticsTab } from "./settings/DiagnosticsTab";
 import { UpdatesTab } from "./settings/UpdatesTab";
-import { KanbanTab } from "./settings/KanbanTab";
+import { KanbanTab, type KanbanProject } from "./settings/KanbanTab";
 import { SettingsHeader, SettingsIcon } from "./settings/parts";
 import { GeneralTab } from "./settings/GeneralTab";
 import { useAgentHooks } from "./settings/useAgentHooks";
@@ -51,6 +51,8 @@ interface Props {
   onKanbanEnabledChange: (enabled: boolean) => void;
   kanbanBacklogEnabled: boolean;
   onKanbanBacklogEnabledChange: (enabled: boolean) => void;
+  /** The active local project, for Kanban > Create backlog column. */
+  kanbanProject: KanbanProject | null;
   terminalSoundsEnabled: boolean;
   onTerminalSoundsEnabledChange: (enabled: boolean) => void;
   terminalSoundOverrides: Record<string, boolean>;
@@ -107,6 +109,7 @@ export function SettingsModal({
   onKanbanEnabledChange,
   kanbanBacklogEnabled,
   onKanbanBacklogEnabledChange,
+  kanbanProject,
   terminalSoundsEnabled,
   onTerminalSoundsEnabledChange,
   terminalSoundOverrides,
@@ -366,7 +369,7 @@ export function SettingsModal({
 
             {activeTab === "updates" && <UpdatesTab isWeb={isWeb} />}
             {activeTab === "kanban" && kanbanEnabled && (
-              <KanbanTab backlogEnabled={kanbanBacklogEnabled} onBacklogEnabledChange={onKanbanBacklogEnabledChange} />
+              <KanbanTab backlogEnabled={kanbanBacklogEnabled} onBacklogEnabledChange={onKanbanBacklogEnabledChange} project={kanbanProject} />
             )}
 
             {activeTab === "machines" && (

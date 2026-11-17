@@ -28,5 +28,4 @@ export const WITHDRAWAL_REASON = {
   removed: "removed from the board",
   reassignedTo: (paneName: string) => `reassigned to ${paneName}`,
   released: "released from your pane",
-  movedToBacklog: "moved to the backlog",
 } as const;

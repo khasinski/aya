@@ -43,6 +43,9 @@ exports.FINISHED_COLUMN_ID = COLUMN_IDS.done;
 
 exports.isPendingColumn = (id) => exports.PENDING_COLUMN_IDS.includes(id);
 
+/** The board's backlog: the column with the Backlog id. */
+exports.isBacklogColumn = (column) => column.id === COLUMN_IDS.backlog;
+
 /** Finished work: the Done column by id, or any column titled "Done". */
 exports.isFinishedColumn = (column) =>
   column.id === exports.FINISHED_COLUMN_ID ||

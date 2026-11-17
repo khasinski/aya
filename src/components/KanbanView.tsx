@@ -1,4 +1,5 @@
 import { BOARD_IMAGE_ACCEPT } from "../../shared/board-images.cjs";
+import { COLUMN_IDS } from "../../shared/board-columns.cjs";
 import {
   memo,
   useState,
@@ -74,7 +75,8 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     archivedCards,
     backlogCards,
     showBacklog,
-    backlogOn,
+    canMoveToBacklog,
+    boardColumns,
     boardFilterOptions,
     hasActiveFilter,
     clearAllFilters,
@@ -325,7 +327,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
         </div>
       ) : (
         <div className="aya-kanban-body">
-          <KanbanColumns {...model} board={board} />
+          <KanbanColumns {...model} board={boardColumns === board.columns ? board : { ...board, columns: boardColumns }} />
 
           {archiveOpen && (
             <aside
@@ -478,8 +480,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                             <button
                               type="button"
                               className="aya-kanban-archive-restore-btn"
-                              title={`Restore ${card.id} to ${origCol ? origCol.title : "board"
-                                }`}
+                              title={`Restore ${card.id} to ${(onBacklogTab ? boardColumns[0] : origCol)?.title ?? "board"}`}
                               onClick={() => void (onBacklogTab ? handleRestoreBacklogCard(card.id) : handleRestoreArchivedCard(card))}
                             >
                               ↩ Restore
@@ -815,7 +816,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
             <span className="aya-kanban-popover-icon">⇣</span>
             <span>Archive card</span>
           </button>
-          {backlogOn && (
+          {canMoveToBacklog && activeMenuCard.columnId !== COLUMN_IDS.backlog && (
             <button
               type="button"
               role="menuitem"
