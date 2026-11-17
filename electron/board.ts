@@ -26,7 +26,20 @@ import {
   isPendingColumn,
 } from "../shared/board-columns.cjs";
 import { BOARD_IMAGE_FORMATS, detectBoardImageFormat, listBoardImageFormats } from "../shared/board-images.cjs";
-import { BYTES_PER_KIB, BYTES_PER_MIB } from "../shared/units.cjs";
+import {
+  MAX_ASSIGNEE_CHARS,
+  MAX_BOARD_CARDS,
+  MAX_BOARD_COLUMNS,
+  MAX_BOARD_FILE_BYTES,
+  MAX_BOARD_IMAGE_BYTES,
+  MAX_CARD_DESCRIPTION_CHARS,
+  MAX_CARD_LABEL_CHARS,
+  MAX_CARD_LABELS,
+  MAX_CARD_TITLE_CHARS,
+  MAX_COLUMN_TITLE_CHARS,
+  MAX_PROJECT_RULES_BYTES,
+} from "../shared/board-limits.cjs";
+import { BYTES_PER_MIB } from "../shared/units.cjs";
 import { boardTaskFooter, WITHDRAWAL_REASON, withProjectRules } from "./board-instructions";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
@@ -38,22 +51,24 @@ export const REPO_BOARD_FILE_NAME = "board.json";
 /** A project's own rules for agents, added under every task prompt; optional. */
 export const PROJECT_RULES_FILE_NAME = "board.md";
 export const BOARD_FORMAT_VERSION = 1;
-export const MAX_BOARD_FILE_BYTES = 2 * BYTES_PER_MIB;
-/** Every task prompt carries the rules, so they stay short. */
-export const MAX_PROJECT_RULES_BYTES = 16 * BYTES_PER_KIB;
-export const MAX_BOARD_IMAGE_BYTES = 8 * BYTES_PER_MIB;
+/** The board limits live in shared/board-limits.cjs; tests and callers still import them from here. */
+export {
+  MAX_ASSIGNEE_CHARS,
+  MAX_BOARD_CARDS,
+  MAX_BOARD_COLUMNS,
+  MAX_BOARD_FILE_BYTES,
+  MAX_BOARD_IMAGE_BYTES,
+  MAX_CARD_DESCRIPTION_CHARS,
+  MAX_CARD_LABEL_CHARS,
+  MAX_CARD_LABELS,
+  MAX_CARD_TITLE_CHARS,
+  MAX_COLUMN_TITLE_CHARS,
+  MAX_PROJECT_RULES_BYTES,
+} from "../shared/board-limits.cjs";
 /** The image limit as users read it in messages. */
 const MAX_BOARD_IMAGE_MB = MAX_BOARD_IMAGE_BYTES / BYTES_PER_MIB;
 /** A data URL of an accepted image format, in any letter case. */
 const BOARD_IMAGE_DATA_URL = new RegExp(`^data:(?:${BOARD_IMAGE_FORMATS.map((format) => format.mime).join("|")});base64,`, "i");
-export const MAX_BOARD_COLUMNS = 24;
-export const MAX_BOARD_CARDS = 500;
-export const MAX_COLUMN_TITLE_CHARS = 80;
-export const MAX_CARD_TITLE_CHARS = 200;
-export const MAX_CARD_DESCRIPTION_CHARS = 16_000;
-export const MAX_ASSIGNEE_CHARS = 120;
-export const MAX_CARD_LABELS = 12;
-export const MAX_CARD_LABEL_CHARS = 32;
 
 const SLUG_RE = /^[a-z0-9_-]{1,80}$/;
 const ID_RE = /^[a-z0-9_-]{1,64}$/i;

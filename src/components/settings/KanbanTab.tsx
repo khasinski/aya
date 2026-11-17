@@ -11,7 +11,7 @@ import {
   MAX_CARD_LABELS,
   MAX_CARD_TITLE_CHARS,
   MAX_COLUMN_TITLE_CHARS,
-} from "../../main-mirrors";
+} from "../../../shared/board-limits.cjs";
 import { mib } from "../../units";
 import { PRIORITY_OPTIONS } from "../useKanbanBoard";
 import { SettingsHeader, SettingsRow } from "./parts";
