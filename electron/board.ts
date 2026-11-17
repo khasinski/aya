@@ -26,6 +26,7 @@ import {
   isPendingColumn,
 } from "../shared/board-columns.cjs";
 import { BOARD_IMAGE_FORMATS, detectBoardImageFormat, listBoardImageFormats } from "../shared/board-images.cjs";
+import { BYTES_PER_KIB, BYTES_PER_MIB } from "../shared/units.cjs";
 import { boardTaskFooter, WITHDRAWAL_REASON, withProjectRules } from "./board-instructions";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
@@ -37,13 +38,12 @@ export const REPO_BOARD_FILE_NAME = "board.json";
 /** A project's own rules for agents, added under every task prompt; optional. */
 export const PROJECT_RULES_FILE_NAME = "board.md";
 export const BOARD_FORMAT_VERSION = 1;
-const BYTES_PER_MB = 1024 * 1024;
-export const MAX_BOARD_FILE_BYTES = 2 * BYTES_PER_MB;
+export const MAX_BOARD_FILE_BYTES = 2 * BYTES_PER_MIB;
 /** Every task prompt carries the rules, so they stay short. */
-export const MAX_PROJECT_RULES_BYTES = 16 * 1024;
-export const MAX_BOARD_IMAGE_BYTES = 8 * BYTES_PER_MB;
+export const MAX_PROJECT_RULES_BYTES = 16 * BYTES_PER_KIB;
+export const MAX_BOARD_IMAGE_BYTES = 8 * BYTES_PER_MIB;
 /** The image limit as users read it in messages. */
-const MAX_BOARD_IMAGE_MB = MAX_BOARD_IMAGE_BYTES / BYTES_PER_MB;
+const MAX_BOARD_IMAGE_MB = MAX_BOARD_IMAGE_BYTES / BYTES_PER_MIB;
 /** A data URL of an accepted image format, in any letter case. */
 const BOARD_IMAGE_DATA_URL = new RegExp(`^data:(?:${BOARD_IMAGE_FORMATS.map((format) => format.mime).join("|")});base64,`, "i");
 export const MAX_BOARD_COLUMNS = 24;
