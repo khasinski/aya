@@ -1,4 +1,5 @@
 import { BOARD_IMAGE_ACCEPT } from "../../shared/board-images.cjs";
+import { COLUMN_IDS } from "../../shared/board-columns.cjs";
 import {
   memo,
   useState,
@@ -815,7 +816,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
             <span className="aya-kanban-popover-icon">⇣</span>
             <span>Archive card</span>
           </button>
-          {canMoveToBacklog && (
+          {canMoveToBacklog && activeMenuCard.columnId !== COLUMN_IDS.backlog && (
             <button
               type="button"
               role="menuitem"

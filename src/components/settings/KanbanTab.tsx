@@ -20,7 +20,8 @@ const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
 
 /** The board's option, defaults, fixed rules and limits. Shown while the Kanban board (General) is on.
- *  Only where the Backlog column shows can be changed; the fixed rules are enforced by electron/board.ts. */
+ *  Only the row below can be changed here (the switch and the Create button, both about the
+ *  current project's board); the fixed rules are enforced by electron/board.ts. */
 /** The project Create backlog column works on. */
 export type KanbanProject = Pick<ProjectConfig, "slug" | "name">;
 
@@ -51,7 +52,7 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
-        What every project board starts with. Only the setting below can be changed here.
+        What every project board starts with. Only the row below can be changed here: the switch and the button.
       </SettingsHeader>
       <div className="aya-settings-general">
         <SettingsRow
@@ -68,14 +69,19 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
                 >
                   Create backlog column
                 </button>
-                {project && <span className="aya-settings-kanban-create-note">Creates the Backlog column in {project.name}</span>}
+                {hasBacklogColumn === true ? (
+                  <span className="aya-settings-kanban-create-note">The board already has a Backlog column</span>
+                ) : (
+                  project && hasBacklogColumn === false &&
+                    <span className="aya-settings-kanban-create-note">Creates the Backlog column in {project.name}</span>
+                )}
               </span>
               <div className="aya-settings-segmented" aria-label="Move backlog to shelf">
                 {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
                   <button
                     key={label}
                     type="button"
-                    disabled={hasBacklogColumn !== true}
+                    disabled={enabled && hasBacklogColumn !== true}
                     className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
                     onClick={() => onBacklogEnabledChange(enabled)}
                   >

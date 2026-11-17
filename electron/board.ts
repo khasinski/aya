@@ -323,11 +323,21 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
       if (!record.cards.every((c) => !marked(c) || (c as { shelf: unknown }).shelf === LEGACY_BACKLOG_SHELF)) {
         throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
       }
+      // Shelf-marked cards need the Backlog column back. With room for it the
+      // column is re-added (as the board's FIRST column, like Create adds it)
+      // and the cards land there; on a board that already has the maximum
+      // number of columns there is no room, so they return to the first
+      // column, where a card added without a column would land. A Backlog
+      // column the user placed elsewhere is left where it is.
+      let markedTarget: string = COLUMN_IDS.backlog;
       if (!columns.some(isBacklogColumn)) {
-        if (columns.length >= MAX_BOARD_COLUMNS) throw new Error(`${fileLabel} has an invalid columns list; nothing was changed.`);
-        columns.push({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
+        if (columns.length < MAX_BOARD_COLUMNS) {
+          columns.unshift({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
+        } else {
+          markedTarget = columns[0].id;
+        }
       }
-      record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: COLUMN_IDS.backlog } : c));
+      record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: markedTarget } : c));
     }
   }
   const colIds = new Set(columns.map((c) => c.id));
@@ -1420,6 +1430,12 @@ export function addBoardColumn(
     const clean = cleanColumnTitle(title);
     const baseId = slugifyName(clean, "column");
     const existingIds = new Set(current.columns.map((c) => c.id.toLowerCase()));
+    // The Backlog column is unique: the shelf switch and the fixed rules key on
+    // its id, so a second one (backlog-2 from a stale Settings tab or a double
+    // click) would be a silent no-op column. Refuse it instead of suffixing.
+    if (baseId === COLUMN_IDS.backlog && existingIds.has(COLUMN_IDS.backlog)) {
+      throw new Error("The board already has a Backlog column.");
+    }
     let id = baseId;
     let idx = 2;
     while (existingIds.has(id.toLowerCase())) {
@@ -1427,9 +1443,14 @@ export function addBoardColumn(
       idx += 1;
     }
     const column: KanbanColumn = { id, title: clean };
+    // The Backlog column is the board's FIRST column (Justyna's call), so a
+    // card added without a column lands there; every other column is appended.
+    const columns = baseId === COLUMN_IDS.backlog
+      ? [column, ...current.columns]
+      : [...current.columns, column];
     const board = await saveBoardUnlocked(ayaHome, project, {
       version: BOARD_FORMAT_VERSION,
-      columns: [...current.columns, column],
+      columns,
       cards: current.cards,
       archivedCards: current.archivedCards,
     });

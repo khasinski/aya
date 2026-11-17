@@ -37,6 +37,7 @@ const {
   searchBoard,
   handleBoardRequest,
   MAX_BOARD_IMAGE_BYTES,
+  MAX_BOARD_COLUMNS,
   MAX_PROJECT_RULES_BYTES,
   PROJECT_RULES_FILE_NAME,
 } = await import("../dist-electron/board.js");
@@ -597,11 +598,11 @@ test("aya board columns gives each column's meaning and the fixed rules, for age
     // The definitions stay literal here: they are the text agents read.
     assert.equal((await handleBoardRequest({ argv: ["columns"] }, "pane-1", deps)).output, [
       "Columns on demo:",
+      "- backlog (Backlog): Waiting to be started, kept for later.",
       "- todo (Todo): Waiting to be started.",
       "- in-progress (In Progress): Being worked on by the pane that claimed it.",
       "- review (Code review): Work is finished and waits for a check.",
       "- done (Done): Finished work; cards here can be archived.",
-      "- backlog (Backlog): Waiting to be started, kept for later.",
       "- blocked (Blocked): custom column, no built-in meaning.",
       "",
       "Fixed rules (Aya enforces these; they cannot be changed):",
@@ -732,7 +733,7 @@ test("aya board CLI end-to-end over control socket", async () => {
     const addedColumn = await runCli(["board", "column", "add", "Backlog"]);
     assert.equal(addedColumn.status, 0, addedColumn.stderr);
     const beforeColumnsMove = await getBoard(fx.home, fx.project);
-    assert.equal(beforeColumnsMove.columns.at(-1).id, "backlog");
+    assert.equal(beforeColumnsMove.columns[0].id, "backlog", "column add Backlog puts it first");
     const reordered = await runCli(["board", "column", "move", "Backlog", "--before", "Todo"]);
     assert.equal(reordered.status, 0, reordered.stderr);
     const afterColumnsMove = await getBoard(fx.home, fx.project);
@@ -1155,7 +1156,7 @@ test("cards saved with the first version's shelf mark load into the Backlog colu
       cards: [{ id: "t-1", columnId: "todo", title: "Kept", createdAt: at, updatedAt: at, shelf: "backlog" },
         { id: "t-2", columnId: "todo", title: "Now", createdAt: at, updatedAt: at }] }));
     const board = await getBoard(fx.home, fx.project);
-    assert.deepEqual(board.columns.map((c) => c.id), ["todo", "backlog"]);
+    assert.deepEqual(board.columns.map((c) => c.id), ["backlog", "todo"]);
     assert.deepEqual(board.cards.map((c) => [c.id, c.columnId]), [["t-1", "backlog"], ["t-2", "todo"]]);
     await moveBoardCard(fx.home, fx.project, "t-2", "todo");
     const file = JSON.parse(readFileSync(backlogFile(fx), "utf8"));
@@ -1163,5 +1164,62 @@ test("cards saved with the first version's shelf mark load into the Backlog colu
     writeFileSync(backlogFile(fx), JSON.stringify({ version: 1, columns: [{ id: "todo", title: "Todo" }],
       cards: [{ id: "t-1", columnId: "todo", title: "A", createdAt: at, updatedAt: at, shelf: "attic" }] }));
     await assert.rejects(getBoard(fx.home, fx.project), /invalid card entries/);
+  } finally { fx.cleanup(); }
+});
+
+test("a second Backlog column is refused instead of becoming backlog-2, and Create puts Backlog first", async () => {
+  const fx = makeFixture();
+  try {
+    await addBoardColumn(fx.home, fx.project, "Backlog");
+    const ids0 = (await getBoard(fx.home, fx.project)).columns.map((c) => c.id);
+    assert.equal(ids0[0], "backlog", "Create backlog column adds the board's FIRST column");
+    await assert.rejects(addBoardColumn(fx.home, fx.project, "Backlog"), /already has a Backlog column/);
+    const ids = (await getBoard(fx.home, fx.project)).columns.map((c) => c.id);
+    assert.equal(ids.filter((id) => id.startsWith("backlog")).length, 1, "no suffixed copy is created");
+    // Other duplicate titles keep the suffix behaviour; the guard is Backlog-only.
+    await addBoardColumn(fx.home, fx.project, "Blocked");
+    await addBoardColumn(fx.home, fx.project, "Blocked");
+    const ids2 = (await getBoard(fx.home, fx.project)).columns.map((c) => c.id);
+    assert.ok(ids2.includes("blocked") && ids2.includes("blocked-2"));
+  } finally { fx.cleanup(); }
+});
+
+test("a shelf-marked card on a board that already has the Backlog column loads without a new column", async () => {
+  const fx = makeFixture();
+  try {
+    const at = "2026-11-12T10:00:00.000Z";
+    mkdirSync(join(fx.home, "boards"), { recursive: true });
+    writeFileSync(backlogFile(fx), JSON.stringify({ version: 1, columns: [{ id: "todo", title: "Todo" }, { id: "backlog", title: "Backlog" }],
+      cards: [{ id: "t-1", columnId: "todo", title: "Parked", createdAt: at, updatedAt: at, shelf: "backlog" }] }));
+    const board = await getBoard(fx.home, fx.project);
+    assert.deepEqual(board.columns.map((c) => c.id), ["todo", "backlog"]);
+    assert.deepEqual(board.cards.map((c) => [c.id, c.columnId]), [["t-1", "backlog"]]);
+  } finally { fx.cleanup(); }
+});
+
+test("a shelf-marked card on a board at the column limit loads into the first column", async () => {
+  const fx = makeFixture();
+  try {
+    const at = "2026-11-12T10:00:00.000Z";
+    mkdirSync(join(fx.home, "boards"), { recursive: true });
+    const columns = Array.from({ length: MAX_BOARD_COLUMNS }, (_, i) => ({ id: `col-${i}`, title: `Col ${i}` }));
+    writeFileSync(backlogFile(fx), JSON.stringify({ version: 1, columns,
+      cards: [{ id: "t-1", columnId: "col-0", title: "Parked", createdAt: at, updatedAt: at, shelf: "backlog" }] }));
+    const board = await getBoard(fx.home, fx.project);
+    assert.equal(board.columns.length, MAX_BOARD_COLUMNS, "no extra column is added");
+    assert.ok(!board.columns.some((c) => c.id === "backlog"));
+    assert.deepEqual(board.cards.map((c) => [c.id, c.columnId]), [["t-1", "col-0"]]);
+  } finally { fx.cleanup(); }
+});
+
+test("a card added without a column lands in the board's first column, Backlog when it exists", async () => {
+  const fx = makeFixture();
+  try {
+    await addBoardColumn(fx.home, fx.project, "Backlog");
+    const { card } = await addBoardCard(fx.home, fx.project, { title: "Fresh idea" });
+    // Consequence of Backlog being the FIRST column (Justyna's call): while
+    // Move backlog to shelf is on, such a card shows in the shelf's Backlog
+    // tab, not on the board, until the column is moved or the card is moved.
+    assert.equal(card.columnId, "backlog");
   } finally { fx.cleanup(); }
 });

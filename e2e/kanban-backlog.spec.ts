@@ -13,6 +13,9 @@ const card = (id: string, title: string, extra: Record<string, unknown> = {}) =>
 });
 const columns = [{ id: "todo", title: "Todo" }, { id: "done", title: "Done" }];
 const withBacklog = [...columns, { id: "backlog", title: "Backlog" }];
+// Backlog as the first column: Restore and the n/c shortcut must pick the first
+// column the board shows, not the board's first column.
+const backlogFirst = [{ id: "backlog", title: "Backlog" }, ...columns];
 const archived = [card("t-3", "Old", { columnId: "done", archivedAt: at })];
 const cards = [card("t-1", "Later idea", { labels: ["idea"] }), card("t-2", "Now")];
 const parked = card("t-4", "Parked", { columnId: "backlog" });
@@ -65,7 +68,7 @@ test.describe("no Backlog column", () => {
     await create.click();
     await expect(create).toBeDisabled();
     await expect(on).toBeEnabled();
-    expect(boardFile(seeded.ayaHome).columns.map((c: { id: string }) => c.id)).toEqual(["todo", "done", "backlog"]);
+    expect(boardFile(seeded.ayaHome).columns.map((c: { id: string }) => c.id)).toEqual(["backlog", "todo", "done"]);
     await settings.locator(".aya-settings-general-row").filter({ hasText: "Move backlog to shelf" }).screenshot({ path: testInfo.outputPath("settings-with-column.png") });
     await settings.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(window.getByTestId("kanban-column-backlog")).toBeVisible();
@@ -77,6 +80,10 @@ test.describe("Backlog column, setting off (default)", () => {
 
   test("the column is on the board and Move to backlog moves a card into it", async ({ window, seeded }) => {
     await expect(window.getByTestId("kanban-column-backlog").getByTestId("kanban-card-t-4")).toBeVisible();
+    // A card already in the Backlog column gets no Move to backlog item (a no-op move).
+    await openCardMenu(window, "t-4");
+    await expect(window.getByRole("menuitem", { name: /Move to backlog/ })).toHaveCount(0);
+    await window.keyboard.press("Escape");
     await openCardMenu(window, "t-1");
     await window.getByRole("menuitem", { name: /Move to backlog/ }).click();
     await expect(window.getByTestId("kanban-column-backlog").getByTestId("kanban-card-t-1")).toBeVisible();
@@ -86,11 +93,18 @@ test.describe("Backlog column, setting off (default)", () => {
 });
 
 test.describe("Backlog column, setting on", () => {
-  test.use({ seedOptions: seed({ version: 1, columns: withBacklog, cards: [...cards, parked], archivedCards: archived }) });
+  test.use({ seedOptions: seed({ version: 1, columns: backlogFirst, cards: [...cards, parked], archivedCards: archived }) });
 
   test("the column is in the shelf; Move to backlog, search and Restore work there", async ({ window, app }, testInfo) => {
     await setShelf(window, app, true);
     await expect(window.getByTestId("kanban-column-backlog")).toHaveCount(0);
+    // n opens the add form in the first column the board shows, not the hidden Backlog one.
+    // A click on the column title first moves focus out of the terminal input,
+    // which otherwise swallows the shortcut.
+    await window.locator(".aya-kanban-column-title").first().click();
+    await window.keyboard.press("n");
+    await expect(window.getByTestId("kanban-column-todo").getByLabel("Card title")).toBeVisible();
+    await window.keyboard.press("Escape");
     await openCardMenu(window, "t-1");
     await window.getByRole("menuitem", { name: /Move to backlog/ }).click();
     await expect(window.getByTestId("kanban-card-t-1")).toHaveCount(0);
@@ -125,5 +139,38 @@ test.describe("a card saved with the first version's shelf mark", () => {
     await expect(window.getByTestId("kanban-column-backlog")).toHaveCount(0);
     const drawer = await openBacklogTab(window);
     await expect(drawer.getByTestId("kanban-backlog-card-t-1")).toBeVisible();
+  });
+});
+
+test.describe("the shelf preference on, board without a Backlog column", () => {
+  test.use({ seedOptions: seed({ version: 1, columns, cards, archivedCards: archived }) });
+
+  test("no Backlog tab shows, and the switch can be turned off from that project", async ({ window, app }) => {
+    await window.evaluate(() => localStorage.setItem("aya:kanban-backlog-shelf", "1"));
+    await window.reload();
+    await expect(window.getByTestId("kanban-column-todo")).toBeVisible();
+    await expect(window.getByTestId("kanban-column-backlog")).toHaveCount(0);
+    await window.getByTestId("kanban-archive-toggle").click();
+    const drawer = window.getByTestId("kanban-archive-drawer");
+    await expect(drawer.getByRole("tab", { name: /Backlog/ })).toHaveCount(0);
+    await drawer.getByRole("button", { name: "Close archive" }).click();
+
+    // The switch is a global preference: On still waits for the column, Off is turnable here.
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await settings.getByTestId("settings-tab").filter({ hasText: "General" }).click();
+    await settings.getByLabel("Kanban board").getByRole("button", { name: "On", exact: true }).click();
+    await settings.getByTestId("settings-tab").filter({ hasText: "Kanban" }).click();
+    const row = settings.getByLabel("Move backlog to shelf", { exact: true });
+    const on = row.getByRole("button", { name: "On", exact: true });
+    const off = row.getByRole("button", { name: "Off", exact: true });
+    await expect(on).toBeDisabled();
+    await expect(on).toHaveClass(/aya-settings-segment--active/);
+    await expect(off).toBeEnabled();
+    await off.click();
+    await expect(off).toHaveClass(/aya-settings-segment--active/);
+    await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(settings).toHaveCount(0);
+    await expect.poll(() => window.evaluate(() => localStorage.getItem("aya:kanban-backlog-shelf"))).toBe("0");
   });
 });

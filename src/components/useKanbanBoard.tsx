@@ -459,9 +459,14 @@ export function useKanbanBoard({
       ) {
         e.preventDefault();
         e.stopPropagation();
+        // The shortcut targets the first column the board actually shows, so it
+        // skips the Backlog column while it sits on the shelf.
+        const visibleColumns = (board?.columns ?? []).filter(
+          (col) => !(backlogEnabled && isBacklogColumn(col)),
+        );
         const targetCol =
-          board.columns.find((col) => !collapsedCols[col.id]) ??
-          board.columns[0];
+          visibleColumns.find((col) => !collapsedCols[col.id]) ??
+          visibleColumns[0];
         if (targetCol) openAddCard(targetCol.id);
       }
     };
@@ -486,7 +491,7 @@ export function useKanbanBoard({
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focusin", onFocusIn);
     };
-  }, [board, collapsedCols, handleUndoDelete, hidden, openAddCard, undoState]);
+  }, [backlogEnabled, board, collapsedCols, handleUndoDelete, hidden, openAddCard, undoState]);
 
   const insertIntoDescription = useCallback(
     (
@@ -723,7 +728,8 @@ export function useKanbanBoard({
     }
   };
 
-  // No Undo here: the card waits on the shelf's Backlog tab, and Restore puts it back.
+  // No Undo here: the card lands in the Backlog column - or on the shelf's
+  // Backlog tab while Move backlog to shelf is on - and Restore puts it back.
   const handleMoveToBacklog = async (cardId: string) => {
     setCardMenu(null);
     setConfirmDeleteCardId(null);
