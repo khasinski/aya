@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { BACKLOG_COLUMN, DEFAULT_BOARD_COLUMNS, FIXED_RULES, isBacklogColumn } from "../../../shared/board-columns.cjs";
+import { DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
+import { useBacklogColumn } from "../../hooks/useBacklogColumn";
 import type { ProjectConfig } from "../../types";
 import {
   MAX_ASSIGNEE_CHARS,
@@ -31,24 +31,7 @@ export function KanbanTab({ backlogOnShelf, onBacklogOnShelfChange, project }: {
   /** The project whose board Create backlog column adds to; null when there is none. */
   project: KanbanProject | null;
 }) {
-  const projectSlug = project?.slug ?? null;
-  // Whether the current project's board has a Backlog column; null until known.
-  const [hasBacklogColumn, setHasBacklogColumn] = useState<boolean | null>(null);
-  useEffect(() => {
-    let live = true;
-    setHasBacklogColumn(null);
-    if (!projectSlug) return;
-    void window.aya.getBoard(projectSlug)
-      .then((board) => { if (live) setHasBacklogColumn(board.columns.some(isBacklogColumn)); })
-      .catch(() => undefined);
-    return () => { live = false; };
-  }, [projectSlug]);
-  const createBacklogColumn = () => {
-    if (!projectSlug) return;
-    void window.aya.addBoardColumn({ projectSlug, title: BACKLOG_COLUMN.title })
-      .then((board) => setHasBacklogColumn(board.columns.some(isBacklogColumn)))
-      .catch(() => undefined);
-  };
+  const { hasBacklogColumn, createBacklogColumn } = useBacklogColumn(project?.slug ?? null);
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
