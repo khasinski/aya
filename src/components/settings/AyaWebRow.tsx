@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { type WebConfigureRequest, type WebServerStatus } from "../../types";
 import { allNetworksWarning, WEB_LOOPBACK_HOST, webHostOptions } from "../../web-host-options";
-import { SettingsRow } from "./parts";
+import { OnOffSwitch, SettingsRow } from "./parts";
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -73,26 +73,12 @@ export function AyaWebRow({ isWeb }: { isWeb: boolean }) {
     control={isWeb ? (
     <span className="aya-modal-hint">Available in the desktop app.</span>
     ) : (
-    <div className="aya-settings-segmented" aria-label="Aya Web">
-      {([
-        [true, "On"],
-        [false, "Off"],
-      ] as const).map(([enabled, label]) => (
-        <button
-          key={String(enabled)}
-          type="button"
-          className={`aya-settings-segment ${
-            (ayaWeb?.enabled ?? false) === enabled
-              ? "aya-settings-segment--active"
-              : ""
-          }`}
-          disabled={ayaWebBusy || !ayaWeb}
-          onClick={() => void applyAyaWeb({ enabled })}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <OnOffSwitch
+      label="Aya Web"
+      value={ayaWeb?.enabled ?? false}
+      onChange={(enabled) => void applyAyaWeb({ enabled })}
+      disabled={ayaWebBusy || !ayaWeb}
+    />
     )}
     >
     {isWeb ? (

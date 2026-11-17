@@ -54,6 +54,17 @@ export function toggleMarkdownTaskItem(
 }
 
 
+/** A card description longer than either limit is clamped, with a Show more toggle. */
+const LONG_DESCRIPTION_CHARS = 180;
+const LONG_DESCRIPTION_LINES = 4;
+
+export function isLongCardDescription(description: string | undefined): boolean {
+  return Boolean(description) &&
+    (description!.length > LONG_DESCRIPTION_CHARS ||
+      description!.split(/\r?\n/).length > LONG_DESCRIPTION_LINES);
+}
+
+
 export function extractChecklistProgress(
   markdown: string | undefined,
 ): { completed: number; total: number } | null {
