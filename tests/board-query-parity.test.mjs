@@ -1,8 +1,8 @@
-// The board query language is written twice: src/components/kanban-search.ts
-// (the board filter and shelf search in the renderer) and matchesBoardQuery in
-// electron/board.ts (`aya board search`). This runs one table of queries through
-// both and pins what each returns, so neither side changes what users get
-// without this table changing too.
+// The board query language lives in shared/board-query.cjs. The board filter and
+// shelf search (src/components/kanban-search.ts) and `aya board search`
+// (matchesBoardQuery in electron/board.ts) both call it. This runs one table of
+// queries through the module and both call sites and pins what each returns, so
+// no side changes what users get without this table changing too.
 //
 // An empty priority token ("p:" or "priority:") is ignored on both sides, as
 // the board filter always did; aya board search used to keep only cards without
@@ -11,6 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { matchesSearchQuery } from "../dist-test/components/kanban-search.js";
+import { matchesBoardQuery as sharedQuery } from "../shared/board-query.cjs";
 
 const { matchesBoardQuery } = await import("../dist-electron/board.js");
 
@@ -25,12 +26,13 @@ const CARDS = [
   card("t-6", "plain", "todo"),
 ];
 
+const shared = (query, archived) => CARDS.filter((c) => sharedQuery(c, query, archived)).map((c) => c.id);
 const renderer = (query, archived) =>
   CARDS.filter((c) => (archived === undefined ? matchesSearchQuery(c, query) : matchesSearchQuery(c, query, archived))).map((c) => c.id);
 const cli = (query, archived) =>
   CARDS.filter((c) => (archived === undefined ? matchesBoardQuery(c, query) : matchesBoardQuery(c, query, { isArchived: archived }))).map((c) => c.id);
 
-// `want`: both sides return it.
+// `want`: the module and both call sites return it.
 // `archived`: the archived flag the caller passes; without it, each side reads card.archivedAt.
 const ROWS = [
   { query: "", want: ["t-1", "t-2", "t-3", "t-4", "t-5", "t-6"] },
@@ -93,6 +95,7 @@ const ROWS = [
 for (const row of ROWS) {
   const name = `${JSON.stringify(row.query)}${row.archived === undefined ? "" : ` (archived: ${row.archived})`}`;
   test(`board filter and aya board search agree on ${name}`, () => {
+    assert.deepEqual(shared(row.query, row.archived), row.want, "shared/board-query.cjs");
     assert.deepEqual(renderer(row.query, row.archived), row.want, "board filter");
     assert.deepEqual(cli(row.query, row.archived), row.want, "aya board search");
   });
