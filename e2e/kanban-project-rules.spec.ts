@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import { AGENT_START_TIMEOUT_MS } from "./timeouts";
-import { populatedBoard } from "./helpers/kanban";
+import { openCardMenu, populatedBoard, seedBoard } from "./helpers/board";
 
 // What a real pane receives when a card is sent to it, without and with the
 // project's own rules in .aya/board.md. The recorder logs every PTY byte.
@@ -10,14 +10,12 @@ const recorder = join(__dirname, "helpers", "pty-recorder.cjs");
 const board = populatedBoard();
 const card = board.cards[0];
 card.title = "Check what the agent receives";
-test.use({ seedOptions: {
-  rightTab: { presetId: "board", name: "Board" },
+test.use({ seedOptions: seedBoard(board, {
   presetList: [{
     id: "shell", name: "Recorder", icon: "$", color: "",
     command: `'${process.execPath}' '${recorder}' "$AYA_PROJECT_DIR/rec-$AYA_TERMINAL_ID.jsonl"`,
   }],
-  ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) },
-} });
+}) });
 
 const FOOTER = "Use `aya board` to inspect or update the board (e.g. `aya board move t-1 review` or `aya board move t-1 done` when finished).";
 const DEFAULT_PROMPT = `Task t-1: ${card.title}\n\n${card.description}\n\n${FOOTER}`;
@@ -37,8 +35,7 @@ for (const [name, rules, expected] of [
     await expect.poll(() => existsSync(log), { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
     const received = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line).b).join("");
 
-    const cardElement = window.getByTestId("kanban-card-t-1");
-    await cardElement.getByRole("button", { name: /Terminal/ }).click();
+    await openCardMenu(window, "t-1");
     await window.getByRole("menuitem", { name: /↪.*shell 1/ }).click();
     // Enter ("\r") comes last, after the whole text.
     await expect.poll(() => received().endsWith("\r")).toBe(true);

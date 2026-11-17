@@ -1,6 +1,6 @@
-import type { ElectronApplication, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { fireShortcut } from "./helpers/shortcut";
+import { backlogShelfButton, setKanbanBoard } from "./helpers/board";
+import { openSettings, settingsTab } from "./helpers/settings";
 import { COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, PENDING_COLUMN_IDS, STARTED_COLUMN_ID } from "../shared/board-columns.cjs";
 import {
   MAX_ASSIGNEE_CHARS, MAX_BOARD_CARDS, MAX_BOARD_COLUMNS, MAX_BOARD_IMAGE_BYTES,
@@ -14,21 +14,6 @@ const pendingTitles = PENDING_COLUMN_IDS.map((id) => COLUMN_TITLES[id]).join(" o
 // The Kanban switch stays in General. Turning it on adds a Kanban tab to Settings
 // that shows the board's defaults; turning it off removes the tab again.
 
-async function openSettings(window: Page, app: ElectronApplication) {
-  await fireShortcut(app, "open-settings");
-  const settings = window.locator(".aya-modal--settings");
-  await expect(settings).toBeVisible();
-  return settings;
-}
-
-const settingsTab = (settings: ReturnType<Page["locator"]>, name: string) =>
-  settings.getByTestId("settings-tab").filter({ hasText: name });
-
-async function setKanban(settings: ReturnType<Page["locator"]>, on: boolean) {
-  await settingsTab(settings, "General").click();
-  await settings.getByLabel("Kanban board").getByRole("button", { name: on ? "On" : "Off", exact: true }).click();
-}
-
 test("Kanban is off by default and Settings has no Kanban tab", async ({ window, app }) => {
   const settings = await openSettings(window, app);
   await expect(settingsTab(settings, "General")).toBeVisible();
@@ -39,16 +24,16 @@ test("Kanban is off by default and Settings has no Kanban tab", async ({ window,
 test("the Kanban switch in General shows and hides the Kanban launcher", async ({ window, app }, testInfo) => {
   const settings = await openSettings(window, app);
   const launcher = window.getByRole("button", { name: "Kanban", exact: true });
-  await setKanban(settings, true);
+  await setKanbanBoard(settings, true);
   await expect(launcher).toHaveCount(1);
   await window.screenshot({ path: testInfo.outputPath("settings-general-kanban-on.png") });
-  await setKanban(settings, false);
+  await setKanbanBoard(settings, false);
   await expect(launcher).toHaveCount(0);
 });
 
 test("turning Kanban on adds a Kanban tab with the board defaults, turning it off removes it", async ({ window, app }, testInfo) => {
   const settings = await openSettings(window, app);
-  await setKanban(settings, true);
+  await setKanbanBoard(settings, true);
   await settingsTab(settings, "Kanban").click();
   const pane = settings.getByTestId("settings-kanban");
   await expect(pane).toContainText(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "));
@@ -74,10 +59,10 @@ test("turning Kanban on adds a Kanban tab with the board defaults, turning it of
   ]) await expect(limits).toContainText(line);
   // The only controls: Create backlog column and the Move backlog to shelf switch.
   await expect(pane.getByRole("button")).toHaveCount(3);
-  await expect(pane.getByLabel("Move backlog to shelf", { exact: true }).getByRole("button", { name: "Off", exact: true })).toHaveClass(/aya-settings-segment--active/);
+  await expect(backlogShelfButton(pane, false)).toHaveClass(/aya-settings-segment--active/);
   await window.screenshot({ path: testInfo.outputPath("settings-kanban-tab.png") });
 
-  await setKanban(settings, false);
+  await setKanbanBoard(settings, false);
   await expect(settingsTab(settings, "Kanban")).toHaveCount(0);
   await expect(settingsTab(settings, "General")).toBeVisible();
 });

@@ -4,19 +4,17 @@ import { join, resolve } from "node:path";
 import { test, expect } from "./fixtures";
 import { envWithoutAya } from "./helpers/env";
 import { AGENT_START_TIMEOUT_MS } from "./timeouts";
-import { populatedBoard } from "./helpers/kanban";
+import { openCardMenu, populatedBoard, readBoardFile, seedBoard } from "./helpers/board";
 
 const recorder = join(__dirname, "helpers", "pty-recorder.cjs");
 const fullBoard = populatedBoard();
 fullBoard.cards[0].title = "A task that can be withdrawn";
-test.use({ seedOptions: {
-  rightTab: { presetId: "board", name: "Board" },
+test.use({ seedOptions: seedBoard(fullBoard, {
   presetList: [{
     id: "shell", name: "Recorder", icon: "$", color: "",
     command: `'${process.execPath}' '${recorder}' "$AYA_PROJECT_DIR/rec-$AYA_TERMINAL_ID.jsonl"`,
   }],
-  ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(fullBoard) },
-} });
+}) });
 
 test("GUI and CLI withdrawals reach the real recipient PTY after the initial task", async ({ window, seeded }) => {
   const log = join(seeded.projectDir, `rec-${seeded.tabIds.left}.jsonl`);
@@ -24,7 +22,7 @@ test("GUI and CLI withdrawals reach the real recipient PTY after the initial tas
   const received = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line).b).join("");
   const card = window.getByTestId("kanban-card-t-1");
   const send = async () => {
-    await card.getByRole("button", { name: /Terminal/ }).click();
+    await openCardMenu(window, "t-1");
     await window.getByRole("menuitem", { name: /↪.*shell 1/ }).click();
     await expect(window.getByTestId("kanban-column-in-progress").getByTestId("kanban-card-t-1")).toBeVisible();
   };
@@ -60,7 +58,7 @@ test("GUI and CLI withdrawals reach the real recipient PTY after the initial tas
   // Notification arrives before the mutation commits. Wait for the completed
   // release rather than reading the file while delivery is still finishing.
   await expect(card.getByRole("button", { name: "Release card t-1", exact: true })).toHaveCount(0);
-  const stored = JSON.parse(readFileSync(join(seeded.ayaHome, "boards/e2e-proj.json"), "utf8"));
+  const stored = readBoardFile(seeded.ayaHome);
   expect(stored.cards.find((card: { id: string }) => card.id === "t-1").claim).toBeUndefined();
   expect(stored.cards.filter((card: { id: string }) => card.id !== "t-1")).toEqual(fullBoard.cards.filter(card => card.id !== "t-1"));
   expect((received().match(/Stop work on this task/g) ?? [])).toHaveLength(3);
@@ -70,7 +68,7 @@ test("GUI and CLI withdrawals reach the real recipient PTY after the initial tas
 test("starting a card in a new pane tracks its recipient for withdrawal", async ({ window, seeded }) => {
   await window.evaluate(() => window.aya.updateBoardCard({ projectSlug: "e2e-proj", cardId: "t-1", title: "New pane task" }));
   await expect(window.getByTestId("kanban-card-t-1")).toContainText("New pane task");
-  await window.getByTestId("kanban-card-t-1").getByRole("button", { name: /Terminal/ }).click();
+  await openCardMenu(window, "t-1");
   await window.getByRole("menuitem", { name: "$ Recorder", exact: true }).click();
   const current = () => window.evaluate(() => window.aya.getBoard("e2e-proj"));
   await expect.poll(async () => (await current()).cards.find(card => card.id === "t-1")?.claim?.paneId).toBeTruthy();
@@ -87,7 +85,7 @@ test("starting a card in a new pane tracks its recipient for withdrawal", async 
 test("withdrawing during new-pane startup cancels the delayed initial prompt", async ({ window, seeded }) => {
   await window.evaluate(() => window.aya.updateBoardCard({ projectSlug: "e2e-proj", cardId: "t-1", title: "Cancelled startup task" }));
   await expect(window.getByTestId("kanban-card-t-1")).toContainText("Cancelled startup task");
-  await window.getByTestId("kanban-card-t-1").getByRole("button", { name: /Terminal/ }).click();
+  await openCardMenu(window, "t-1");
   await window.getByRole("menuitem", { name: "$ Recorder", exact: true }).click();
   const current = () => window.evaluate(() => window.aya.getBoard("e2e-proj"));
   await expect.poll(async () => (await current()).cards.find(card => card.id === "t-1")?.claim?.paneId).toBeTruthy();
@@ -107,7 +105,7 @@ test("withdrawing during new-pane startup cancels the delayed initial prompt", a
 test("a pending startup survives renderer reload and its task is submitted only once", async ({ window, seeded }) => {
   await window.evaluate(() => window.aya.updateBoardCard({ projectSlug: "e2e-proj", cardId: "t-1", title: "Restored startup task" }));
   await expect(window.getByTestId("kanban-card-t-1")).toContainText("Restored startup task");
-  await window.getByTestId("kanban-card-t-1").getByRole("button", { name: /Terminal/ }).click();
+  await openCardMenu(window, "t-1");
   await window.getByRole("menuitem", { name: "$ Recorder", exact: true }).click();
   const saved = () => JSON.parse(readFileSync(join(seeded.ayaHome, "projects/e2e-proj.json"), "utf8"));
   await expect.poll(() => saved().tabs.some((tab: { initialBoardCard?: { cardId: string } }) => tab.initialBoardCard?.cardId === "t-1")).toBe(true);
