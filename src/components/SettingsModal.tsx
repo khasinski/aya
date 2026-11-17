@@ -13,6 +13,7 @@ import type { SettingsTab } from "../settings-tabs";
 import { MachinesSettings } from "./MachinesSettings";
 import { DiagnosticsTab } from "./settings/DiagnosticsTab";
 import { UpdatesTab } from "./settings/UpdatesTab";
+import { KanbanTab } from "./settings/KanbanTab";
 import { SettingsHeader, SettingsIcon } from "./settings/parts";
 import { GeneralTab } from "./settings/GeneralTab";
 import { useAgentHooks } from "./settings/useAgentHooks";
@@ -147,6 +148,10 @@ export function SettingsModal({
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+  // The Kanban tab exists only while the board is on; turning it off returns to General.
+  useEffect(() => {
+    if (!kanbanEnabled && activeTab === "kanban") setActiveTab("general");
+  }, [kanbanEnabled, activeTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -242,6 +247,8 @@ export function SettingsModal({
     { id: "updates", label: "Updates", icon: "system_update", dirty: false },
     { id: "diagnostics", label: "Diagnostics", icon: "monitor_heart", dirty: false },
     { id: "machines", label: "Machines", icon: "dns", dirty: false },
+    // Only while the board is on (General); off, Settings looks as it did before.
+    ...(kanbanEnabled ? [{ id: "kanban" as const, label: "Kanban", icon: "view_kanban", dirty: false }] : []),
     { id: "themes", label: "Themes", icon: "palette", dirty: themesDirty },
     { id: "presets", label: "Presets", icon: "terminal", dirty: presetsDirty },
     { id: "snippets", label: "Snippets", icon: "bolt", dirty: snippetsDirty },
@@ -354,6 +361,7 @@ export function SettingsModal({
             )}
 
             {activeTab === "updates" && <UpdatesTab isWeb={isWeb} />}
+            {activeTab === "kanban" && kanbanEnabled && <KanbanTab />}
 
             {activeTab === "machines" && (
               <section className="aya-settings-pane">

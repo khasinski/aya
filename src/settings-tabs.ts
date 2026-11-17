@@ -4,6 +4,7 @@ export type SettingsTab =
   | "updates"
   | "diagnostics"
   | "machines"
+  | "kanban"
   | "themes"
   | "presets"
   | "snippets";

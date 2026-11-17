@@ -2500,6 +2500,17 @@
 .aya-settings-rule-diagnostics p { margin: 4px 0; }
 .aya-settings-rule-diagnostics ul { margin: 0; padding-left: 20px; }
 .aya-settings-rule-diagnostics code { overflow-wrap: anywhere; font-family: var(--font-mono); }
+.aya-settings-box {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-primary);
+  font-size: 12px;
+}
+.aya-settings-box h3 { margin: 0 0 6px; font-size: 13px; }
+.aya-settings-box ul { margin: 0; padding-left: 20px; }
 .aya-settings-diagnostics-json {
   max-height: 220px;
   overflow: auto;

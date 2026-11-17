@@ -1,1 +1,1 @@
-export { gib, gibFromMiB } from "../shared/units.cjs";
+export { gib, gibFromMiB, mib } from "../shared/units.cjs";
