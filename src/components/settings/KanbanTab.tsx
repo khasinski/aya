@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, FIXED_RULES, isBacklogColumn } from "../../../shared/board-columns.cjs";
+import { DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
+import { useBacklogColumn } from "../../hooks/useBacklogColumn";
 import type { ProjectConfig } from "../../types";
 import {
   MAX_ASSIGNEE_CHARS,
@@ -11,10 +11,10 @@ import {
   MAX_CARD_LABELS,
   MAX_CARD_TITLE_CHARS,
   MAX_COLUMN_TITLE_CHARS,
-} from "../../main-mirrors";
+} from "../../../shared/board-limits.cjs";
 import { mib } from "../../units";
 import { PRIORITY_OPTIONS } from "../useKanbanBoard";
-import { SettingsHeader, SettingsRow } from "./parts";
+import { OnOffSwitch, SettingsHeader, SettingsRow } from "./parts";
 
 const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
@@ -25,30 +25,13 @@ const count = (n: number) => n.toLocaleString("en-US");
 /** The project Create backlog column works on. */
 export type KanbanProject = Pick<ProjectConfig, "slug" | "name">;
 
-export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
-  backlogEnabled: boolean;
-  onBacklogEnabledChange: (enabled: boolean) => void;
+export function KanbanTab({ backlogOnShelf, onBacklogOnShelfChange, project }: {
+  backlogOnShelf: boolean;
+  onBacklogOnShelfChange: (enabled: boolean) => void;
   /** The project whose board Create backlog column adds to; null when there is none. */
   project: KanbanProject | null;
 }) {
-  const projectSlug = project?.slug ?? null;
-  // Whether the current project's board has a Backlog column; null until known.
-  const [hasBacklogColumn, setHasBacklogColumn] = useState<boolean | null>(null);
-  useEffect(() => {
-    let live = true;
-    setHasBacklogColumn(null);
-    if (!projectSlug) return;
-    void window.aya.getBoard(projectSlug)
-      .then((board) => { if (live) setHasBacklogColumn(board.columns.some(isBacklogColumn)); })
-      .catch(() => undefined);
-    return () => { live = false; };
-  }, [projectSlug]);
-  const createBacklogColumn = () => {
-    if (!projectSlug) return;
-    void window.aya.addBoardColumn({ projectSlug, title: COLUMN_TITLES[COLUMN_IDS.backlog] })
-      .then((board) => setHasBacklogColumn(board.columns.some(isBacklogColumn)))
-      .catch(() => undefined);
-  };
+  const { hasBacklogColumn, createBacklogColumn, createError } = useBacklogColumn(project?.slug ?? null);
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
@@ -69,26 +52,21 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
                 >
                   Create backlog column
                 </button>
-                {hasBacklogColumn === true ? (
+                {createError ? (
+                  <span className="aya-settings-errors" role="alert">{createError}</span>
+                ) : hasBacklogColumn === true ? (
                   <span className="aya-settings-kanban-create-note">The board already has a Backlog column</span>
                 ) : (
                   project && hasBacklogColumn === false &&
                     <span className="aya-settings-kanban-create-note">Creates the Backlog column in {project.name}</span>
                 )}
               </span>
-              <div className="aya-settings-segmented" aria-label="Move backlog to shelf">
-                {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    disabled={enabled && hasBacklogColumn !== true}
-                    className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
-                    onClick={() => onBacklogEnabledChange(enabled)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <OnOffSwitch
+                label="Move backlog to shelf"
+                value={backlogOnShelf}
+                onChange={onBacklogOnShelfChange}
+                disabled={(enabled) => enabled && hasBacklogColumn !== true}
+              />
             </div>
           )}
         >

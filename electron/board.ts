@@ -15,9 +15,9 @@ import { oneAtATime } from "./keyed-queue";
 import { inputMayHaveBeenWritten } from "./pane-input-outcome";
 import { PROJECT_AYA_DIRNAME } from "./paths";
 import {
+  BACKLOG_COLUMN,
   COLUMN_DEFINITIONS,
   COLUMN_IDS,
-  COLUMN_TITLES,
   isBacklogColumn,
   DEFAULT_BOARD_COLUMNS as DICTIONARY_COLUMNS,
   FIXED_RULES,
@@ -26,6 +26,22 @@ import {
   isPendingColumn,
 } from "../shared/board-columns.cjs";
 import { BOARD_IMAGE_FORMATS, detectBoardImageFormat, listBoardImageFormats } from "../shared/board-images.cjs";
+import {
+  MAX_ASSIGNEE_CHARS,
+  MAX_BOARD_CARDS,
+  MAX_BOARD_COLUMNS,
+  MAX_BOARD_FILE_BYTES,
+  MAX_BOARD_IMAGE_BYTES,
+  MAX_CARD_DESCRIPTION_CHARS,
+  MAX_CARD_LABEL_CHARS,
+  MAX_CARD_LABELS,
+  MAX_CARD_TITLE_CHARS,
+  MAX_COLUMN_TITLE_CHARS,
+  MAX_PROJECT_RULES_BYTES,
+} from "../shared/board-limits.cjs";
+import { PRIORITY_VALUES } from "../shared/board-priorities.cjs";
+import { matchesBoardQuery as matchesQuery } from "../shared/board-query.cjs";
+import { BYTES_PER_MIB } from "../shared/units.cjs";
 import { boardTaskFooter, WITHDRAWAL_REASON, withProjectRules } from "./board-instructions";
 import { callerProject } from "./team-author";
 import { slugifyName } from "./text";
@@ -37,35 +53,32 @@ export const REPO_BOARD_FILE_NAME = "board.json";
 /** A project's own rules for agents, added under every task prompt; optional. */
 export const PROJECT_RULES_FILE_NAME = "board.md";
 export const BOARD_FORMAT_VERSION = 1;
-const BYTES_PER_MB = 1024 * 1024;
-export const MAX_BOARD_FILE_BYTES = 2 * BYTES_PER_MB;
-/** Every task prompt carries the rules, so they stay short. */
-export const MAX_PROJECT_RULES_BYTES = 16 * 1024;
-export const MAX_BOARD_IMAGE_BYTES = 8 * BYTES_PER_MB;
+/** The board limits live in shared/board-limits.cjs; tests and callers still import them from here. */
+export {
+  MAX_ASSIGNEE_CHARS,
+  MAX_BOARD_CARDS,
+  MAX_BOARD_COLUMNS,
+  MAX_BOARD_FILE_BYTES,
+  MAX_BOARD_IMAGE_BYTES,
+  MAX_CARD_DESCRIPTION_CHARS,
+  MAX_CARD_LABEL_CHARS,
+  MAX_CARD_LABELS,
+  MAX_CARD_TITLE_CHARS,
+  MAX_COLUMN_TITLE_CHARS,
+  MAX_PROJECT_RULES_BYTES,
+} from "../shared/board-limits.cjs";
 /** The image limit as users read it in messages. */
-const MAX_BOARD_IMAGE_MB = MAX_BOARD_IMAGE_BYTES / BYTES_PER_MB;
+const MAX_BOARD_IMAGE_MB = MAX_BOARD_IMAGE_BYTES / BYTES_PER_MIB;
 /** A data URL of an accepted image format, in any letter case. */
 const BOARD_IMAGE_DATA_URL = new RegExp(`^data:(?:${BOARD_IMAGE_FORMATS.map((format) => format.mime).join("|")});base64,`, "i");
-export const MAX_BOARD_COLUMNS = 24;
-export const MAX_BOARD_CARDS = 500;
-export const MAX_COLUMN_TITLE_CHARS = 80;
-export const MAX_CARD_TITLE_CHARS = 200;
-export const MAX_CARD_DESCRIPTION_CHARS = 16_000;
-export const MAX_ASSIGNEE_CHARS = 120;
-export const MAX_CARD_LABELS = 12;
-export const MAX_CARD_LABEL_CHARS = 32;
 
 const SLUG_RE = /^[a-z0-9_-]{1,80}$/;
 const ID_RE = /^[a-z0-9_-]{1,64}$/i;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const serial = oneAtATime();
 
-export const VALID_KANBAN_PRIORITIES: readonly KanbanPriority[] = [
-  "low",
-  "medium",
-  "high",
-  "urgent",
-];
+/** The priorities a card accepts, lowest first; shared/board-priorities.cjs defines them. */
+export const VALID_KANBAN_PRIORITIES: readonly KanbanPriority[] = PRIORITY_VALUES;
 
 export interface BoardSnapshot {
   version: 1;
@@ -297,6 +310,30 @@ function normalizeStoredCard(c: KanbanCard, includeArchivedAt: boolean): KanbanC
   };
 }
 
+/** Cards saved with the first backlog version's shelf mark need the Backlog column back.
+ *  With room for it the column is re-added (as the board's FIRST column, like Create adds it)
+ *  and the cards land there; on a board that already has the maximum number of columns there
+ *  is no room, so they return to the first column, where a card added without a column would
+ *  land. A Backlog column the user placed elsewhere is left where it is.
+ *  Changes `record.cards` and `columns`. */
+function migrateLegacyBacklogShelf(record: Record<string, unknown>, columns: KanbanColumn[], fileLabel: string): void {
+  if (!Array.isArray(record.cards)) return;
+  const marked = (c: unknown) => typeof c === "object" && c !== null && "shelf" in c;
+  if (!record.cards.some(marked)) return;
+  if (!record.cards.every((c) => !marked(c) || (c as { shelf: unknown }).shelf === LEGACY_BACKLOG_SHELF)) {
+    throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
+  }
+  let markedTarget: string = BACKLOG_COLUMN.id;
+  if (!columns.some(isBacklogColumn)) {
+    if (columns.length < MAX_BOARD_COLUMNS) {
+      columns.unshift({ ...BACKLOG_COLUMN });
+    } else {
+      markedTarget = fallbackColumn(columns)!.id;
+    }
+  }
+  record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: markedTarget } : c));
+}
+
 function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
   let parsed: unknown;
   try {
@@ -318,29 +355,7 @@ function parseStoredBoard(raw: string, fileLabel: string): StoredBoard {
     throw new Error(`${fileLabel} has invalid column definitions; nothing was changed.`);
   }
   const columns = record.columns.map((c) => ({ id: c.id, title: c.title.trim() }));
-  if (Array.isArray(record.cards)) {
-    const marked = (c: unknown) => typeof c === "object" && c !== null && "shelf" in c;
-    if (record.cards.some(marked)) {
-      if (!record.cards.every((c) => !marked(c) || (c as { shelf: unknown }).shelf === LEGACY_BACKLOG_SHELF)) {
-        throw new Error(`${fileLabel} has invalid card entries; nothing was changed.`);
-      }
-      // Shelf-marked cards need the Backlog column back. With room for it the
-      // column is re-added (as the board's FIRST column, like Create adds it)
-      // and the cards land there; on a board that already has the maximum
-      // number of columns there is no room, so they return to the first
-      // column, where a card added without a column would land. A Backlog
-      // column the user placed elsewhere is left where it is.
-      let markedTarget: string = COLUMN_IDS.backlog;
-      if (!columns.some(isBacklogColumn)) {
-        if (columns.length < MAX_BOARD_COLUMNS) {
-          columns.unshift({ id: COLUMN_IDS.backlog, title: COLUMN_TITLES[COLUMN_IDS.backlog] });
-        } else {
-          markedTarget = fallbackColumn(columns)!.id;
-        }
-      }
-      record.cards = record.cards.map((c) => (marked(c) ? { ...(c as object), columnId: markedTarget } : c));
-    }
-  }
+  migrateLegacyBacklogShelf(record, columns, fileLabel);
   const colIds = new Set(columns.map((c) => c.id));
   if (colIds.size !== columns.length) {
     throw new Error(`${fileLabel} has duplicate column ids; nothing was changed.`);
@@ -1670,100 +1685,13 @@ export function formatBoardText(board: BoardSnapshot): string {
   return `${lines.join("\n")}\n`;
 }
 
-const PRIORITY_TOKEN_MAP: Record<string, KanbanPriority> = {
-  p0: "urgent",
-  urgent: "urgent",
-  p1: "high",
-  high: "high",
-  p2: "medium",
-  medium: "medium",
-  p3: "low",
-  low: "low",
-};
-
+/** `aya board search`: shared/board-query.cjs, the query language the board filter uses too. */
 export function matchesBoardQuery(
   card: KanbanCard,
   rawQuery: string,
   options?: { isArchived?: boolean },
 ): boolean {
-  const trimmed = rawQuery.trim().toLowerCase();
-  if (!trimmed) return true;
-  const isArchived = options?.isArchived ?? Boolean(card.archivedAt);
-  const tokens = trimmed.split(/\s+/).filter(Boolean);
-  for (const token of tokens) {
-    if (token.startsWith("#") && token.length > 1) {
-      const needle = token.slice(1);
-      if (!card.labels?.some((l) => l.toLowerCase().includes(needle))) return false;
-      continue;
-    }
-    if ((token.startsWith("label:") || token.startsWith("tag:")) && token.includes(":")) {
-      const needle = token.slice(token.indexOf(":") + 1);
-      if (!needle) continue;
-      if (!card.labels?.some((l) => l.toLowerCase().includes(needle))) return false;
-      continue;
-    }
-    if (token.startsWith("@") && token.length > 1) {
-      const needle = token.slice(1);
-      const assigneeMatch = card.assignee?.toLowerCase().includes(needle) ?? false;
-      const claimMatch = card.claim?.paneName.toLowerCase().includes(needle) ?? false;
-      if (!assigneeMatch && !claimMatch) return false;
-      continue;
-    }
-    if (token.startsWith("assignee:") || token.startsWith("owner:")) {
-      const needle = token.slice(token.indexOf(":") + 1);
-      if (!needle) continue;
-      const assigneeMatch = card.assignee?.toLowerCase().includes(needle) ?? false;
-      const claimMatch = card.claim?.paneName.toLowerCase().includes(needle) ?? false;
-      if (!assigneeMatch && !claimMatch) return false;
-      continue;
-    }
-    if (token in PRIORITY_TOKEN_MAP && (token === "p0" || token === "p1" || token === "p2" || token === "p3")) {
-      if (card.priority !== PRIORITY_TOKEN_MAP[token]) return false;
-      continue;
-    }
-    if (token.startsWith("p:") || token.startsWith("priority:")) {
-      const rawP = token.slice(token.indexOf(":") + 1);
-      const mapped = PRIORITY_TOKEN_MAP[rawP];
-      if (mapped) {
-        if (card.priority !== mapped) return false;
-        continue;
-      }
-      if ((card.priority?.toLowerCase() ?? "") !== rawP) return false;
-      continue;
-    }
-    if (token.startsWith("col:") || token.startsWith("column:")) {
-      const needle = token.slice(token.indexOf(":") + 1);
-      if (needle && !card.columnId.toLowerCase().includes(needle)) return false;
-      continue;
-    }
-    if (token === "is:archived" || token === "in:archive") {
-      if (!isArchived) return false;
-      continue;
-    }
-    if (token === "is:active" || token === "is:open") {
-      if (isArchived) return false;
-      continue;
-    }
-    if (token === "is:claimed") {
-      if (!card.claim) return false;
-      continue;
-    }
-    if (token === "is:unassigned") {
-      if (card.claim || card.assignee) return false;
-      continue;
-    }
-    const matchesFreeText =
-      card.id.toLowerCase().includes(token) ||
-      card.title.toLowerCase().includes(token) ||
-      (card.description?.toLowerCase().includes(token) ?? false) ||
-      card.columnId.toLowerCase().includes(token) ||
-      (card.assignee?.toLowerCase().includes(token) ?? false) ||
-      (card.claim?.paneName.toLowerCase().includes(token) ?? false) ||
-      (card.priority?.toLowerCase().includes(token) ?? false) ||
-      (card.labels?.some((l) => l.toLowerCase().includes(token)) ?? false);
-    if (!matchesFreeText) return false;
-  }
-  return true;
+  return matchesQuery(card, rawQuery, options?.isArchived);
 }
 
 export async function searchBoard(
@@ -1808,8 +1736,10 @@ function formatSearchCardLine(card: KanbanCard, prefixLabel: string): string {
 
 // ---- CLI (`aya board ...`) ----
 
+/** The priorities as the usage lists them. */
+const PRIORITY_CHOICES = PRIORITY_VALUES.join("|");
 const BOARD_USAGE =
-  "usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <low|medium|high|urgent>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <low|medium|high|urgent|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]";
+  `usage: aya board [--json] [--project slug] | search <query> [--archive|--active] [--json] [--project slug] | columns [--json] [--project slug] | add <title> [--column <col>] [--description <text>] [--assignee <name>] [--priority <${PRIORITY_CHOICES}>] [--labels <a,b>] [--project slug] | move <id> <column> [--project slug] | edit <id> [--title <title>] [--description <text>] [--assignee <name|none>] [--priority <${PRIORITY_CHOICES}|none>] [--labels <a,b|none>] [--project slug] | remove <id> [--project slug] | clear <column> [--project slug] | archive [list|<id>|restore <id> [column]|clear|search <query>] [--project slug] | claim <id> [--replace] [--project slug] | release <id> [--force] [--project slug] | column add|rename|remove ... [--project slug] | column move <column> --before|--after <other-column> [--project slug] | export-repo [--project slug]`;
 
 export interface BoardControlRequest {
   argv: string[];

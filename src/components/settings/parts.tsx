@@ -68,3 +68,72 @@ export function SettingsRow({
     </div>
   );
 }
+
+/** A row of buttons, one per option, where the button of the current value is active. */
+export function Segmented<T extends string | boolean>({
+  label,
+  options,
+  value,
+  onChange,
+  disabled,
+  buttonTestId,
+}: {
+  /** The group's aria-label. */
+  label: string;
+  /** Each option's value and button text, in display order. */
+  options: ReadonlyArray<readonly [T, string]>;
+  value: T;
+  onChange: (value: T) => void;
+  /** All buttons, or, as a function, the buttons of the options it returns true for. */
+  disabled?: boolean | ((option: T) => boolean);
+  buttonTestId?: string;
+}) {
+  return (
+    <div className="aya-settings-segmented" aria-label={label}>
+      {options.map(([option, text]) => (
+        <button
+          key={String(option)}
+          data-testid={buttonTestId}
+          type="button"
+          disabled={typeof disabled === "function" ? disabled(option) : disabled}
+          className={`aya-settings-segment ${
+            value === option ? "aya-settings-segment--active" : ""
+          }`}
+          onClick={() => onChange(option)}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const ON_OFF_OPTIONS = [
+  [true, "On"],
+  [false, "Off"],
+] as const;
+
+/** The On/Off switch of a boolean setting. */
+export function OnOffSwitch({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  /** The switch's aria-label. */
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+  /** Both buttons, or, as a function, the button whose value it returns true for. */
+  disabled?: boolean | ((value: boolean) => boolean);
+}) {
+  return (
+    <Segmented<boolean>
+      label={label}
+      options={ON_OFF_OPTIONS}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+    />
+  );
+}

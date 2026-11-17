@@ -3,9 +3,27 @@ import { PRESET_ID_SHELL } from "../../preset-ids";
 import { type LayoutMode, type Preset, type UsageHookStatus, type StatusHookStatus, type OmarchyStatus } from "../../types";
 import { type MacOptionKeyMode } from "../../terminal-option-key";
 import { type TerminalSoundCue } from "../../terminal-sound-prefs";
-import { SettingsHeader, SettingsRow } from "./parts";
+import { OnOffSwitch, Segmented, SettingsHeader, SettingsRow } from "./parts";
 import { AyaWebRow } from "./AyaWebRow";
 import { CliRow, MicrophoneRow, NotificationsRow } from "./SystemRows";
+
+const MAC_OPTION_KEY_OPTIONS: ReadonlyArray<readonly [MacOptionKeyMode, string]> = [
+  ["right-option-compose", "Right Option composes"],
+  ["option-as-meta", "All Option = Meta"],
+];
+const USAGE_ICON_OPTIONS: ReadonlyArray<readonly [boolean, string]> = [
+  [true, "Show names"],
+  [false, "Compact rings"],
+];
+const GITHUB_LINK_OPTIONS: ReadonlyArray<readonly [boolean, string]> = [
+  [true, "Show"],
+  [false, "Hide"],
+];
+const WINDOW_LAYOUT_OPTIONS: ReadonlyArray<readonly [LayoutMode, string]> = [
+  ["classic", "Projects on top"],
+  ["projects-left", "Projects on left"],
+  ["stacked", "Stacked"],
+];
 
 interface GeneralTabProps {
   omarchy: OmarchyStatus | null;
@@ -176,26 +194,13 @@ export function GeneralTab({
     icon="keyboard_option_key"
     title="Mac Option key"
     control={(
-    <div className="aya-settings-segmented" aria-label="Mac Option key">
-    {([
-      ["right-option-compose", "Right Option composes"],
-      ["option-as-meta", "All Option = Meta"],
-    ] as const).map(([mode, label]) => (
-      <button
-        key={mode}
-        data-testid="mac-option-segment"
-        type="button"
-        className={`aya-settings-segment ${
-          macOptionKeyMode === mode
-            ? "aya-settings-segment--active"
-            : ""
-        }`}
-        onClick={() => onMacOptionKeyModeChange(mode)}
-      >
-        {label}
-      </button>
-    ))}
-    </div>
+    <Segmented
+      label="Mac Option key"
+      options={MAC_OPTION_KEY_OPTIONS}
+      value={macOptionKeyMode}
+      onChange={onMacOptionKeyModeChange}
+      buttonTestId="mac-option-segment"
+    />
     )}
     >
     Left Option as Meta, right Option for accents.
@@ -205,25 +210,12 @@ export function GeneralTab({
     icon="donut_large"
     title="Display harness name in usage icons"
     control={(
-    <div className="aya-settings-segmented" aria-label="Usage icons">
-      {([
-        [true, "Show names"],
-        [false, "Compact rings"],
-      ] as const).map(([show, label]) => (
-        <button
-          key={String(show)}
-          type="button"
-          className={`aya-settings-segment ${
-            showUsageHarnessName === show
-              ? "aya-settings-segment--active"
-              : ""
-          }`}
-          onClick={() => onShowUsageHarnessNameChange(show)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <Segmented
+      label="Usage icons"
+      options={USAGE_ICON_OPTIONS}
+      value={showUsageHarnessName}
+      onChange={onShowUsageHarnessNameChange}
+    />
     )}
     >
     Show Claude/Codex names in the top-bar usage icons, or use compact
@@ -233,25 +225,12 @@ export function GeneralTab({
     icon="merge"
     title="GitHub link in the status bar"
     control={(
-    <div className="aya-settings-segmented" aria-label="GitHub link">
-      {([
-        [true, "Show"],
-        [false, "Hide"],
-      ] as const).map(([show, label]) => (
-        <button
-          key={String(show)}
-          type="button"
-          className={`aya-settings-segment ${
-            showGitHubLink === show
-              ? "aya-settings-segment--active"
-              : ""
-          }`}
-          onClick={() => onShowGitHubLinkChange(show)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <Segmented
+      label="GitHub link"
+      options={GITHUB_LINK_OPTIONS}
+      value={showGitHubLink}
+      onChange={onShowGitHubLinkChange}
+    />
     )}
     >
     Show a link to the current branch's pull request next to the branch
@@ -269,24 +248,12 @@ export function GeneralTab({
     </>
     }
     control={(
-    <div className="aya-settings-segmented" aria-label="Window layout">
-      {([
-        ["classic", "Projects on top"],
-        ["projects-left", "Projects on left"],
-        ["stacked", "Stacked"],
-      ] as const).map(([mode, label]) => (
-        <button
-          key={mode}
-          type="button"
-          className={`aya-settings-segment ${
-            layoutMode === mode ? "aya-settings-segment--active" : ""
-          }`}
-          onClick={() => onLayoutModeChange(mode)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <Segmented
+      label="Window layout"
+      options={WINDOW_LAYOUT_OPTIONS}
+      value={layoutMode}
+      onChange={onLayoutModeChange}
+    />
     )}
     >
     Classic keeps project tabs on top with the terminal list on the
@@ -304,28 +271,11 @@ export function GeneralTab({
     </>
     }
     control={(
-    <div
-      className="aya-settings-segmented"
-      aria-label="Harness-aware search"
-    >
-      {([
-        [true, "On"],
-        [false, "Off"],
-      ] as const).map(([enabled, label]) => (
-        <button
-          key={String(enabled)}
-          type="button"
-          className={`aya-settings-segment ${
-            harnessSearchEnabled === enabled
-              ? "aya-settings-segment--active"
-              : ""
-          }`}
-          onClick={() => onHarnessSearchEnabledChange(enabled)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <OnOffSwitch
+      label="Harness-aware search"
+      value={harnessSearchEnabled}
+      onChange={onHarnessSearchEnabledChange}
+    />
     )}
     >
     Adds a History mode to the find bar (Cmd+F) in Claude Code and
@@ -342,28 +292,11 @@ export function GeneralTab({
     </>
     }
     control={(
-    <div
-      className="aya-settings-segmented"
-      aria-label="Kanban board"
-    >
-      {([
-        [true, "On"],
-        [false, "Off"],
-      ] as const).map(([enabled, label]) => (
-        <button
-          key={String(enabled)}
-          type="button"
-          className={`aya-settings-segment ${
-            kanbanEnabled === enabled
-              ? "aya-settings-segment--active"
-              : ""
-          }`}
-          onClick={() => onKanbanEnabledChange(enabled)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <OnOffSwitch
+      label="Kanban board"
+      value={kanbanEnabled}
+      onChange={onKanbanEnabledChange}
+    />
     )}
     >
     Built-in per-project Kanban board alongside your terminals and in
@@ -438,25 +371,11 @@ export function GeneralTab({
     icon="volume_up"
     title="Terminal sounds"
     control={(
-    <div className="aya-settings-segmented" aria-label="Terminal sounds">
-      {([
-        [true, "On"],
-        [false, "Off"],
-      ] as const).map(([on, label]) => (
-        <button
-          key={String(on)}
-          type="button"
-          className={`aya-settings-segment ${
-            terminalSoundsEnabled === on
-              ? "aya-settings-segment--active"
-              : ""
-          }`}
-          onClick={() => onTerminalSoundsEnabledChange(on)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <OnOffSwitch
+      label="Terminal sounds"
+      value={terminalSoundsEnabled}
+      onChange={onTerminalSoundsEnabledChange}
+    />
     )}
     >
     Play a short chime when a terminal starts waiting for you, and

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { localSummaryUnavailableMessage } from "../../local-summary-errors";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../../ollama-defaults";
 import { type AyaIntelligenceConfig, type OllamaStatus } from "../../types";
-import { SettingsHeader, SettingsIcon } from "./parts";
+import { OnOffSwitch, SettingsHeader, SettingsIcon } from "./parts";
 
 interface IntelligenceTabProps {
   localSummariesEnabled: boolean;
@@ -112,25 +112,11 @@ export function IntelligenceTab({
         <div className="aya-intelligence-grid">
           <div className="aya-intelligence-field">
             <label>Summaries</label>
-            <div className="aya-settings-segmented" aria-label="Aya Intelligence">
-              {([
-                [true, "On"],
-                [false, "Off"],
-              ] as const).map(([enabled, label]) => (
-                <button
-                  key={String(enabled)}
-                  type="button"
-                  className={`aya-settings-segment ${
-                    localSummariesEnabled === enabled
-                      ? "aya-settings-segment--active"
-                      : ""
-                  }`}
-                  onClick={() => onLocalSummariesEnabledChange(enabled)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <OnOffSwitch
+              label="Aya Intelligence"
+              value={localSummariesEnabled}
+              onChange={onLocalSummariesEnabledChange}
+            />
           </div>
           <div className="aya-intelligence-field">
             <label>Provider</label>

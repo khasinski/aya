@@ -1,6 +1,6 @@
 import { isFinishedColumn } from "../../shared/board-columns.cjs";
 import "./kanban.css";
-import { extractChecklistProgress, KanbanCardMarkdown, livePaneDotInfo } from './KanbanCardContent';
+import { extractChecklistProgress, isLongCardDescription, KanbanCardMarkdown, livePaneDotInfo } from './KanbanCardContent';
 import { columnDotClass, PRIORITY_OPTIONS, type KanbanViewModel } from './useKanbanBoard';
 type KanbanColumnsProps = Pick<
   KanbanViewModel,
@@ -510,10 +510,7 @@ export function KanbanColumns(props: KanbanColumnsProps) {
 
               const isMenuOpen = cardMenu?.cardId === card.id;
               const isExpanded = Boolean(expandedCards[card.id]);
-              const isLongDesc =
-                Boolean(card.description) &&
-                (card.description!.length > 180 ||
-                  card.description!.split(/\r?\n/).length > 4);
+              const isLongDesc = isLongCardDescription(card.description);
               const checklist = extractChecklistProgress(
                 card.description,
               );
