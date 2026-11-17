@@ -1,21 +1,16 @@
 import { test, expect } from "./fixtures";
+import { boardCard, seedBoard } from "./helpers/board";
 
 // The board treats a column as finished work when its id is "done" or its title
 // reads "Done": only there can cards be archived, one by one or all at once.
 // Column ids and titles stay literal here: they are what board files store.
-const card = (id: string, columnId: string) => ({
-  id, title: `Card ${id}`, columnId,
-  createdAt: "2026-11-12T10:00:00.000Z", updatedAt: "2026-11-12T10:00:00.000Z",
-});
+const card = (id: string, columnId: string) => boardCard(id, `Card ${id}`, { columnId });
 const board = {
   version: 1,
   columns: [{ id: "todo", title: "Todo" }, { id: "done", title: "Done" }, { id: "shipped", title: "Done" }],
   cards: [card("t-1", "todo"), card("t-2", "done"), card("t-3", "shipped")],
 };
-test.use({ seedOptions: {
-  rightTab: { presetId: "board", name: "Board" },
-  ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) },
-} });
+test.use({ seedOptions: seedBoard(board) });
 
 test("only a Done column offers to archive its cards, by id or by title", async ({ window }) => {
   for (const [columnId, cardId] of [["done", "t-2"], ["shipped", "t-3"]] as const) {

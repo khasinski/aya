@@ -3,22 +3,20 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { test, expect } from "./fixtures";
 import { envWithoutAya } from "./helpers/env";
-import { populatedBoard } from "./helpers/kanban";
+import { BOARD_FILE, BOARD_TAB, boardCard, populatedBoard, seedBoard } from "./helpers/board";
 
-const originalCard = {
-  id: "t-1", title: "Existing task", description: "Keep this card in Todo",
-  columnId: "todo", createdAt: "2026-11-11T10:00:00.000Z", updatedAt: "2026-11-11T10:00:00.000Z",
-};
+const originalCard = boardCard("t-1", "Existing task", { description: "Keep this card in Todo" });
 const filled = populatedBoard();
 const cards = [originalCard, ...filled.cards.filter(card => card.id !== originalCard.id)];
-const existingBoard = JSON.stringify({ ...filled, cards });
+const existingBoard = { ...filled, cards };
+/** The board a repository keeps for itself, relative to the project dir. */
+const REPO_BOARD_FILE = ".aya/board.json";
 
 for (const repo of [false, true]) {
   test.describe(repo ? "repo board" : "user board", () => {
-    test.use({ seedOptions: {
-      singleTab: { presetId: "board", name: "Board" },
-      ...(repo ? { projectFiles: { ".aya/board.json": existingBoard } } : { ayaHomeFiles: { "boards/e2e-proj.json": existingBoard } }),
-    } });
+    test.use({ seedOptions: repo
+      ? { singleTab: BOARD_TAB, projectFiles: { [REPO_BOARD_FILE]: JSON.stringify(existingBoard) } }
+      : seedBoard(existingBoard, { pane: "single" }) });
 
     test("add Backlog (it goes first), reorder with GUI and CLI, and reload", async ({ window, seeded }, testInfo) => {
       const titles = window.locator(".aya-kanban-column-title");
@@ -56,7 +54,7 @@ for (const repo of [false, true]) {
       });
       expect(output).toContain("moved column backlog after done");
       await expect(titles).toHaveText([...initialOrder, "Backlog"]);
-      const file = repo ? join(seeded.projectDir, ".aya/board.json") : join(seeded.ayaHome, "boards/e2e-proj.json");
+      const file = repo ? join(seeded.projectDir, REPO_BOARD_FILE) : join(seeded.ayaHome, BOARD_FILE);
       expect(JSON.parse(readFileSync(file, "utf8")).cards).toEqual(cards);
       await expect(window.locator(".aya-kanban-error")).toHaveCount(0);
     });

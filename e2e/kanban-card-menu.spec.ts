@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, launchApp, closeAndWait } from "./fixtures";
-import { populatedBoard } from "./helpers/kanban";
+import { openCardMenu, populatedBoard, seedBoard } from "./helpers/board";
 
 const board = populatedBoard(14, true);
 for (const scenario of [
@@ -11,11 +11,10 @@ for (const scenario of [
   { name: "long menu in a narrow split pane", roles: 7, presets: 12, column: 5, split: true, longNames: false },
 ]) {
 test.describe(scenario.name, () => {
-test.use({ seedOptions: {
-  singleTab: { presetId: "board", name: "Board" },
+test.use({ seedOptions: seedBoard(board, {
+  pane: "single",
   presetList: Array.from({ length: scenario.presets }, (_, i) => ({ id: `preset-${i}`, name: `Preset ${i}`, icon: "$", color: "", command: "$SHELL" })),
-  ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) },
-} });
+}) });
 
 test("a full board keeps assignment choices inside the viewport and selectable after resize", async ({ seeded }, testInfo) => {
   const projectPath = join(seeded.ayaHome, "projects/e2e-proj.json");
@@ -65,16 +64,15 @@ test("a full board keeps assignment choices inside the viewport and selectable a
 }
 
 test.describe("GUI presets without board-task startup support", () => {
-  test.use({ seedOptions: {
-    singleTab: { presetId: "board", name: "Board" },
+  test.use({ seedOptions: seedBoard(board, {
+    pane: "single",
     presetList: [
       { id: "gui", name: "Unsupported GUI start", icon: "◆", color: "", command: "codex", agent: "codex", interfaceMode: "gui" },
       { id: "shell", name: "Supported terminal", icon: "$", color: "", command: "$SHELL" },
     ],
-    ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) },
-  } });
+  }) });
   test("does not offer an action that would leave a phantom reservation", async ({ window }) => {
-    await window.getByTestId("kanban-card-t-1").getByRole("button", { name: /Terminal/ }).click();
+    await openCardMenu(window, "t-1");
     await expect(window.getByRole("menuitem", { name: /Unsupported GUI start/ })).toHaveCount(0);
     await expect(window.getByRole("menuitem", { name: /Supported terminal/ })).toHaveCount(1);
     const snapshot = await window.evaluate(() => window.aya.getBoard("e2e-proj"));

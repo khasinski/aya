@@ -1,15 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, launchApp, closeAndWait } from "./fixtures";
-import { KANBAN_STORAGE_KEY, LAYOUT_MODE_STORAGE_KEY } from "../src/storage-keys";
+import { reloadWithKanban } from "./helpers/board";
 
 for (const layout of ["projects-left", "stacked", "classic"]) {
   test(`Kanban launcher stays outside drag regions and opens its board in ${layout}`, async ({ window, seeded }, testInfo) => {
-    await window.evaluate(({ layoutKey, kanbanKey, layout }) => {
-      localStorage.setItem(layoutKey, layout);
-      localStorage.setItem(kanbanKey, "1");
-    }, { layoutKey: LAYOUT_MODE_STORAGE_KEY, kanbanKey: KANBAN_STORAGE_KEY, layout });
-    await window.reload();
+    await reloadWithKanban(window, layout);
     const button = window.getByRole("button", { name: "Kanban", exact: true });
     await expect(button).toBeVisible();
     // Browser-dispatched mouse events bypass Electron's native drag hit test.
@@ -56,11 +52,7 @@ test("a crowded strip keeps the Kanban label readable and its keyboard focus ins
   try {
     const window = await app.firstWindow();
     await window.setViewportSize({ width: 1000, height: 700 });
-    await window.evaluate(({ layoutKey, kanbanKey }) => {
-      localStorage.setItem(layoutKey, "projects-left");
-      localStorage.setItem(kanbanKey, "1");
-    }, { layoutKey: LAYOUT_MODE_STORAGE_KEY, kanbanKey: KANBAN_STORAGE_KEY });
-    await window.reload();
+    await reloadWithKanban(window, "projects-left");
     const button = window.getByRole("button", { name: "Kanban", exact: true });
     await window.keyboard.press("Tab");
     await button.focus();

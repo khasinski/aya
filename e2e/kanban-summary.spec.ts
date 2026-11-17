@@ -3,9 +3,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { test, expect } from "./fixtures";
 import { envWithoutAya } from "./helpers/env";
-import { APP_THEME_STORAGE_KEY, KANBAN_STORAGE_KEY, LAYOUT_MODE_STORAGE_KEY } from "../src/storage-keys";
+import { BOARD_FILE, boardCard, boardFiles, reloadWithKanban } from "./helpers/board";
+import { APP_THEME_STORAGE_KEY } from "../src/storage-keys";
 
-const card = (id: string, columnId: string) => ({ id, columnId, title: id, createdAt: "2026-11-15T10:00:00.000Z", updatedAt: "2026-11-15T10:00:00.000Z" });
+const card = (id: string, columnId: string) => boardCard(id, id, { columnId });
 const board = {
   version: 1,
   columns: [{ id: "backlog", title: "Backlog" }, { id: "doing", title: "Doing" }, { id: "done", title: "Done" }],
@@ -15,13 +16,9 @@ const board = {
 
 for (const layout of ["projects-left", "stacked", "classic"]) {
   test.describe(layout, () => {
-    test.use({ seedOptions: { secondProject: true, ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) } } });
+    test.use({ seedOptions: { secondProject: true, ayaHomeFiles: boardFiles(board) } });
     test("summary follows CLI moves, undo, column renames and the active project without opening the board", async ({ window, seeded }, testInfo) => {
-      await window.evaluate(({ layoutKey, kanbanKey, layout }) => {
-        localStorage.setItem(layoutKey, layout);
-        localStorage.setItem(kanbanKey, "1");
-      }, { layoutKey: LAYOUT_MODE_STORAGE_KEY, kanbanKey: KANBAN_STORAGE_KEY, layout });
-      await window.reload();
+      await reloadWithKanban(window, layout);
       const launcher = window.getByRole("button", { name: "Kanban", exact: true });
       await expect(launcher).toHaveAttribute("aria-description", "Backlog: 2 · Doing: 1");
       await expect(window.getByTestId("kanban-pane")).toHaveCount(0);
@@ -64,33 +61,25 @@ for (const layout of ["projects-left", "stacked", "classic"]) {
 }
 
 test.describe("unreadable board", () => {
-  test.use({ seedOptions: { ayaHomeFiles: { "boards/e2e-proj.json": "invalid json" } } });
+  test.use({ seedOptions: { ayaHomeFiles: { [BOARD_FILE]: "invalid json" } } });
   test("shows unavailable instead of an empty board and recovers on the next change", async ({ window, seeded }) => {
-    await window.evaluate(({ layoutKey, kanbanKey }) => {
-      localStorage.setItem(layoutKey, "projects-left");
-      localStorage.setItem(kanbanKey, "1");
-    }, { layoutKey: LAYOUT_MODE_STORAGE_KEY, kanbanKey: KANBAN_STORAGE_KEY });
-    await window.reload();
+    await reloadWithKanban(window, "projects-left");
     const summary = window.getByTestId("kanban-tab-summary");
     await expect(summary).toHaveText("Board unavailable");
-    writeFileSync(join(seeded.ayaHome, "boards/e2e-proj.json"), JSON.stringify(board));
+    writeFileSync(join(seeded.ayaHome, BOARD_FILE), JSON.stringify(board));
     await window.evaluate(() => window.aya.moveBoardCard({ projectSlug: "e2e-proj", cardId: "t-1", columnId: "done" }));
     await expect(summary).toHaveText("Backlog: 1 · Doing: 1 · Done: 1");
   });
 });
 
 test.describe("external board changes", () => {
-  test.use({ seedOptions: { ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) } } });
+  test.use({ seedOptions: { ayaHomeFiles: boardFiles(board) } });
   test("opening the board refreshes a summary after a direct file change", async ({ window, seeded }) => {
-    await window.evaluate(({ layoutKey, kanbanKey }) => {
-      localStorage.setItem(layoutKey, "projects-left");
-      localStorage.setItem(kanbanKey, "1");
-    }, { layoutKey: LAYOUT_MODE_STORAGE_KEY, kanbanKey: KANBAN_STORAGE_KEY });
-    await window.reload();
+    await reloadWithKanban(window, "projects-left");
     const launcher = window.getByRole("button", { name: "Kanban", exact: true });
     await expect(launcher).toHaveAttribute("aria-description", "Backlog: 2 · Doing: 1");
     const changed = { ...board, cards: board.cards.map(card => ({ ...card, columnId: "done" })) };
-    writeFileSync(join(seeded.ayaHome, "boards/e2e-proj.json"), JSON.stringify(changed));
+    writeFileSync(join(seeded.ayaHome, BOARD_FILE), JSON.stringify(changed));
     await launcher.focus();
     await window.keyboard.press("Enter");
     await expect(window.getByTestId("kanban-column-done").locator(".aya-kanban-card")).toHaveCount(3);
@@ -115,15 +104,10 @@ test.describe("five populated columns", () => {
       description: "Implementation, verification and delivery of a project task.",
     }))),
   };
-  test.use({ seedOptions: { ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(fiveColumnBoard) } } });
+  test.use({ seedOptions: { ayaHomeFiles: boardFiles(fiveColumnBoard) } });
   test("keeps a five-status summary within its tab at wide and narrow window sizes", async ({ window }, testInfo) => {
     await window.setViewportSize({ width: 1920, height: 850 });
-    await window.evaluate(({ layoutKey, kanbanKey, themeKey }) => {
-      localStorage.setItem(layoutKey, "projects-left");
-      localStorage.setItem(kanbanKey, "1");
-      localStorage.setItem(themeKey, "dark");
-    }, { layoutKey: LAYOUT_MODE_STORAGE_KEY, kanbanKey: KANBAN_STORAGE_KEY, themeKey: APP_THEME_STORAGE_KEY });
-    await window.reload();
+    await reloadWithKanban(window, "projects-left", { [APP_THEME_STORAGE_KEY]: "dark" });
     const launcher = window.getByRole("button", { name: "Kanban", exact: true });
     const expected = "Backlog: 12 · Todo: 8 · In Progress: 3 · Review: 2 · Done: 21";
     await expect(launcher.getByTestId("kanban-tab-summary")).toHaveText(expected);

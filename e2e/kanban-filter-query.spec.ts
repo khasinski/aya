@@ -1,32 +1,26 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
+import { boardCard, BOARD_SEED_TIME, openShelf, seedBoard } from "./helpers/board";
 
 // Pins the board filter's query language as it works today (#label, label:,
 // @owner, p0-p3, col:, is:archived, free text). The archive shelf reuses it.
 // Card ids, labels and the query tokens are the external contract users type.
-const at = "2026-11-12T10:00:00.000Z";
-const card = (id: string, title: string, columnId: string, extra: Record<string, unknown> = {}) => ({
-  id, title, columnId, createdAt: at, updatedAt: at, ...extra,
-});
 const board = {
   version: 1,
   columns: [{ id: "todo", title: "Todo" }, { id: "done", title: "Done" }],
   cards: [
-    card("t-1", "Fix auth timeout", "todo", { labels: ["auth"], priority: "high", assignee: "alice" }),
-    card("t-2", "Write docs", "done", { labels: ["docs"], priority: "low" }),
-    card("t-3", "Refactor parser", "todo", { priority: "urgent", assignee: "bob" }),
+    boardCard("t-1", "Fix auth timeout", { columnId: "todo", labels: ["auth"], priority: "high", assignee: "alice" }),
+    boardCard("t-2", "Write docs", { columnId: "done", labels: ["docs"], priority: "low" }),
+    boardCard("t-3", "Refactor parser", { columnId: "todo", priority: "urgent", assignee: "bob" }),
   ],
   archivedCards: [
-    card("t-4", "Old auth fix", "done", { labels: ["auth"], archivedAt: at }),
-    card("t-5", "Old release", "done", { archivedAt: at }),
+    boardCard("t-4", "Old auth fix", { columnId: "done", labels: ["auth"], archivedAt: BOARD_SEED_TIME }),
+    boardCard("t-5", "Old release", { columnId: "done", archivedAt: BOARD_SEED_TIME }),
   ],
 };
 const BOARD_IDS = ["t-1", "t-2", "t-3"];
 const ARCHIVED_IDS = ["t-4", "t-5"];
-test.use({ seedOptions: {
-  rightTab: { presetId: "board", name: "Board" },
-  ayaHomeFiles: { "boards/e2e-proj.json": JSON.stringify(board) },
-} });
+test.use({ seedOptions: seedBoard(board) });
 
 async function expectShown(window: Page, testIdPrefix: string, all: string[], shown: string[]) {
   for (const id of all) {
@@ -49,8 +43,7 @@ const CASES: { query: string; board: string[]; archive: string[] }[] = [
 
 test("the board filter narrows board and archived cards by its query language", async ({ window }) => {
   const filter = window.getByRole("searchbox", { name: "Filter cards" });
-  await window.getByTestId("kanban-archive-toggle").click();
-  await expect(window.getByTestId("kanban-archive-drawer")).toBeVisible();
+  await expect(await openShelf(window)).toBeVisible();
   for (const { query, board: onBoard, archive } of CASES) {
     await test.step(query, async () => {
       await filter.fill(query);

@@ -1,6 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, launchApp, closeAndWait } from "./fixtures";
+import { reloadWithKanban } from "./helpers/board";
 import { seedCodexGui } from "./helpers/codex-gui";
 
 for (const layout of ["classic", "projects-left", "stacked"]) {
@@ -10,11 +11,7 @@ for (const layout of ["classic", "projects-left", "stacked"]) {
     try {
       const page = await app.firstWindow();
       await expect(page.locator(".aya-conversation header").getByRole("status")).toHaveText("Ready");
-      await page.evaluate(layout => {
-        localStorage.setItem("aya:kanban", "1");
-        localStorage.setItem("aya:layout-mode", layout);
-      }, layout);
-      await page.reload();
+      await reloadWithKanban(page, layout);
       const toggle = page.getByRole("button", { name: "Kanban", exact: true });
       await expect(toggle).toBeVisible();
       // CDP clicks bypass Electron's native window-drag hit testing. A titlebar
