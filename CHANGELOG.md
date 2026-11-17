@@ -1,10 +1,15 @@
 # Changelog
 
-## Unreleased
+## v0.19.0 - 2026-11-17
 
 - Add `/usage` in Claude GUI with native account-wide plan limits, reset times, and current-session cost and token usage.
-
 - Enable Claude GUI's Chrome integration at startup and add `/chrome` status, on, off and reconnect commands using Claude Code's native browser controls.
+- Kanban: the Archive drawer becomes a shelf with an Archive tab, card counts and its own search in the board filter's query language.
+- Kanban: add a Backlog column from Settings > Kanban, move cards to it from a card's menu, and optionally keep the backlog on the shelf instead of the board.
+- Add a read-only Kanban tab in Settings that shows the board's default columns, fixed rules and limits.
+- Add `aya board columns`, which tells agents what each column means and which board rules Aya enforces.
+- Add opt-in project rules for board tasks: the text of `.aya/board.md` is appended to every task prompt.
+- Fix the Kanban filter box changing width, so Archive opens on the first click.
 
 ## v0.18.1 - 2026-11-15
 
