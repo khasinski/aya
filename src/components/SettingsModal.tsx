@@ -49,6 +49,8 @@ interface Props {
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
   kanbanEnabled: boolean;
   onKanbanEnabledChange: (enabled: boolean) => void;
+  kanbanBacklogEnabled: boolean;
+  onKanbanBacklogEnabledChange: (enabled: boolean) => void;
   terminalSoundsEnabled: boolean;
   onTerminalSoundsEnabledChange: (enabled: boolean) => void;
   terminalSoundOverrides: Record<string, boolean>;
@@ -103,6 +105,8 @@ export function SettingsModal({
   onHarnessSearchEnabledChange,
   kanbanEnabled,
   onKanbanEnabledChange,
+  kanbanBacklogEnabled,
+  onKanbanBacklogEnabledChange,
   terminalSoundsEnabled,
   onTerminalSoundsEnabledChange,
   terminalSoundOverrides,
@@ -361,7 +365,9 @@ export function SettingsModal({
             )}
 
             {activeTab === "updates" && <UpdatesTab isWeb={isWeb} />}
-            {activeTab === "kanban" && kanbanEnabled && <KanbanTab />}
+            {activeTab === "kanban" && kanbanEnabled && (
+              <KanbanTab backlogEnabled={kanbanBacklogEnabled} onBacklogEnabledChange={onKanbanBacklogEnabledChange} />
+            )}
 
             {activeTab === "machines" && (
               <section className="aya-settings-pane">

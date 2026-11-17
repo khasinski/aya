@@ -11,6 +11,7 @@ const { startControlServerOn } = await import("../dist-electron/control.js");
 const { registerBoardIpc } = await import("../dist-electron/ipc/board-ipc.js");
 const { TextPastedError } = await import("../dist-electron/team-control.js");
 const { HOLD_NOT_RUNNING } = await import("../dist-electron/pane-holds.js");
+const { capabilitiesDocument } = await import("../dist-electron/capabilities.js");
 const {
   getBoard,
   addBoardCard,
@@ -21,6 +22,8 @@ const {
   unarchiveBoardCard,
   clearBoardColumn,
   restoreBoardCards,
+  moveBoardCardToBacklog,
+  restoreBacklogCard,
   claimBoardCard,
   releaseBoardCard,
   addBoardColumn,
@@ -39,6 +42,15 @@ const {
   MAX_BOARD_IMAGE_BYTES,
   MAX_PROJECT_RULES_BYTES,
   PROJECT_RULES_FILE_NAME,
+  BACKLOG_SHELF,
+  BACKLOG_OFF_MESSAGE,
+  KANBAN_SETTINGS_FILE_NAME,
+  readBacklogSetting,
+  setBacklogSetting,
+  backlogMode,
+  sendCardToBacklog,
+  BACKLOG_IS_COLUMN_MESSAGE,
+  MAX_BOARD_CARDS,
 } = await import("../dist-electron/board.js");
 
 const cli = resolve("bin/aya");
@@ -1105,4 +1117,276 @@ test("searchBoard, matchesBoardQuery, and aya board search CLI across active and
   } finally {
     fx.cleanup();
   }
+});
+
+// Pins the bytes a board without a backlog is saved with today: format, key
+// order and fields after archive, unarchive, column rename and column delete.
+// The backlog must leave such boards exactly like this.
+test("a board without a backlog is saved byte for byte as before", async () => {
+  const fx = makeFixture();
+  try {
+    const at = "2026-11-12T10:00:00.000Z";
+    mkdirSync(join(fx.home, "boards"), { recursive: true });
+    writeFileSync(join(fx.home, "boards", "demo.json"), JSON.stringify({
+      version: 1,
+      columns: [{ id: "todo", title: "Todo" }, { id: "in-progress", title: "In Progress" }, { id: "done", title: "Done" }],
+      cards: [
+        { id: "t-1", columnId: "todo", title: "First", description: "Body", priority: "high", labels: ["bug"], createdAt: at, updatedAt: at },
+        { id: "t-2", columnId: "done", title: "Second", assignee: "Ann", createdAt: at, updatedAt: at },
+      ],
+      archivedCards: [{ id: "t-3", columnId: "done", title: "Third", createdAt: at, updatedAt: at, archivedAt: at }],
+    }));
+    await archiveBoardCard(fx.home, fx.project, "t-2", new Date("2026-11-16T10:00:00.000Z"));
+    await unarchiveBoardCard(fx.home, fx.project, "t-3", undefined, new Date("2026-11-16T11:00:00.000Z"));
+    await renameBoardColumn(fx.home, fx.project, "todo", "To do");
+    await deleteBoardColumn(fx.home, fx.project, "in-progress");
+    const expected = {
+      version: 1,
+      columns: [{ id: "todo", title: "To do" }, { id: "done", title: "Done" }],
+      cards: [
+        { id: "t-1", columnId: "todo", title: "First", description: "Body", priority: "high", labels: ["bug"], createdAt: at, updatedAt: at },
+        { id: "t-3", columnId: "done", title: "Third", createdAt: at, updatedAt: "2026-11-16T11:00:00.000Z" },
+      ],
+      archivedCards: [
+        { id: "t-2", columnId: "done", title: "Second", assignee: "Ann", archivedAt: "2026-11-16T10:00:00.000Z", createdAt: at, updatedAt: "2026-11-16T10:00:00.000Z" },
+      ],
+    };
+    assert.equal(readFileSync(join(fx.home, "boards", "demo.json"), "utf8"), `${JSON.stringify(expected, null, 2)}\n`);
+  } finally { fx.cleanup(); }
+});
+
+// Backlog: a status like Archive. On disk the card stays in `cards`, marked
+// "shelf": "backlog", so an Aya that does not know the field shows it on the board.
+const boardFile = (fx) => join(fx.home, "boards", "demo.json");
+const readBoardFile = (fx) => JSON.parse(readFileSync(boardFile(fx), "utf8"));
+
+test("a card moved to the backlog leaves the board and is stored in cards with the backlog mark", async () => {
+  const fx = makeFixture();
+  try {
+    await setBacklogSetting(fx.home, true);
+    await addBoardCard(fx.home, fx.project, { title: "Keep for later", priority: "low" });
+    await addBoardCard(fx.home, fx.project, { title: "Now" });
+    const { board } = await moveBoardCardToBacklog(fx.home, fx.project, "t-1", new Date("2026-11-16T10:00:00.000Z"));
+    assert.deepEqual(board.cards.map((c) => c.id), ["t-2"]);
+    assert.deepEqual(board.backlogCards.map((c) => [c.id, c.columnId, c.updatedAt]), [["t-1", "todo", "2026-11-16T10:00:00.000Z"]]);
+    assert.equal(board.backlogCards[0].shelf, undefined, "the mark stays in the file");
+    const file = readBoardFile(fx);
+    assert.deepEqual(Object.keys(file), ["version", "columns", "cards"]);
+    assert.deepEqual(file.cards.map((c) => [c.id, c.shelf]), [["t-2", undefined], ["t-1", BACKLOG_SHELF]]);
+    const again = await getBoard(fx.home, fx.project);
+    assert.deepEqual(again.backlogCards.map((c) => c.id), ["t-1"]);
+    assert.deepEqual(again.cards.map((c) => c.id), ["t-2"]);
+  } finally { fx.cleanup(); }
+});
+
+test("a backlog card returns to the end of its column, or to the first column when its column is gone", async () => {
+  const fx = makeFixture();
+  try {
+    await setBacklogSetting(fx.home, true);
+    await addBoardCard(fx.home, fx.project, { title: "A", columnId: "review" });
+    await addBoardCard(fx.home, fx.project, { title: "B", columnId: "review" });
+    await moveBoardCardToBacklog(fx.home, fx.project, "t-1");
+    const back = await restoreBacklogCard(fx.home, fx.project, "t-1");
+    assert.deepEqual(back.board.cards.map((c) => [c.id, c.columnId]), [["t-2", "review"], ["t-1", "review"]]);
+    assert.equal(back.board.backlogCards, undefined, "no backlog key once it is empty");
+    assert.ok(!readBoardFile(fx).cards.some((c) => "shelf" in c));
+    await moveBoardCardToBacklog(fx.home, fx.project, "t-1");
+    await moveBoardCardToBacklog(fx.home, fx.project, "t-2");
+    await deleteBoardColumn(fx.home, fx.project, "review");
+    const first = (await getBoard(fx.home, fx.project)).columns[0].id;
+    assert.deepEqual((await getBoard(fx.home, fx.project)).backlogCards.map((c) => c.columnId), [first, first]);
+    const restored = await restoreBacklogCard(fx.home, fx.project, "t-2");
+    assert.equal(restored.card.columnId, first);
+  } finally { fx.cleanup(); }
+});
+
+test("backlog cards keep their ids taken and count toward the card limit", async () => {
+  const fx = makeFixture();
+  try {
+    await setBacklogSetting(fx.home, true);
+    await addBoardCard(fx.home, fx.project, { title: "One" });
+    await addBoardCard(fx.home, fx.project, { title: "Two" });
+    await moveBoardCardToBacklog(fx.home, fx.project, "t-2");
+    const { card } = await addBoardCard(fx.home, fx.project, { title: "Three" });
+    assert.equal(card.id, "t-3");
+    const clash = await addBoardCard(fx.home, fx.project, { id: "t-2", title: "Clash" });
+    assert.equal(clash.card.id, "t-4", "an id a backlog card holds is not given out again");
+    const at = "2026-11-12T10:00:00.000Z";
+    const cards = Array.from({ length: MAX_BOARD_CARDS }, (_, i) => ({
+      id: `t-${i + 1}`, columnId: "todo", title: `Card ${i + 1}`, createdAt: at, updatedAt: at,
+      ...(i % 2 ? { shelf: BACKLOG_SHELF } : {}),
+    }));
+    writeFileSync(boardFile(fx), JSON.stringify({ version: 1, columns: [{ id: "todo", title: "Todo" }], cards }));
+    await assert.rejects(addBoardCard(fx.home, fx.project, { title: "One too many" }), /maximum of 500 cards/);
+  } finally { fx.cleanup(); }
+});
+
+test("a board file with an unknown shelf value is refused", async () => {
+  const fx = makeFixture();
+  try {
+    const at = "2026-11-12T10:00:00.000Z";
+    mkdirSync(join(fx.home, "boards"), { recursive: true });
+    writeFileSync(boardFile(fx), JSON.stringify({ version: 1, columns: [{ id: "todo", title: "Todo" }],
+      cards: [{ id: "t-1", columnId: "todo", title: "A", createdAt: at, updatedAt: at, shelf: "attic" }] }));
+    await assert.rejects(getBoard(fx.home, fx.project), /invalid card entries/);
+  } finally { fx.cleanup(); }
+});
+
+test("moving a claimed card to the backlog drops the claim and asks its pane to stop", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await setBacklogSetting(fx.home, true);
+    await addBoardCard(fx.home, fx.project, { title: "Claimed task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    const board = await fx.call("board:move-to-backlog", { cardId: "t-1" });
+    await fx.flush();
+    assert.equal(board.backlogCards[0].claim, undefined);
+    assert.ok(fx.sent.some((m) => m.paneId === "pane-1" && m.text.includes("t-1: Claimed task was moved to the backlog")));
+    const restored = await fx.call("board:restore-from-backlog", { cardId: "t-1" });
+    assert.deepEqual(restored.cards.map((c) => c.id), ["t-1"]);
+  } finally { fx.cleanup(); }
+});
+
+test("aya board backlog lists, moves to and restores from the backlog; remove deletes a backlog card", async () => {
+  const fx = makeFixture();
+  try {
+    await setBacklogSetting(fx.home, true);
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    const run = async (...argv) => (await handleBoardRequest({ argv, projectSlug: "demo" }, undefined, deps)).output;
+    await addBoardCard(fx.home, fx.project, { title: "Later", priority: "low", labels: ["idea"] });
+    await addBoardCard(fx.home, fx.project, { title: "Gone" });
+    assert.equal(await run("backlog"), "Backlog for demo is empty.\n");
+    assert.equal(await run("backlog", "t-1"), "moved t-1 to the backlog: Later\n");
+    assert.equal(await run("backlog"), "Backlog for demo [1]:\n  t-1  Later  [off the board, returns to: todo, priority: low, labels: idea]\n");
+    assert.deepEqual(JSON.parse(await run("backlog", "--json")).map((c) => c.id), ["t-1"]);
+    assert.match(await run(), /## Backlog \[1 kept off the board — run "aya board backlog" to view\]/);
+    assert.equal(await run("backlog", "restore", "t-1"), "restored t-1 to todo: Later\n");
+    await run("backlog", "t-2");
+    await run("remove", "t-2");
+    assert.equal((await getBoard(fx.home, fx.project)).backlogCards, undefined);
+    await assert.rejects(run("backlog", "restore"), /usage: aya board/);
+  } finally { fx.cleanup(); }
+});
+
+test("the backlog setting is off with no file, and turning it off removes the file", async () => {
+  const fx = makeFixture();
+  try {
+    const file = join(fx.home, KANBAN_SETTINGS_FILE_NAME);
+    assert.equal(await readBacklogSetting(fx.home), false);
+    await setBacklogSetting(fx.home, true);
+    assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { backlog: true });
+    assert.equal(await readBacklogSetting(fx.home), true);
+    await setBacklogSetting(fx.home, false);
+    assert.equal(existsSync(file), false);
+  } finally { fx.cleanup(); }
+});
+
+test("with the backlog off, agents see nothing of it and nothing can be moved into it", async () => {
+  const fx = makeFixture();
+  try {
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    const run = async (...argv) => (await handleBoardRequest({ argv, projectSlug: "demo" }, undefined, deps)).output;
+    await addBoardCard(fx.home, fx.project, { title: "Kept" });
+    await addBoardCard(fx.home, fx.project, { title: "Now" });
+    await setBacklogSetting(fx.home, true);
+    await moveBoardCardToBacklog(fx.home, fx.project, "t-1");
+    await setBacklogSetting(fx.home, false);
+    // A card already in the backlog stays out of everything an agent reads.
+    assert.doesNotMatch(await run(), /backlog/i);
+    assert.equal(JSON.parse(await run("--json")).backlogCards, undefined);
+    await assert.rejects(run("backlog"), (err) => /usage: aya board/.test(err.message) && !/backlog/i.test(err.message));
+    await assert.rejects(run("backlog", "t-2"), (err) => !/backlog/i.test(err.message));
+    await assert.rejects(moveBoardCardToBacklog(fx.home, fx.project, "t-2"), { message: BACKLOG_OFF_MESSAGE });
+    assert.ok(!capabilitiesDocument({}).commands.some((c) => /backlog/.test(c.command)));
+    assert.ok(capabilitiesDocument({}, { backlog: true }).commands.some((c) => c.command === "board backlog"));
+    const usage = await run("no-such-command").catch((err) => err.message);
+    assert.doesNotMatch(usage, /backlog \[/);
+  } finally { fx.cleanup(); }
+});
+
+
+// One board, one backlog: every combination of the setting and a Backlog column.
+const BACKLOG_STATES = [
+  { setting: false, column: false, mode: "off" },
+  { setting: false, column: true, mode: "off" },
+  { setting: true, column: false, mode: "shelf" },
+  { setting: true, column: true, mode: "column" },
+];
+for (const state of BACKLOG_STATES) {
+  test(`backlog with the setting ${state.setting ? "on" : "off"} and ${state.column ? "a" : "no"} Backlog column: ${state.mode}`, async () => {
+    const fx = makeFixture();
+    try {
+      const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+      const run = async (...argv) => (await handleBoardRequest({ argv, projectSlug: "demo" }, undefined, deps)).output;
+      if (state.column) await addBoardColumn(fx.home, fx.project, "Backlog");
+      await addBoardCard(fx.home, fx.project, { title: "One" });
+      await addBoardCard(fx.home, fx.project, { title: "Two" });
+      await setBacklogSetting(fx.home, state.setting);
+      assert.equal(await backlogMode(fx.home, (await getBoard(fx.home, fx.project)).columns), state.mode);
+      assert.equal(capabilitiesDocument({}, { backlog: state.setting }).commands.some((c) => c.command === "board backlog"), state.setting);
+      if (state.column) {
+        // A Backlog column works as a column in every state.
+        assert.equal(await run("move", "t-1", "backlog"), "moved t-1 to backlog\n");
+        await run("move", "t-1", "todo");
+      }
+      if (state.mode === "off") {
+        await assert.rejects(run("backlog"), (err) => !/backlog/i.test(err.message));
+        await assert.rejects(run("backlog", "t-2"), (err) => !/backlog/i.test(err.message));
+        await assert.rejects(sendCardToBacklog(fx.home, fx.project, "t-2"), { message: "The backlog is off (Settings > Kanban > Backlog)." });
+        assert.doesNotMatch(await run(), /## Backlog \[/);
+      } else if (state.mode === "shelf") {
+        assert.equal(await run("backlog", "t-2"), "moved t-2 to the backlog: Two\n");
+        const board = await getBoard(fx.home, fx.project);
+        assert.deepEqual([board.cards.map((c) => c.id), board.backlogCards.map((c) => c.id)], [["t-1"], ["t-2"]]);
+        assert.equal(await run("backlog"), "Backlog for demo [1]:\n  t-2  Two  [off the board, returns to: todo]\n");
+      } else {
+        assert.equal(await run("backlog", "t-2"), "moved t-2 to the Backlog column: Two\n");
+        const board = await getBoard(fx.home, fx.project);
+        assert.deepEqual(board.cards.map((c) => [c.id, c.columnId]), [["t-1", "todo"], ["t-2", "backlog"]]);
+        assert.equal(board.backlogCards, undefined, "nothing goes off the board");
+        assert.ok(!readBoardFile(fx).cards.some((c) => "shelf" in c));
+        assert.equal(await run("backlog"), "Backlog for demo [1]:\n  t-2  Two  [in the Backlog column]\n");
+        await assert.rejects(moveBoardCardToBacklog(fx.home, fx.project, "t-1"), { message: BACKLOG_IS_COLUMN_MESSAGE });
+      }
+    } finally { fx.cleanup(); }
+  });
+}
+
+test("backlog transitions: a Backlog column added or removed while the setting is on", async () => {
+  const fx = makeFixture();
+  try {
+    const deps = { ayaHome: fx.home, listProjects: async () => [fx.project] };
+    const run = async (...argv) => (await handleBoardRequest({ argv, projectSlug: "demo" }, undefined, deps)).output;
+    await setBacklogSetting(fx.home, true);
+    for (const title of ["A", "B", "C"]) await addBoardCard(fx.home, fx.project, { title });
+    assert.equal(await run("backlog", "t-1"), "moved t-1 to the backlog: A\n");
+    // A Backlog column appears: new moves go there; the card already off the board stays listed.
+    await addBoardColumn(fx.home, fx.project, "Backlog");
+    assert.equal(await run("backlog", "t-2"), "moved t-2 to the Backlog column: B\n");
+    assert.equal(await run("backlog"), "Backlog for demo [2]:\n  t-2  B  [in the Backlog column]\n  t-1  A  [off the board, returns to: todo]\n");
+    assert.equal(await run("backlog", "restore", "t-1"), "restored t-1 to todo: A\n");
+    // The column cannot go while it holds cards; once empty and removed, the shelf is back.
+    await assert.rejects(deleteBoardColumn(fx.home, fx.project, "backlog"), /still has 1 card/);
+    await run("move", "t-2", "todo");
+    await deleteBoardColumn(fx.home, fx.project, "backlog");
+    assert.equal(await run("backlog", "t-3"), "moved t-3 to the backlog: C\n");
+    // Setting off: agents see none of it; the card waits off the board for the user.
+    await setBacklogSetting(fx.home, false);
+    assert.doesNotMatch(await run(), /backlog/i);
+    assert.deepEqual((await getBoard(fx.home, fx.project)).backlogCards.map((c) => c.id), ["t-3"]);
+  } finally { fx.cleanup(); }
+});
+
+test("Move to backlog on a board with a Backlog column takes the claim like any return to Backlog", async () => {
+  const fx = makeDispatchFixture();
+  try {
+    await setBacklogSetting(fx.home, true);
+    await addBoardColumn(fx.home, fx.project, "Backlog");
+    await addBoardCard(fx.home, fx.project, { title: "Claimed task" });
+    await fx.call("board:send-to-pane", { cardId: "t-1", targetId: "pane-1" });
+    const board = await fx.call("board:move-to-backlog", { cardId: "t-1" });
+    await fx.flush();
+    assert.deepEqual(board.cards.map((c) => [c.id, c.columnId, c.claim]), [["t-1", "backlog", undefined]]);
+    assert.ok(fx.sent.some((m) => m.paneId === "pane-1" && m.text.includes("t-1: Claimed task was returned to Backlog")));
+  } finally { fx.cleanup(); }
 });

@@ -54,13 +54,41 @@ and scrolls if its list is long. Its position and height follow window resizing.
 
 ## Shelf
 
-The Archive button opens the shelf, a drawer beside the board. It has one tab,
-Archive, with the cards archived from the board.
+The Archive button opens the shelf, a drawer beside the board, with an Archive
+tab and sometimes a Backlog tab (see "Backlog"). With the Backlog tab the button
+reads "Shelf (n)".
 
 The shelf has its own search box. It uses the same query as the board filter
 (text, `#label`, `@owner`, `p0`-`p3`, `col:name`) and narrows the shelf on top
 of the board filter. The tab shows how many cards match, for example `1/2`.
 The search does not filter the board itself.
+
+## Backlog
+
+Settings > Kanban > Backlog: off by default, applies to every project. Stored in `~/.aya/kanban.json`, which exists only while it is on.
+
+| Setting | Board has a Backlog column | Move to backlog |
+|---|---|---|
+| off | any | not available; a Backlog column is an ordinary column |
+| on | no | takes the card off the board to the Backlog tab on the shelf |
+| on | yes | puts the card in the Backlog column; the shelf has no Backlog tab |
+
+- A claimed card loses its claim, and its pane is asked to stop.
+- Restore on the Backlog tab: the card goes to the end of its column, or to the first column if its column is gone.
+- Cards already on the shelf keep the Backlog tab visible, whatever the setting.
+- While the setting is off, agents see nothing about a backlog: not in the usage, `aya capabilities`, `aya board` or `--json`. `aya board backlog` is an unknown command.
+- "Todo or Backlog" elsewhere in this document means the Backlog column.
+
+Agents, while the setting is on:
+
+```sh
+aya board backlog               # list the Backlog column and the shelf (--json)
+aya board backlog t-12          # move t-12 to the board's backlog
+aya board backlog restore t-12  # put a shelf card back on the board
+aya board remove t-12           # delete a card
+```
+
+File: a shelf card stays in `cards` with `"shelf": "backlog"`. An older Aya ignores the field and shows the card on the board. A board with no shelf cards is saved exactly as before.
 
 ## Terminology
 
@@ -96,7 +124,6 @@ task again. A file with only blank lines adds nothing.
 ## Planned changes (not implemented)
 
 These items are tracked on the board, not in this file:
-- Backlog as a status like Archive, opt-in in Settings > Kanban. When it is on, the shelf gets a Backlog tab; boards without it stay as they are.
 - Short definitions shown on the four default column headers.
 - A glossary of states in one place, and an opt-in card template with Required, Nice to have and Acceptance criterion fields. Default behaviour stays unchanged.
 - A harness that validates card fields.
@@ -108,6 +135,7 @@ These defaults describe the target state too. Planned changes are opt-in and mus
 - Kanban board (Settings > General, "Experimental"): off by default (`KANBAN_CODEC = boolPreference(false)` in `src/app-preferences.ts`).
 - Default columns: Todo, In Progress, Review, Done (`DEFAULT_BOARD_COLUMNS` in `shared/board-columns.cjs`).
 - Shelf (the Archive button): an Archive tab and its own search; no Backlog tab.
+- Backlog (Settings > Kanban): off by default, with no `~/.aya/kanban.json` (`readBacklogSetting` and `backlogMode` in `electron/board.ts`). A Backlog column alone does not turn it on.
 - New card: goes into the first column; priority and labels are optional and are omitted when not given; description starts empty; no assignee.
 - Card description limit: 16,000 characters (`MAX_CARD_DESCRIPTION_CHARS`).
 - Priorities: `low`, `medium`, `high`, `urgent`. Search tokens: `p0` = urgent, `p1` = high, `p2` = medium, `p3` = low.

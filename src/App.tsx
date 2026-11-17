@@ -89,6 +89,7 @@ import {
   projectSplitTree,
 } from "./split-tree";
 import { useAppPreferences, useAppPreferenceActions } from "./hooks/useAppPreferences";
+import { useKanbanBacklogSetting } from "./hooks/useKanbanBacklogSetting";
 import { useProjectTimeline, usePtyTimelineEvents } from "./hooks/useProjectTimeline";
 import { waitingPanesOf } from "./team-view";
 import { calculateProjectBadges } from "./project-badges";
@@ -237,6 +238,7 @@ export function App() {
     customDoneSound,
     setCustomDoneSound,
   } = useAppPreferences();
+  const [kanbanBacklogEnabled, setKanbanBacklogEnabled] = useKanbanBacklogSetting();
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const terminalsRef = useRef(terminals);
   const projectsRef = useRef(projects);
@@ -1273,6 +1275,7 @@ export function App() {
             findInPaneFor={findInPaneFor}
             closeFindPane={closeFindPane}
             harnessSearchEnabled={harnessSearchEnabled}
+            kanbanBacklogEnabled={kanbanBacklogEnabled}
             openSettings={openSettings}
             closeProject={closeProject}
             restartTerminal={restartTerminal}
@@ -1626,6 +1629,8 @@ export function App() {
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           kanbanEnabled={kanbanEnabled}
           onKanbanEnabledChange={setKanbanEnabled}
+          kanbanBacklogEnabled={kanbanBacklogEnabled}
+          onKanbanBacklogEnabledChange={setKanbanBacklogEnabled}
           terminalSoundsEnabled={terminalSoundsEnabled}
           onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
           terminalSoundOverrides={terminalSoundOverrides}

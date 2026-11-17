@@ -17,15 +17,38 @@ import { SettingsHeader, SettingsRow } from "./parts";
 const value = (text: string) => <span className="aya-modal-hint">{text}</span>;
 const count = (n: number) => n.toLocaleString("en-US");
 
-/** The board's defaults, fixed rules and limits, read only. Shown while the Kanban board (General) is on.
- *  The fixed rules are enforced by electron/board.ts and cannot be turned off. */
-export function KanbanTab() {
+/** The board's option, defaults, fixed rules and limits. Shown while the Kanban board (General) is on.
+ *  Only Backlog can be changed; the fixed rules are enforced by electron/board.ts. */
+export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
+  backlogEnabled: boolean;
+  onBacklogEnabledChange: (enabled: boolean) => void;
+}) {
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
-        What every project board starts with. These cannot be changed here yet.
+        What every project board starts with. Only Backlog can be changed here.
       </SettingsHeader>
       <div className="aya-settings-general">
+        <SettingsRow
+          icon="inventory_2"
+          title="Backlog"
+          control={(
+            <div className="aya-settings-segmented" aria-label="Backlog">
+              {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
+                  onClick={() => onBacklogEnabledChange(enabled)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        >
+          Adds Move to backlog to each card's menu and a Backlog tab to the shelf. A board with a Backlog column uses that column.
+        </SettingsRow>
         <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "))}>
           Add, rename and reorder columns on the board itself.
         </SettingsRow>

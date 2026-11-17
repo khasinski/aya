@@ -33,6 +33,8 @@ interface Derived {
   gitBySlug: Map<string, ProjectGitInfo>;
   teamsBySlug: Map<string, TeamSummary[]>;
   boardsBySlug: Map<string, BoardSnapshot>;
+  /** Settings > Kanban > Backlog in the emulator; off until set. */
+  boardBacklogSetting?: boolean;
   tabsById: Map<string, { tab: EmTab; projectSlug: string; cwd: string }>;
   /** Rendered lines of each tab's content -> its Apple-Intelligence summary.
    *  Used by summarizeLocal to re-apply a terminal summary after App's prune
@@ -316,6 +318,42 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       const next: BoardSnapshot = {
         ...b,
         cards: b.cards.filter((c) => c.id !== req.cardId),
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    getBoardBacklogSetting: async () => d.boardBacklogSetting === true,
+    setBoardBacklogSetting: async (req) => {
+      d.boardBacklogSetting = req.enabled;
+      return req.enabled;
+    },
+    moveBoardCardToBacklog: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const target = b.cards.find((c) => c.id === req.cardId);
+      if (!target || d.boardBacklogSetting !== true) return b as never;
+      if (b.columns.some((c) => c.id === COLUMN_IDS.backlog)) {
+        return api.moveBoardCard({ projectSlug: req.projectSlug, cardId: req.cardId, columnId: COLUMN_IDS.backlog }) as never;
+      }
+      const shelved = { ...target, updatedAt: new Date().toISOString() };
+      delete shelved.claim;
+      const next: BoardSnapshot = {
+        ...b,
+        cards: b.cards.filter((c) => c.id !== req.cardId),
+        backlogCards: [shelved, ...(b.backlogCards ?? [])],
+      };
+      d.boardsBySlug.set(req.projectSlug, next);
+      return next as never;
+    },
+    restoreBacklogCard: async (req) => {
+      const b = await api.getBoard(req.projectSlug);
+      const target = (b.backlogCards ?? []).find((c) => c.id === req.cardId);
+      if (!target) return b as never;
+      const columnId = b.columns.some((c) => c.id === target.columnId) ? target.columnId : b.columns[0].id;
+      const backlog = (b.backlogCards ?? []).filter((c) => c.id !== req.cardId);
+      const next: BoardSnapshot = {
+        ...b,
+        cards: [...b.cards, { ...target, columnId, updatedAt: new Date().toISOString() }],
+        ...(backlog.length ? { backlogCards: backlog } : { backlogCards: undefined }),
       };
       d.boardsBySlug.set(req.projectSlug, next);
       return next as never;

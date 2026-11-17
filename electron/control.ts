@@ -29,7 +29,7 @@ import { AYA_HOME, CONTROL_SOCKET_PATH, IS_E2E_HEADLESS } from "./paths";
 import { quietWhenTesting } from "./native-ui-text";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
-import { handleBoardRequest } from "./board";
+import { handleBoardRequest, readBacklogSetting } from "./board";
 import { callerProject, handleTeamAuthorRequest } from "./team-author";
 import { paneTeamRole } from "./team-files";
 import { HOLD_BUSY, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, isDialogHold, isUserOnlyHold } from "./pane-holds";
@@ -524,7 +524,7 @@ async function handleRequest(
   const win = options.getWindow();
   if (request.type === "capabilities") {
     return {
-      output: `${JSON.stringify(capabilitiesDocument(caller), null, 2)}\n`,
+      output: `${JSON.stringify(capabilitiesDocument(caller, { backlog: await readBacklogSetting(options.boardHome ?? AYA_HOME) }), null, 2)}\n`,
     };
   }
   if (request.type === "open") {

@@ -1459,8 +1459,10 @@
   color: var(--aya-pane-muted);
 }
 
+/* Always shown on shelf rows, so always clickable too, not only on hover. */
 .aya-kanban-card-quick--visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .aya-kanban-archive-restore-btn {
