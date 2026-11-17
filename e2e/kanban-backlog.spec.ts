@@ -45,16 +45,30 @@ async function openBacklogTab(window: Page) {
 test.describe("no Backlog column", () => {
   test.use({ seedOptions: seed({ version: 1, columns, cards, archivedCards: archived }) });
 
-  test("no Move to backlog and no Backlog tab, with the setting off or on", async ({ window, app }) => {
-    for (const on of [false, true]) {
-      if (on) await setShelf(window, app, true);
-      await openCardMenu(window, "t-1");
-      await expect(window.getByRole("menuitem", { name: /Move to backlog/ })).toHaveCount(0);
-      await window.keyboard.press("Escape");
-      await expect(window.getByTestId("kanban-archive-toggle")).toHaveText("Archive (1)");
-    }
-    await window.getByTestId("kanban-archive-toggle").click();
-    await expect(window.getByTestId("kanban-archive-drawer").getByRole("tab")).toHaveCount(1);
+  test("no Move to backlog; Settings offers Create backlog column and keeps the switch off until it exists", async ({ window, app, seeded }, testInfo) => {
+    await openCardMenu(window, "t-1");
+    await expect(window.getByRole("menuitem", { name: /Move to backlog/ })).toHaveCount(0);
+    await window.keyboard.press("Escape");
+    await expect(window.getByTestId("kanban-archive-toggle")).toHaveText("Archive (1)");
+
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await settings.getByTestId("settings-tab").filter({ hasText: "General" }).click();
+    await settings.getByLabel("Kanban board").getByRole("button", { name: "On", exact: true }).click();
+    await settings.getByTestId("settings-tab").filter({ hasText: "Kanban" }).click();
+    const create = settings.getByRole("button", { name: "Create backlog column", exact: true });
+    const on = settings.getByLabel("Move backlog to shelf", { exact: true }).getByRole("button", { name: "On", exact: true });
+    await expect(create).toBeEnabled();
+    await expect(settings.getByText("Creates the Backlog column in e2e")).toBeVisible();
+    await expect(on).toBeDisabled();
+    await settings.locator(".aya-settings-general-row").filter({ hasText: "Move backlog to shelf" }).screenshot({ path: testInfo.outputPath("settings-no-column.png") });
+    await create.click();
+    await expect(create).toBeDisabled();
+    await expect(on).toBeEnabled();
+    expect(boardFile(seeded.ayaHome).columns.map((c: { id: string }) => c.id)).toEqual(["todo", "done", "backlog"]);
+    await settings.locator(".aya-settings-general-row").filter({ hasText: "Move backlog to shelf" }).screenshot({ path: testInfo.outputPath("settings-with-column.png") });
+    await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(window.getByTestId("kanban-column-backlog")).toBeVisible();
   });
 });
 

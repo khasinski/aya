@@ -70,7 +70,7 @@ The backlog is a board's Backlog column (`aya board column add Backlog`). It is 
 - Move to backlog in a card's menu moves the card into that column. It is offered only on a board that has the column.
 - A claimed card moved there loses its claim, and its pane is asked to stop, as on any return to Backlog.
 
-Settings > Kanban > Move backlog to shelf (off by default, every project) only changes where the column shows:
+Settings > Kanban has Create backlog column, which adds the column to the current project's board, and Move backlog to shelf (off by default, every project). The switch can be turned on once the board has the column, and it only changes where the column shows:
 
 | Setting | Backlog column |
 |---|---|

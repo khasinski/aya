@@ -1631,6 +1631,7 @@ export function App() {
           onKanbanEnabledChange={setKanbanEnabled}
           kanbanBacklogEnabled={kanbanBacklogEnabled}
           onKanbanBacklogEnabledChange={setKanbanBacklogEnabled}
+          kanbanProject={activeProject && !activeProject.remote ? { slug: activeProject.slug, name: activeProject.name } : null}
           terminalSoundsEnabled={terminalSoundsEnabled}
           onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
           terminalSoundOverrides={terminalSoundOverrides}

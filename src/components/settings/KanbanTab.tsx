@@ -1,4 +1,5 @@
-import { DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
+import { useEffect, useState } from "react";
+import { COLUMN_IDS, COLUMN_TITLES, DEFAULT_BOARD_COLUMNS, FIXED_RULES } from "../../../shared/board-columns.cjs";
 import {
   MAX_ASSIGNEE_CHARS,
   MAX_BOARD_CARDS,
@@ -19,10 +20,30 @@ const count = (n: number) => n.toLocaleString("en-US");
 
 /** The board's option, defaults, fixed rules and limits. Shown while the Kanban board (General) is on.
  *  Only where the Backlog column shows can be changed; the fixed rules are enforced by electron/board.ts. */
-export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
+export function KanbanTab({ backlogEnabled, onBacklogEnabledChange, project }: {
   backlogEnabled: boolean;
   onBacklogEnabledChange: (enabled: boolean) => void;
+  /** The project whose board Create backlog column adds to; null when there is none. */
+  project: { slug: string; name: string } | null;
 }) {
+  const projectSlug = project?.slug ?? null;
+  // Whether the current project's board has a Backlog column; null until known.
+  const [hasBacklogColumn, setHasBacklogColumn] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    setHasBacklogColumn(null);
+    if (!projectSlug) return;
+    void window.aya.getBoard(projectSlug)
+      .then((board) => { if (live) setHasBacklogColumn(board.columns.some((c) => c.id === COLUMN_IDS.backlog)); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [projectSlug]);
+  const createBacklogColumn = () => {
+    if (!projectSlug) return;
+    void window.aya.addBoardColumn({ projectSlug, title: COLUMN_TITLES[COLUMN_IDS.backlog] })
+      .then((board) => setHasBacklogColumn(board.columns.some((c) => c.id === COLUMN_IDS.backlog)))
+      .catch(() => undefined);
+  };
   return (
     <section className="aya-settings-pane" data-testid="settings-kanban">
       <SettingsHeader icon="view_kanban" title="Kanban">
@@ -33,21 +54,35 @@ export function KanbanTab({ backlogEnabled, onBacklogEnabledChange }: {
           icon="inventory_2"
           title="Move backlog to shelf"
           control={(
-            <div className="aya-settings-segmented" aria-label="Move backlog to shelf">
-              {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
+            <div className="aya-settings-button-row">
+              <span className="aya-settings-kanban-create">
                 <button
-                  key={label}
                   type="button"
-                  className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
-                  onClick={() => onBacklogEnabledChange(enabled)}
+                  className="aya-modal-btn"
+                  disabled={hasBacklogColumn !== false}
+                  onClick={createBacklogColumn}
                 >
-                  {label}
+                  Create backlog column
                 </button>
-              ))}
+                {project && <span className="aya-settings-kanban-create-note">Creates the Backlog column in {project.name}</span>}
+              </span>
+              <div className="aya-settings-segmented" aria-label="Move backlog to shelf">
+                {([[true, "On"], [false, "Off"]] as const).map(([enabled, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    disabled={hasBacklogColumn !== true}
+                    className={`aya-settings-segment ${backlogEnabled === enabled ? "aya-settings-segment--active" : ""}`}
+                    onClick={() => onBacklogEnabledChange(enabled)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         >
-          Shows a board's Backlog column in the shelf instead of on the board.
+          Shows the board's Backlog column in the shelf instead of on the board. Needs a Backlog column.
         </SettingsRow>
         <SettingsRow icon="view_column" title="Columns on a new board" control={value(DEFAULT_BOARD_COLUMNS.map((column) => column.title).join(", "))}>
           Add, rename and reorder columns on the board itself.
