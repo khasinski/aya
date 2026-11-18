@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { PTY_HOST_EXIT_WAIT_MS, type PtyHostClient, type HostRestartTarget } from "./pty-host-client";
 import { currentProcessesConfirmed, type RelaunchDeps } from "./relaunch-notes";
 import { restartStaleHost } from "./updates";
+import { dialogDetail, dialogList } from "./native-ui-text";
 import {handoverPeer} from "./pty-handover-window";
 import type {HostAuthenticationProblem} from "./pty-host-auth-status";
 import type { HostRecord } from "./pty-host-registry";
@@ -331,29 +332,29 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
     const reported=legacy?.reportedIds.map(id=>`${names.get(id)??id} (reported by the old host; child PID unavailable)`)??[];
     return (legacy?"The older terminal host does not support socket authentication. Restarting it stops its current processes.":"Aya could not authenticate to this terminal host. Restarting it stops its current processes.")+
       (target.pid?`\n\nTerminal host PID ${target.pid}.`:"\n\nThe terminal host identity is unknown; nothing can be stopped safely.")+
-      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:"")+
-      (legacy?`\n\nReported by the old host:\n${[...reported,...(legacy.unknownCount?[`${legacy.unknownCount} more unknown`]:[])].join("\n")||"No running panes reported."}`:!target.authentication?.inventoryKnown?"\n\nThe retained process inventory is unknown. It must not be treated as empty.":"");
+      (retained.length?`\n\nProcesses that may still run:\n${dialogList(retained)}`:"")+
+      (legacy?`\n\nReported by the old host:\n${dialogList(reported,legacy.unknownCount?[`${legacy.unknownCount} more unknown`]:[])||"No running panes reported."}`:!target.authentication?.inventoryKnown?"\n\nThe retained process inventory is unknown. It must not be treated as empty.":"");
   }
   function verifiedAuthTarget(target:{pid?:number|null;startTime?:string|null;authentication?:HostAuthenticationProblem}):boolean{
     return !!target.pid&&!!target.startTime&&target.authentication?.targetVerified===true;
   }
   async function explainUnverifiedAuth(target:Pick<HostRestartTarget,"pid"|"owner"|"authentication">):Promise<void>{
     const options={type:"warning" as const,title:"Terminal host unavailable",message:"Aya cannot safely restart this terminal host",
-      detail:"The terminal host identity could not be verified. Nothing was stopped; its processes keep running.\n\n"+await authRestartDetail(target),buttons:["OK"],defaultId:0,cancelId:0,noLink:true};
+      detail:dialogDetail("The terminal host identity could not be verified. Nothing was stopped; its processes keep running.\n\n"+await authRestartDetail(target)),buttons:["OK"],defaultId:0,cancelId:0,noLink:true};
     const window=focusedAyaWindow();if(window)await dialog.showMessageBox(window,options);else await dialog.showMessageBox(options);
   }
   async function unavailableOwnerDetail(target:Pick<HostRestartTarget,"owner"|"recoveryReason">):Promise<string>{
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
     return "Stopping the terminal owner"+(target.owner?` (PID ${target.owner.pid})`:"")+" ends its panes. The JS terminal host is unavailable. Surviving processes require a separate confirmation."+
-      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:target.owner?"\n\nNo pane processes were recorded.":"\n\nThe retained process inventory is unknown.")+
+      (retained.length?`\n\nProcesses that may still run:\n${dialogList(retained)}`:target.owner?"\n\nNo pane processes were recorded.":"\n\nThe retained process inventory is unknown.")+
       (!target.owner?.startIdentity?"\n\nThe owner's kernel start identity was not recorded. Aya cannot stop it safely; nothing will be signalled.":"")+
       (target.recoveryReason?`\n\n${target.recoveryReason}`:"");
   }
   async function askSurvivorRecovery(target:HostRestartTarget):Promise<boolean>{
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`),...(target.owner?.recoveryFailures??[])];
-    return askRestart("Stop surviving processes","The terminal owner has stopped. These retained processes may still run. Stop only the processes whose recorded identities can still be verified?"+(retained.length?`\n\n${retained.join("\n")}`:"\n\nTheir identities are unknown; unverified processes will not be signalled."));
+    return askRestart("Stop surviving processes","The terminal owner has stopped. These retained processes may still run. Stop only the processes whose recorded identities can still be verified?"+(retained.length?`\n\n${dialogList(retained)}`:"\n\nTheir identities are unknown; unverified processes will not be signalled."));
   }
   async function askChangedRestartTarget(target:HostRestartTarget):Promise<boolean>{
     if(target.ownerUnavailable)return askRestart("Stop terminal owner",await unavailableOwnerDetail(target));
@@ -365,7 +366,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
     return askRestart("Restart","The terminal host changed after the previous question. Restarting this host stops its current work."+
       (target.pid?`\n\nTerminal host PID ${target.pid}; ${target.ptyCount} panes.`:"\n\nThe current host identity cannot be verified; nothing will be stopped.")+
-      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:""));
+      (retained.length?`\n\nProcesses that may still run:\n${dialogList(retained)}`:""));
   }
 
   /** Settings > Diagnostics > PTY host > Restart (and Aya Web): asks, then replaces the host. Throws when cancelled,
@@ -384,7 +385,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
     const confirmed = before.ownerUnavailable&&before.ownerStopped?true:before.ownerUnavailable?await askRestart("Stop terminal owner",await unavailableOwnerDetail(before)):before.authentication?await askRestart("Restart",await authRestartDetail(before)):recovery ? await askRestart("Restart", legacy
       ? "Moving these terminals to Aya's native PTY owner stops their current processes. They cannot be moved from the older host."
       : (before.continuityUnavailable ? "Restarting the terminal host stops its running processes. Automatic recovery is unavailable." : "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work.") +
-        (retained.length ? `\n\nProcesses that may still run:\n${retained.join("\n")}` : ""))
+        (retained.length ? `\n\nProcesses that may still run:\n${dialogList(retained)}` : ""))
       : await confirmLosingWork("Restarting the PTY host", "Restart");
     if (!confirmed) throw new Error("restart cancelled");
     const exited = await ptyHost.restart({target:{pid:before.pid,startTime:before.startTime??null,owner:before.owner},confirmChanged:askChangedRestartTarget,confirmSurvivors:askSurvivorRecovery});
@@ -394,7 +395,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
       showStaleHost(true);
       const left = [...(after.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`), ...(after.owner?.uncertain ?? [])];
       throw new Error(`Some terminal processes could not be confirmed stopped. Their disconnected inventory was kept${left.length ? `: ${left.join(", ")}` : "."}` +
-        (after.owner?.recoveryFailures?.length ? `\n\n${after.owner.recoveryFailures.join("\n")}` : ""));
+        (after.owner?.recoveryFailures?.length ? `\n\n${dialogList(after.owner.recoveryFailures)}` : ""));
     }
     if (!exited) {
       showStaleHost(true);

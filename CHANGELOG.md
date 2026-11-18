@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Keep the restart warnings short when many terminals are open: they list the first 8 processes and count the rest, so the buttons stay on screen.
+
 ## v0.19.0 - 2026-11-17
 
 - Add `/usage` in Claude GUI with native account-wide plan limits, reset times, and current-session cost and token usage.
