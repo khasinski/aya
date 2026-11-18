@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { boardCard, openShelf, openShelfTab, readBoardFile, seedBoard, setBacklogOnShelf } from "./helpers/board";
+import { boardCard, openShelf, readBoardFile, seedBoard, setBacklogOnShelf, shelfTab } from "./helpers/board";
 
 // The shelf button is always on the board's toolbar, also while the shelf is empty, and
 // the shelf's Backlog tab takes new cards: with Move backlog to shelf on, the board
@@ -28,9 +28,23 @@ test.describe("an empty Backlog column on the shelf", () => {
     await setBacklogOnShelf(window, app, true);
     await expect(window.getByTestId("kanban-column-backlog")).toHaveCount(0);
     await expect(window.getByTestId("kanban-archive-toggle")).toHaveText("Shelf (0)");
-    const drawer = await openShelfTab(window, "Backlog");
+    const drawer = await openShelf(window);
+    const addCard = drawer.getByRole("button", { name: "+ Add card" });
+    // Add card belongs to the Backlog tab only.
+    await expect(addCard).toHaveCount(0);
+    await shelfTab(drawer, "Backlog").click();
+    await expect(drawer.getByText("Backlog is empty. Use + Add card", { exact: false })).toBeVisible();
 
-    await drawer.getByRole("button", { name: "+ Add card" }).click();
+    // Leaving the tab drops a half-typed form: the hidden column has nowhere else to show it.
+    await addCard.click();
+    await drawer.getByLabel("Card title").fill("Draft");
+    await expect(drawer.getByText("Backlog is empty.", { exact: false })).toHaveCount(0);
+    await drawer.screenshot({ path: testInfo.outputPath("shelf-backlog-form.png") });
+    await shelfTab(drawer, "Archive").click();
+    await shelfTab(drawer, "Backlog").click();
+    await expect(drawer.getByLabel("Card title")).toHaveCount(0);
+
+    await addCard.click();
     await drawer.getByLabel("Card title").fill("Someday idea");
     await drawer.getByLabel("Card title").press("Enter");
 

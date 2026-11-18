@@ -1434,6 +1434,13 @@
   gap: 4px;
 }
 
+/* The Backlog tab's + Add card and its form stay above the scrolling list. */
+.aya-kanban-shelf-add {
+  flex-shrink: 0;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 10px 10px 0;
+}
 .aya-kanban-archive-list {
   display: flex;
   flex-direction: column;
