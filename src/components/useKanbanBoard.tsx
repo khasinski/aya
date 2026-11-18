@@ -1254,37 +1254,36 @@ export function useKanbanBoard({
                 Save to .aya/board.json
               </button>
             )}
-            {(archivedCards.length > 0 || backlogCards.length > 0 || archiveOpen) && (
-              <button
-                type="button"
-                data-testid="kanban-archive-toggle"
-                className={`aya-kanban-btn aya-kanban-archive-btn${archiveOpen ? " aya-kanban-archive-btn--active" : ""
-                  }`}
-                title="Toggle archived cards drawer"
-                onClick={() => {
-                  setArchiveOpen((prev) => !prev);
-                  setConfirmEmptyArchive(false);
-                }}
-              >
-                {showBacklog ? (
-                  <span>
-                    Shelf (
-                    {hasActiveFilter
-                      ? `${filteredArchivedCards.length + filteredBacklogCards.length}/${archivedCards.length + backlogCards.length}`
-                      : archivedCards.length + backlogCards.length}
-                    )
-                  </span>
-                ) : (
-                  <span>
-                    Archive (
-                    {hasActiveFilter
-                      ? `${filteredArchivedCards.length}/${archivedCards.length}`
-                      : archivedCards.length}
-                    )
-                  </span>
-                )}
-              </button>
-            )}
+            {/* The shelf is always reachable, also while it is empty, so the Backlog tab can take new cards. */}
+            <button
+              type="button"
+              data-testid="kanban-archive-toggle"
+              className={`aya-kanban-btn aya-kanban-archive-btn${archiveOpen ? " aya-kanban-archive-btn--active" : ""
+                }`}
+              title="Toggle archived cards drawer"
+              onClick={() => {
+                setArchiveOpen((prev) => !prev);
+                setConfirmEmptyArchive(false);
+              }}
+            >
+              {showBacklog ? (
+                <span>
+                  Shelf (
+                  {hasActiveFilter
+                    ? `${filteredArchivedCards.length + filteredBacklogCards.length}/${archivedCards.length + backlogCards.length}`
+                    : archivedCards.length + backlogCards.length}
+                  )
+                </span>
+              ) : (
+                <span>
+                  Archive (
+                  {hasActiveFilter
+                    ? `${filteredArchivedCards.length}/${archivedCards.length}`
+                    : archivedCards.length}
+                  )
+                </span>
+              )}
+            </button>
           </>
         )}
         {addingColumn ? (

@@ -55,7 +55,8 @@ and scrolls if its list is long. Its position and height follow window resizing.
 
 ## Shelf
 
-The Archive button opens the shelf, a drawer beside the board, with an Archive
+The Archive button, always on the board's toolbar (also while the shelf is empty),
+opens the shelf, a drawer beside the board, with an Archive
 tab and, with Move backlog to shelf on, a Backlog tab (see "Backlog"). The button
 then reads "Shelf (n)".
 
@@ -76,7 +77,7 @@ Settings > Kanban has Create backlog column, which adds the column to the curren
 | Setting | Backlog column |
 |---|---|
 | off | on the board |
-| on | in the shelf, as the Backlog tab; Restore there moves a card to the first column on the board |
+| on | in the shelf, as the Backlog tab, with its own Add card; Restore there moves a card to the first column on the board |
 
 Cards saved by the first backlog version (`"shelf": "backlog"`) load into the Backlog column, which is added first when missing. On a board that already has the maximum number of columns they fall back to the first column.
 

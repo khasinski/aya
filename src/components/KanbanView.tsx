@@ -1,5 +1,5 @@
 import { BOARD_IMAGE_ACCEPT } from "../../shared/board-images.cjs";
-import { COLUMN_IDS } from "../../shared/board-columns.cjs";
+import { COLUMN_IDS, isBacklogColumn } from "../../shared/board-columns.cjs";
 import {
   memo,
   useState,
@@ -7,6 +7,7 @@ import {
 import { createPortal } from "react-dom";
 import "./kanban.css";
 import { livePaneDotInfo } from './KanbanCardContent';
+import { KanbanAddCardForm } from './KanbanAddCardForm';
 import { KanbanColumns } from './KanbanColumns';
 import { matchesSearchQuery } from "./kanban-search";
 import { ShelfRow } from './ShelfRow';
@@ -19,6 +20,8 @@ export const KanbanView = memo(function KanbanView(props: Props) {
   const [shelfTab, setShelfTab] = useState<"archive" | "backlog">("archive");
   const {
     terminal,
+    addingCardColId,
+    openAddCard,
     hidden,
     paneStyle,
     isActivePane,
@@ -92,6 +95,8 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     ? filteredBacklogCards.filter((card) => matchesSearchQuery(card, shelfQuery, false))
     : filteredBacklogCards;
   const onBacklogTab = showBacklog && shelfTab === "backlog";
+  // The Backlog tab adds cards to the board's Backlog column, which the board hides while it is on the shelf.
+  const backlogColumnId = board?.columns.find(isBacklogColumn)?.id;
   const drawerCards = onBacklogTab ? backlogMatches : archiveMatches;
   const shelfName = onBacklogTab ? "backlog" : "archive";
   // What a shelf row shows and does differs only by tab; the rest of the row is ShelfRow.
@@ -436,6 +441,17 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                 />
               </div>
               <div className="aya-kanban-archive-list">
+                {onBacklogTab && backlogColumnId && (addingCardColId === backlogColumnId ? (
+                  <KanbanAddCardForm {...model} columnId={backlogColumnId} />
+                ) : (
+                  <button
+                    type="button"
+                    className="aya-kanban-col-add-btn"
+                    onClick={() => openAddCard(backlogColumnId)}
+                  >
+                    <span>+ Add card</span>
+                  </button>
+                ))}
                 {drawerCards.length === 0 ? (
                   <div className="aya-kanban-empty-col">
                     {hasActiveFilter || shelfSearching ? shelf.noMatchText : shelf.emptyText}
