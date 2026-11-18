@@ -368,8 +368,9 @@ export function useKanbanBoard({
     }
   }, [runAction, terminal.projectSlug, undoState]);
 
+  // `expandColumn: false` keeps a collapsed column collapsed: the shelf's Backlog tab adds to a column the board hides.
   const openAddCard = useCallback(
-    (columnId: string) => {
+    (columnId: string, { expandColumn = true }: { expandColumn?: boolean } = {}) => {
       setEditingCardId(null);
       setAddingCardColId(columnId);
       setNewCardTitle("");
@@ -377,7 +378,7 @@ export function useKanbanBoard({
       setNewCardAssignee("");
       setNewCardPriority("");
       setNewCardLabels("");
-      if (collapsedCols[columnId]) {
+      if (expandColumn && collapsedCols[columnId]) {
         toggleColumnCollapsed(columnId);
       }
     },

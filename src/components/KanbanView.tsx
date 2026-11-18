@@ -100,12 +100,12 @@ export const KanbanView = memo(function KanbanView(props: Props) {
   // The Backlog tab adds cards to the board's Backlog column, which the board hides while it is on the shelf.
   const backlogColumnId = board?.columns.find(isBacklogColumn)?.id;
   const addingOnShelf = showBacklog && backlogColumnId !== undefined && addingCardColId === backlogColumnId;
-  const shelfAddVisible = archiveOpen && onBacklogTab;
   // The Backlog column is hidden while it is on the shelf, so its new-card form lives only in the
-  // Backlog tab: leaving the tab or closing the shelf drops the form.
+  // Backlog tab. Switching tabs keeps the draft for when the tab comes back; closing the shelf drops it.
   useEffect(() => {
-    if (addingOnShelf && !shelfAddVisible) setAddingCardColId(null);
-  }, [addingOnShelf, shelfAddVisible, setAddingCardColId]);
+    if (addingOnShelf && !archiveOpen) setAddingCardColId(null);
+  }, [addingOnShelf, archiveOpen, setAddingCardColId]);
+  const archiveShown = archiveOpen && !onBacklogTab;
   const drawerCards = onBacklogTab ? backlogMatches : archiveMatches;
   const shelfName = onBacklogTab ? "backlog" : "archive";
   // What a shelf row shows and does differs only by tab; the rest of the row is ShelfRow.
@@ -215,20 +215,22 @@ export const KanbanView = memo(function KanbanView(props: Props) {
             <button
               type="button"
               data-testid="kanban-filter-archive-hits"
-              className={`aya-kanban-filter-chip aya-kanban-filter-chip--archive${archiveOpen ? " aya-kanban-filter-chip--active" : ""
+              className={`aya-kanban-filter-chip aya-kanban-filter-chip--archive${archiveShown ? " aya-kanban-filter-chip--active" : ""
                 }`}
               title={
-                archiveOpen
+                archiveShown
                   ? "Hide archive drawer"
                   : "Show matching cards in Archive drawer"
               }
               onClick={() => {
-                setArchiveOpen((prev) => !prev);
+                // Show opens the shelf on its Archive tab, also when it is open on Backlog.
+                setArchiveOpen(!archiveShown);
+                if (!archiveShown) setShelfTab("archive");
                 setConfirmEmptyArchive(false);
               }}
             >
               📦 {filteredArchivedCards.length} in Archive ·{" "}
-              {archiveOpen ? "Hide" : "Show"}
+              {archiveShown ? "Hide" : "Show"}
             </button>
           )}
           {hasActiveFilter && (
@@ -457,7 +459,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                     <button
                       type="button"
                       className="aya-kanban-col-add-btn"
-                      onClick={() => openAddCard(backlogColumnId)}
+                      onClick={() => openAddCard(backlogColumnId, { expandColumn: false })}
                     >
                       <span>+ Add card</span>
                     </button>

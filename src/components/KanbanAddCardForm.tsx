@@ -21,6 +21,8 @@ type KanbanAddCardFormProps = Pick<
 > & { columnId: string };
 
 // The new-card form, shared by a board column and the shelf's Backlog tab.
+// Plain Enter in the title or assignee adds the card; Cmd/Ctrl+Enter is the form's own
+// shortcut (handleAddFormKeyDown), so the inputs leave it to the form and add only once.
 export function KanbanAddCardForm({
   columnId,
   terminal,
@@ -51,7 +53,7 @@ export function KanbanAddCardForm({
         value={newCardTitle}
         onChange={(e) => setNewCardTitle(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
             e.preventDefault();
             void handleCreateCard(columnId);
           }
@@ -78,7 +80,7 @@ export function KanbanAddCardForm({
         value={newCardAssignee}
         onChange={(e) => setNewCardAssignee(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
             e.preventDefault();
             void handleCreateCard(columnId);
           }
