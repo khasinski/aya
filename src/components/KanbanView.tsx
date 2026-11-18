@@ -1,12 +1,14 @@
 import { BOARD_IMAGE_ACCEPT } from "../../shared/board-images.cjs";
-import { COLUMN_IDS } from "../../shared/board-columns.cjs";
+import { COLUMN_IDS, isBacklogColumn } from "../../shared/board-columns.cjs";
 import {
   memo,
+  useEffect,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
 import "./kanban.css";
 import { livePaneDotInfo } from './KanbanCardContent';
+import { KanbanAddCardForm } from './KanbanAddCardForm';
 import { KanbanColumns } from './KanbanColumns';
 import { matchesSearchQuery } from "./kanban-search";
 import { ShelfRow } from './ShelfRow';
@@ -19,6 +21,9 @@ export const KanbanView = memo(function KanbanView(props: Props) {
   const [shelfTab, setShelfTab] = useState<"archive" | "backlog">("archive");
   const {
     terminal,
+    addingCardColId,
+    setAddingCardColId,
+    openAddCard,
     hidden,
     paneStyle,
     isActivePane,
@@ -92,6 +97,15 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     ? filteredBacklogCards.filter((card) => matchesSearchQuery(card, shelfQuery, false))
     : filteredBacklogCards;
   const onBacklogTab = showBacklog && shelfTab === "backlog";
+  // The Backlog tab adds cards to the board's Backlog column, which the board hides while it is on the shelf.
+  const backlogColumnId = board?.columns.find(isBacklogColumn)?.id;
+  const addingOnShelf = showBacklog && backlogColumnId !== undefined && addingCardColId === backlogColumnId;
+  // The Backlog column is hidden while it is on the shelf, so its new-card form lives only in the
+  // Backlog tab. Switching tabs keeps the draft for when the tab comes back; closing the shelf drops it.
+  useEffect(() => {
+    if (addingOnShelf && !archiveOpen) setAddingCardColId(null);
+  }, [addingOnShelf, archiveOpen, setAddingCardColId]);
+  const archiveShown = archiveOpen && !onBacklogTab;
   const drawerCards = onBacklogTab ? backlogMatches : archiveMatches;
   const shelfName = onBacklogTab ? "backlog" : "archive";
   // What a shelf row shows and does differs only by tab; the rest of the row is ShelfRow.
@@ -99,7 +113,7 @@ export const KanbanView = memo(function KanbanView(props: Props) {
     ? {
       testIdPrefix: "kanban-backlog-card-",
       noMatchText: "No matching backlog cards",
-      emptyText: "Backlog is empty. Use Move to backlog in a card's menu to keep a card off the board.",
+      emptyText: "Backlog is empty. Use + Add card, or Move to backlog in a card's menu to keep a card off the board.",
       shelvedAt: (card: KanbanCard) => card.updatedAt,
       restore: (card: KanbanCard) => handleRestoreBacklogCard(card.id),
       restoreColumn: () => boardColumns[0],
@@ -201,20 +215,22 @@ export const KanbanView = memo(function KanbanView(props: Props) {
             <button
               type="button"
               data-testid="kanban-filter-archive-hits"
-              className={`aya-kanban-filter-chip aya-kanban-filter-chip--archive${archiveOpen ? " aya-kanban-filter-chip--active" : ""
+              className={`aya-kanban-filter-chip aya-kanban-filter-chip--archive${archiveShown ? " aya-kanban-filter-chip--active" : ""
                 }`}
               title={
-                archiveOpen
+                archiveShown
                   ? "Hide archive drawer"
                   : "Show matching cards in Archive drawer"
               }
               onClick={() => {
-                setArchiveOpen((prev) => !prev);
+                // Show opens the shelf on its Archive tab, also when it is open on Backlog.
+                setArchiveOpen(!archiveShown);
+                if (!archiveShown) setShelfTab("archive");
                 setConfirmEmptyArchive(false);
               }}
             >
               📦 {filteredArchivedCards.length} in Archive ·{" "}
-              {archiveOpen ? "Hide" : "Show"}
+              {archiveShown ? "Hide" : "Show"}
             </button>
           )}
           {hasActiveFilter && (
@@ -435,9 +451,24 @@ export const KanbanView = memo(function KanbanView(props: Props) {
                   onChange={(e) => setShelfQuery(e.target.value)}
                 />
               </div>
+              {onBacklogTab && backlogColumnId && (
+                <div className="aya-kanban-shelf-add">
+                  {addingOnShelf ? (
+                    <KanbanAddCardForm {...model} columnId={backlogColumnId} />
+                  ) : (
+                    <button
+                      type="button"
+                      className="aya-kanban-col-add-btn"
+                      onClick={() => openAddCard(backlogColumnId, { expandColumn: false })}
+                    >
+                      <span>+ Add card</span>
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="aya-kanban-archive-list">
                 {drawerCards.length === 0 ? (
-                  <div className="aya-kanban-empty-col">
+                  !addingOnShelf && <div className="aya-kanban-empty-col">
                     {hasActiveFilter || shelfSearching ? shelf.noMatchText : shelf.emptyText}
                   </div>
                 ) : (

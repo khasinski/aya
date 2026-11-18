@@ -1,5 +1,6 @@
 import { isFinishedColumn } from "../../shared/board-columns.cjs";
 import "./kanban.css";
+import { KanbanAddCardForm } from "./KanbanAddCardForm";
 import { extractChecklistProgress, isLongCardDescription, KanbanCardMarkdown, livePaneDotInfo } from './KanbanCardContent';
 import { columnDotClass, PRIORITY_OPTIONS, type KanbanViewModel } from './useKanbanBoard';
 type KanbanColumnsProps = Pick<
@@ -94,13 +95,6 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     renameColDraft,
     setRenameColDraft,
     addingCardColId,
-    setAddingCardColId,
-    newCardTitle,
-    setNewCardTitle,
-    newCardDesc,
-    setNewCardDesc,
-    newCardAssignee,
-    setNewCardAssignee,
     editingCardId,
     setEditingCardId,
     editTitle,
@@ -122,7 +116,6 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     setDropTargetColId,
     dropIndicator,
     setDropIndicator,
-    addDescRef,
     editDescRef,
     runAction,
     openAddCard,
@@ -133,14 +126,12 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     handleDeleteColumn,
     handleClearColumn,
     handleArchiveCard,
-    handleCreateCard,
     startEditCard,
     handleSaveCard,
     handleToggleCardTaskItem,
     handleMoveCard,
     handleDeleteCard,
     openCardPopover,
-    handleAddFormKeyDown,
     handleEditFormKeyDown,
     siblingMap,
     hasActiveFilter,
@@ -367,70 +358,7 @@ export function KanbanColumns(props: KanbanColumnsProps) {
           </div>
 
           <div className="aya-kanban-cards">
-            {addingCardColId === col.id && (
-              <div
-                className="aya-kanban-form"
-                onKeyDown={(e) => handleAddFormKeyDown(col.id, e)}
-              >
-                <input
-                  className="aya-kanban-input"
-                  placeholder="Card title…"
-                  aria-label="Card title"
-                  value={newCardTitle}
-                  onChange={(e) => setNewCardTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleCreateCard(col.id);
-                    }
-                  }}
-                  autoFocus
-                />
-                {renderDescriptionToolbar("add")}
-                <textarea
-                  ref={addDescRef}
-                  className="aya-kanban-textarea"
-                  placeholder="Description / Markdown, links, checklists, or paste image (⌘V)…"
-                  aria-label="Card description"
-                  value={newCardDesc}
-                  onChange={(e) => setNewCardDesc(e.target.value)}
-                  onPaste={(e) => handleTextareaPaste("add", e)}
-                  onDrop={(e) => handleTextareaDrop("add", e)}
-                />
-                {renderPriorityAndLabelsRow("add")}
-                <input
-                  className="aya-kanban-input"
-                  placeholder="Assignee (optional)…"
-                  aria-label="Card assignee"
-                  list={`kanban-assignees-${terminal.id}`}
-                  value={newCardAssignee}
-                  onChange={(e) => setNewCardAssignee(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleCreateCard(col.id);
-                    }
-                  }}
-                />
-                <div className="aya-kanban-form-actions">
-                  <button
-                    type="button"
-                    className="aya-kanban-btn"
-                    onClick={() => setAddingCardColId(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="aya-kanban-btn aya-kanban-btn--primary"
-                    disabled={!newCardTitle.trim()}
-                    onClick={() => void handleCreateCard(col.id)}
-                  >
-                    Add card
-                  </button>
-                </div>
-              </div>
-            )}
+            {addingCardColId === col.id && <KanbanAddCardForm {...props} columnId={col.id} />}
 
             {colCards.length === 0 && addingCardColId !== col.id && (
               <div className="aya-kanban-empty-col">
