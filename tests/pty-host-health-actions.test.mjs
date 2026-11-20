@@ -431,3 +431,16 @@ test("Stop other hosts never signals a pid whose kernel identity was unknown bef
   assert.deepEqual(await wired.stopOtherHostsFromWindow(), []);
   assert.deepEqual(operations(log).filter(([op]) => op === "kill"), []);
 });
+
+// A native message box does not scroll: 40 retained processes, one per line, pushed its buttons off the screen.
+test('a restart question with many retained processes lists the first few and counts the rest',async t=>{
+ const {d,state,log}=setup(t);state.askAnswer=false;
+ const inventory=Array.from({length:40},(_,i)=>({id:`pane-${i}`,pid:1000+i}));
+ d.relaunchDeps.panes=async()=>inventory.map((p,i)=>({id:p.id,name:`Agent ${i}`}));
+ d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:40,authentication:{required:true,targetVerified:true,inventoryKnown:true,reason:'auth refused'},owner:{pid:99,incompatible:false,disconnected:inventory.map(p=>p.id),inventory}});
+ const actions=createPtyHostHealth(d);
+ await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+ const [[, ,text]]=log.filter(([op])=>op==='ask-restart');
+ assert.match(text,/Agent 0 \(PID 1000\)/);assert.match(text,/and 32 more/);assert.doesNotMatch(text,/Agent 39/);
+ assert.ok(text.split('\n').length<=20,`${text.split('\n').length} lines`);
+});
