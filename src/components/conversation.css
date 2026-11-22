@@ -347,3 +347,4 @@
 .aya-chat-image-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .aya-chat-image-preview { box-sizing: border-box; width: fit-content; max-width: calc(100vw - 48px); }
 .aya-chat-image-preview img { display: block; min-height: 0; max-width: 100%; max-height: calc(85vh - 96px); object-fit: contain; margin: auto; }
+.aya-gui-request-origin { display: block; margin-top: 4px; color: var(--fg-tertiary); font-size: 11px; }

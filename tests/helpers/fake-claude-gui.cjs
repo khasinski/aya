@@ -209,6 +209,28 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
           input: { command: 'echo hello' },
         },
       });
+    } else if (prompt === 'background-agent' || prompt === 'foreground-agent') {
+      // The sequence Claude Code 2.1.330 writes for an Agent call (captured from a real session).
+      const background = prompt === 'background-agent';
+      write({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', content_block: { type: 'tool_use', id: 'toolu_agent', name: 'Agent', input: {} } } });
+      write({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'toolu_agent', name: 'Agent', input: { description: 'Read a.txt', subagent_type: 'Explore', prompt: 'Read a.txt and report it' } }] } });
+      write({ type: 'system', subtype: 'task_started', task_id: 'agent-1', tool_use_id: 'toolu_agent', description: 'Read a.txt', subagent_type: 'Explore', is_backgrounded: background, task_type: 'local_agent' });
+      if (background) write({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_agent', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }] } });
+      // The subagent's own text arrives before the main reply has any; it must not become the reply.
+      write({ type: 'assistant', parent_tool_use_id: 'toolu_agent', message: { content: [{ type: 'text', text: 'Private subagent text' }] } });
+      write({ type: 'assistant', parent_tool_use_id: 'toolu_agent', message: { content: [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: 'a.txt' } }] } });
+      write({ type: 'user', parent_tool_use_id: 'toolu_agent', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_read', content: 'hello' }] } });
+      if (background) {
+        write({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'A subagent is reading a.txt.' } } });
+        write({ type: 'result', subtype: 'success', is_error: false, result: 'A subagent is reading a.txt.' });
+        busy = false;
+        // After the turn, the subagent asks for approval; Claude reports back once it is answered.
+        write({ type: 'control_request', request_id: 'sub-approve', request: { subtype: 'can_use_tool', tool_name: 'Bash', tool_use_id: 'toolu_sub_bash', agent_id: 'agent-1', input: { command: 'wc -c a.txt' } } });
+      } else {
+        write({ type: 'system', subtype: 'task_notification', task_id: 'agent-1', tool_use_id: 'toolu_agent', status: 'completed', summary: 'a.txt says hello' });
+        write({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_agent', content: [{ type: 'text', text: 'a.txt says hello' }] }] } });
+        complete('The file says hello.');
+      }
     } else if (prompt === 'wait') {
       return;
     } else if (prompt === 'question') {
@@ -285,6 +307,15 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       } else {
         complete('All functions have been decompiled.');
       }
+      return;
+    }
+
+    if (reqId === 'sub-approve') {
+      write({ type: 'system', subtype: 'task_notification', task_id: 'agent-1', tool_use_id: 'toolu_agent', status: 'completed', summary: `a.txt says hello (${inner.behavior})` });
+      // Claude starts the follow-up turn by itself.
+      write({ type: 'system', subtype: 'init', session_id: 'claude-test-thread', model: currentModel });
+      write({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'The subagent says hello.' } } });
+      write({ type: 'result', subtype: 'success', is_error: false, result: 'The subagent says hello.', origin: { kind: 'task-notification' } });
       return;
     }
 

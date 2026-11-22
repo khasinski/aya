@@ -708,6 +708,64 @@ test('a subagent turn does not interrupt the conversation or misdirect steering'
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 
+test('a Claude background subagent stays visible past its turn, asks for approval and reports back in a new reply', async () => {
+  const seed = seedEnv({
+    singleTab: { presetId: 'gui', name: 'Claude GUI' },
+    presetList: [{ id: 'gui', name: 'Claude GUI', icon: '✦', color: '', command: 'claude', agent: 'claude', interfaceMode: 'gui' }],
+  });
+  const bin = join(seed.root, 'gui-bin'); mkdirSync(bin);
+  copyFileSync(resolve('tests/helpers/fake-claude-gui.cjs'), join(bin, 'claude')); chmodSync(join(bin, 'claude'), 0o755);
+  seed.launchEnv = { AYA_E2E_CLAUDE_BIN: join(bin, 'claude') };
+  const app = await launchApp(seed);
+  try {
+    const page = await app.firstWindow(), gui = page.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Claude' });
+    const turnStatus = gui.getByRole('status', { name: 'Turn status' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await prompt.fill('background-agent'); await prompt.press('Enter');
+    // The turn has ended, but its subagent still runs and is waiting for an approval.
+    await expect(gui.locator('article.assistant')).toHaveCount(1);
+    await expect(gui.locator('article.assistant')).toContainText('A subagent is reading a.txt.');
+    await expect(gui.getByText('Private subagent text')).toHaveCount(0);
+    const approval = gui.getByRole('group', { name: 'Approval required' });
+    await expect(approval).toContainText('Requested by Subagent: Read a.txt');
+    await expect(approval).toContainText('wc -c a.txt');
+    await expect(turnStatus).toHaveText('Waiting for your response');
+    const activity = gui.getByRole('region', { name: 'Tool activity details' });
+    await gui.getByLabel('Tool activity', { exact: true }).click();
+    await expect(activity).toContainText('◌ Subagent (Explore): Read a.txt');
+    await approval.getByRole('button', { name: 'Allow once' }).click();
+    // The subagent's report finishes its row, and Claude's follow-up is a reply of its own.
+    await expect(gui.locator('article.assistant')).toHaveCount(2);
+    await expect(gui.locator('article.assistant').first()).toContainText('A subagent is reading a.txt.');
+    await expect(gui.locator('article.assistant').last()).toContainText('The subagent says hello.');
+    await expect(turnStatus).toHaveText('Turn complete');
+    await expect(activity).toContainText('✓ Subagent (Explore): Read a.txt');
+    await activity.getByText('Subagent (Explore): Read a.txt').click();
+    await expect(activity.locator('pre')).toContainText('Read: a.txt');
+    await expect(activity.locator('pre')).toContainText('a.txt says hello (allow)');
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
+test('a Codex subagent shows what it was asked, and its approval outlives the main turn', async () => {
+  const seed = seedCodexGui();
+  const app = await launchApp(seed);
+  try {
+    const page = await app.firstWindow(), gui = page.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Codex' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await prompt.fill('subagent-outlives-turn'); await prompt.press('Enter');
+    const approval = gui.getByRole('group', { name: 'Approval required' });
+    await expect(approval).toContainText('Requested by Subagent: Inspect the logs');
+    await expect(gui.getByRole('status', { name: 'Turn status' })).toHaveText('Waiting for your response');
+    await gui.getByLabel('Tool activity', { exact: true }).click();
+    await expect(gui.getByRole('region', { name: 'Tool activity details' })).toContainText('✓ Subagent: Inspect the logs');
+    await approval.getByRole('button', { name: 'Allow once' }).click();
+    await expect(approval).toHaveCount(0);
+    await expect(gui.getByRole('status', { name: 'Turn status' })).toHaveText('Turn complete');
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
 test('a queued message starts after a turn completes before its start acknowledgement', async () => {
   const seed = seedCodexGui();
   const app = await launchApp(seed);

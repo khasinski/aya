@@ -88,6 +88,11 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
   protected threadId = '';
   protected busy = false;
   get running() { return this.busy; }
+  /** Ends the requests of the turn that just ended. A subagent's request outlives it: a background subagent keeps
+   *  running, and its agent still waits for the answer. */
+  protected clearTurnRequests() {
+    for (const [id, request] of this.requests) if (!text(request.params.subagent)) this.requests.delete(id);
+  }
   protected closing = false;
   protected stderr = '';
   cwd = '';
@@ -824,6 +829,28 @@ export class PiGuiSession extends BaseManagedGuiSession {
   }
 }
 
+/** Claude Code's subagent tool: `Agent`, called `Task` in older versions. */
+const CLAUDE_AGENT_TOOLS = new Set(['Agent', 'Task']);
+
+interface ClaudeSubagent {
+  /** Claude's agent ID (`task_id`; `agent_id` in the agent's permission requests). */
+  taskId: string;
+  description: string;
+  prompt: string;
+  subagentType: string;
+  /** Runs past the end of the turn that started it. */
+  background: boolean;
+  done: boolean;
+  output: string;
+}
+
+/** One line of a subagent's progress: "Read: src/main.ts", "Bash: Run the tests". */
+function subagentToolLine(name: string, input: Record<string, unknown>): string {
+  const detail = text(input.description) || text(input.command) || text(input.file_path) || text(input.path) || text(input.pattern) || text(input.url) || text(input.query);
+  const line = detail.replace(/\s+/g, ' ').trim();
+  return `${name}${line ? `: ${line.length > 160 ? `${line.slice(0, 159)}…` : line}` : ''}`;
+}
+
 export class ClaudeGuiSession extends BaseManagedGuiSession {
   private pendingControl = new Map<
     string,
@@ -841,6 +868,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private handledQuestionToolIds = new Set<string>();
   private pendingAssistantQuestions: unknown[] | null = null;
   private chromeCommandPending = false;
+  /** Subagents started with the Agent tool, by that tool call's ID. Reported as Codex `collabAgentToolCall` items. */
+  private agents = new Map<string, ClaudeSubagent>();
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -890,9 +919,77 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     }
     this.pendingControl.clear();
     this.requests.clear();
+    this.agents.clear();
     this.busy = false;
     this.turnId = null;
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
+  }
+
+  /** A turn's per-turn state starts empty, whether the user sent it or Claude started it. */
+  private beginTurn() {
+    this.busy = true;
+    this.turnId = `turn-${++this.nextId}`;
+    this.currentItemId = `msg-${this.nextId}`;
+    this.currentAssistantText = '';
+    this.handledQuestionToolIds.clear();
+    this.pendingAssistantQuestions = null;
+  }
+
+  /** Claude starts a turn by itself when a background subagent reports back. Without its own turn, its answer would
+   *  be appended to the previous reply and its result would replace that reply's text. */
+  private ensureTurn() {
+    if (this.busy) return;
+    this.beginTurn();
+    this.emit({ method: 'turn/started', params: { turn: { id: this.turnId } } });
+  }
+
+  private reportAgent(id: string, method: 'item/started' | 'item/completed', status?: string) {
+    const agent = this.agents.get(id);
+    if (!agent) return;
+    this.emit({
+      method,
+      params: {
+        item: {
+          id,
+          type: 'collabAgentToolCall',
+          tool: 'spawnAgent',
+          senderThreadId: this.threadId,
+          receiverThreadIds: agent.taskId ? [agent.taskId] : [],
+          agentsStates: {},
+          ...(agent.description ? { description: agent.description } : {}),
+          ...(agent.prompt ? { prompt: agent.prompt } : {}),
+          ...(agent.subagentType ? { subagentType: agent.subagentType } : {}),
+          ...(agent.background ? { background: true } : {}),
+          ...(agent.output ? { aggregatedOutput: agent.output } : {}),
+          status: status ?? 'inProgress',
+        },
+      },
+    });
+  }
+
+  private agentOutput(id: string, line: string) {
+    const agent = this.agents.get(id);
+    if (!agent || agent.done || !line) return;
+    const delta = (agent.output ? '\n' : '') + line;
+    agent.output = (agent.output + delta).slice(-100000);
+    this.emit({ method: 'item/commandExecution/outputDelta', params: { itemId: id, delta } });
+  }
+
+  private finishAgent(id: string, status: string, report: string) {
+    const agent = this.agents.get(id);
+    if (!agent || agent.done) return;
+    if (report.trim()) agent.output = (agent.output ? `${agent.output}\n\n${report.trim()}` : report.trim()).slice(-100000);
+    agent.done = true;
+    this.reportAgent(id, 'item/completed', status);
+  }
+
+  /** "Subagent: Read the config" for an approval or question a subagent asks; empty for the main agent. */
+  private subagentOf(agentId: string): string {
+    if (!agentId) return '';
+    for (const agent of this.agents.values()) {
+      if (agent.taskId === agentId) return agent.description ? `Subagent: ${agent.description}` : 'A subagent';
+    }
+    return 'A subagent';
   }
 
   async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
@@ -1049,12 +1146,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     if (!prompt.trim() || prompt.length > 100000) {
       throw Error('Prompt must contain 1–100000 characters');
     }
-    this.busy = true;
-    this.turnId = `turn-${++this.nextId}`;
-    this.currentItemId = `msg-${this.nextId}`;
-    this.currentAssistantText = '';
-    this.handledQuestionToolIds.clear();
-    this.pendingAssistantQuestions = null;
+    this.beginTurn();
     try {
       if (options.model) {
         await this.controlRequest('set_model', { model: options.model });
@@ -1177,6 +1269,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
         const toolName = text(req.tool_name);
         const input = object(req.input);
         const toolUseId = text(req.tool_use_id) || reqId;
+        const subagent = this.subagentOf(text(req.agent_id));
+        const origin = subagent ? { subagent } : {};
         if (toolName.startsWith('mcp__aya__') || toolName.startsWith('aya_')) {
           this.write({
             type: 'control_response',
@@ -1204,7 +1298,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
           });
           this.requests.set(reqId, {
             method: 'item/tool/requestUserInput',
-            params: { questions },
+            params: { questions, ...origin },
             resolve: (val) => {
               const rawAnswers = val.answers || {};
               const resolvedAnswers: Record<string, string> = { ...rawAnswers };
@@ -1233,14 +1327,14 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
               });
             },
           });
-          this.emit({ method: 'item/tool/requestUserInput', params: { questions }, id: reqId });
+          this.emit({ method: 'item/tool/requestUserInput', params: { questions, ...origin }, id: reqId });
           return;
         }
         const commandText =
           text(input.command) || text(input.file_path) || text(input.path) || toolName;
         this.requests.set(reqId, {
           method: 'item/commandExecution/requestApproval',
-          params: { command: commandText, reason: text(req.decision_reason) || `Run ${toolName}` },
+          params: { command: commandText, reason: text(req.decision_reason) || `Run ${toolName}`, ...origin },
           resolve: (val) => {
             if (val.decision === 'accept') {
               this.write({
@@ -1269,7 +1363,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
         });
         this.emit({
           method: 'item/commandExecution/requestApproval',
-          params: { command: commandText, reason: text(req.decision_reason) || `Run ${toolName}` },
+          params: { command: commandText, reason: text(req.decision_reason) || `Run ${toolName}`, ...origin },
           id: reqId,
         });
         return;
@@ -1283,7 +1377,58 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       return;
     }
 
+    // Subagent lifecycle. Background shell tasks report through the same events; only Agent calls are tracked.
+    if (type === 'system' && ['task_started', 'task_notification'].includes(text(message.subtype))) {
+      const id = text(message.tool_use_id) || [...this.agents].find(([, agent]) => agent.taskId === text(message.task_id))?.[0] || '';
+      const agent = this.agents.get(id);
+      if (!agent) return;
+      if (text(message.subtype) === 'task_started') {
+        agent.taskId = text(message.task_id) || agent.taskId;
+        agent.description ||= text(message.description);
+        agent.subagentType ||= text(message.subagent_type);
+        agent.prompt ||= text(message.prompt);
+        if (message.is_backgrounded === true) agent.background = true;
+        if (!agent.done) this.reportAgent(id, 'item/started');
+      } else {
+        const status = text(message.status);
+        this.finishAgent(id, status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'interrupted', text(message.summary));
+      }
+      return;
+    }
+
+    // A subagent's own messages carry the Agent call's ID; they are its progress, never the conversation's reply.
+    const parentToolUseId = text(message.parent_tool_use_id);
+    if (parentToolUseId && (type === 'stream_event' || type === 'assistant' || type === 'user')) {
+      if (type === 'assistant') {
+        const content = object(message.message).content;
+        for (const block of Array.isArray(content) ? content : []) {
+          const b = object(block);
+          if (text(b.type) === 'tool_use') this.agentOutput(parentToolUseId, subagentToolLine(text(b.name), object(b.input)));
+        }
+      }
+      return;
+    }
+
+    if (type === 'user') {
+      // An Agent call's result. A background agent's result only says it was launched; its report comes later.
+      const content = object(message.message).content;
+      for (const block of Array.isArray(content) ? content : []) {
+        const b = object(block);
+        const id = text(b.tool_use_id);
+        const agent = this.agents.get(id);
+        if (text(b.type) !== 'tool_result' || !agent || agent.done) continue;
+        const result = Array.isArray(b.content) ? b.content.map(part => text(object(part).text)).join('\n') : text(b.content);
+        if (agent.background || /^Async agent launched/.test(result)) {
+          if (!agent.background) { agent.background = true; this.reportAgent(id, 'item/started'); }
+          continue;
+        }
+        this.finishAgent(id, b.is_error === true ? 'failed' : 'completed', result);
+      }
+      return;
+    }
+
     if (type === 'stream_event') {
+      this.ensureTurn();
       const evt = object(message.event);
       const evtType = text(evt.type);
       if (evtType === 'content_block_delta') {
@@ -1301,6 +1446,11 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
         if (text(block.type) === 'tool_use') {
           const toolName = text(block.name);
           const id = text(block.id) || `tool-${++this.nextId}`;
+          if (CLAUDE_AGENT_TOOLS.has(toolName)) {
+            this.agents.set(id, { taskId: '', description: '', prompt: '', subagentType: '', background: false, done: false, output: '' });
+            this.reportAgent(id, 'item/started');
+            return;
+          }
           this.emit({
             method: 'item/started',
             params: {
@@ -1319,10 +1469,19 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     }
 
     if (type === 'assistant') {
+      this.ensureTurn();
       const msg = object(message.message);
       if (Array.isArray(msg.content)) {
         for (const rawBlock of msg.content) {
           const b = object(rawBlock);
+          const agent = text(b.type) === 'tool_use' ? this.agents.get(text(b.id)) : undefined;
+          if (agent && !agent.done) {
+            const input = object(b.input);
+            agent.description ||= text(input.description);
+            agent.prompt ||= text(input.prompt);
+            agent.subagentType ||= text(input.subagent_type);
+            this.reportAgent(text(b.id), 'item/started');
+          }
           if (text(b.type) === 'tool_use' && text(b.name) === 'AskUserQuestion') {
             const toolId = text(b.id);
             if (!toolId || !this.handledQuestionToolIds.has(toolId)) {
@@ -1347,6 +1506,11 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     }
 
     if (type === 'result') {
+      // A result outside any turn ends a turn Claude started without streaming; one with nothing to show is ignored.
+      if (!this.busy) {
+        if (!text(message.result)) return;
+        this.ensureTurn();
+      }
       const finalText = text(message.result) || this.currentAssistantText;
       const pendingQuestions = this.pendingAssistantQuestions;
       this.pendingAssistantQuestions = null;
@@ -1373,7 +1537,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       const finishedTurnId = this.turnId || 'turn';
       this.busy = false;
       this.turnId = null;
-      this.requests.clear();
+      this.clearTurnRequests();
       this.emit({
         method: 'turn/completed',
         params: {

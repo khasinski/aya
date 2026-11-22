@@ -129,6 +129,17 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       event('fixture/foreign-finished', {});
       return;
     }
+    if (prompt === 'subagent-outlives-turn') {
+      // A spawned agent asks for approval; the main turn ends before anyone answers.
+      write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
+      event('turn/started', { threadId: p.threadId, turn: { id: 'turn' } });
+      const spawn = { id: 'spawn-1', type: 'collabAgentToolCall', tool: 'spawnAgent', senderThreadId: p.threadId, receiverThreadIds: ['child-thread'], prompt: 'Inspect the logs\nThen report', agentsStates: { 'child-thread': { status: 'running' } } };
+      event('item/started', { threadId: p.threadId, item: { ...spawn, status: 'inProgress' } });
+      event('item/completed', { threadId: p.threadId, item: { ...spawn, status: 'completed' } });
+      write({ id: 'late-child', method: 'item/commandExecution/requestApproval', params: { threadId: 'child-thread', command: 'cat app.log' } });
+      event('turn/completed', { threadId: p.threadId, turn: { id: 'turn', status: 'completed' } }); busy = false;
+      return;
+    }
     if (prompt === 'slow-start') { setTimeout(() => { write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } }); event('turn/started', { turn: { id: 'turn' } }); }, 100); return; }
     if (prompt === 'complete-before-ack') {
       event('turn/started', { turn: { id: 'turn' } });
@@ -226,6 +237,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (holdProgress && progressStep === 1) return;
     if (++progressStep <= 2) write({ id: 'progress', method: 'item/tool/call', params: { tool: 'aya_progress', arguments: { progressId, label: 'Decompiling functions', current: progressStep === 1 ? 4 : 10, total: 10, detail: progressStep === 1 ? 'Decompiled four functions' : 'All ten functions are ready' } } });
     else complete('All functions have been decompiled.');
+  } else if (!message.method && message.id === 'late-child') { event('fixture/child-answered', message.result);
   } else if (!message.method && message.id === 'approve') { event('fixture/approval', message.result); complete(typeof message.result.decision === 'string' ? message.result.decision : JSON.stringify(message.result)); }
   else if (!message.method && message.id === 'bulk-present') {
     if (!message.result.success) { complete('Widget creation failed'); return; }

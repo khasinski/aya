@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Conversation GUI: show subagents as their own activity rows with the task they were given, their tool calls and their final report. Claude's background subagents stay running after the turn that started them, and the pane reports how many are still working.
+- Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.
+- Fix Claude GUI appending the reply Claude writes when a background subagent finishes to the previous reply, and replacing that reply's text; the follow-up is now a turn and reply of its own. A subagent's own text no longer appears as Claude's reply.
+
 ## v0.20.0 - 2026-11-22
 
 - Render Mermaid diagrams and charts directly in conversations, including flowcharts, sequence diagrams, pie charts and bar/line charts, with source viewing, copying and enlarged previews.

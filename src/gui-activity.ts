@@ -2,7 +2,7 @@
 
 import { formatElapsed } from "./gui-status";
 
-export type ActivityKind = "command" | "edit" | "web" | "tool";
+export type ActivityKind = "command" | "edit" | "web" | "agent" | "tool";
 
 export interface ActivityTiming {
   kind: ActivityKind;
@@ -14,10 +14,46 @@ export function activityKind(itemType: string): ActivityKind {
   if (itemType === "commandExecution") return "command";
   if (itemType === "fileChange") return "edit";
   if (itemType === "webSearch") return "web";
+  if (itemType === "collabAgentToolCall") return "agent";
   return "tool";
 }
 
-const KIND_LABEL: Record<ActivityKind, string> = { command: "Commands", edit: "File edits", web: "Web searches", tool: "Tools" };
+const firstLine = (value: unknown, max = 80): string => {
+  const line = (typeof value === "string" ? value : "").trim().split("\n")[0]!.trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+};
+
+/** What a subagent call does, from a Codex `collabAgentToolCall` item (Claude's Agent tool is reported the same way):
+ *  "Subagent (Explore): Find the config loader", "Waiting for 2 subagents". */
+export function subagentLabel(item: Record<string, unknown>): string {
+  const tool = typeof item.tool === "string" ? item.tool : "spawnAgent";
+  const receivers = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.length : 0;
+  const plural = (n: number) => (n > 1 ? `${n} subagents` : "a subagent");
+  if (tool === "spawnAgent") {
+    const type = firstLine(item.subagentType, 40);
+    const what = firstLine(item.description) || firstLine(item.prompt);
+    return `Subagent${type ? ` (${type})` : ""}${what ? `: ${what}` : ""}`;
+  }
+  if (tool === "wait") return `Waiting for ${plural(receivers)}`;
+  if (tool === "sendInput" || tool === "sendMessage" || tool === "followupTask") return `Messaging ${plural(receivers)}`;
+  if (tool === "resumeAgent") return `Resuming ${plural(receivers)}`;
+  if (tool === "closeAgent") return `Closing ${plural(receivers)}`;
+  if (tool === "interruptAgent") return `Stopping ${plural(receivers)}`;
+  if (tool === "listAgents") return "Listing subagents";
+  return "Using a subagent";
+}
+
+/** The last known state of each agent a Codex collab call addressed, one line per agent. */
+export function subagentStates(item: Record<string, unknown>): string {
+  const states = item.agentsStates && typeof item.agentsStates === "object" ? Object.entries(item.agentsStates as Record<string, unknown>) : [];
+  return states.map(([thread, raw]) => {
+    const state = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const message = typeof state.message === "string" ? state.message.trim() : "";
+    return `${thread}: ${typeof state.status === "string" ? state.status : "unknown"}${message ? `\n${message}` : ""}`;
+  }).join("\n\n");
+}
+
+const KIND_LABEL: Record<ActivityKind, string> = { command: "Commands", edit: "File edits", web: "Web searches", agent: "Subagents", tool: "Tools" };
 
 /** How long a call took, or null while it runs or when no timing was recorded (an activity restored from disk). */
 export function activityDuration(activity: Pick<ActivityTiming, "startedAt" | "endedAt">): number | null {

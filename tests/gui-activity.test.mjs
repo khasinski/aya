@@ -45,3 +45,13 @@ test("durations and phase text read short", () => {
 test("no activities, no phases", () => {
   assert.deepEqual(activityPhases([]), []);
 });
+
+test("subagent calls read as what they do", async () => {
+  const { subagentLabel, subagentStates } = await import("../dist-test/gui-activity.js");
+  assert.equal(activityKind("collabAgentToolCall"), "agent");
+  assert.equal(subagentLabel({ tool: "spawnAgent", subagentType: "Explore", description: "Find the loader", prompt: "Long prompt" }), "Subagent (Explore): Find the loader");
+  assert.equal(subagentLabel({ tool: "spawnAgent", prompt: "Inspect the logs\nThen report" }), "Subagent: Inspect the logs");
+  assert.equal(subagentLabel({ tool: "wait", receiverThreadIds: ["a", "b"] }), "Waiting for 2 subagents");
+  assert.equal(subagentLabel({ tool: "closeAgent", receiverThreadIds: ["a"] }), "Closing a subagent");
+  assert.equal(subagentStates({ agentsStates: { a: { status: "completed", message: "Done" }, b: { status: "running" } } }), "a: completed\nDone\n\nb: running");
+});

@@ -24,6 +24,8 @@ export class CodexGuiSession {
   private model = '';
   /** Side chats running on forked threads: their notifications never reach the conversation. */
   private sideThreads = new Map<string, { text: string; done: (error?: Error) => void }>();
+  /** Spawned subagents' threads and what each was asked to do, from the main thread's collab calls. */
+  private subagentThreads = new Map<string, string>();
   private busy = false;
   private samplingEpoch = 0;
   private samplingWaiters = new Set<() => void>();
@@ -307,7 +309,10 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
         return;
       }
       if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput'].includes(method)) {
-        this.requests.set(id, { method, params }); this.emit({ method, params, id }); return;
+        // A subagent's request is marked so the main turn's end does not drop it while that agent still waits.
+        const thread = text(params.threadId), task = this.subagentThreads.get(thread);
+        const request = { method, params: thread && this.threadId && thread !== this.threadId ? { ...params, subagent: task ? `Subagent: ${task}` : 'A subagent' } : params };
+        this.requests.set(id, request); this.emit({ ...request, id }); return;
       }
       this.write({ id, error: { code: -32601, message: `Aya PoC does not support ${method}` } });
       this.emit({ method: 'aya/notice', params: { message: `Unsupported Codex request: ${method}` } });
@@ -317,6 +322,11 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
     // Those turns must not change this pane's active turn or its conversation.
     // Server requests above still need their own replies regardless of origin.
     if (/^(?:turn\/|item\/|thread\/goal\/)/.test(method) && this.threadId && typeof params.threadId === 'string' && params.threadId !== this.threadId) return;
+    const item = object(params.item);
+    if (item.type === 'collabAgentToolCall' && item.tool === 'spawnAgent' && Array.isArray(item.receiverThreadIds)) {
+      const task = text(item.prompt).trim().split('\n')[0]!.slice(0, 80);
+      for (const thread of item.receiverThreadIds) if (typeof thread === 'string') this.subagentThreads.set(thread, task);
+    }
     if (method === 'turn/started') { this.samplingEpoch++; this.turnId = text(object(params.turn).id); this.busy = true; }
     if (method === 'turn/completed') {
       if (this.turnId && text(object(params.turn).id) && object(params.turn).id !== this.turnId) return;
@@ -326,7 +336,9 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
         const progress: GuiProgress = { ...previous, status: object(params.turn).status === 'failed' ? 'failed' : 'paused', detail: previous.detail || 'Turn ended before this task was marked complete' };
         this.progresses.set(id, progress); this.emit({ method: 'aya/progress', params: { progress } });
       }
-      this.busy = false; this.turnId = null; this.requests.clear(); }
+      this.busy = false; this.turnId = null;
+      for (const [id, request] of this.requests) if (!request.params.subagent) this.requests.delete(id);
+    }
     if (method === 'serverRequest/resolved' && (typeof params.requestId === 'string' || typeof params.requestId === 'number')) this.requests.delete(params.requestId);
     this.emit({ method, params });
   }

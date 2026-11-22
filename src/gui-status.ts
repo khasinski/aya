@@ -17,6 +17,8 @@ export interface GuiPaneStatusInput {
   /** Queued messages are held (after a stop, an error or a reconnect). */
   queueHeld: boolean;
   queued: number;
+  /** Subagents still running after the turn that started them ended (Claude's background agents). */
+  backgroundAgents?: number;
 }
 
 export type GuiPaneStatus = { level: ControlStatusLevel; text: string } | "clear";
@@ -39,11 +41,17 @@ export function guiPaneStatus(input: GuiPaneStatusInput): GuiPaneStatus {
   if (input.unansweredQuestion) return { level: "waiting", text: `${agentLabel} has a question: ${oneLine(input.unansweredQuestion)}` };
   if (!input.ready) return "clear";
   if (input.busy) return { level: "active", text: `${agentLabel} is working` };
+  if (input.backgroundAgents) return { level: "active", text: backgroundAgentsText(input.backgroundAgents) };
   if (input.turnOutcome === "failed") return { level: "error", text: `${agentLabel}'s turn failed` };
   if (input.turnOutcome === "complete") {
     return { level: "done", text: input.queueHeld && input.queued > 0 ? `Turn complete · ${input.queued} queued message${input.queued === 1 ? "" : "s"} held` : "Turn complete" };
   }
   return "clear";
+}
+
+/** "1 subagent working in the background". */
+export function backgroundAgentsText(count: number): string {
+  return `${count} subagent${count === 1 ? "" : "s"} working in the background`;
 }
 
 /** True when two statuses read the same, so an effect does not re-report on every render. */

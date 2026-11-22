@@ -11,12 +11,12 @@ import { guiSupportedAgent } from '../agentPreset';
 import { appendMessageDeltas,createTextDeltaBuffer,scheduleConversationFrame } from '../conversation-deltas';
 import { conversationSaveDelay } from '../conversation-save-delay';
 import { movedUpFromFollowedPosition, wheelTargetsConversation } from '../conversation-scroll';
-import { activityDuration,activityKind,activityPhases,phaseText,shortDuration,type ActivityKind } from '../gui-activity';
+import { activityDuration,activityKind,activityPhases,phaseText,shortDuration,subagentLabel,subagentStates,type ActivityKind } from '../gui-activity';
 import { followUpHint,parseFollowUpPreference,pasteBecomesAttachment,recallStep,sendAction,sendLabel,sentPromptText,stashStep,withQuote,type FollowUpPreference,type Recall } from '../gui-composer';
 import { reviewCommentsBlock,terminalExcerptBlock,withContextBlock } from '../gui-context';
 import { findStatus,findTextMatches,stepMatch } from '../gui-find';
 import { guiRendererRecoveryInProgress,takeGuiPaneRecovery } from '../gui-renderer-recovery';
-import { guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
+import { backgroundAgentsText,guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
 import type { SettingsTab } from '../settings-tabs';
 import { GUI_FOLLOW_UP_STORAGE_KEY,guiStashKey } from '../storage-keys';
 import { terminalExcerpt } from '../terminal-checkpoint-registry';
@@ -39,7 +39,8 @@ interface QuestionAnswer { messageId: string; answers: Record<string, string> }
 interface QueuedMessage { id: string; text: string; attachments: Attachment[]; questionAnswer?: QuestionAnswer }
 interface ModelOption { id: string; model: string; displayName: string; supportedReasoningEfforts: { reasoningEffort: string }[]; defaultReasoningEffort: string }
 type ContextComment = { id: string; file: string; hunk: string; line: string; newLine: number | null; oldLine: number | null; note: string; sentAt: string | null; checkout: string };
-interface Activity { id: string; label: string; status: string; output: string; kind?: ActivityKind; startedAt?: number; endedAt?: number }
+/** `background`: a subagent that keeps running after its turn ends; only its own completion finishes it. */
+interface Activity { id: string; label: string; status: string; output: string; kind?: ActivityKind; startedAt?: number; endedAt?: number; background?: boolean }
 interface GoalDetails { objective: string; status: string; reason?: string }
 interface GuiQuestionOption { label: string; description: string }
 interface GuiQuestion { id: string; header: string; question: string; isSecret: boolean; multiSelect: boolean; options: GuiQuestionOption[] }
@@ -394,7 +395,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (event.id !== undefined) setRequests(old => [...old.filter(r => r.id !== event.id), event]);
       if (event.method === 'aya/requestResolved' || event.method === 'serverRequest/resolved') setRequests(old => old.filter(r => r.id !== (p.id ?? p.requestId)));
       if (event.method === 'turn/started') { turnRevision.current++; turnExplanation.current = ''; setBusy(true); setTurnOutcome(null); }
-      if (event.method === 'turn/completed') { turnRevision.current++; setBusy(false); setRequests([]); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); if (turn.error) fail(obj(turn.error).message); }
+      if (event.method === 'turn/completed') { turnRevision.current++; setBusy(false); setRequests(old => old.filter(r => !!str(r.params.subagent))); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' && !a.background ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); if (turn.error) fail(obj(turn.error).message); }
       if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setRequests([]); setQueueHeld(true); setSideQuestion(''); setTurnOutcome('interrupted'); setMessages(old => old.map(m => m.progress?.status === 'running' ? { ...m, progress: { ...m.progress, status: 'paused' } } : m)); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: 'interrupted' } : a)); fail(p.message); }
       if (event.method === 'error' || event.method === 'aya/notice') fail(p.message || obj(p.error).message);
       if (event.method === 'turn/plan/updated' && Array.isArray(p.plan)) setPlan(p.plan as { step: string; status: string }[]);
@@ -405,9 +406,12 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
           setMessages(old => old.some(m => m.id === item.id) ? old.map(m => m.id === item.id ? { ...m, text: str(item.text) || m.text, questions: qs } : m) : [...old, { id: str(item.id), type: 'assistant', text: str(item.text), questions: qs }]);
         }
         if (!['agentMessage', 'userMessage', 'reasoning', 'plan'].includes(type)) {
-          const label = type === 'commandExecution' ? str(item.command) || 'Running a command' : type === 'fileChange' ? 'Editing files' : type === 'dynamicToolCall' ? (item.tool === 'aya_open_artifact' ? 'Opening an artifact' : 'Preparing an artifact') : type === 'webSearch' ? 'Searching the web' : type === 'mcpToolCall' ? `Using ${str(item.tool) || 'a connected tool'}` : 'Using a tool';
+          const label = type === 'commandExecution' ? str(item.command) || 'Running a command' : type === 'fileChange' ? 'Editing files' : type === 'dynamicToolCall' ? (item.tool === 'aya_open_artifact' ? 'Opening an artifact' : 'Preparing an artifact') : type === 'webSearch' ? 'Searching the web' : type === 'collabAgentToolCall' ? subagentLabel(item) : type === 'mcpToolCall' ? `Using ${str(item.tool) || 'a connected tool'}` : 'Using a tool';
           const finished = event.method === 'item/completed', now = Date.now();
-          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, label, status: finished ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000) || a.output, ...(finished && a.endedAt === undefined ? { endedAt: now } : {}) } : a) : [...old.slice(-49), { id: str(item.id), label, status: finished ? str(item.status) || 'completed' : 'inProgress', output: str(item.aggregatedOutput).slice(-100000), kind: activityKind(type), startedAt: now, ...(finished ? { endedAt: now } : {}) }]);
+          const output = (str(item.aggregatedOutput) || (type === 'collabAgentToolCall' ? subagentStates(item) : '')).slice(-100000);
+          const background = item.background === true ? { background: true } : {};
+          const status = finished ? str(item.status) || 'completed' : 'inProgress';
+          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, ...background, label, status, output: output || a.output, ...(finished && a.endedAt === undefined ? { endedAt: now } : {}) } : a) : [...old.slice(-49), { id: str(item.id), label, status, output, kind: activityKind(type), startedAt: now, ...background, ...(finished ? { endedAt: now } : {}) }]);
         }
       }
       if (event.method === 'item/commandExecution/outputDelta') setActivities(old => old.map(a => a.id === p.itemId ? { ...a, output: (a.output + str(p.delta)).slice(-100000) } : a));
@@ -446,7 +450,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         const cut = saved.goal.lastIndexOf(' · ');
         if (saved.goal) { const details = saved.goalDetails as GoalDetails | undefined || { objective: cut >= 0 ? saved.goal.slice(0, cut) : saved.goal, status: cut >= 0 ? saved.goal.slice(cut + 3) : 'active' }; setGoalDetails(details); lastGoal.current = details; }
       }
-      if (Array.isArray(saved.activities)) setActivities(saved.activities.slice(-50).map(value => { const activity = obj(value); return { id: str(activity.id), label: str(activity.label), status: activity.status === 'inProgress' && !saved.recoveryRunning ? 'interrupted' : str(activity.status), output: str(activity.output).slice(-100000), ...(typeof activity.kind === 'string' ? { kind: activity.kind as ActivityKind } : {}), ...(typeof activity.startedAt === 'number' ? { startedAt: activity.startedAt } : {}), ...(typeof activity.endedAt === 'number' ? { endedAt: activity.endedAt } : {}) }; }));
+      if (Array.isArray(saved.activities)) setActivities(saved.activities.slice(-50).map(value => { const activity = obj(value); return { id: str(activity.id), label: str(activity.label), status: activity.status === 'inProgress' && !saved.recoveryRunning ? 'interrupted' : str(activity.status), output: str(activity.output).slice(-100000), ...(typeof activity.kind === 'string' ? { kind: activity.kind as ActivityKind } : {}), ...(typeof activity.startedAt === 'number' ? { startedAt: activity.startedAt } : {}), ...(typeof activity.endedAt === 'number' ? { endedAt: activity.endedAt } : {}), ...(activity.background === true ? { background: true } : {}) }; }));
       if (Array.isArray(saved.queue)) { setQueue(saved.queue as QueuedMessage[]); setQueueHeld(saved.queue.length > 0); }
       if (Array.isArray(saved.attachments)) setAttachments(saved.attachments as Attachment[]);
       if (typeof saved.selectedModel === 'string') setSelectedModel(saved.selectedModel);
@@ -526,6 +530,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     pauseFollowing();
     match.scrollIntoView({ block: 'center' });
   }, [findOpen, findNavigationRevision, pauseFollowing]);
+  const backgroundAgents = activities.filter(a => a.background && a.status === 'inProgress').length;
   const reportedStatus = useRef<GuiPaneStatus | null>(null);
   const turnRanHere = useRef(false);   // a turn restored from disk is history, not news
   useEffect(() => {
@@ -534,18 +539,18 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       const questions = normalizeQuestions(request.params.questions);
       return questions.length > 0
         ? { kind: 'question' as const, text: questions[0].question }
-        : { kind: 'approval' as const, text: str(request.params.command) || str(request.params.reason) };
+        : { kind: 'approval' as const, text: (str(request.params.subagent) ? `${str(request.params.subagent)} · ` : '') + (str(request.params.command) || str(request.params.reason)) };
     });
     const last = messages[messages.length - 1];
     const lastQuestions = last && last.type === 'assistant' && !busy ? extractMessageQuestions(last) : [];
     const unanswered = lastQuestions.length > 0 && !(last?.questionAnswers && Object.keys(last.questionAnswers).length > 0) ? lastQuestions[0].question : undefined;
     if (busy) turnRanHere.current = true;
-    const computed = guiPaneStatus({ agentLabel, ready, busy, requests: asked, ...(unanswered ? { unansweredQuestion: unanswered } : {}), turnOutcome, queueHeld, queued: queue.length });
+    const computed = guiPaneStatus({ agentLabel, ready, busy, requests: asked, ...(unanswered ? { unansweredQuestion: unanswered } : {}), turnOutcome, queueHeld, queued: queue.length, backgroundAgents });
     const next: GuiPaneStatus = computed !== 'clear' && (computed.level === 'done' || computed.level === 'error') && !turnRanHere.current ? 'clear' : computed;
     if (sameGuiPaneStatus(next, reportedStatus.current)) return;
     reportedStatus.current = next;
     onReportStatus(terminal.id, next);
-  }, [onReportStatus, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length]);
+  }, [onReportStatus, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length, backgroundAgents]);
   useLayoutEffect(() => { if (!hidden) scrollToLatest(); }, [hidden, messages, activities, side, requests, plan, scrollToLatest]);
   useEffect(() => {
     const observer = new ResizeObserver(scrollToLatest);
@@ -815,9 +820,9 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         /></WindowedMessage>
       ))}
       {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map((a, index) => { const phase = activityPhaseList.find(p => p.index === index); const took = activityDuration(a); return <Fragment key={a.id}>{phase && <div className="aya-gui-activity-phase" role="presentation">{phaseText(phase)}</div>}<details><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}{took !== null && <small className="aya-gui-activity-time"> · {shortDuration(took)}</small>}</summary>{a.output && <pre>{a.output}</pre>}</details></Fragment>; })}</div></details>}
-      {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-row"><div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={busy && requests.length === 0}>
+      {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-row"><div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={(busy || backgroundAgents > 0) && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
-        {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
+        {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : backgroundAgents ? `${backgroundAgentsText(backgroundAgents)}…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
       </div><ConversationTurnTimer busy={busy} hidden={hidden} /></div>}
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={resumeFollowing}>Jump to latest ↓</button>}</div>
@@ -1218,5 +1223,5 @@ function GuiRequest({ request, agentLabel, codex, active, promptEmpty, respond }
     return () => window.removeEventListener('keydown', onKey);
   });
   if (questions.length > 0) return <GuiQuestionCard questions={questions} agentLabel={agentLabel} isRequest onSubmit={answers => submit({ answers })} />;
-  return <section className="aya-gui-request" role="group" aria-label="Approval required"><strong>Approval required</strong><pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre><div className="aya-gui-request-actions">{decisions.map((decision, index) => <button key={index} disabled={sending} data-primary={decision === 'accept' || undefined} aria-keyshortcuts={decision === 'accept' ? 'Control+Enter Meta+Enter' : decision === 'decline' && promptEmpty ? 'Control+Backspace Meta+Backspace' : undefined} onClick={() => void submit({ decision })}>{decisionLabel(decision)}</button>)}</div>{active && (canAllow || canDecline) && <small className="aya-gui-request-hint">{canAllow ? '⌘↵ allow once' : ''}{canAllow && canDecline && promptEmpty ? ' · ' : ''}{canDecline && promptEmpty ? '⌘⌫ decline' : ''}</small>}</section>;
+  return <section className="aya-gui-request" role="group" aria-label="Approval required"><strong>Approval required</strong>{str(request.params.subagent) && <small className="aya-gui-request-origin">Requested by {str(request.params.subagent)}</small>}<pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre><div className="aya-gui-request-actions">{decisions.map((decision, index) => <button key={index} disabled={sending} data-primary={decision === 'accept' || undefined} aria-keyshortcuts={decision === 'accept' ? 'Control+Enter Meta+Enter' : decision === 'decline' && promptEmpty ? 'Control+Backspace Meta+Backspace' : undefined} onClick={() => void submit({ decision })}>{decisionLabel(decision)}</button>)}</div>{active && (canAllow || canDecline) && <small className="aya-gui-request-hint">{canAllow ? '⌘↵ allow once' : ''}{canAllow && canDecline && promptEmpty ? ' · ' : ''}{canDecline && promptEmpty ? '⌘⌫ decline' : ''}</small>}</section>;
 }

@@ -613,3 +613,66 @@ test('a new Codex goal becomes active after the previous goal completed', async 
   assert.equal((await session.command('goal', 'pause')).goal.status, 'paused');
   assert.equal((await session.command('goal', 'resume')).goal.objective, 'Second objective');
 });
+
+test('Claude GUI shows a background subagent as its own activity and gives its follow-up turn its own reply', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('background-agent');
+  await wait(() => events.some(e => e.id === 'sub-approve'));
+  const turnEnds = () => events.filter(e => e.method === 'turn/completed');
+  assert.equal(turnEnds().length, 1);
+  assert.equal(session.running, false);
+  // The subagent's text never reaches the reply.
+  const replies = () => events.filter(e => e.method === 'item/completed' && e.params.item.type === 'agentMessage');
+  assert.deepEqual(replies().map(e => e.params.item.text), ['A subagent is reading a.txt.']);
+  assert.equal(events.some(e => e.method === 'item/agentMessage/delta' && /Private subagent/.test(e.params.delta)), false);
+  // The Agent call is a subagent item that keeps running past the turn.
+  const agentItems = () => events.filter(e => e.params?.item?.type === 'collabAgentToolCall');
+  const started = agentItems().at(-1).params.item;
+  assert.equal(started.id, 'toolu_agent');
+  assert.equal(started.description, 'Read a.txt');
+  assert.equal(started.subagentType, 'Explore');
+  assert.equal(started.background, true);
+  assert.equal(agentItems().some(e => e.method === 'item/completed'), false);
+  assert.ok(events.some(e => e.method === 'item/commandExecution/outputDelta' && e.params.itemId === 'toolu_agent' && e.params.delta === 'Read: a.txt'));
+  // Its approval survives the end of the turn and names the subagent.
+  const approval = events.find(e => e.id === 'sub-approve');
+  assert.equal(approval.params.subagent, 'Subagent: Read a.txt');
+  await session.respond('sub-approve', { decision: 'accept' });
+  await wait(() => turnEnds().length === 2);
+  const done = agentItems().find(e => e.method === 'item/completed').params.item;
+  assert.equal(done.status, 'completed');
+  assert.match(done.aggregatedOutput, /Read: a\.txt[\s\S]*a\.txt says hello \(allow\)/);
+  // Claude's own follow-up turn is a new turn with a new reply; the first reply keeps its text.
+  assert.equal(events.filter(e => e.method === 'turn/started').length, 2);
+  const [first, second] = replies().map(e => e.params.item);
+  assert.equal(first.text, 'A subagent is reading a.txt.');
+  assert.equal(second.text, 'The subagent says hello.');
+  assert.notEqual(first.id, second.id);
+  assert.equal(session.running, false);
+});
+
+test('Claude GUI completes a foreground subagent with its report', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('foreground-agent');
+  await wait(() => events.some(e => e.method === 'turn/completed'));
+  const items = events.filter(e => e.params?.item?.type === 'collabAgentToolCall');
+  assert.equal(items.some(e => e.params.item.background), false);
+  const done = items.filter(e => e.method === 'item/completed');
+  assert.equal(done.length, 1);
+  assert.match(done[0].params.item.aggregatedOutput, /Read: a\.txt\n\na\.txt says hello$/);
+  assert.deepEqual(events.filter(e => e.method === 'item/completed' && e.params.item.type === 'agentMessage').map(e => e.params.item.text), ['The file says hello.']);
+});
+
+test('a Codex subagent approval outlives the main turn and names the subagent', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [fixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('subagent-outlives-turn');
+  await wait(() => events.some(e => e.method === 'turn/completed'));
+  const request = events.find(e => e.id === 'late-child');
+  assert.equal(request.params.subagent, 'Subagent: Inspect the logs');
+  await session.respond('late-child', { decision: 'accept' });
+  await wait(() => events.some(e => e.method === 'fixture/child-answered'));
+  assert.equal(events.find(e => e.method === 'fixture/child-answered').params.decision, 'accept');
+});

@@ -51,3 +51,11 @@ test("sameGuiPaneStatus compares level and text", () => {
   assert.ok(!sameGuiPaneStatus("clear", { level: "done", text: "a" }));
   assert.ok(!sameGuiPaneStatus(null, "clear"));
 });
+
+test("background subagents keep an idle pane active until they finish", () => {
+  const idle = { agentLabel: "Claude", ready: true, busy: false, requests: [], turnOutcome: "complete", queueHeld: false, queued: 0 };
+  assert.deepEqual(guiPaneStatus({ ...idle, backgroundAgents: 2 }), { level: "active", text: "2 subagents working in the background" });
+  assert.deepEqual(guiPaneStatus({ ...idle, backgroundAgents: 1 }), { level: "active", text: "1 subagent working in the background" });
+  assert.equal(guiPaneStatus({ ...idle, backgroundAgents: 0 }).level, "done");
+  assert.equal(guiPaneStatus({ ...idle, backgroundAgents: 1, requests: [{ kind: "approval", text: "ls" }] }).level, "waiting");
+});
