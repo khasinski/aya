@@ -1,9 +1,12 @@
-import { memo,useMemo } from 'react';
+import { isValidElement, memo, useMemo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { workspaceLink } from '../../shared/workspace-link.cjs';
 import { useWorkspaceFileLink } from './WorkspaceFileLinks';
 import { WorkspaceImage } from './WorkspaceImage';
+import { ConversationCodeBlock } from './ConversationCodeBlock';
+import { ConversationDiagram } from './ConversationDiagram';
+import { isInlineImage } from '../conversation-images';
 const plugins = [remarkGfm];
 function isSafeExternalHref(href: string | undefined): href is string {
   if (!href) return false;
@@ -17,7 +20,13 @@ function isSafeExternalHref(href: string | undefined): href is string {
 export const ConversationMarkdown = memo(function ConversationMarkdown({ text, loadImage }: { text: string; loadImage: (path: string) => Promise<unknown> }) {
   const openFile = useWorkspaceFileLink();
   const components = useMemo(() => ({
-    img: ({ src, alt }: { src?: string; alt?: string }) => <WorkspaceImage path={String(src || '')} alt={alt || 'Image'} load={loadImage} />,
+    img: ({ src, alt }: { src?: string; alt?: string }) => <WorkspaceImage path={src || ''} alt={alt || 'Image'} load={loadImage} />,
+    pre: ({ children }: { children?: ReactNode }) => {
+      if (!isValidElement<{ children?: ReactNode; className?: string }>(children)) return <pre>{children}</pre>;
+      const source = String(children.props.children ?? '').replace(/\n$/, '');
+      const language = /(?:^|\s)language-([^\s]+)/.exec(children.props.className || '')?.[1] || '';
+      return language.toLowerCase() === 'mermaid' ? <ConversationDiagram source={source} /> : <ConversationCodeBlock source={source} language={language} />;
+    },
     a: ({ href, children }: { href?: string; children?: React.ReactNode }) =>
       isSafeExternalHref(href) ? (
         <a
@@ -38,5 +47,5 @@ export const ConversationMarkdown = memo(function ConversationMarkdown({ text, l
         href && workspaceLink(href) && openFile ? <a href={href} onClick={event => { event.preventDefault(); event.stopPropagation(); event.currentTarget.focus(); openFile(href); }}>{children}</a> : <span>{children}</span>
       ),
   }), [loadImage, openFile]);
-  return <ReactMarkdown urlTransform={url => isSafeExternalHref(url) || workspaceLink(url) ? url : ""} remarkPlugins={plugins} components={components}>{text}</ReactMarkdown>;
+  return <ReactMarkdown urlTransform={(url, key) => isSafeExternalHref(url) || workspaceLink(url) || (key === 'src' && isInlineImage(url)) ? url : ''} remarkPlugins={plugins} components={components}>{text}</ReactMarkdown>;
 });

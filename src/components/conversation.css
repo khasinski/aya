@@ -332,3 +332,18 @@
 }
 
 .aya-gui-compose-footer .aya-composer-options-panel .aya-gui-enter-hint { display: block !important; white-space: normal; line-height: 1.5; }
+
+/* Rich output belongs to the message, without opening the artifact drawer. */
+.aya-chat-code, .aya-chat-diagram { min-width: 0; margin: 12px 0; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--bg-code); }
+.aya-chat-block-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--fg-secondary); font: 11px var(--font-mono); }
+.aya-conversation .aya-chat-block-toolbar button { padding: 3px 8px; font: 11px var(--font-sans); }
+.aya-conversation .aya-chat-code pre { margin: 0; border-radius: 0; white-space: pre; overflow-wrap: normal; tab-size: 4; }
+.aya-chat-diagram > p { padding: 0 12px; color: var(--fg-secondary); }
+.aya-chat-diagram .aya-chat-code { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.aya-chat-diagram-preview { overflow: auto; padding: 16px; background: #fff; }
+.aya-conversation .aya-chat-diagram-preview img { max-height: none; width: auto; height: auto; margin: auto; }
+.aya-chat-image { display: inline-flex; max-width: 100%; margin: 8px 0; vertical-align: middle; }
+.aya-conversation .aya-chat-image-open { display: block; max-width: 100%; padding: 0; overflow: hidden; border-radius: 8px; background: var(--bg-code); cursor: zoom-in; }
+.aya-chat-image-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.aya-chat-image-preview { box-sizing: border-box; width: fit-content; max-width: calc(100vw - 48px); }
+.aya-chat-image-preview img { display: block; min-height: 0; max-width: 100%; max-height: calc(85vh - 96px); object-fit: contain; margin: auto; }

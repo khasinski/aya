@@ -70,6 +70,9 @@ export default defineConfig({
         chunkFileNames: "assets/[name]-[hash].js",
         codeSplitting: {
           groups: [
+            // Keep the diagram engine and its layout dependencies out of the
+            // eagerly loaded vendor chunk. It loads on the first Mermaid block.
+            { name: "mermaid", test: /node_modules[\\/]mermaid[\\/]/, priority: 60, includeDependenciesRecursively: true, entriesAware: true },
             { name: "syntax-highlight", test: /node_modules[\\/]highlight\.js[\\/]/, priority: 50 },
             {
               name: "xterm-addons",
@@ -90,6 +93,7 @@ export default defineConfig({
               name: "vendor",
               test: /node_modules[\\/]/,
               priority: 10,
+              entriesAware: true,
             },
           ],
         },

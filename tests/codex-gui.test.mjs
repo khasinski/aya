@@ -59,6 +59,8 @@ test('artifacts reject malformed shapes and images cannot leave the workspace or
     await symlink(path.join(root, 'outside.png'), path.join(project, 'escape.png'));
     await writeFile(path.join(project, 'page.png'), '<html>not an image</html>');
     assert.match(await workspaceImage(project, 'image.png'), /^data:image\/png;base64,/);
+    await writeFile(path.join(project, 'animated.gif'), Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
+    assert.match(await workspaceImage(project, 'animated.gif'), /^data:image\/gif;base64,/);
     await assert.rejects(workspaceImage(project, '../outside.png'), /inside/);
     await assert.rejects(workspaceImage(project, 'escape.png'), /inside/);
     await assert.rejects(workspaceImage(project, 'page.png'), /Supported images/);

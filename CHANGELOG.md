@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.20.0 - 2026-11-22
+
+- Render Mermaid diagrams and charts directly in conversations, including flowcharts, sequence diagrams, pie charts and bar/line charts, with source viewing, copying and enlarged previews.
+- Add syntax highlighting and copy buttons to fenced code blocks in conversations.
+- Show workspace images and embedded data images directly in chat, with click-to-enlarge previews, GIF support and retry after loading errors.
+- Load the diagram engine on demand and preserve rich output when restoring conversations; incomplete or invalid diagrams retain readable source.
+- Keep the Kanban shelf button visible when empty and allow adding cards directly from the shelf's Backlog tab (#342).
+
 ## v0.19.0 - 2026-11-17
 
 - Add `/usage` in Claude GUI with native account-wide plan limits, reset times, and current-session cost and token usage.
