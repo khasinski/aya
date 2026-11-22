@@ -40,9 +40,10 @@ export async function workspaceImage(root: string, file: string): Promise<string
   if (data.length > 8 * 1024 * 1024) throw Error('Image is too large');
   const mime = data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'image/png'
     : data[0] === 255 && data[1] === 216 && data[2] === 255 ? 'image/jpeg'
+    : /^GIF8[79]a$/.test(data.toString('ascii', 0, 6)) ? 'image/gif'
     : data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp'
     : path.extname(resolved).toLowerCase() === '.svg' && /<svg(?:\s|>)/i.test(data.toString('utf8')) ? 'image/svg+xml' : null;
-  if (!mime) throw Error('Supported images: PNG, JPEG, WebP and SVG');
+  if (!mime) throw Error('Supported images: PNG, JPEG, WebP, GIF and SVG');
   return `data:${mime};base64,${data.toString('base64')}`;
 }
 export async function presentArtifact(root: string, args: unknown, options: { htmlBaseDir?: string } = {}): Promise<GuiArtifact> {

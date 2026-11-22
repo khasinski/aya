@@ -152,6 +152,15 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (prompt === 'delay-ack') { event('turn/started', { turn: { id: 'turn' } }); setTimeout(() => { write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } }); complete('Delayed acknowledgement'); }, 700); return; }
     write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
     event('turn/started', { turn: { id: 'turn' } });
+    if (prompt === 'inline-output' || prompt === 'inline-stream') {
+      const text = require('node:fs').readFileSync(require('node:path').join(process.cwd(), 'inline-output.md'), 'utf8');
+      if (prompt === 'inline-stream') {
+        event('item/started', { item: { id: 'answer', type: 'agentMessage', text: '' } });
+        event('item/agentMessage/delta', { itemId: 'answer', delta: '```mermaid\nflowchart LR\n A[' });
+        setTimeout(() => complete(text), 1200);
+      } else complete(text);
+      return;
+    }
     if (prompt === 'many-widgets') { bulkIndex = 0; nextBulkWidget(); return; }
     if (prompt === 'empty-table') { write({ id: 'present', method: 'item/tool/call', params: { tool: 'aya_present', arguments: { kind: 'table', title: 'Empty table', columns: ['Name'], rows: [], open: true } } }); return; }
     if (prompt === 'long-stream') {

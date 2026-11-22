@@ -1382,46 +1382,46 @@ body {
   max-width: 220px; height: 24px; border: 1px solid var(--border); border-radius: 4px;
   background: var(--bg); color: var(--fg-primary); font: inherit;
 }
-.aya-diff-view .hljs-keyword,
-.aya-diff-view .hljs-selector-tag,
-.aya-diff-view .hljs-built_in,
-.aya-diff-view .hljs-name,
-.aya-diff-view .hljs-tag {
+:is(.aya-diff-view, .aya-chat-code) .hljs-keyword,
+:is(.aya-diff-view, .aya-chat-code) .hljs-selector-tag,
+:is(.aya-diff-view, .aya-chat-code) .hljs-built_in,
+:is(.aya-diff-view, .aya-chat-code) .hljs-name,
+:is(.aya-diff-view, .aya-chat-code) .hljs-tag {
   color: var(--aya-syntax-keyword);
 }
-.aya-diff-view .hljs-string,
-.aya-diff-view .hljs-title,
-.aya-diff-view .hljs-section,
-.aya-diff-view .hljs-attribute,
-.aya-diff-view .hljs-literal,
-.aya-diff-view .hljs-template-tag,
-.aya-diff-view .hljs-template-variable,
-.aya-diff-view .hljs-type,
-.aya-diff-view .hljs-addition {
+:is(.aya-diff-view, .aya-chat-code) .hljs-string,
+:is(.aya-diff-view, .aya-chat-code) .hljs-title,
+:is(.aya-diff-view, .aya-chat-code) .hljs-section,
+:is(.aya-diff-view, .aya-chat-code) .hljs-attribute,
+:is(.aya-diff-view, .aya-chat-code) .hljs-literal,
+:is(.aya-diff-view, .aya-chat-code) .hljs-template-tag,
+:is(.aya-diff-view, .aya-chat-code) .hljs-template-variable,
+:is(.aya-diff-view, .aya-chat-code) .hljs-type,
+:is(.aya-diff-view, .aya-chat-code) .hljs-addition {
   color: var(--aya-syntax-string);
 }
-.aya-diff-view .hljs-number,
-.aya-diff-view .hljs-symbol,
-.aya-diff-view .hljs-bullet,
-.aya-diff-view .hljs-variable,
-.aya-diff-view .hljs-params,
-.aya-diff-view .hljs-meta,
-.aya-diff-view .hljs-link {
+:is(.aya-diff-view, .aya-chat-code) .hljs-number,
+:is(.aya-diff-view, .aya-chat-code) .hljs-symbol,
+:is(.aya-diff-view, .aya-chat-code) .hljs-bullet,
+:is(.aya-diff-view, .aya-chat-code) .hljs-variable,
+:is(.aya-diff-view, .aya-chat-code) .hljs-params,
+:is(.aya-diff-view, .aya-chat-code) .hljs-meta,
+:is(.aya-diff-view, .aya-chat-code) .hljs-link {
   color: var(--aya-syntax-number);
 }
-.aya-diff-view .hljs-comment,
-.aya-diff-view .hljs-quote,
-.aya-diff-view .hljs-deletion {
+:is(.aya-diff-view, .aya-chat-code) .hljs-comment,
+:is(.aya-diff-view, .aya-chat-code) .hljs-quote,
+:is(.aya-diff-view, .aya-chat-code) .hljs-deletion {
   color: var(--aya-syntax-comment);
   font-style: italic;
 }
-.aya-diff-view .hljs-regexp,
-.aya-diff-view .hljs-selector-id,
-.aya-diff-view .hljs-selector-class {
+:is(.aya-diff-view, .aya-chat-code) .hljs-regexp,
+:is(.aya-diff-view, .aya-chat-code) .hljs-selector-id,
+:is(.aya-diff-view, .aya-chat-code) .hljs-selector-class {
   color: var(--aya-syntax-purple);
 }
-.aya-diff-view .hljs-emphasis { font-style: italic; }
-.aya-diff-view .hljs-strong { font-weight: 700; }
+:is(.aya-diff-view, .aya-chat-code) .hljs-emphasis { font-style: italic; }
+:is(.aya-diff-view, .aya-chat-code) .hljs-strong { font-weight: 700; }
 .aya-diff-view mark {
   border-radius: 2px;
   background: var(--aya-mark-bg);
