@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import { AYA_HOME } from './paths';
 import { PROGRESS_TOOL, progressUpdate } from './gui-progress';
 import { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, presentArtifact, workspaceImage } from './gui-artifact-tools';
+import { claudeContextUsage, claudeSkills, cleanPromptSuggestion, type GuiSkill } from './gui-composer-assist';
 import type { CodexGuiSession } from './codex-gui-session';
 import type { GuiProgress } from '../shared/gui-progress';
 import type { GuiArtifact, GuiEvent } from '../shared/codex-gui';
@@ -36,7 +37,7 @@ export type GuiSessionInstance = Pick<
   | 'interrupt'
   | 'respond'
   | 'close'
-> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation'>>;
+> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'skills' | 'setPromptSuggestions'>>;
 
 const STRIPPED_AYA_ENV = [
   'ELECTRON_RUN_AS_NODE',
@@ -841,6 +842,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private handledQuestionToolIds = new Set<string>();
   private pendingAssistantQuestions: unknown[] | null = null;
   private chromeCommandPending = false;
+  private promptSuggestions = false;
+  private skillList: GuiSkill[] = [];
+  private contextUsagePending = false;
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -947,8 +951,11 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       const initRes = await this.controlRequest('initialize', {
         sdkMcpServers: ['aya'],
         appendSystemPrompt: buildGuiDeveloperInstructions('Claude'),
+        promptSuggestions: this.promptSuggestions,
       });
       const responseObj = object(initRes.response);
+      this.skillList = claudeSkills(responseObj.commands);
+      void this.refreshContextUsage();
       if (Array.isArray(responseObj.models)) {
         this.cachedModels = (responseObj.models as unknown[]).map((raw) => {
           const m = object(raw);
@@ -983,6 +990,22 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
   async models() {
     return { data: this.cachedModels };
+  }
+
+  /** Takes effect for suggestions shown now; Claude generates them only when this was on at connect. */
+  setPromptSuggestions(enabled: boolean) { this.promptSuggestions = enabled; }
+
+  async skills() { return this.skillList; }
+
+  /** Asked once per turn end (and at connect), never while a request is already out. */
+  private async refreshContextUsage() {
+    if (this.contextUsagePending) return;
+    this.contextUsagePending = true;
+    try {
+      const usage = claudeContextUsage((await this.controlRequest('get_context_usage', { detail: 'summary' }, 10000)).response);
+      if (usage) this.emit({ method: 'aya/contextUsage', params: { ...usage } });
+    } catch { /* older Claude Code: the meter stays hidden */ }
+    finally { this.contextUsagePending = false; }
   }
 
   async command(name: string, argument: string): Promise<Record<string, unknown>> {
@@ -1277,6 +1300,18 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       return;
     }
 
+    if (type === 'prompt_suggestion') {
+      const suggestion = cleanPromptSuggestion(message.suggestion);
+      if (suggestion && this.promptSuggestions && !this.busy) this.emit({ method: 'aya/promptSuggestion', params: { text: suggestion } });
+      return;
+    }
+
+    if (type === 'system' && text(message.subtype) === 'commands_changed') {
+      this.skillList = claudeSkills(message.commands);
+      this.emit({ method: 'aya/skillsChanged', params: {} });
+      return;
+    }
+
     if (type === 'system' && text(message.subtype) === 'init') {
       if (text(message.session_id)) this.threadId = text(message.session_id);
       this.emit({ method: 'aya/session', params: { threadId: this.threadId, ...(text(message.model) ? { model: text(message.model) } : {}) } });
@@ -1374,6 +1409,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       this.busy = false;
       this.turnId = null;
       this.requests.clear();
+      void this.refreshContextUsage();
       this.emit({
         method: 'turn/completed',
         params: {

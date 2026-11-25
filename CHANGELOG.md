@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Conversation GUI: show the agent's suggested next prompt in the empty composer (Tab inserts it; can be turned off), a context-window meter in the header, a `$` skills picker (also in the `/` menu) for Claude and Codex, and a Restart agent session action (`/restart`) that reloads skills and MCP servers and resumes the conversation.
+
 ## v0.20.0 - 2026-11-22
 
 - Render Mermaid diagrams and charts directly in conversations, including flowcharts, sequence diagrams, pie charts and bar/line charts, with source viewing, copying and enlarged previews.

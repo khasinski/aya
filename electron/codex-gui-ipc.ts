@@ -201,7 +201,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return panels.close(key, value && typeof value === 'object' ? withPanelArtifacts(key, value as Record<string, unknown>) : undefined);
     }
     if (action === 'connect' || action === 'reconnect') {
-      let params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean; view?: Record<string, unknown> };
+      let params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean; promptSuggestions?: boolean; view?: Record<string, unknown> };
       if (action === 'reconnect') {
         const saved = snapshots.get(key);
         if (!saved) throw Error('Reload the conversation before reconnecting');
@@ -241,6 +241,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         if (!recoverablePanels.has(key) && !event.sender.isDestroyed()) { try { event.sender.send('codex-gui:event', id, payload); } catch { /* Renderer recovery replays this journal. */ } }
       });
       sessions.set(key, { session, cwd: params.cwd, agent, unsafeMode: params.unsafeMode === true });
+      session.setPromptSuggestions?.(params.promptSuggestions === true);
       try {
         const saved = snapshots.get(key);
         const result = await session.connect(params.cwd, '', params.configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.type !== 'settings' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, params.unsafeMode === true);
@@ -316,6 +317,8 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     }
     if (!entry) throw Error('Panel is disconnected');
     if (action === 'models') return entry.session.models();
+    if (action === 'skills') return entry.session.skills ? entry.session.skills() : [];
+    if (action === 'prompt-suggestions') { entry.session.setPromptSuggestions?.(value === true); return; }
     if (action === 'steer') return entry.session.steer(String(value));
     if (action === 'pick-attachments') {
       const window = BrowserWindow.fromWebContents(event.sender); if (!window) throw Error('Window is closed');

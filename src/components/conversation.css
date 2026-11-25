@@ -347,3 +347,20 @@
 .aya-chat-image-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .aya-chat-image-preview { box-sizing: border-box; width: fit-content; max-width: calc(100vw - 48px); }
 .aya-chat-image-preview img { display: block; min-height: 0; max-width: 100%; max-height: calc(85vh - 96px); object-fit: contain; margin: auto; }
+
+/* Composer assistance: context meter, skills picker, suggestion toggle */
+.aya-gui-context-meter { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 11px; color: var(--fg-tertiary); font-variant-numeric: tabular-nums; cursor: default; }
+.aya-gui-context-meter-bar { position: relative; width: 36px; height: 4px; border-radius: 2px; background: var(--bg-tertiary); overflow: hidden; }
+.aya-gui-context-meter-bar > span { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 2px; }
+.aya-gui-context-meter[data-level="warn"] .aya-gui-context-meter-bar > span { background: #c99d62; }
+.aya-gui-context-meter[data-level="high"] .aya-gui-context-meter-bar > span { background: #ed9595; }
+.aya-gui-context-meter[data-level="high"] { color: #ed9595; }
+.aya-gui-skills { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow: auto; margin-bottom: 8px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
+.aya-conversation .aya-gui-skills button { display: flex; align-items: baseline; gap: 8px; text-align: left; border: 0; background: transparent; padding: 6px 8px; min-width: 0; }
+.aya-conversation .aya-gui-skills button[aria-selected="true"], .aya-conversation .aya-gui-skills button:hover { background: var(--bg-tertiary); }
+.aya-gui-skills b { font-weight: 550; flex: none; }
+.aya-gui-skills i { color: var(--fg-tertiary); flex: none; }
+.aya-gui-skills small { color: var(--fg-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.aya-gui-skills-empty { padding: 6px 8px; color: var(--fg-tertiary); }
+.aya-gui-skill-command small { color: var(--fg-tertiary); }
+.aya-gui-suggest-toggle[aria-pressed="true"] { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 40%, var(--border)); }

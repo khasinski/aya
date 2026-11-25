@@ -2,6 +2,7 @@ import { GuiProtocolWriter } from './gui-protocol-writer';
 import { GuiJsonLines } from './gui-json-lines';
 import { PROGRESS_TOOL, progressUpdate } from './gui-progress';
 import type { GuiProgress } from '../shared/gui-progress';
+import { CODEX_PROMPT_SUGGESTION_PROMPT, cleanPromptSuggestion, codexContextUsage, codexSkills, type GuiSkill } from './gui-composer-assist';
 // Development PoC: Codex owns the agent loop and policies; Aya owns presentation.
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
@@ -33,6 +34,9 @@ export class CodexGuiSession {
   private artifactRevisions = new Map<string, number>();
   private progresses = new Map<string, GuiProgress>();
   private stderr = '';
+  private promptSuggestions = false;
+  private skillList: Promise<GuiSkill[]> | null = null;
+  private skillsChanged = false;
   cwd = '';
   constructor(private readonly emit: (event: GuiEvent) => void, private readonly executable = 'codex', private readonly args = ['app-server', '--listen', 'stdio://']) {}
   private write(value: unknown) { if (!this.child || this.child.stdin.destroyed) throw Error('Codex is disconnected'); if (!this.writer) throw Error('Codex is disconnected'); this.writer.write(value); }
@@ -179,6 +183,33 @@ export class CodexGuiSession {
     throw Error(`Unsupported command /${name}. Use /goal, /btw or /compact. Other CLI commands remain available in Terminal mode.`);
   }
   async models() { return this.rpc('model/list', { limit: 100 }); }
+  setPromptSuggestions(enabled: boolean) { this.promptSuggestions = enabled; }
+  /** Cached until Codex reports `skills/changed`; a failed list is asked again next time. */
+  async skills(): Promise<GuiSkill[]> {
+    if (!this.skillList || this.skillsChanged) {
+      const forceReload = this.skillsChanged; this.skillsChanged = false;
+      this.skillList = this.rpc('skills/list', { cwds: [this.cwd], ...(forceReload ? { forceReload } : {}) }).then(codexSkills);
+    }
+    const listing = this.skillList;
+    try { return await listing; } catch (error) { if (this.skillList === listing) this.skillList = null; throw error; }
+  }
+  /** Codex has no native next-prompt suggestion: sample one from the finished turn, as T3 Code does. Best effort. */
+  private async suggestNextPrompt(turnId: string) {
+    const epoch = this.samplingEpoch;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (!this.promptSuggestions || this.busy || epoch !== this.samplingEpoch || !this.child) return;
+      try {
+        const result = await this.rpc('thread/sample', { threadId: this.threadId, expectedTurnId: turnId, prompt: CODEX_PROMPT_SUGGESTION_PROMPT, effort: 'low' });
+        const suggestion = cleanPromptSuggestion(result.text);
+        if (suggestion && this.promptSuggestions && !this.busy && epoch === this.samplingEpoch) this.emit({ method: 'aya/promptSuggestion', params: { text: suggestion } });
+        return;
+      } catch (error) {
+        // turn/completed can arrive before the sampling source is idle (see /btw).
+        if (!/must be idle/i.test(error instanceof Error ? error.message : String(error))) return;
+        await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
   async steer(prompt: string) {
     if (!prompt.trim() || prompt.length > 100000) throw Error('Message must contain 1–100000 characters');
     if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
@@ -326,7 +357,15 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
         const progress: GuiProgress = { ...previous, status: object(params.turn).status === 'failed' ? 'failed' : 'paused', detail: previous.detail || 'Turn ended before this task was marked complete' };
         this.progresses.set(id, progress); this.emit({ method: 'aya/progress', params: { progress } });
       }
-      this.busy = false; this.turnId = null; this.requests.clear(); }
+      this.busy = false; this.turnId = null; this.requests.clear();
+      const finished = text(object(params.turn).id);
+      if (finished && object(params.turn).status === 'completed' && this.promptSuggestions) void this.suggestNextPrompt(finished);
+    }
+    if (method === 'thread/tokenUsage/updated' && (!this.threadId || params.threadId === undefined || params.threadId === this.threadId)) {
+      const usage = codexContextUsage(params);
+      if (usage) this.emit({ method: 'aya/contextUsage', params: { ...usage } });
+    }
+    if (method === 'skills/changed') { this.skillsChanged = true; this.emit({ method: 'aya/skillsChanged', params: {} }); }
     if (method === 'serverRequest/resolved' && (typeof params.requestId === 'string' || typeof params.requestId === 'number')) this.requests.delete(params.requestId);
     this.emit({ method, params });
   }

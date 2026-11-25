@@ -94,8 +94,24 @@ Goal changes are also recorded as conversation entries; the goal bar shows a sep
 - `/btw <question>` samples the completed thread context without adding a normal conversation turn. On Codex, `/btw` also works while the main turn runs: Aya forks the thread through the last finished turn into an ephemeral, read-only side thread and answers there, so the main turn is untouched.
 - `/compact` requests native context compaction.
 - Unsupported commands show an explicit error. CLI-only features remain available through Terminal mode.
+- `/restart` (or the restart icon in the header) stops the agent process and resumes the same conversation in a new one. Use it after adding or changing skills or MCP servers: the new process loads them. It needs an idle turn.
 
-Current limitations: local harnesses only; custom command flags are not applied; review, skills and MCP management are not exposed yet. The preset's **Unsafe approvals** setting does apply to GUI sessions and is shown in the conversation header: for Codex it uses full filesystem access and does not ask for approval. With that setting off, Codex uses workspace-write and on-request approvals. Existing Codex session records remain managed by Codex. Local conversation snapshots are limited to 32 MiB each.
+### Skills
+
+Type `$` in the composer to pick a skill: the list shows each skill's description and filters as you type; ArrowUp/ArrowDown move, Tab or Enter choose, Escape closes it. Skills also appear in the `/` command menu after Aya's own commands. Aya inserts what the agent understands:
+
+- **Codex** lists enabled skills with `skills/list` and invokes one with `$name` anywhere in the message. A change to the skill files refreshes the list.
+- **Claude** lists the skills and custom commands that are not built in (from its initialize response, refreshed when Claude reports a change) and runs one only when `/name` starts the message, so choosing a skill moves `/name` to the front. A `/name` that matches a Claude skill is sent to Claude instead of being treated as an Aya command; Aya's own commands keep their names.
+
+Pi and Antigravity have no skills picker.
+
+### Suggested next prompt and context meter
+
+After a turn, an empty composer shows the agent's predicted next message as placeholder text; Tab inserts it and typing hides it until the next turn. Claude produces the suggestion itself (Claude Code's prompt suggestions; Claude may decline to suggest anything). Codex has no native suggestion, so Aya asks the finished thread for one with a short low-effort `thread/sample` call, which costs a small extra model request per turn. Turn it off with **Suggestions on/off** in the conversation settings (remembered); for Claude the setting reaches Claude Code when the session starts, so turning it back on applies after `/restart`. Pi and Antigravity have no suggestions.
+
+The header shows how much of the context window the conversation uses, with the token counts in its tooltip. Claude reports it with `get_context_usage` (summary detail, no extra token counting) at connect and after each turn; Codex reports `thread/tokenUsage/updated` during turns, so its meter appears after the first turn.
+
+Current limitations: local harnesses only; custom command flags are not applied; review and MCP management are not exposed yet. The preset's **Unsafe approvals** setting does apply to GUI sessions and is shown in the conversation header: for Codex it uses full filesystem access and does not ask for approval. With that setting off, Codex uses workspace-write and on-request approvals. Existing Codex session records remain managed by Codex. Local conversation snapshots are limited to 32 MiB each.
 
 The built-in **Violet** appearance applies the GUI prototype palette to Aya chrome and terminal defaults. Select **Settings → General → Appearance → Violet** in either development or packaged Aya. This is a saved, optional color scheme alongside System, Light and Dark; switching back removes the palette overrides. Explicit per-tab terminal themes retain their own colors.
 

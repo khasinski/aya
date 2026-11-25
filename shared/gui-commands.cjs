@@ -7,6 +7,7 @@ const common = [
   { name: 'status', description: 'Show connection, goal and queue status.' },
   { name: 'goal', description: 'Set, pause, resume or clear the goal.' },
   { name: 'compact', description: 'Compact the conversation context.' },
+  { name: 'restart', description: 'Restart the agent session to load changed skills or MCP servers, then resume this conversation.' },
 ];
 exports.guiCommands = agent => [
   ...common,

@@ -90,6 +90,18 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     event('item/completed', { threadId: 'side-thread', item: { id: 'side-answer', type: 'agentMessage', text: 'A forked side answer' } });
     event('turn/completed', { threadId: 'side-thread', turn: { id: 'side-turn', status: 'completed' } });
   }
+  else if (message.method === 'thread/sample' && /^Predict the next message/.test(p.prompt || '')) {
+    event('fixture/suggestion-sample', p);
+    write({ id: message.id, result: { text: process.env.AYA_FAKE_NO_SUGGESTION ? null : 'Run the tests next', sourceTurnId: p.expectedTurnId } });
+  }
+  else if (message.method === 'skills/list') {
+    event('fixture/skills', p);
+    write({ id: message.id, result: { data: [{ cwd: p.cwds?.[0] || process.cwd(), errors: [], skills: [
+      { name: 'fake-deploy', description: 'Deploy the app to staging', path: '/skills/fake-deploy/SKILL.md', scope: 'user', enabled: true, pluginId: null, interface: { shortDescription: 'Deploy to staging' } },
+      { name: 'disabled-skill', description: 'Never listed', path: '/skills/disabled/SKILL.md', scope: 'user', enabled: false, pluginId: null },
+      { name: 'lint-fix', description: 'Fix lint errors', path: '/skills/lint-fix/SKILL.md', scope: 'repo', enabled: true, pluginId: null },
+    ] }] } });
+  }
   else if (message.method === 'thread/sample') {
     event('fixture/sample', { attempt: ++sampleAttempts, ...p });
     if (p.prompt === 'idle-race' && sampleAttempts <= 2) write({ id: message.id, error: { code: -32600, message: 'sample source must be idle' } });
@@ -159,6 +171,12 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         event('item/agentMessage/delta', { itemId: 'answer', delta: '```mermaid\nflowchart LR\n A[' });
         setTimeout(() => complete(text), 1200);
       } else complete(text);
+      return;
+    }
+    if (prompt === 'context-usage' || prompt.startsWith('$fake-deploy')) {
+      event('thread/tokenUsage/updated', { threadId: p.threadId, turnId: 'turn', tokenUsage: { total: { totalTokens: 90000, inputTokens: 80000, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 10000, reasoningOutputTokens: 0 }, last: { totalTokens: 64000, inputTokens: 60000, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 4000, reasoningOutputTokens: 0 }, modelContextWindow: 256000 } });
+      event('thread/tokenUsage/updated', { threadId: 'child-thread', turnId: 'child-turn', tokenUsage: { total: { totalTokens: 1 }, last: { totalTokens: 1 }, modelContextWindow: 2 } });
+      complete(prompt.startsWith('$') ? `Skill ran: ${prompt}` : 'Context measured');
       return;
     }
     if (prompt === 'many-widgets') { bulkIndex = 0; nextBulkWidget(); return; }

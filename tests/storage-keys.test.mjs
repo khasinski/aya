@@ -29,6 +29,7 @@ const EXPECTED = {
   NO_HARNESS_HINT_DISMISSED_STORAGE_KEY: "aya:no-harness-hint-dismissed",
   DEBUG_TERMINAL_INPUT_STORAGE_KEY: "aya:debug-terminal-input",
   GUI_FOLLOW_UP_STORAGE_KEY: "aya:gui-follow-up",
+  GUI_PROMPT_SUGGESTIONS_STORAGE_KEY: "aya:gui-prompt-suggestions",
 };
 
 test("every stored preference keeps the key it is stored under today", () => {
