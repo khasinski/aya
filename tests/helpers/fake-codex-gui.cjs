@@ -129,6 +129,17 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       event('fixture/foreign-finished', {});
       return;
     }
+    if (prompt === 'subagent-runs' || prompt === 'subagent-runs-busy') {
+      // A spawned agent's turn keeps running after the call that spawned it (and, unless busy, the main turn) ended.
+      write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
+      event('turn/started', { threadId: p.threadId, turn: { id: 'turn' } });
+      const spawn = { id: 'spawn-run', type: 'collabAgentToolCall', tool: 'spawnAgent', senderThreadId: p.threadId, receiverThreadIds: ['child-run-thread'], prompt: 'Watch the build', agentsStates: { 'child-run-thread': { status: 'running' } } };
+      event('item/started', { threadId: p.threadId, item: { ...spawn, status: 'inProgress' } });
+      event('turn/started', { threadId: 'child-run-thread', turn: { id: 'child-run-turn' } });
+      event('item/completed', { threadId: p.threadId, item: { ...spawn, status: 'completed' } });
+      if (prompt === 'subagent-runs') { event('turn/completed', { threadId: p.threadId, turn: { id: 'turn', status: 'completed' } }); busy = false; }
+      return;
+    }
     if (prompt === 'subagent-outlives-turn') {
       // A spawned agent asks for approval; the main turn ends before anyone answers.
       write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
@@ -235,6 +246,10 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       server.stdout.once('data', chunk => complete(`Dev server on port ${String(chunk).trim()} pid ${server.pid}`));
     }
     else write({ id: 'present', method: 'item/tool/call', params: { threadId: 'test-thread', turnId: 'turn', tool: 'aya_present', arguments: { open: prompt === 'open-widget', kind: 'table', title: prompt === 'open-widget' ? 'Opened by Codex' : 'A real tool result', columns: ['Name', 'State'], rows: [['Aya', 'Ready']] } } });
+  } else if (message.method === 'turn/interrupt' && p.threadId === 'child-run-thread') {
+    // Interrupting a subagent's thread ends only that thread's turn.
+    event('fixture/interrupt', p); write({ id: message.id, result: {} });
+    event('turn/completed', { threadId: 'child-run-thread', turn: { id: 'child-run-turn', status: 'interrupted' } });
   } else if (message.method === 'turn/interrupt') {
     event('fixture/interrupt', p); write({ id: message.id, result: {} }); event('turn/completed', { turn: { id: activeTurn, status: 'interrupted' } }); busy = false;
   } else if (!message.method && message.id === 'progress') {

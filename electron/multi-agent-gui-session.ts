@@ -1,6 +1,7 @@
 import { GuiProtocolWriter } from './gui-protocol-writer';
 import { GuiJsonLines } from './gui-json-lines';
 import { claudeChromeCommand } from './claude-chrome';
+import { TaskOutputTail, claudeTaskOutputRoot } from './gui-task-output-tail';
 import { formatClaudeUsage } from './claude-usage';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat, readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -37,7 +38,7 @@ export type GuiSessionInstance = Pick<
   | 'interrupt'
   | 'respond'
   | 'close'
-> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation'>>;
+> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'stopSubagent'>>;
 
 const STRIPPED_AYA_ENV = [
   'ELECTRON_RUN_AS_NODE',
@@ -872,6 +873,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private chromeCommandPending = false;
   /** Subagents started with the Agent tool, by that tool call's ID. Reported as Codex `collabAgentToolCall` items. */
   private agents = new Map<string, ClaudeSubagent>();
+  /** Live output of the shell commands subagents run, by Claude's shell task ID. */
+  private taskTails = new Map<string, { agentId: string; tail: TaskOutputTail }>();
+  private claudeEnv: NodeJS.ProcessEnv = {};
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -922,6 +926,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     this.pendingControl.clear();
     this.requests.clear();
     this.agents.clear();
+    for (const { tail } of this.taskTails.values()) tail.dispose();
+    this.taskTails.clear();
     this.busy = false;
     this.turnId = null;
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
@@ -969,10 +975,11 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     });
   }
 
-  private agentOutput(id: string, line: string) {
+  /** Appends to a subagent's output: a line of progress, or (`raw`) what its command printed. */
+  private agentOutput(id: string, line: string, raw = false) {
     const agent = this.agents.get(id);
     if (!agent || agent.done || !line) return;
-    const delta = (agent.output ? '\n' : '') + line;
+    const delta = (!raw && agent.output && !agent.output.endsWith('\n') ? '\n' : '') + line;
     agent.output = (agent.output + delta).slice(-100000);
     this.emit({ method: 'item/commandExecution/outputDelta', params: { itemId: id, delta } });
   }
@@ -980,9 +987,44 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private finishAgent(id: string, status: string, report: string) {
     const agent = this.agents.get(id);
     if (!agent || agent.done) return;
-    if (report.trim()) agent.output = (agent.output ? `${agent.output}\n\n${report.trim()}` : report.trim()).slice(-100000);
+    for (const [taskId, entry] of this.taskTails) if (entry.agentId === id) { entry.tail.dispose(); this.taskTails.delete(taskId); }
+    if (report.trim()) agent.output = (agent.output ? `${agent.output}${agent.output.endsWith('\n') ? '\n' : '\n\n'}${report.trim()}` : report.trim()).slice(-100000);
     agent.done = true;
+    // A stopped subagent's questions and approvals have no one waiting for them any more.
+    for (const [requestId, request] of this.requests) {
+      if (agent.taskId && request.params.subagentTaskId === agent.taskId) { this.requests.delete(requestId); this.emit({ method: 'aya/requestResolved', params: { id: requestId } }); }
+    }
     this.reportAgent(id, 'item/completed', status);
+  }
+
+  /** Streams what a shell command a subagent runs prints, from the file Claude writes it to. */
+  private tailSubagentTask(agentId: string, message: Record<string, unknown>) {
+    const taskId = text(message.task_id);
+    const root = claudeTaskOutputRoot(this.claudeEnv, this.cwd);
+    if (!taskId || this.taskTails.has(taskId) || (!root && !text(message.output_file))) return;
+    let first = true;
+    const tail = new TaskOutputTail({
+      ...(text(message.output_file) ? { file: text(message.output_file) } : {}),
+      ...(root ? { root } : {}),
+      cwd: this.cwd,
+      sessionId: text(message.session_id) || this.threadId,
+      taskId,
+      onChunk: chunk => {
+        const output = this.agents.get(agentId)?.output || '';
+        this.agentOutput(agentId, (first && output && !output.endsWith('\n') ? '\n' : '') + chunk, true);
+        first = false;
+      },
+    });
+    this.taskTails.set(taskId, { agentId, tail });
+  }
+
+  /** Stops one subagent; Claude reports it stopped and may then continue by itself. */
+  async stopSubagent(id: string) {
+    const agent = this.agents.get(id);
+    if (!agent || agent.done) return;
+    if (!agent.taskId) throw Error('This subagent has not started yet');
+    await this.controlRequest('stop_task', { task_id: agent.taskId }, 15000);
+    this.finishAgent(id, 'interrupted', '');
   }
 
   /** "Subagent: Read the config" for an approval or question a subagent asks; empty for the main agent. */
@@ -1015,6 +1057,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     const claudeDir = configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir());
     const customDir = claudeDir && path.resolve(claudeDir) !== path.join(homedir(), '.claude');
     const env = this.cleanEnv(customDir ? { CLAUDE_CONFIG_DIR: claudeDir } : {});
+    this.claudeEnv = env;
     this.child = spawn(this.executable, args, {
       cwd: this.cwd,
       env,
@@ -1178,10 +1221,16 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     }
   }
 
+  /** Stops the turn and every subagent, including background ones that outlived their turn: Claude's interrupt stops
+   *  them too (it spares them only for a client that declares its own per-task stop), and an older Claude that does
+   *  not is sent a stop for each one still running. */
   async interrupt() {
-    if (this.busy) {
-      await this.controlRequest('interrupt');
-    }
+    const running = [...this.agents].filter(([, agent]) => !agent.done).map(([id]) => id);
+    if (!this.busy && !running.length) return;
+    // Idle, an older Claude may refuse the interrupt; its subagents are still stopped one by one.
+    try { await this.controlRequest('interrupt'); } catch (error) { if (this.busy) throw error; }
+    await Promise.all(running.map(id => this.stopSubagent(id).catch(() => {})));
+    for (const id of running) this.finishAgent(id, 'interrupted', '');
   }
 
   private async receive(raw: unknown) {
@@ -1272,7 +1321,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
         const input = object(req.input);
         const toolUseId = text(req.tool_use_id) || reqId;
         const subagent = this.subagentOf(text(req.agent_id));
-        const origin = subagent ? { subagent } : {};
+        const origin = subagent ? { subagent, subagentTaskId: text(req.agent_id) } : {};
         if (toolName.startsWith('mcp__aya__') || toolName.startsWith('aya_')) {
           this.write({
             type: 'control_response',
@@ -1381,6 +1430,16 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
     // Subagent lifecycle. Background shell tasks report through the same events; only Agent calls are tracked.
     if (type === 'system' && ['task_started', 'task_notification'].includes(text(message.subtype))) {
+      // A shell command a subagent runs: tail what it prints into the subagent's output while it runs.
+      const parentTask = text(message.parent_task_id);
+      const owner = parentTask ? [...this.agents].find(([, agent]) => agent.taskId === parentTask && !agent.done)?.[0] : undefined;
+      if (text(message.subtype) === 'task_started' && owner && text(message.task_type) === 'local_bash') { this.tailSubagentTask(owner, message); return; }
+      const tailed = this.taskTails.get(text(message.task_id));
+      if (tailed && text(message.subtype) === 'task_notification') {
+        this.taskTails.delete(text(message.task_id));
+        void tailed.tail.stop();
+        return;
+      }
       const id = text(message.tool_use_id) || [...this.agents].find(([, agent]) => agent.taskId === text(message.task_id))?.[0] || '';
       const agent = this.agents.get(id);
       if (!agent) return;
