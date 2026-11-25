@@ -130,6 +130,20 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       });
       return;
     }
+    if (subtype === 'set_permission_mode') {
+      // Claude 2.1.332's answers: bypassPermissions only when launched with a skip-permissions flag.
+      const launchedWithBypass = process.argv.some(arg => /^--(?:allow-)?dangerously-skip-permissions$/.test(arg));
+      write({ method: 'fixture/permission-mode', params: { mode: req.mode } });
+      if (!['default', 'acceptEdits', 'auto', 'bypassPermissions', 'dontAsk', 'plan'].includes(req.mode)) {
+        write({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Cannot set permission mode: must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan' } });
+      } else if (req.mode === 'bypassPermissions' && (!launchedWithBypass || process.env.AYA_FAKE_CLAUDE_BYPASS_DISABLED === '1')) {
+        write({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Cannot set permission mode to bypassPermissions because it is disabled by settings or configuration' } });
+      } else {
+        write({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: { mode: req.mode } } });
+        write({ type: 'system', subtype: 'status', status: null, permissionMode: req.mode });
+      }
+      return;
+    }
     if (subtype === 'interrupt') {
       write({
         type: 'control_response',
@@ -231,6 +245,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         write({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_agent', content: [{ type: 'text', text: 'a.txt says hello' }] }] } });
         complete('The file says hello.');
       }
+    } else if (prompt === 'approval-note') {
+      write({ type: 'control_request', request_id: 'approve-note', request: { subtype: 'can_use_tool', tool_name: 'Bash', tool_use_id: 'tool-bash-note', decision_reason: 'Test approval', input: { command: 'rm -rf build' } } });
+    } else if (prompt === 'self-mode') {
+      // Claude changes its own mode, as when it leaves plan mode.
+      write({ type: 'system', subtype: 'status', status: null, permissionMode: 'acceptEdits' });
+      complete('Mode changed by Claude');
     } else if (prompt === 'wait') {
       return;
     } else if (prompt === 'question') {
@@ -287,6 +307,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     const resp = message.response || {};
     const reqId = resp.request_id;
     const inner = resp.response || {};
+    if (inner.behavior) write({ method: 'fixture/permission-answer', params: { requestId: reqId, behavior: inner.behavior, message: inner.message ?? null } });
+
+    if (reqId === 'approve-note') {
+      complete(inner.behavior === 'allow' ? 'accept' : `Declined: ${inner.message}`);
+      return;
+    }
 
     if (reqId === 'progress') {
       const mcpResult = inner.mcp_response?.result || {};

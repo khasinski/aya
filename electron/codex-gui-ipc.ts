@@ -16,6 +16,7 @@ import { exportArtifactMedia } from './gui-artifact-media';
 import { archiveConversation,hydrateConversationArtifact,listConversations,loadConversation,readArchivedConversation,saveConversation } from './gui-conversation-store';
 import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
 import { GuiRecoveryJournal } from './gui-recovery-journal';
+import { guiPermissionModes,initialGuiPermissionMode,parseGuiPermissionMode } from '../shared/gui-permission-mode.cjs';
 import { AYA_HOME } from './paths';
 import { readWorkspaceFile } from './workspace-file';
 function normalizeGuiAgent(raw: unknown): GuiAgentKind {
@@ -165,6 +166,9 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         next = { ...next, ...await session.readConversation(params.conversationId.slice(6)) };
       } else if (params.conversationId) next = await readArchivedConversation(params.conversationId, snapshot, { lazyArtifacts: true });
       await panels.close(key, params.view ? withPanelArtifacts(key, params.view) : undefined);
+      // The permission mode belongs to the pane, not to a conversation.
+      const permissionMode = parseGuiPermissionMode(params.view?.permissionMode ?? snapshot.view?.permissionMode);
+      if (permissionMode) next = { ...next, view: { ...next.view, permissionMode } };
       await saveConversation(id, next);
       return;
     }
@@ -201,7 +205,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return panels.close(key, value && typeof value === 'object' ? withPanelArtifacts(key, value as Record<string, unknown>) : undefined);
     }
     if (action === 'connect' || action === 'reconnect') {
-      let params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean; view?: Record<string, unknown> };
+      let params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean; permissionMode?: unknown; view?: Record<string, unknown> };
       if (action === 'reconnect') {
         const saved = snapshots.get(key);
         if (!saved) throw Error('Reload the conversation before reconnecting');
@@ -215,10 +219,10 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         const replay = journals.get(key)?.replay(Number(snapshots.get(key)?.view?.eventSequence || 0));
         for (const payload of replay?.events || []) event.sender.send('codex-gui:event', id, payload);
         const connected = journals.get(key)?.connectionLost !== true;
-        event.sender.send('codex-gui:event', id, { method: 'aya/recovered', params: { connected, running: connected && current.session.running, truncated: replay?.truncated === true, unsafeMode: current.unsafeMode } });
+        event.sender.send('codex-gui:event', id, { method: 'aya/recovered', params: { connected, running: connected && current.session.running, truncated: replay?.truncated === true, unsafeMode: current.unsafeMode, permissionMode: current.permissionMode } });
         recoverablePanels.delete(key);
         if (!connected) { panels.disconnect(key); event.sender.send('codex-gui:event', id, { method: 'aya/disconnected', params: { message: 'The agent connection was lost while the interface was unavailable. Reconnect to resume the saved conversation.' } }); }
-        return { connected, threadId: snapshots.get(key)?.threadId, model: current.model || current.agent, unsafeMode: current.unsafeMode, attachmentIds: [...attachments.get(key)?.keys() || []] };
+        return { connected, threadId: snapshots.get(key)?.threadId, model: current.model || current.agent, unsafeMode: current.unsafeMode, permissionMode: current.permissionMode, attachmentIds: [...attachments.get(key)?.keys() || []] };
       }
       if (sessions.has(key)) throw Error('Panel already connected');
       const agent = normalizeGuiAgent(params.agent);
@@ -232,6 +236,8 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         if (panels.closing.has(key) || sessions.get(key)?.session !== session) return;
         const payload = journal.record(rawPayload);
         if (payload.method === 'aya/session' && typeof payload.params.threadId === 'string') { const snapshot = snapshots.get(key); if (snapshot) snapshot.threadId = payload.params.threadId; }
+        const reportedMode = payload.method === 'aya/permissionMode' && parseGuiPermissionMode(payload.params.mode), current = sessions.get(key);
+        if (reportedMode && current) { current.permissionMode = reportedMode; current.unsafeMode = reportedMode === 'full-access'; }
         if (payload.method === 'aya/artifact') {
           const artifact = payload.params.artifact as GuiArtifact;
           let owned = artifacts.get(key); if (!owned) { owned = new Map(); artifacts.set(key, owned); }
@@ -240,17 +246,22 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         }
         if (!recoverablePanels.has(key) && !event.sender.isDestroyed()) { try { event.sender.send('codex-gui:event', id, payload); } catch { /* Renderer recovery replays this journal. */ } }
       });
-      sessions.set(key, { session, cwd: params.cwd, agent, unsafeMode: params.unsafeMode === true });
+      // A pane's chosen mode outlives restarts; the preset's unsafe approvals only set the first one.
+      const chosenMode = guiPermissionModes(agent).length ? parseGuiPermissionMode(params.permissionMode) : undefined;
+      const unsafeMode = chosenMode ? chosenMode === 'full-access' : params.unsafeMode === true;
+      sessions.set(key, { session, cwd: params.cwd, agent, unsafeMode, permissionMode: chosenMode ?? initialGuiPermissionMode(agent, unsafeMode) });
       try {
         const saved = snapshots.get(key);
-        const result = await session.connect(params.cwd, '', params.configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.type !== 'settings' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, params.unsafeMode === true);
-        const connected = sessions.get(key); if (connected) connected.model = result.model;
+        const result = await session.connect(params.cwd, '', params.configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.type !== 'settings' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, unsafeMode, chosenMode);
+        const connected = sessions.get(key);
+        const permissionMode = result.permissionMode ?? initialGuiPermissionMode(agent, unsafeMode);
+        if (connected) { connected.model = result.model; connected.permissionMode = permissionMode; connected.unsafeMode = permissionMode === 'full-access'; }
         session.restoreArtifacts([...(artifacts.get(key)?.values() || [])]);
         if (Array.isArray(saved?.view?.messages)) session.restoreProgress(saved.view.messages.filter((m: { progress?: unknown }) => !!m.progress).map((m: { progress: import('../shared/gui-progress').GuiProgress }) => m.progress));
         const snapshot = { ...saved, cwd: params.cwd, configDir: params.configDir, agent, threadId: result.threadId };
         snapshots.set(key, snapshot);
         await saveConversation(id, snapshot);
-        return { ...result, unsafeMode: params.unsafeMode === true, attachmentIds: [...attachments.get(key)?.keys() || []] };
+        return { ...result, unsafeMode: permissionMode === 'full-access', permissionMode, attachmentIds: [...attachments.get(key)?.keys() || []] };
       }
       catch (error) { panels.disconnect(key); throw error; }
     }
@@ -317,6 +328,13 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (!entry) throw Error('Panel is disconnected');
     if (action === 'models') return entry.session.models();
     if (action === 'steer') return entry.session.steer(String(value));
+    if (action === 'set-permission-mode') {
+      const mode = parseGuiPermissionMode(value);
+      if (!mode || !entry.session.setPermissionMode || !guiPermissionModes(entry.agent).length) throw Error('This agent cannot change its permission mode in the conversation');
+      await entry.session.setPermissionMode(mode);
+      entry.permissionMode = mode; entry.unsafeMode = mode === 'full-access';
+      return { permissionMode: mode };
+    }
     if (action === 'pick-attachments') {
       const window = BrowserWindow.fromWebContents(event.sender); if (!window) throw Error('Window is closed');
       const agentLabel = entry.agent === 'pi' ? 'Pi' : entry.agent === 'claude' ? 'Claude' : entry.agent === 'antigravity' ? 'Antigravity' : 'Codex';
@@ -367,7 +385,11 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'read-linked-file') return readWorkspaceFile(entry.cwd, value);
     if (action === 'image') return workspaceImage(entry.cwd, String(value));
     if (action === 'command') { const p = value as { name: string; argument: string }; return entry.session.command(p.name, p.argument); }
-    if (action === 'respond') { const p = value as { id: string | number; value: Parameters<CodexGuiSession['respond']>[1] }; return entry.session.respond(p.id, p.value); }
+    if (action === 'respond') {
+      const p = value as { id: string | number; value: Parameters<CodexGuiSession['respond']>[1] };
+      const note = typeof p.value?.note === 'string' ? p.value.note.slice(0, 100000) : undefined;
+      return entry.session.respond(p.id, { ...p.value, ...(note === undefined ? {} : { note }) });
+    }
     throw Error('Unknown GUI action');
     };
     return ['load', 'connect', 'reconnect', 'persist', 'close', 'dispose-pane', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();

@@ -138,6 +138,7 @@ test('a recovered GUI reports the running session approval mode, not an edited p
     await expect.poll(() => live<string>(`document.querySelector('.aya-gui-header [role="status"]')?.textContent`)).toBe('Disconnected');
     await live(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Reconnect').click()`);
     await expect.poll(() => live<string>(`document.querySelector('.aya-gui-header [role="status"]')?.textContent`)).toBe('Ready');
-    expect(await live<boolean>(`!!document.querySelector('.aya-gui-unsafe-badge')`)).toBe(false);
+    // The pane keeps its own permission mode; the edited preset only sets the mode of new panes.
+    expect(await live<boolean>(`!!document.querySelector('.aya-gui-unsafe-badge')`)).toBe(true);
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });

@@ -6,6 +6,7 @@ import type { GuiProgress } from '../shared/gui-progress';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import type { GuiEvent, GuiArtifact, GuiApprovalDecision } from '../shared/codex-gui';
+import { codexPermissionPolicy, initialGuiPermissionMode, type GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
@@ -27,6 +28,9 @@ export class CodexGuiSession {
   /** Spawned subagents' threads and what each was asked to do, from the main thread's collab calls. */
   private subagentThreads = new Map<string, string>();
   private busy = false;
+  /** The pane's mode, and the one Codex last received; a change goes with the next turn/start. */
+  private permissionMode: GuiPermissionMode = 'auto-accept-edits';
+  private appliedPermissionMode: GuiPermissionMode = 'auto-accept-edits';
   private samplingEpoch = 0;
   private samplingWaiters = new Set<() => void>();
   get running() { return this.busy; }
@@ -53,8 +57,10 @@ export class CodexGuiSession {
     for (const wake of this.samplingWaiters) wake();
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
   }
-  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
+  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false, permissionMode?: GuiPermissionMode): Promise<{ threadId: string; model: string; permissionMode?: GuiPermissionMode }> {
     if (this.child) throw Error('Start a new window for a separate PoC session');
+    this.permissionMode = this.appliedPermissionMode = permissionMode ?? initialGuiPermissionMode('codex', unsafeMode);
+    const policy = codexPermissionPolicy(this.permissionMode);
     this.cwd = await realpath(cwd);
     if (!(await stat(this.cwd)).isDirectory()) throw Error('Workspace must be a directory');
     const env = { ...process.env };
@@ -86,14 +92,14 @@ export class CodexGuiSession {
       if (resumeThreadId) this.threadId = resumeThreadId;
       const result = await this.rpc(resumeThreadId ? 'thread/resume' : 'thread/start', {
         ...(resumeThreadId ? { threadId: resumeThreadId, excludeTurns: true } : {}),
-        cwd: this.cwd, ...(model ? { model } : {}), sandbox: unsafeMode ? 'danger-full-access' : 'workspace-write', approvalPolicy: unsafeMode ? 'never' : 'on-request', approvalsReviewer: 'user',
+        cwd: this.cwd, ...(model ? { model } : {}), sandbox: policy.sandbox, approvalPolicy: policy.approvalPolicy, approvalsReviewer: policy.approvalsReviewer,
         ...(resumeThreadId ? {} : { dynamicTools: [PRESENT_TOOL, OPEN_ARTIFACT_TOOL, PROGRESS_TOOL] }),
         developerInstructions: 'You are displayed inside Aya GUI, a local graphical frontend for Codex. Respond in the user’s language. You own the normal Codex tool loop, context and sandbox. Use Markdown freely. Messages support syntax-highlighted fenced code blocks (include the language), inline images with ![description](workspace-relative-or-absolute-path) or base64 data image URLs, and Mermaid fenced blocks for diagrams and charts (flowchart, sequenceDiagram, pie, xychart-beta). Prefer these inline formats for visuals that belong in the conversation; no artifact tool is needed. Local images must be inside the selected workspace (PNG/JPEG/WebP/GIF/SVG, up to 8 MiB); remote image URLs are not loaded. Use aya_present for standalone artifacts, metrics and interactive HTML. Set open=true when you want to show a newly created artifact immediately; use aya_open_artifact with its returned artifactId to reopen an existing one. Use HTML widgets for interactive visuals, forms, charts and mockups; use local PNG/JPEG/WebP/SVG files for graphics. Widgets are self-contained and cannot access the network or files. Widget row clicks arrive as user follow-ups. For measurable tasks use aya_progress with a label, actual completed units, total units and optional stage detail. Reuse its returned progressId for updates instead of creating new bars. Do not invent progress for tasks without measurable units. Do not start subagents unless the user requests delegation.',
       });
       this.threadId = text(object(result.thread).id);
       this.model = text(result.model);
       if (!this.threadId) throw Error('Codex did not return a thread ID');
-      return { threadId: this.threadId, model: text(result.model) || model || 'Codex default' };
+      return { threadId: this.threadId, model: text(result.model) || model || 'Codex default', permissionMode: this.permissionMode };
     } catch (error) { this.close(); throw error; }
   }
   async listConversations() {
@@ -181,6 +187,8 @@ export class CodexGuiSession {
     throw Error(`Unsupported command /${name}. Use /goal, /btw or /compact. Other CLI commands remain available in Terminal mode.`);
   }
   async models() { return this.rpc('model/list', { limit: 100 }); }
+  /** Codex takes a mode with a turn; the running turn keeps the one it started with. */
+  async setPermissionMode(mode: GuiPermissionMode) { this.permissionMode = mode; }
   async steer(prompt: string) {
     if (!prompt.trim() || prompt.length > 100000) throw Error('Message must contain 1–100000 characters');
     if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
@@ -194,10 +202,13 @@ export class CodexGuiSession {
     this.busy = true;
     const startedAtEpoch = this.samplingEpoch;
     const mode = options.plan === undefined ? null : { mode: options.plan ? 'plan' : 'default', settings: { model: options.model || this.model, reasoning_effort: null, developer_instructions: null } };
-    const starting = this.rpc('turn/start', { threadId: this.threadId, ...(mode ? { collaborationMode: mode } : {}), ...(options.model ? { model: options.model } : {}), ...(options.effort ? { effort: options.effort } : {}), input: [{ type: 'text', text: prompt, text_elements: [] }, ...(options.images || []).map(file => ({ type: 'localImage', path: file }))] });
+    // A mode overrides the thread's settings for this and later turns, so it is sent only when it changed.
+    const permissionMode = this.permissionMode, policy = permissionMode === this.appliedPermissionMode ? null : codexPermissionPolicy(permissionMode);
+    const starting = this.rpc('turn/start', { threadId: this.threadId, ...(mode ? { collaborationMode: mode } : {}), ...(policy ? { approvalPolicy: policy.approvalPolicy, approvalsReviewer: policy.approvalsReviewer, sandboxPolicy: policy.sandboxPolicy } : {}), ...(options.model ? { model: options.model } : {}), ...(options.effort ? { effort: options.effort } : {}), input: [{ type: 'text', text: prompt, text_elements: [] }, ...(options.images || []).map(file => ({ type: 'localImage', path: file }))] });
     this.startingTurn = starting;
     try {
       const result = await starting;
+      this.appliedPermissionMode = permissionMode;
       if (this.busy && !this.turnId) this.turnId = text(object(result.turn).id) || this.turnId;
     } catch (error) { if (this.samplingEpoch === startedAtEpoch) this.busy = false; throw error; }
     finally { if (this.startingTurn === starting) this.startingTurn = null; }
@@ -230,7 +241,7 @@ export class CodexGuiSession {
     if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
     if (this.turnId) await this.rpc('turn/interrupt', { threadId: this.threadId, turnId: this.turnId });
   }
-  async respond(id: string | number, value: { decision?: GuiApprovalDecision; answers?: Record<string, string> }) {
+  async respond(id: string | number, value: { decision?: GuiApprovalDecision; answers?: Record<string, string>; note?: string }) {
     const request = this.requests.get(id);
     if (!request) throw Error('This request has already ended');
     let result: unknown;

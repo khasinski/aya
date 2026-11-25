@@ -4,6 +4,8 @@
 
 - Conversation GUI: show subagents as their own activity rows with the task they were given, their tool calls and their final report. Claude's background subagents stay running after the turn that started them, and the pane reports how many are still working.
 - Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.
+- Conversation GUI: decline an approval with a note: type why and press Enter, or choose **Decline with note**. Claude gets the note as the refusal's reason (subagents too); Codex and Pi get it as a steer into the continuing turn.
+- Conversation GUI: choose a permission mode per Claude or Codex pane (Supervised, Auto-accept edits, Auto, Full access) in the conversation settings or with Ctrl/Cmd+Shift+A. Claude switches at once, Codex with the next turn; the mode is kept with the pane, and the preset's Unsafe approvals only set a new pane's first mode.
 - Fix Claude GUI appending the reply Claude writes when a background subagent finishes to the previous reply, and replacing that reply's text; the follow-up is now a turn and reply of its own. A subagent's own text no longer appears as Claude's reply.
 
 ## v0.20.0 - 2026-11-22
