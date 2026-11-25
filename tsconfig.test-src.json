@@ -42,6 +42,7 @@
     "src/gui-context.ts",
     "src/gui-find.ts",
     "src/gui-status.ts",
+    "src/gui-turn-diff.ts",
     "src/harness-search-coverage.ts",
     "src/harness-search-sequence.ts",
     "src/hooks/usePersistentPreference.ts",

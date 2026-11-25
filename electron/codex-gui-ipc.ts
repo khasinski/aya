@@ -16,6 +16,7 @@ import { exportArtifactMedia } from './gui-artifact-media';
 import { archiveConversation,hydrateConversationArtifact,listConversations,loadConversation,readArchivedConversation,saveConversation } from './gui-conversation-store';
 import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
 import { GuiRecoveryJournal } from './gui-recovery-journal';
+import { GuiTurnDiffs,handleGuiDiffAction } from './gui-turn-diff';
 import { AYA_HOME } from './paths';
 import { readWorkspaceFile } from './workspace-file';
 function normalizeGuiAgent(raw: unknown): GuiAgentKind {
@@ -59,6 +60,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
   const recoverablePanels = new Set<string>();
   const journals = new Map<string, GuiRecoveryJournal>();
   const searches = new Map<string, symbol>();
+  const turnDiffs = new GuiTurnDiffs();
   prepareRecovery = ownerId => {
     recoveringOwners.add(ownerId);
     for (const panelKey of snapshots.keys()) if (panelKey.startsWith(`${ownerId}:`)) recoverablePanels.add(panelKey);
@@ -180,6 +182,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return { revision: revision + 1 };
     }
     if (action === 'dispose-pane') {
+      turnDiffs.forget(key);
       recoverablePanels.delete(key);
       journals.delete(key);
       searches.delete(key);
@@ -228,8 +231,9 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       const previous = snapshots.get(key); if (previous?.view) previous.view = { ...previous.view, eventSequence: 0 };
       event.sender.send('codex-gui:event', id, { method: 'aya/sessionEpoch', params: {} });
       const journal = new GuiRecoveryJournal(); journals.set(key, journal);
-      const session = createGuiSession(agent, rawPayload => {
+      const session = createGuiSession(agent, function emitToPanel(rawPayload) {
         if (panels.closing.has(key) || sessions.get(key)?.session !== session) return;
+        turnDiffs.observe(key, params.cwd, rawPayload, emitToPanel);
         const payload = journal.record(rawPayload);
         if (payload.method === 'aya/session' && typeof payload.params.threadId === 'string') { const snapshot = snapshots.get(key); if (snapshot) snapshot.threadId = payload.params.threadId; }
         if (payload.method === 'aya/artifact') {
@@ -260,6 +264,11 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       const entry = panels.artifact(key, request?.id, request?.revision);
       return entry && 'deferred' in entry ? hydrateConversationArtifact(entry) : entry;
     };
+    if (action === 'diff-turn' || action === 'diff-commits' || action === 'diff-commit') {
+      const cwd = entry?.cwd || snapshots.get(key)?.cwd;
+      if (!cwd) throw Error('Panel is disconnected');
+      return handleGuiDiffAction(turnDiffs, key, cwd, action, value);
+    }
     if (action === 'artifact-search') {
       const search = Symbol(); searches.set(key, search);
       const tokens = normalizeArtifactSearch(String(value).slice(0, 1000)).trim().split(/\s+/).filter(Boolean);
@@ -357,6 +366,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return item;
     }
     if (action === 'send') {
+      if (!entry.session.running) await turnDiffs.beginTurn(key, entry.cwd);
       if (typeof value === 'string') return entry.session.send(value);
       const params = value as { text: string; model?: string; effort?: string; plan?: boolean; attachmentIds?: string[] };
       const files = (params.attachmentIds || []).map(id => { const file = attachments.get(key)?.get(id); if (!file) throw Error('Please reattach this file after reconnecting'); return file; });

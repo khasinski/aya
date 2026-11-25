@@ -5,6 +5,7 @@
 - Conversation GUI: show subagents as their own activity rows with the task they were given, their tool calls and their final report. Claude's background subagents stay running after the turn that started them, and the pane reports how many are still working.
 - Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.
 - Fix Claude GUI appending the reply Claude writes when a background subagent finishes to the previous reply, and replacing that reply's text; the follow-up is now a turn and reply of its own. A subagent's own text no longer appears as Claude's reply.
+- Conversation GUI: see what each turn changed. In a git project, a turn that edits files ends with a "Changes in this turn" row that opens the diff of that turn only, leaving out edits made before it and pulls or commits made between turns. File edits in the activity log (Codex file changes, Claude's Edit and Write) open the diff at that file, and the diff viewer also lists the branch's commits, each with its own diff.
 
 ## v0.20.0 - 2026-11-22
 

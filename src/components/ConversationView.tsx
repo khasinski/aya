@@ -15,6 +15,7 @@ import { activityDuration,activityKind,activityPhases,phaseText,shortDuration,su
 import { followUpHint,parseFollowUpPreference,pasteBecomesAttachment,recallStep,sendAction,sendLabel,sentPromptText,stashStep,withQuote,type FollowUpPreference,type Recall } from '../gui-composer';
 import { reviewCommentsBlock,terminalExcerptBlock,withContextBlock } from '../gui-context';
 import { findStatus,findTextMatches,stepMatch } from '../gui-find';
+import { fileChangePaths,isTurnDiffSummary,repoRelativePath,type TurnDiffSummary } from '../gui-turn-diff';
 import { guiRendererRecoveryInProgress,takeGuiPaneRecovery } from '../gui-renderer-recovery';
 import { backgroundAgentsText,guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
 import type { SettingsTab } from '../settings-tabs';
@@ -25,6 +26,7 @@ import { ArtifactPanel } from './ArtifactPanel';
 import './conversation.css';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { ConversationTurnTimer } from './ConversationTurnTimer';
+import { GuiDiffDialog,TurnChanges } from './GuiDiffDialog';
 import { SnippetBar } from './SnippetBar';
 import { ipcMessage } from './use-async-action';
 import { useModalFocus } from './useModalFocus';
@@ -40,11 +42,11 @@ interface QueuedMessage { id: string; text: string; attachments: Attachment[]; q
 interface ModelOption { id: string; model: string; displayName: string; supportedReasoningEfforts: { reasoningEffort: string }[]; defaultReasoningEffort: string }
 type ContextComment = { id: string; file: string; hunk: string; line: string; newLine: number | null; oldLine: number | null; note: string; sentAt: string | null; checkout: string };
 /** `background`: a subagent that keeps running after its turn ends; only its own completion finishes it. */
-interface Activity { id: string; label: string; status: string; output: string; kind?: ActivityKind; startedAt?: number; endedAt?: number; background?: boolean }
+interface Activity { id: string; label: string; status: string; output: string; kind?: ActivityKind; startedAt?: number; endedAt?: number; background?: boolean; files?: string[]; turnDiffId?: string }
 interface GoalDetails { objective: string; status: string; reason?: string }
 interface GuiQuestionOption { label: string; description: string }
 interface GuiQuestion { id: string; header: string; question: string; isSecret: boolean; multiSelect: boolean; options: GuiQuestionOption[] }
-interface Message { kind?: 'plan'; progress?: GuiProgress; id: string; type: string; text: string; delivery?: 'sending' | 'sent' | 'failed' | 'unconfirmed'; title?: string; goal?: GoalDetails | null; questions?: unknown[]; questionAnswers?: Record<string, string> }
+interface Message { kind?: 'plan'; progress?: GuiProgress; id: string; type: string; text: string; delivery?: 'sending' | 'sent' | 'failed' | 'unconfirmed'; title?: string; goal?: GoalDetails | null; questions?: unknown[]; questionAnswers?: Record<string, string>; turnDiff?: TurnDiffSummary }
 function normalizeQuestions(raw: unknown): GuiQuestion[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((item, index) => {
@@ -195,6 +197,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     try { recall.current = null; setPrompt(old => withContextBlock(old, build())); setContextMenu(null); composer.current?.focus(); }
     catch (e) { fail(e); setContextMenu(null); }
   };
+  const [diffView, setDiffView] = useState<{ source: string; file: string | null } | null>(null);
+  const turnDiffs = messages.flatMap(m => m.type === 'turnDiff' && m.turnDiff ? [m.turnDiff] : []);
   const [planMode, setPlanModeValue] = useState(false);
   const planRef = useRef(false);   // read by dispatch in the same tick that /plan or Implement changes it
   const setPlanMode = (value: boolean | ((old: boolean) => boolean)) => { const next = typeof value === 'function' ? value(planRef.current) : value; planRef.current = next; setPlanModeValue(next); };
@@ -411,8 +415,14 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
           const output = (str(item.aggregatedOutput) || (type === 'collabAgentToolCall' ? subagentStates(item) : '')).slice(-100000);
           const background = item.background === true ? { background: true } : {};
           const status = finished ? str(item.status) || 'completed' : 'inProgress';
-          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, ...background, label, status, output: output || a.output, ...(finished && a.endedAt === undefined ? { endedAt: now } : {}) } : a) : [...old.slice(-49), { id: str(item.id), label, status, output, kind: activityKind(type), startedAt: now, ...background, ...(finished ? { endedAt: now } : {}) }]);
+          const edited = fileChangePaths(item), files = edited.length ? { files: edited, kind: activityKind(type) } : {};
+          setActivities(old => old.some(a => a.id === item.id) ? old.map(a => a.id === item.id ? { ...a, ...background, ...files, label, status, output: output || a.output, ...(finished && a.endedAt === undefined ? { endedAt: now } : {}) } : a) : [...old.slice(-49), { id: str(item.id), label, status, output, kind: activityKind(type), startedAt: now, ...background, ...files, ...(finished ? { endedAt: now } : {}) }]);
         }
+      }
+      if (event.method === 'aya/turnDiff' && isTurnDiffSummary(p.turnDiff)) {
+        const turnDiff = p.turnDiff;
+        setMessages(old => old.some(m => m.id === turnDiff.id) ? old : [...old, { id: turnDiff.id, type: 'turnDiff', text: turnDiff.files.map(f => f.path).join('\n'), turnDiff }]);
+        setActivities(old => old.map(a => a.files?.length && !a.turnDiffId ? { ...a, turnDiffId: turnDiff.id } : a));
       }
       if (event.method === 'item/commandExecution/outputDelta') setActivities(old => old.map(a => a.id === p.itemId ? { ...a, output: (a.output + str(p.delta)).slice(-100000) } : a));
       if (event.method === 'thread/goal/updated') applyGoal(p.goal ?? p);
@@ -450,7 +460,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         const cut = saved.goal.lastIndexOf(' · ');
         if (saved.goal) { const details = saved.goalDetails as GoalDetails | undefined || { objective: cut >= 0 ? saved.goal.slice(0, cut) : saved.goal, status: cut >= 0 ? saved.goal.slice(cut + 3) : 'active' }; setGoalDetails(details); lastGoal.current = details; }
       }
-      if (Array.isArray(saved.activities)) setActivities(saved.activities.slice(-50).map(value => { const activity = obj(value); return { id: str(activity.id), label: str(activity.label), status: activity.status === 'inProgress' && !saved.recoveryRunning ? 'interrupted' : str(activity.status), output: str(activity.output).slice(-100000), ...(typeof activity.kind === 'string' ? { kind: activity.kind as ActivityKind } : {}), ...(typeof activity.startedAt === 'number' ? { startedAt: activity.startedAt } : {}), ...(typeof activity.endedAt === 'number' ? { endedAt: activity.endedAt } : {}), ...(activity.background === true ? { background: true } : {}) }; }));
+      if (Array.isArray(saved.activities)) setActivities(saved.activities.slice(-50).map(value => { const activity = obj(value); return { id: str(activity.id), label: str(activity.label), status: activity.status === 'inProgress' && !saved.recoveryRunning ? 'interrupted' : str(activity.status), output: str(activity.output).slice(-100000), ...(typeof activity.kind === 'string' ? { kind: activity.kind as ActivityKind } : {}), ...(typeof activity.startedAt === 'number' ? { startedAt: activity.startedAt } : {}), ...(typeof activity.endedAt === 'number' ? { endedAt: activity.endedAt } : {}), ...(activity.background === true ? { background: true } : {}), ...(Array.isArray(activity.files) ? { files: activity.files.filter((f): f is string => typeof f === 'string') } : {}), ...(typeof activity.turnDiffId === 'string' ? { turnDiffId: activity.turnDiffId } : {}) }; }));
       if (Array.isArray(saved.queue)) { setQueue(saved.queue as QueuedMessage[]); setQueueHeld(saved.queue.length > 0); }
       if (Array.isArray(saved.attachments)) setAttachments(saved.attachments as Attachment[]);
       if (typeof saved.selectedModel === 'string') setSelectedModel(saved.selectedModel);
@@ -808,7 +818,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {messages.map((m, index) => (
         <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= messages.length - 12} keepMounted={Boolean(m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length)} findOpen={findOpen}>
-        <ConversationMessageItem
+        {m.type === 'turnDiff' && m.turnDiff ? <TurnChanges summary={m.turnDiff} onOpen={file => setDiffView({ source: `turn:${m.turnDiff!.id}`, file })} /> : <ConversationMessageItem
           message={m}
           agentBadge={agentBadge}
           agentLabel={agentLabel}
@@ -817,15 +827,16 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
           onExpandPlan={pauseFollowing}
           onAnswerMessageQuestions={handleAnswerMessageQuestions}
           onImplementPlan={m.id === messages[messages.length - 1]?.id && !busy && ready ? () => { setPlanMode(false); void send('Implement the plan.'); } : undefined}
-        /></WindowedMessage>
+        />}</WindowedMessage>
       ))}
-      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map((a, index) => { const phase = activityPhaseList.find(p => p.index === index); const took = activityDuration(a); return <Fragment key={a.id}>{phase && <div className="aya-gui-activity-phase" role="presentation">{phaseText(phase)}</div>}<details><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}{took !== null && <small className="aya-gui-activity-time"> · {shortDuration(took)}</small>}</summary>{a.output && <pre>{a.output}</pre>}</details></Fragment>; })}</div></details>}
+      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map((a, index) => { const phase = activityPhaseList.find(p => p.index === index); const took = activityDuration(a); return <Fragment key={a.id}>{phase && <div className="aya-gui-activity-phase" role="presentation">{phaseText(phase)}</div>}<details><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}{took !== null && <small className="aya-gui-activity-time"> · {shortDuration(took)}</small>}</summary>{a.files?.length && (busy || a.turnDiffId) ? <div className="aya-gui-activity-files">{a.files.map(f => <button type="button" key={f} title={`Open the diff of ${f}`} onClick={() => setDiffView({ source: a.turnDiffId ? `turn:${a.turnDiffId}` : 'current', file: f })}>Open diff <code>{repoRelativePath(f, { root: terminal.cwd, prefix: '', cwd: terminal.cwd })}</code></button>)}</div> : null}{a.output && <pre>{a.output}</pre>}</details></Fragment>; })}</div></details>}
       {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-row"><div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={(busy || backgroundAgents > 0) && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
         {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : backgroundAgents ? `${backgroundAgentsText(backgroundAgents)}…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
       </div><ConversationTurnTimer busy={busy} hidden={hidden} /></div>}
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={resumeFollowing}>Jump to latest ↓</button>}</div>
+    {diffView && <GuiDiffDialog terminal={terminal} invoke={invoke} turns={turnDiffs} busy={busy} initialSource={diffView.source} focusFile={diffView.file} onClose={() => setDiffView(null)} onAddToMessage={block => addContext(() => block)} />}
     {side && <aside className="aya-gui-side"><button aria-label={`Close ${sideTitle.toLowerCase()}`} onClick={closeSide}>×</button><strong>{sideTitle}</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>

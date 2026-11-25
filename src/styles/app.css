@@ -1249,6 +1249,24 @@ body {
   min-height: 220px;
   max-height: min(620px, calc(100vh - 140px));
 }
+.aya-diff-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 0;
+  color: var(--fg-tertiary);
+  font: 12px var(--font-sans);
+}
+.aya-diff-source select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-primary);
+  font: inherit;
+}
 .aya-diff-search {
   display: flex;
   align-items: center;

@@ -229,6 +229,17 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       busy = false;
     }
     else if (prompt.startsWith('Keep distance 0') || prompt.startsWith('Readable C')) complete(`Answered: ${prompt}`);
+    else if (prompt === 'edit-files' || prompt === 'edit-files-wait') {
+      // Edits the project like apply_patch would: one tracked file, one new file.
+      const fs = require('node:fs'), path = require('node:path');
+      const edited = path.join(process.cwd(), 'committed.txt'), added = path.join(process.cwd(), 'notes', 'turn.md');
+      fs.appendFileSync(edited, 'added by the turn\n');
+      fs.mkdirSync(path.dirname(added), { recursive: true }); fs.writeFileSync(added, '# Written in this turn\n');
+      const item = { id: 'patch-1', type: 'fileChange', changes: [{ path: edited, kind: { type: 'update', move_path: null }, diff: '' }, { path: added, kind: { type: 'add' }, diff: '' }] };
+      event('item/started', { item: { ...item, status: 'inProgress' } });
+      event('item/completed', { item: { ...item, status: 'completed' } });
+      if (prompt === 'edit-files') complete('Edited two files.');
+    }
     else write({ id: 'present', method: 'item/tool/call', params: { threadId: 'test-thread', turnId: 'turn', tool: 'aya_present', arguments: { open: prompt === 'open-widget', kind: 'table', title: prompt === 'open-widget' ? 'Opened by Codex' : 'A real tool result', columns: ['Name', 'State'], rows: [['Aya', 'Ready']] } } });
   } else if (message.method === 'turn/interrupt') {
     event('fixture/interrupt', p); write({ id: message.id, result: {} }); event('turn/completed', { turn: { id: activeTurn, status: 'interrupted' } }); busy = false;

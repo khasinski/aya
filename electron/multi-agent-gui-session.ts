@@ -831,6 +831,7 @@ export class PiGuiSession extends BaseManagedGuiSession {
 
 /** Claude Code's subagent tool: `Agent`, called `Task` in older versions. */
 const CLAUDE_AGENT_TOOLS = new Set(['Agent', 'Task']);
+const CLAUDE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
 interface ClaudeSubagent {
   /** Claude's agent ID (`task_id`; `agent_id` in the agent's permission requests). */
@@ -1456,7 +1457,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
             params: {
               item: {
                 id,
-                type: toolName === 'Bash' ? 'commandExecution' : 'mcpToolCall',
+                type: toolName === 'Bash' ? 'commandExecution' : CLAUDE_EDIT_TOOLS.has(toolName) ? 'fileChange' : 'mcpToolCall',
                 tool: toolName,
                 command: toolName,
                 status: 'inProgress',
@@ -1482,6 +1483,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
             agent.subagentType ||= text(input.subagent_type);
             this.reportAgent(text(b.id), 'item/started');
           }
+          // The full input arrives with the message: name the edited file so the activity log can open its diff.
+          const editedFile = text(b.type) === 'tool_use' && CLAUDE_EDIT_TOOLS.has(text(b.name)) ? text(object(b.input).file_path) || text(object(b.input).notebook_path) : '';
+          if (editedFile) this.emit({ method: 'item/started', params: { item: { id: text(b.id), type: 'fileChange', tool: text(b.name), command: text(b.name), status: 'inProgress', changes: [{ path: editedFile }] } } });
           if (text(b.type) === 'tool_use' && text(b.name) === 'AskUserQuestion') {
             const toolId = text(b.id);
             if (!toolId || !this.handledQuestionToolIds.has(toolId)) {
