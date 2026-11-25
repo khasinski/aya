@@ -151,6 +151,9 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   // Keep sockets short and use the shell's canonical cwd spelling from boot.
   // Otherwise /tmp -> /private/tmp looks like a checkout change to the UI.
   const root = realpathSync(mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "aya-e2e-")));
+  // Fake agents are copied here without a .js extension; a stray /tmp/package.json with "type": "module" would make
+  // Node load them as ES modules, so the seed root states CommonJS for everything below it.
+  writeFileSync(join(root, "package.json"), '{"type":"commonjs"}\n');
   const ayaHome = join(root, "aya-home");
   const userDataDir = join(root, "electron-data");
   const projectDir = join(root, "project");
