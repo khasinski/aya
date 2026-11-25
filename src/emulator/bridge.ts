@@ -195,6 +195,8 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     // No live process to read a cwd from; the status bar falls back to the
     // scenario's spawn cwd (its worktree binding or the project dir).
     ptyCwd: async () => null as never,
+    ptyServers: async () => [],
+    ptyStopServer: async () => ({ forced: false }),
     ptySearch: async () => [] as never,
     harnessSearch: async () => [] as never,
     harnessSearchCancel: noopAsync,

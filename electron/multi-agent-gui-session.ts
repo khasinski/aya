@@ -26,6 +26,7 @@ export type GuiSessionInstance = Pick<
   CodexGuiSession,
   | 'cwd'
   | 'running'
+  | 'pid'
   | 'connect'
   | 'restoreProgress'
   | 'restoreArtifacts'
@@ -93,6 +94,7 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
   protected clearTurnRequests() {
     for (const [id, request] of this.requests) if (!text(request.params.subagent)) this.requests.delete(id);
   }
+  get pid() { return this.child?.pid; }
   protected closing = false;
   protected stderr = '';
   cwd = '';

@@ -23,6 +23,8 @@ import { terminalExcerpt } from '../terminal-checkpoint-registry';
 import type { Preset,Snippet,TerminalState } from '../types';
 import { ArtifactPanel } from './ArtifactPanel';
 import './conversation.css';
+import { AgentServers } from './AgentServers';
+import type { AgentServer } from '../../shared/ipc-types';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { ConversationTurnTimer } from './ConversationTurnTimer';
 import { SnippetBar } from './SnippetBar';
@@ -733,6 +735,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       {sessionUnsafe && <span className="aya-gui-unsafe-badge" title={guiAgent === 'codex' ? 'This session skips approval prompts and runs without the workspace sandbox.' : 'This session uses the preset’s unsafe approval mode.'}>Unsafe approvals</span>}
       <span className="aya-sr-only" role="status">{connecting ? 'Connecting…' : switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
       {!ready && restored && <button type="button" disabled={connecting} onClick={() => void reconnect()}>{connecting ? 'Connecting…' : 'Reconnect'}</button>}
+      <AgentServers active={ready && !hidden} busy={busy} list={() => invoke('servers') as Promise<AgentServer[]>} stop={pid => invoke('stop-server', pid)} open={port => invoke('open-server', port)} />
       <button className="aya-gui-icon-button" disabled={!ready || switching} aria-label="Resume a saved conversation" title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button>
       <button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>
     </header>

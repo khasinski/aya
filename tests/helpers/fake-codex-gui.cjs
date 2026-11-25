@@ -229,6 +229,11 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       busy = false;
     }
     else if (prompt.startsWith('Keep distance 0') || prompt.startsWith('Readable C')) complete(`Answered: ${prompt}`);
+    else if (prompt === 'start-server') {
+      // A dev server the agent starts: a child of this process, listening on a free port (agent-servers e2e).
+      const server = require('node:child_process').spawn(process.execPath, ['-e', "require('http').createServer((q,s)=>s.end('fake dev server')).listen(0,'127.0.0.1',function(){process.stdout.write(this.address().port+String.fromCharCode(10))})"], { stdio: ['ignore', 'pipe', 'ignore'] });
+      server.stdout.once('data', chunk => complete(`Dev server on port ${String(chunk).trim()} pid ${server.pid}`));
+    }
     else write({ id: 'present', method: 'item/tool/call', params: { threadId: 'test-thread', turnId: 'turn', tool: 'aya_present', arguments: { open: prompt === 'open-widget', kind: 'table', title: prompt === 'open-widget' ? 'Opened by Codex' : 'A real tool result', columns: ['Name', 'State'], rows: [['Aya', 'Ready']] } } });
   } else if (message.method === 'turn/interrupt') {
     event('fixture/interrupt', p); write({ id: message.id, result: {} }); event('turn/completed', { turn: { id: activeTurn, status: 'interrupted' } }); busy = false;

@@ -1672,3 +1672,32 @@ body {
 .aya-stacked-headerslot :is(button, input, select, textarea, a) {
   -webkit-app-region: no-drag;
 }
+
+/* Local servers a pane's agent started (components/AgentServers.tsx): header badge and its list. */
+.aya-servers-button {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-secondary); color: var(--fg-secondary);
+  font: 500 11px/1.3 var(--font-sans); cursor: pointer; white-space: nowrap;
+}
+.aya-servers-button:hover, .aya-servers-button[aria-expanded="true"] { color: var(--fg-primary); border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
+.aya-pane-header .aya-servers-button { margin-left: auto; }
+.aya-pane-header .aya-pane-header-meta + .aya-servers-button { margin-left: 0; }
+.aya-servers-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-active, #40c463); }
+.aya-servers-popover {
+  position: fixed; z-index: 1000; width: min(440px, calc(100vw - 16px)); max-height: 60vh; overflow: auto;
+  padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--fg-primary); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  font: 12px/1.4 var(--font-sans);
+}
+.aya-servers-title { font-weight: 600; margin-bottom: 6px; }
+.aya-servers-popover ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.aya-servers-row { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); }
+.aya-servers-command { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--font-mono); }
+.aya-servers-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; color: var(--fg-secondary); font-size: 11px; }
+.aya-servers-meta > span { margin-right: auto; font-family: var(--font-mono); }
+.aya-servers-meta button { padding: 2px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg-primary); font: inherit; cursor: pointer; }
+.aya-servers-meta .aya-servers-open { color: var(--accent); }
+.aya-servers-meta .aya-servers-stop:hover:not(:disabled) { border-color: var(--status-error, #c01c28); color: var(--status-error, #c01c28); }
+.aya-servers-meta button:disabled { opacity: 0.6; cursor: default; }
+.aya-servers-error { margin-top: 8px; color: var(--status-error, #c01c28); }

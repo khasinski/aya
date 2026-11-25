@@ -97,6 +97,9 @@ export function createWebAya(transport: WebTransport): AyaApi {
     ptyKill: inv("pty:kill"),
     ptyBuffer: inv("pty:buffer"),
     ptyCwd: inv("pty:cwd"),
+    // A server on the host is not one this browser could open; Aya Web does not list them.
+    ptyServers: async () => [],
+    ptyStopServer: async () => { throw new Error("Not available in Aya Web"); },
     ptySearch: inv("pty:search"),
     harnessSearch: inv("harness:search"),
     harnessSearchCancel: inv("harness:search-cancel"),

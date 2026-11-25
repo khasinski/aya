@@ -76,6 +76,7 @@ import { registerDiffCommentsIpc } from "./ipc/diff-comments-ipc";
 import { registerEnvIpc } from "./ipc/env-ipc";
 import { registerProjectsIpc } from "./ipc/projects-ipc";
 import { registerPromptAttachmentIpc } from "./ipc/prompt-attachments-ipc";
+import { registerAgentServersIpc } from "./ipc/agent-servers-ipc";
 import { registerPtyIpc } from "./ipc/pty-ipc";
 import { registerRemoteIpc } from "./ipc/remote-ipc";
 import { registerSettingsIpc } from "./ipc/settings-ipc";
@@ -771,6 +772,7 @@ function registerIpc(): TeamRunner {
     },
     attach: () => ptyHost.attachWebContents(remotePtySessions!),
   });
+  registerAgentServersIpc({ ipcMain, getPid: (ptyId) => ptyHost.getPid(ptyId), isRemote: (ptyId) => remoteTerminalManager.has(ptyId) });
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
