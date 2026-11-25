@@ -71,6 +71,7 @@ const callMcpTool = (reqId, name, args) => {
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (!line.trim()) return;
   const message = JSON.parse(line);
+  if (editScenario(message)) return;
 
   if (message.type === 'control_request') {
     const req = message.request || {};
@@ -446,3 +447,63 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 });
 
 process.on('SIGTERM', () => process.exit(busy ? 2 : 0));
+
+// Edit from here (AYA_FAKE_CLAUDE_STATE set): a transcript kept on disk across restarts,
+// honoring --resume, --resume-session-at, --fork-session and --session-id like Claude 2.1,
+// message uuids from stdin, and rewind_files with file checkpoints.
+// Prompts: "note <word>" answers with every note in the transcript; "write <file> <text>" also writes a file.
+function editScenario(message) {
+  const stateFile = process.env.AYA_FAKE_CLAUDE_STATE;
+  if (!stateFile) return false;
+  const fs = require('node:fs'), path = require('node:path'), { randomUUID } = require('node:crypto');
+  const arg = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
+  const load = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return { sessions: {}, files: {} }; } };
+  const save = state => fs.writeFileSync(stateFile, JSON.stringify(state));
+  if (!editScenario.session) {
+    const state = load(), resume = arg('--resume'), at = arg('--resume-session-at');
+    let transcript = resume ? (state.sessions[resume] || []).slice() : [];
+    if (resume && at) { const cut = transcript.findIndex(entry => entry.uuid === at); if (cut < 0) { process.stderr.write(`No message found with message.uuid of: ${at}\n`); process.exit(1); } transcript = transcript.slice(0, cut + 1); }
+    editScenario.session = resume && !process.argv.includes('--fork-session') ? resume : arg('--session-id') || resume;
+    state.sessions[editScenario.session] = transcript; save(state);
+  }
+  const sid = editScenario.session;
+  const reply = (id, response) => write({ type: 'control_response', response: { subtype: 'success', request_id: id, response } });
+  if (message.type === 'control_request' && message.request?.subtype === 'initialize') {
+    write({ method: 'fixture/config', params: { args: process.argv.slice(2), checkpointing: process.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING || null } });
+    reply(message.request_id, { session_id: sid, model: 'fake-claude', models: [{ value: 'fake-claude', displayName: 'Fake Claude' }] });
+    return true;
+  }
+  if (message.type === 'control_request' && message.request?.subtype === 'rewind_files') {
+    const state = load(), transcript = state.sessions[sid] || [], req = message.request;
+    const start = transcript.findIndex(entry => entry.uuid === req.user_message_id && entry.type === 'user');
+    write({ method: 'fixture/rewind', params: { userMessageId: req.user_message_id, dryRun: req.dry_run === true } });
+    if (start < 0 || process.env.AYA_FAKE_CLAUDE_NO_CHECKPOINT === '1') { reply(message.request_id, { canRewind: false, error: 'No file checkpoint found for this message.' }); return true; }
+    const changes = transcript.slice(start).filter(entry => entry.type === 'user').flatMap(entry => state.files[entry.uuid] || []);
+    if (req.dry_run) { reply(message.request_id, { canRewind: true, filesChanged: [...new Set(changes.map(change => change.path))], insertions: 0, deletions: changes.length }); return true; }
+    for (const change of changes.reverse()) { if (change.before === null) fs.rmSync(change.path, { force: true }); else fs.writeFileSync(change.path, change.before); }
+    reply(message.request_id, { canRewind: true });
+    return true;
+  }
+  if (message.type !== 'user' || message.steer) return false;
+  const prompt = (message.message?.content || []).find(c => c.type === 'text')?.text || '';
+  if (!/^(note|write) /.test(prompt)) return false;
+  const state = load(), transcript = state.sessions[sid] || [];
+  const uuid = message.uuid || randomUUID();
+  transcript.push({ uuid, type: 'user', text: prompt });
+  write({ method: 'fixture/turn', params: { prompt, uuid } });
+  if (prompt.startsWith('write ')) {
+    const [, name, ...rest] = prompt.split(' '), file = path.join(process.cwd(), name);
+    state.files[uuid] = [...(state.files[uuid] || []), { path: file, before: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null }];
+    fs.writeFileSync(file, rest.join(' '));
+  }
+  const notes = transcript.filter(entry => entry.type === 'user').map(entry => entry.text.split(' ')[1]);
+  const text = `I remember: ${notes.join(', ')}`;
+  const assistant = randomUUID();
+  transcript.push({ uuid: assistant, type: 'assistant', text });
+  state.sessions[sid] = transcript; save(state);
+  write({ type: 'system', subtype: 'init', session_id: sid, model: 'fake-claude' });
+  write({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
+  write({ type: 'assistant', uuid: assistant, parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
+  write({ type: 'result', subtype: 'success', is_error: false, result: text });
+  return true;
+}

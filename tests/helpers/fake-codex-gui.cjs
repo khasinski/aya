@@ -96,6 +96,14 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     else if (p.prompt === 'sample-error') write({ id: message.id, error: { code: -32600, message: 'Sample unavailable' } });
     else write({ id: message.id, result: { text: 'A separate side answer', sourceTurnId: p.expectedTurnId } });
   }
+  else if (message.method === 'turn/start' && noteTurn(message, p)) return;
+  else if (message.method === 'thread/revert') {
+    event('fixture/revert', p);
+    const cut = noteTurns.findIndex(turn => turn.id === p.beforeTurnId);
+    if (cut < 0) { write({ id: message.id, error: { code: -32602, message: `Unknown turn ${p.beforeTurnId}` } }); return; }
+    noteTurns.splice(cut);
+    write({ id: message.id, result: { thread: { id: p.threadId, turns: [] }, itemsBackwardsCursor: null, turnsBackwardsCursor: null } });
+  }
   else if (message.method === 'turn/start') {
     busy = true;
     activeTurn = 'turn';
@@ -304,3 +312,25 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   else if (message.method && message.id) write({ id: message.id, error: { code: -32601, message: 'Unsupported fixture request' } });
 });
 process.on('SIGTERM', () => process.exit(busy ? 2 : 0));
+
+// Edit from here: "note <word>" turns get unique ids and answer with every note still in the thread;
+// "write <file> <text>" also writes a file in the workspace. thread/revert drops turns from beforeTurnId on.
+const noteTurns = [];
+function noteTurn(message, p) {
+  const prompt = p.input?.[0]?.text || '';
+  if (!/^(note|write) /.test(prompt)) return false;
+  const id = `note-turn-${noteTurns.length + 1}-${Date.now()}`;
+  noteTurns.push({ id, word: prompt.split(' ')[1] });
+  if (prompt.startsWith('write ')) {
+    const [, name, ...rest] = prompt.split(' ');
+    require('node:fs').writeFileSync(require('node:path').join(process.cwd(), name), rest.join(' '));
+  }
+  event('fixture/turn', p);
+  write({ id: message.id, result: { turn: { id, status: 'inProgress' } } });
+  event('turn/started', { turn: { id } });
+  const text = `I remember: ${noteTurns.map(turn => turn.word).join(', ')}`;
+  event('item/started', { item: { id: id + '-answer', type: 'agentMessage', text: '' } });
+  event('item/completed', { item: { id: id + '-answer', type: 'agentMessage', text } });
+  event('turn/completed', { turn: { id, status: 'completed' } });
+  return true;
+}

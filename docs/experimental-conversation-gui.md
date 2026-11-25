@@ -74,6 +74,20 @@ The **Show** menu at the top of the diff switches between turns and the branch's
 
 The snapshots are tree objects built in a temporary index, so your index, stash, branches and files are never touched; nothing is committed. They are not referenced by any branch, so `git gc` may remove them after a few weeks, and an older turn's diff then says so. Folders outside git have no turn diffs, and a repository whose snapshot takes longer than three seconds is not snapshotted again until Aya restarts.
 
+## Edit from here
+
+Hover a message you sent to Claude or Codex and choose **Edit from here**. Its text returns to the composer (attachments do not; add them again), and a notice above the composer says how many later messages will go. Sending the edited text rewinds the agent to just before that message and removes the message and everything after it from the conversation, from Aya's saved copy and from Aya's history; **Cancel edit** leaves everything as it was. The action needs an idle turn and is hidden for Pi and Antigravity, for messages saved before Aya recorded where they start, and while a turn runs.
+
+- **Claude** restarts on the same transcript cut after the previous turn's last assistant message (`--resume <session> --resume-session-at <message> --fork-session --session-id <new>`). The fork becomes the pane's session, so the dropped turns never come back on resume. Editing the first message starts a new session.
+- **Codex** drops the message's turn and the later ones with app-server `thread/revert`, keeping the thread.
+
+**Also revert files** restores the files changed since that message, before the conversation is rewound. It is off by default and offered only when the restore is safe:
+
+- For Claude, Aya runs Claude Code with file checkpointing on (`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`) and asks it to `rewind_files` to the message. This covers the files Claude changed with its edit tools, not changes made by shell commands, and is refused when any of those files lies outside the pane's folder.
+- Otherwise, in a linked git worktree, Aya snapshots the pane's folder (tracked and untracked files, ignored ones excluded) when each message is sent, through a temporary git index that leaves your index, branches and stash alone. Restoring it deletes files added since, puts changed and deleted ones back, including edits you made by hand, and never touches ignored files or anything outside the pane's folder. The main checkout gets no snapshot.
+
+Neither undoes actions outside the workspace, such as commands that changed other systems.
+
 ## Measured task progress
 
 For tasks with measurable units, Codex is given the `aya_progress` tool. Call it with `label`, `current`, `total`, and optionally `detail`; it returns a `progressId`. Reuse that ID to update the existing bar. For example, decompiling ten functions can report 0/10, 4/10 and 10/10. Percentages are derived from these counts, never invented by Aya. Optional `status` is `running`, `complete`, `paused` or `failed`; completion requires current equal to total.

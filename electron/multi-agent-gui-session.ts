@@ -17,6 +17,7 @@ import type { CodexGuiSession } from './codex-gui-session';
 import type { GuiProgress } from '../shared/gui-progress';
 import type { GuiArtifact, GuiEvent } from '../shared/codex-gui';
 import { claudeDeclineMessage, claudePermissionMode, fromClaudePermissionMode, guiPermissionModeLabel, type GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
+import { insideDirectory, type EditSendInfo, type EditTarget } from './gui-edit-from-here';
 
 const execFileAsync = promisify(execFile);
 const object = (value: unknown): Record<string, unknown> =>
@@ -40,7 +41,11 @@ export type GuiSessionInstance = Pick<
   | 'interrupt'
   | 'respond'
   | 'close'
-> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'stopSubagent' | 'setPermissionMode'>>;
+> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'stopSubagent' | 'setPermissionMode' | 'editFromHere'>> & {
+  /** Files a Claude checkpoint rewind would restore, or null when it cannot. */
+  previewFileRewind?(target: EditTarget): Promise<string[] | null>;
+  rewindFiles?(target: EditTarget): Promise<void>;
+};
 
 const STRIPPED_AYA_ENV = [
   'ELECTRON_RUN_AS_NODE',
@@ -255,6 +260,10 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
     const child = this.child;
     this.child = null;
     this.failSession('Session closed');
+    this.terminate(child);
+  }
+
+  protected terminate(child: ChildProcessWithoutNullStreams | null) {
     if (child?.pid) {
       try {
         process.kill(-child.pid, 'SIGTERM');
@@ -288,7 +297,7 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
   abstract send(
     prompt: string,
     options?: { model?: string; effort?: string; images?: string[] },
-  ): Promise<void>;
+  ): Promise<EditSendInfo | void>;
   abstract interrupt(): Promise<void>;
 }
 
@@ -885,6 +894,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   /** Tool calls of the current turn still waiting for their result, so a failed one can be reported as failed. */
   private openTools = new Map<string, Record<string, unknown>>();
   private permissionMode: GuiPermissionMode = 'supervised';
+  /** The transcript head: uuid of the last top-level assistant message, the cut point for --resume-session-at. */
+  private lastAssistantUuid = '';
+  private launchOptions: { configDir?: string; unsafeMode: boolean; model: string; permissionMode?: GuiPermissionMode } = { unsafeMode: false, model: '' };
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -946,7 +958,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private beginTurn() {
     this.busy = true;
     this.turnId = `turn-${++this.nextId}`;
-    this.currentItemId = `msg-${this.nextId}`;
+    this.currentItemId = `msg-${randomUUID()}`;
     this.currentAssistantText = '';
     this.handledQuestionToolIds.clear();
     this.pendingAssistantQuestions = null;
@@ -1052,6 +1064,12 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     this.cwd = await realpath(cwd);
     if (!(await stat(this.cwd)).isDirectory()) throw Error('Workspace must be a directory');
     this.threadId = resumeThreadId || randomUUID();
+    this.launchOptions = { configDir, unsafeMode, model, permissionMode };
+    return this.launch(resumeThreadId ? ['--resume', resumeThreadId] : ['--session-id', this.threadId]);
+  }
+
+  private async launch(sessionArgs: string[]) {
+    const { configDir, unsafeMode, model, permissionMode } = this.launchOptions;
     // Full access needs bypassPermissions, which Claude only allows mid-session when launched with the allow flag.
     const fullAccess = permissionMode ? permissionMode === 'full-access' : unsafeMode;
     const args = [...(this.customArgs ?? [
@@ -1063,28 +1081,31 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       '--include-partial-messages',
       '--permission-prompt-tool=stdio',
       '--chrome',
-      ...(resumeThreadId ? ['--resume', resumeThreadId] : ['--session-id', this.threadId]),
+      ...sessionArgs,
     ]), ...(fullAccess ? ['--dangerously-skip-permissions'] : ['--allow-dangerously-skip-permissions'])];
     // Explicitly setting even ~/.claude changes Claude's macOS Keychain account.
     // Match the terminal preset: only override the environment for a custom directory.
     const claudeDir = configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir());
     const customDir = claudeDir && path.resolve(claudeDir) !== path.join(homedir(), '.claude');
-    const env = this.cleanEnv(customDir ? { CLAUDE_CONFIG_DIR: claudeDir } : {});
+    // File checkpoints let "Edit from here" restore what Claude's edit tools changed (rewind_files).
+    const env = this.cleanEnv({ CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: 'true', ...(customDir ? { CLAUDE_CONFIG_DIR: claudeDir } : {}) });
     this.claudeEnv = env;
-    this.child = spawn(this.executable, args, {
+    const child = spawn(this.executable, args, {
       cwd: this.cwd,
       env,
       detached: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    this.child.stdin.on('error', () => {});
-    this.writer = new GuiProtocolWriter(this.child.stdin, this.agentLabel, message => { this.failSession(message); this.close(); });
-    this.child.stderr.on('data', (data) => {
+    this.child = child;
+    child.stdin.on('error', () => {});
+    this.writer = new GuiProtocolWriter(child.stdin, this.agentLabel, message => { if (this.child !== child) return; this.failSession(message); this.close(); });
+    child.stderr.on('data', (data) => {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
-    this.child.stdout.setEncoding('utf8');
+    child.stdout.setEncoding('utf8');
     const frames = new GuiJsonLines();
-    this.child.stdout.on('data', data => {
+    child.stdout.on('data', data => {
+      if (this.child !== child) return;
       try {
         frames.push(String(data), message => {
           void this.receive(message).catch(error => { this.failSession(String(error)); this.close(); });
@@ -1094,10 +1115,10 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
         this.close();
       }
     });
-    this.child.once('error', (error) => this.failSession(`Cannot start Claude: ${error.message}`));
-    this.child.once('exit', (code) =>
-      this.failSession(`Claude stopped (${code ?? 'signal'}). ${this.stderr}`),
-    );
+    child.once('error', (error) => { if (this.child === child) this.failSession(`Cannot start Claude: ${error.message}`); });
+    child.once('exit', (code) => {
+      if (this.child === child) this.failSession(`Claude stopped (${code ?? 'signal'}). ${this.stderr}`);
+    });
     try {
       const initRes = await this.controlRequest('initialize', {
         sdkMcpServers: ['aya'],
@@ -1234,14 +1255,18 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
         });
       }
       this.emit({ method: 'turn/started', params: { turn: { id: this.turnId } } });
+      // Claude keeps this uuid in its transcript; Edit from here rewinds files to it.
+      const claudeUser = randomUUID();
       this.write({
         type: 'user',
+        uuid: claudeUser,
         session_id: this.threadId,
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
         message: { role: 'user', content },
         parent_tool_use_id: null,
       });
+      return { claudeUser };
     } catch (error) {
       this.busy = false;
       this.turnId = null;
@@ -1252,6 +1277,51 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   /** Stops the turn and every subagent, including background ones that outlived their turn: Claude's interrupt stops
    *  them too (it spares them only for a client that declares its own per-task stop), and an older Claude that does
    *  not is sent a stop for each one still running. */
+  async previewFileRewind(target: EditTarget): Promise<string[] | null> {
+    if (this.busy) throw Error('Stop the current turn first');
+    if (!target.claudeUser) return null;
+    try {
+      const result = object((await this.controlRequest('rewind_files', { user_message_id: target.claudeUser, dry_run: true }, 20000)).response);
+      if (result.canRewind !== true) return null;
+      const files = Array.isArray(result.filesChanged) ? result.filesChanged.filter((f): f is string => typeof f === 'string') : [];
+      return files.every(file => insideDirectory(this.cwd, path.resolve(this.cwd, file))) ? files : null;
+    } catch { return null; }
+  }
+
+  async rewindFiles(target: EditTarget) {
+    const files = await this.previewFileRewind(target);
+    if (!files) throw Error('Claude has no file checkpoint for this message inside the workspace');
+    const result = object((await this.controlRequest('rewind_files', { user_message_id: target.claudeUser })).response);
+    if (result.canRewind !== true) throw Error(text(result.error) || 'Claude could not restore the files');
+  }
+
+  /** Restart Claude on its transcript cut just before the message: --resume-session-at the previous
+   *  assistant message, forked into a new session so the dropped turns never come back on resume. */
+  async editFromHere(target: EditTarget) {
+    if (this.busy) throw Error('Stop the current turn first');
+    if (target.resumeAt !== null && !target.resumeAt) throw Error('This message cannot be edited: Claude did not report where its turn began');
+    const previous = this.threadId, next = randomUUID();
+    const child = this.child;
+    this.closing = true;
+    this.writer?.close(); this.writer = null; this.child = null;
+    this.failSession('Restarting Claude');
+    this.terminate(child);
+    this.closing = false; this.stderr = '';
+    this.threadId = next;
+    this.lastAssistantUuid = target.resumeAt || '';
+    // The restarted Claude keeps the pane's current permission mode.
+    this.launchOptions = { ...this.launchOptions, permissionMode: this.permissionMode };
+    try {
+      const result = await this.launch(target.resumeAt ? ['--resume', previous, '--resume-session-at', target.resumeAt, '--fork-session', '--session-id', next] : ['--session-id', next]);
+      this.emit({ method: 'aya/session', params: { threadId: this.threadId, model: result.model } });
+      return { threadId: this.threadId };
+    } catch (error) {
+      this.closing = false;
+      this.emit({ method: 'aya/disconnected', params: { message: `Claude could not restart at the earlier message: ${error instanceof Error ? error.message : String(error)}` } });
+      throw error;
+    }
+  }
+
   async interrupt() {
     const running = [...this.agents].filter(([, agent]) => !agent.done).map(([id]) => id);
     if (!this.busy && !running.length) return;
@@ -1564,6 +1634,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
     if (type === 'assistant') {
       this.ensureTurn();
+      if (text(message.uuid) && !message.parent_tool_use_id) this.lastAssistantUuid = text(message.uuid);
       const msg = object(message.message);
       if (Array.isArray(msg.content)) {
         for (const rawBlock of msg.content) {
@@ -1646,6 +1717,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
           turn: {
             id: finishedTurnId,
             status: isInterrupted ? 'interrupted' : isError ? 'failed' : 'completed',
+            ...(this.lastAssistantUuid ? { ayaHead: this.lastAssistantUuid } : {}),
             ...(usageLimit
               ? { error: { message: claudeLimitMessage(usageLimit, text(message.result)), usageLimit } }
               : isError && text(message.error)

@@ -14,6 +14,7 @@
 - Conversation GUI: see what each turn changed. In a git project, a turn that edits files ends with a "Changes in this turn" row that opens the diff of that turn only, leaving out edits made before it and pulls or commits made between turns. File edits in the activity log (Codex file changes, Claude's Edit and Write) open the diff at that file, and the diff viewer also lists the branch's commits, each with its own diff.
 
 - Conversation GUI: a turn stopped by a Claude or Codex usage limit shows a Limited state with the reset time, **Resume at reset** (sends "continue" when the limit resets, survives a reload) and **Snooze until reset**. View options hide successful or all tool calls, and Zen mode (Cmd/Ctrl+Alt+Z) shows only your messages and each turn's final reply. Screen readers hear when a turn starts, needs approval and ends, and the window title leads with the focused GUI pane's status.
+- Add **Edit from here** to Claude and Codex conversations: an earlier message goes back into the composer, and sending it continues the conversation as if the later messages never happened (Claude resumes a fork cut at that point, Codex reverts the thread). An optional **Also revert files** restores the files from Claude's file checkpoints or, in a git worktree, from a snapshot Aya takes when each message is sent.
 
 ## v0.20.0 - 2026-11-22
 
