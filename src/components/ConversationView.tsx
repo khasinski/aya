@@ -1,4 +1,4 @@
-import { Fragment,memo,useCallback,useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type SetStateAction } from 'react';
+import { Fragment,memo,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type CSSProperties,type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { ComposerOptions } from './ComposerOptions';
 import ReactMarkdown from 'react-markdown';
@@ -25,6 +25,8 @@ import { ArtifactPanel } from './ArtifactPanel';
 import './conversation.css';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { ConversationTurnTimer } from './ConversationTurnTimer';
+import { EditFromHereBar,useEditFromHere } from './EditFromHere';
+import { editableMessageIds,editPlan,messagesBefore,recordClaudeHead,type EditInfo } from '../gui-edit-from-here';
 import { SnippetBar } from './SnippetBar';
 import { ipcMessage } from './use-async-action';
 import { useModalFocus } from './useModalFocus';
@@ -43,7 +45,7 @@ interface Activity { id: string; label: string; status: string; output: string; 
 interface GoalDetails { objective: string; status: string; reason?: string }
 interface GuiQuestionOption { label: string; description: string }
 interface GuiQuestion { id: string; header: string; question: string; isSecret: boolean; multiSelect: boolean; options: GuiQuestionOption[] }
-interface Message { kind?: 'plan'; progress?: GuiProgress; id: string; type: string; text: string; delivery?: 'sending' | 'sent' | 'failed' | 'unconfirmed'; title?: string; goal?: GoalDetails | null; questions?: unknown[]; questionAnswers?: Record<string, string> }
+interface Message { kind?: 'plan'; progress?: GuiProgress; id: string; type: string; text: string; delivery?: 'sending' | 'sent' | 'failed' | 'unconfirmed'; title?: string; goal?: GoalDetails | null; questions?: unknown[]; questionAnswers?: Record<string, string>; edit?: EditInfo }
 function normalizeQuestions(raw: unknown): GuiQuestion[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((item, index) => {
@@ -125,6 +127,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const agentBadge = guiAgent === 'pi' ? 'PI' : guiAgent === 'claude' ? 'CLAUDE' : guiAgent === 'antigravity' ? 'ANTIGRAVITY' : 'CODEX';
   const invoke = (action: string, value?: unknown) => { if (!api) return Promise.reject(Error('Conversation GUI is available in the desktop app only.')); return api.invoke(terminal.id, action, value); };
   const [messages, setMessages] = useState<Message[]>([]);
+  const edit = useEditFromHere(invoke);
   const [artifacts, setArtifacts] = useState<GuiArtifactEntry[]>([]);
   const [seenArtifactRevisions, setSeenArtifactRevisions] = useState<Record<string, number>>({});
   const markArtifactViewed = useCallback((id: string, revision: number) => setSeenArtifactRevisions(old => (old[id] || 0) >= revision ? old : { ...old, [id]: revision }), []);
@@ -394,6 +397,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (event.id !== undefined) setRequests(old => [...old.filter(r => r.id !== event.id), event]);
       if (event.method === 'aya/requestResolved' || event.method === 'serverRequest/resolved') setRequests(old => old.filter(r => r.id !== (p.id ?? p.requestId)));
       if (event.method === 'turn/started') { turnRevision.current++; turnExplanation.current = ''; setBusy(true); setTurnOutcome(null); }
+      if (event.method === 'turn/completed' && str(obj(p.turn).ayaHead)) setMessages(old => recordClaudeHead(old, str(obj(p.turn).ayaHead)));
       if (event.method === 'turn/completed') { turnRevision.current++; setBusy(false); setRequests([]); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); if (turn.error) fail(obj(turn.error).message); }
       if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setRequests([]); setQueueHeld(true); setSideQuestion(''); setTurnOutcome('interrupted'); setMessages(old => old.map(m => m.progress?.status === 'running' ? { ...m, progress: { ...m.progress, status: 'paused' } } : m)); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: 'interrupted' } : a)); fail(p.message); }
       if (event.method === 'error' || event.method === 'aya/notice') fail(p.message || obj(p.error).message);
@@ -626,9 +630,10 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     const messageId = crypto.randomUUID();
     setMessages(old => [...old, { id: messageId, type: 'user', delivery: 'sending', text: text + (files.length ? `\n\n${files.map(a => `📎 ${a.name}`).join(' · ')}` : '') }]);
     try {
-      await invoke('send', { text, attachmentIds: files.map(a => a.id), model: selectedModel || undefined, effort: effort || undefined, ...(capabilities.plan && (planRef.current || planWasOn.current) ? { plan: planRef.current } : {}) });
+      const sent = obj(await invoke('send', { text, attachmentIds: files.map(a => a.id), model: selectedModel || undefined, effort: effort || undefined, ...(capabilities.plan && (planRef.current || planWasOn.current) ? { plan: planRef.current } : {}) }));
       planWasOn.current = planRef.current;
-      setMessages(old => old.map(m => m.id === messageId ? { ...m, delivery: 'sent' } : m.id === questionAnswer?.messageId ? { ...m, questionAnswers: questionAnswer.answers } : m));
+      const editInfo = Object.keys(obj(sent.rewind)).length ? { ...obj(sent.rewind) as EditInfo, prompt: text } : null;
+      setMessages(old => old.map(m => m.id === messageId ? { ...m, delivery: 'sent', ...(editInfo ? { edit: { ...m.edit, ...editInfo } } : {}) } : m.id === questionAnswer?.messageId ? { ...m, questionAnswers: questionAnswer.answers } : m));
       if (queuedId) setQueue(old => old.filter(item => item.id !== queuedId));
       return true;
     } catch (e) { fail(e); setMessages(old => old.map(m => m.id === messageId ? { ...m, delivery: 'failed' } : m)); if (turnRevision.current === sentAtTurnRevision) { setBusy(false); setTurnOutcome('failed'); } setQueueHeld(true); return false; }
@@ -641,11 +646,36 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     // Queue changes drive dispatch. Model/effort changes apply to the next turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, busy, sideQuestion, queueHeld, queue, requests.length, dispatchRevision, steerPending]);
+  const editPending = useRef(false);
+  /** Edit from here: rewind the agent (and files, if chosen), drop the message and everything after it, then send the new text. */
+  const sendEdited = async (text: string) => {
+    const plan = edit.editing!.plan;
+    if (busy || dispatching.current || requests.length || editPending.current) { setError('Stop the current turn before editing an earlier message.'); return; }
+    if (!messages.some(m => m.id === plan.messageId)) { edit.cancel(); setError('That message is no longer in the conversation.'); return; }
+    editPending.current = true;
+    try { await edit.apply(); } catch (e) { fail(e); return; } finally { editPending.current = false; }
+    setMessages(old => messagesBefore(old, plan.messageId));
+    setActivities([]); setPlan([]); setTurnOutcome(null); edit.cancel();
+    const files = attachments;
+    setPrompt(''); setAttachments([]);
+    const revision = draftRevision.current;
+    if (!await dispatch(text || 'Inspect the attached files.', files) && draftRevision.current === revision) { setPrompt(text); setAttachments(files); }
+  };
+  const editableIds = useMemo(() => editableMessageIds(messages, guiAgent), [messages, guiAgent]);
+  const startEditRef = useRef<(id: string) => void>(() => {});
+  startEditRef.current = (id: string) => {
+    const plan = editPlan(messages, messages.findIndex(m => m.id === id), guiAgent);
+    if (!plan) return;
+    recall.current = null; setPrompt(plan.prompt); edit.start(plan);
+    requestAnimationFrame(() => composer.current?.focus());
+  };
+  const handleEditFromHere = useCallback((id: string) => startEditRef.current(id), []);
   const send = async (text: string, opposite = false) => {
     if ((!text.trim() && !attachments.length) || !ready || switching) return;
     setError('');
     try {
       if (text.startsWith('/')) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
+      if (edit.editing) { await sendEdited(text); return; }
       if (busy || sideQuestion || queue.length || dispatching.current) {
         if (!dispatching.current && sendAction({ mustWait: true, busy, steerSupported: capabilities.steer, preference: followUp, opposite, hasAttachments: attachments.length > 0, isCommand: false }) === 'steer') { await steer(text); return; }
         setQueue(old => [...old, { id: crypto.randomUUID(), text: text || 'Inspect the attached files.', attachments }]); setPrompt(''); setAttachments([]); return;
@@ -812,6 +842,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
           onExpandPlan={pauseFollowing}
           onAnswerMessageQuestions={handleAnswerMessageQuestions}
           onImplementPlan={m.id === messages[messages.length - 1]?.id && !busy && ready ? () => { setPlanMode(false); void send('Implement the plan.'); } : undefined}
+          onEditFromHere={editableIds.has(m.id) && !busy && ready && !switching ? handleEditFromHere : undefined}
+          editing={edit.editing?.plan.messageId === m.id}
         /></WindowedMessage>
       ))}
       {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map((a, index) => { const phase = activityPhaseList.find(p => p.index === index); const took = activityDuration(a); return <Fragment key={a.id}>{phase && <div className="aya-gui-activity-phase" role="presentation">{phaseText(phase)}</div>}<details><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}{took !== null && <small className="aya-gui-activity-time"> · {shortDuration(took)}</small>}</summary>{a.output && <pre>{a.output}</pre>}</details></Fragment>; })}</div></details>}
@@ -845,6 +877,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       {prompt.startsWith('/') && <div className="aya-gui-commands">{availableCommands.filter(item => item.name.startsWith(prompt.slice(1).split(/\s/)[0])).map(item => <button type="button" key={item.name} title={item.description} onClick={() => setPrompt('/' + item.name + ' ')}>/{item.name}</button>)}</div>}
       {attachments.length > 0 && <div className="aya-gui-attachments">{attachments.map(a => <span key={a.id} title={a.path}>📎 {a.name}{needsReattachment(a) && <strong role="status"> · Reattach</strong>}<button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments(old => old.filter(f => f.id !== a.id))}>×</button></span>)}</div>}
       {attachments.some(needsReattachment) && <div className="aya-gui-attachment-notice" role="status">Remove and reattach the marked files before sending.</div>}
+      {edit.editing && <EditFromHereBar state={edit.editing} agentLabel={agentLabel} busy={busy} onRevertFiles={edit.setRevertFiles} onCancel={() => { edit.cancel(); composer.current?.focus(); }} />}
       <textarea
         ref={composer}
         aria-label={`Message ${agentLabel}`}
@@ -980,6 +1013,8 @@ const ConversationMessageItem = memo(function ConversationMessageItem({
   onAnswerMessageQuestions,
   onImplementPlan,
   onExpandPlan,
+  onEditFromHere,
+  editing = false,
 }: {
   message: Message;
   agentBadge: string;
@@ -993,6 +1028,8 @@ const ConversationMessageItem = memo(function ConversationMessageItem({
   ) => Promise<void>;
   onImplementPlan?: () => void;
   onExpandPlan: () => void;
+  onEditFromHere?: (id: string) => void;
+  editing?: boolean;
 }) {
   if (m.kind === 'plan') return <PlanCard text={m.text} loadImage={loadConversationImage} onImplement={onImplementPlan} onExpand={onExpandPlan} />;
   if (m.type === 'progress' && m.progress) {
@@ -1021,7 +1058,8 @@ const ConversationMessageItem = memo(function ConversationMessageItem({
   const displayText =
     msgQuestions.length > 0 ? stripQuestionBulletsFromText(m.text, msgQuestions) : m.text;
   return (
-    <article className={m.type}>
+    <article className={m.type} data-editing={editing || undefined}>
+      {onEditFromHere && <button type="button" className="aya-gui-edit-from-here" title="Put this message back in the composer and continue the conversation from here" onClick={() => onEditFromHere(m.id)}>Edit from here</button>}
       <small>
         {m.type === 'user'
           ? `YOU${

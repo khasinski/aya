@@ -14,6 +14,7 @@ import { clearWidgetDocuments,registerWidgetProtocol,widgetDocument } from './gu
 import { installArtifactImageMenu,saveGuiArtifact } from './gui-artifact-image-menu';
 import { exportArtifactMedia } from './gui-artifact-media';
 import { archiveConversation,hydrateConversationArtifact,listConversations,loadConversation,readArchivedConversation,saveConversation } from './gui-conversation-store';
+import { editFromHere,sendWithSnapshot } from './gui-edit-from-here-ipc';
 import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
 import { GuiRecoveryJournal } from './gui-recovery-journal';
 import { AYA_HOME } from './paths';
@@ -361,8 +362,9 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       const params = value as { text: string; model?: string; effort?: string; plan?: boolean; attachmentIds?: string[] };
       const files = (params.attachmentIds || []).map(id => { const file = attachments.get(key)?.get(id); if (!file) throw Error('Please reattach this file after reconnecting'); return file; });
       const text = params.text + (files.filter(f => !f.image).length ? '\n\nAttached files (selected by the user):\n' + files.filter(f => !f.image).map(f => JSON.stringify(f.path)).join('\n') : '');
-      return entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) });
+      return sendWithSnapshot(entry, () => entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) }));
     }
+    if (action === 'edit-from-here') return editFromHere(entry, value, snapshots.get(key));
     if (action === 'interrupt') return entry.session.interrupt();
     if (action === 'read-linked-file') return readWorkspaceFile(entry.cwd, value);
     if (action === 'image') return workspaceImage(entry.cwd, String(value));

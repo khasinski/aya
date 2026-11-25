@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add **Edit from here** to Claude and Codex conversations: an earlier message goes back into the composer, and sending it continues the conversation as if the later messages never happened (Claude resumes a fork cut at that point, Codex reverts the thread). An optional **Also revert files** restores the files from Claude's file checkpoints or, in a git worktree, from a snapshot Aya takes when each message is sent.
+
 ## v0.20.0 - 2026-11-22
 
 - Render Mermaid diagrams and charts directly in conversations, including flowcharts, sequence diagrams, pie charts and bar/line charts, with source viewing, copying and enlarged previews.

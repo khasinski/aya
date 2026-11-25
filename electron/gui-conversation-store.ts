@@ -169,6 +169,16 @@ export async function archiveConversation(value: ConversationSnapshot) {
   await writeFileAtomic(path.join(AYA_HOME, 'conversations', 'history', id + '.json'), JSON.stringify({ id, cwd: value.cwd, configDir: value.configDir, agent: value.agent || 'codex', threadId: value.threadId, title: String(first?.text || 'Untitled conversation').slice(0, 160), updatedAt: Date.now() }), 0o600);
   historyGeneration++;
 }
+/** Removes a conversation's archived copy from history (its later turns were dropped by Edit from here). */
+export async function forgetArchivedConversation(value: ConversationSnapshot) {
+  if (!value.threadId) return;
+  const id = historyId(value);
+  await writes.get('history:' + id);
+  for (const target of [path.join(AYA_HOME, 'conversations', 'history', id + '.json'), file('history:' + id)]) {
+    try { await unlink(target); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
+  historyGeneration++;
+}
 interface HistoryRow { id: string; cwd: string; configDir?: string; agent: string; threadId: string; title: string; updatedAt: number }
 const historyFiles = new Map<string, { signature: string; row: HistoryRow | null }>();
 let historyGeneration = 0;

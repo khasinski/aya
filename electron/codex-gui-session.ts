@@ -6,6 +6,7 @@ import type { GuiProgress } from '../shared/gui-progress';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import type { GuiEvent, GuiArtifact, GuiApprovalDecision } from '../shared/codex-gui';
+import type { EditSendInfo, EditTarget } from './gui-edit-from-here';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
@@ -185,7 +186,7 @@ export class CodexGuiSession {
     if (!this.busy || !this.turnId) throw Error('There is no active turn to steer');
     return this.rpc('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input: [{ type: 'text', text: prompt, text_elements: [] }] });
   }
-  async send(prompt: string, options: { model?: string; effort?: string; plan?: boolean; images?: string[] } = {}) {
+  async send(prompt: string, options: { model?: string; effort?: string; plan?: boolean; images?: string[] } = {}): Promise<EditSendInfo | void> {
     if (!this.threadId) throw Error('Connect to Codex first');
     if (this.busy) throw Error('Codex is working; stop the current turn first');
     if (!prompt.trim() || prompt.length > 100000) throw Error('Prompt must contain 1–100000 characters');
@@ -197,6 +198,8 @@ export class CodexGuiSession {
     try {
       const result = await starting;
       if (this.busy && !this.turnId) this.turnId = text(object(result.turn).id) || this.turnId;
+      const codexTurn = text(object(result.turn).id);
+      return codexTurn ? { codexTurn } : undefined;
     } catch (error) { if (this.samplingEpoch === startedAtEpoch) this.busy = false; throw error; }
     finally { if (this.startingTurn === starting) this.startingTurn = null; }
   }
@@ -223,6 +226,13 @@ export class CodexGuiSession {
       this.sideThreads.delete(sideId);
       void this.rpc('thread/unsubscribe', { threadId: sideId }).catch(() => {});
     }
+  }
+  /** Edit from here: drop the message's turn and every later one from the thread's history (files are untouched). */
+  async editFromHere(target: EditTarget) {
+    if (this.busy) throw Error('Stop the current turn first');
+    if (!target.codexTurn) throw Error('This message cannot be edited: Codex did not report its turn');
+    await this.rpc('thread/revert', { threadId: this.threadId, beforeTurnId: target.codexTurn });
+    return { threadId: this.threadId };
   }
   async interrupt() {
     if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
