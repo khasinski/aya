@@ -229,10 +229,13 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     else if (prompt === 'approval-options') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'git status', proposedExecpolicyAmendment: ['git', 'status'], availableDecisions: ['accept', 'acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'status'] } }, 'decline'] } });
     else if (prompt === 'permissions') write({ id: 'approve', method: 'item/permissions/requestApproval', params: { permissions: { network: { enabled: true } } } });
     else if (prompt === 'disconnect-approval') {
-      write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval' } });
+      // No Decline on offer, so Enter queues a message instead of declining with it as a note.
+      write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval', availableDecisions: ['accept', 'cancel'] } });
       setTimeout(() => process.exit(0), 1000);
     }
     else if (prompt === 'approval') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval' } });
+    // After a decline the turn goes on, so a note can still steer it.
+    else if (prompt === 'approval-continue') write({ id: 'approve-continue', method: 'item/commandExecution/requestApproval', params: { command: 'rm -rf build', reason: 'Test approval' } });
     else if (prompt === 'wait' || prompt === 'slow-steer-wait') return;
     else if (prompt === 'question-secret') { secretQuestion = true; write({ id: 'question', method: 'item/tool/requestUserInput', params: { questions: [{ id: 'choice', question: 'Enter secret', isSecret: true, options: [] }] } }); }
     else if (prompt === 'question') write({ id: 'question', method: 'item/tool/requestUserInput', params: { questions: [{ id: 'choice', question: 'Which option?', options: [{ label: 'A', description: 'First' }] }] } });
@@ -287,6 +290,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (holdProgress && progressStep === 1) return;
     if (++progressStep <= 2) write({ id: 'progress', method: 'item/tool/call', params: { tool: 'aya_progress', arguments: { progressId, label: 'Decompiling functions', current: progressStep === 1 ? 4 : 10, total: 10, detail: progressStep === 1 ? 'Decompiled four functions' : 'All ten functions are ready' } } });
     else complete('All functions have been decompiled.');
+  } else if (!message.method && message.id === 'approve-continue') { event('fixture/approval', message.result);
   } else if (!message.method && message.id === 'late-child') { event('fixture/child-answered', message.result);
   } else if (!message.method && message.id === 'approve') { event('fixture/approval', message.result); complete(typeof message.result.decision === 'string' ? message.result.decision : JSON.stringify(message.result)); }
   else if (!message.method && message.id === 'bulk-present') {

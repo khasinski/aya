@@ -6,11 +6,13 @@ import remarkGfm from 'remark-gfm';
 import type { GuiApprovalDecision,GuiArtifact,GuiArtifactEntry,GuiEvent } from '../../shared/codex-gui';
 import { conversationPatch } from '../../shared/conversation-patch.cjs';
 import { guiCapabilities,guiCommands } from '../../shared/gui-commands.cjs';
+import { approvalNoteDelivery,guiPermissionModeLabel,guiPermissionModes,initialGuiPermissionMode,nextGuiPermissionMode,parseGuiPermissionMode,type GuiPermissionMode } from '../../shared/gui-permission-mode.cjs';
 import type { GuiProgress } from '../../shared/gui-progress';
 import { guiSupportedAgent } from '../agentPreset';
 import { appendMessageDeltas,createTextDeltaBuffer,scheduleConversationFrame } from '../conversation-deltas';
 import { conversationSaveDelay } from '../conversation-save-delay';
 import { movedUpFromFollowedPosition, wheelTargetsConversation } from '../conversation-scroll';
+import { approvalNoteTarget,declinableApproval,isPermissionModeShortcut,permissionModeChangeText } from '../gui-approval-modes';
 import { activityDuration,activityKind,activityPhases,phaseText,shortDuration,subagentLabel,subagentStates,type ActivityKind } from '../gui-activity';
 import { followUpHint,parseFollowUpPreference,pasteBecomesAttachment,recallStep,sendAction,sendLabel,sentPromptText,stashStep,withQuote,type FollowUpPreference,type Recall } from '../gui-composer';
 import { reviewCommentsBlock,terminalExcerptBlock,withContextBlock } from '../gui-context';
@@ -240,7 +242,11 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const [paneFocused, setPaneFocused] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
-  const [sessionUnsafe, setSessionUnsafe] = useState(preset.unsafeMode === true);
+  // The pane's permission mode; the preset's unsafe approvals only pick the first one.
+  const [permissionMode, setPermissionModeValue] = useState<GuiPermissionMode>(() => initialGuiPermissionMode(guiAgent, preset.unsafeMode === true));
+  const permissionModeRef = useRef(permissionMode); permissionModeRef.current = permissionMode;
+  const sessionPermissionMode = (result: unknown) => parseGuiPermissionMode(obj(result).permissionMode) ?? initialGuiPermissionMode(guiAgent, obj(result).unsafeMode === true);
+  const sessionUnsafe = permissionMode === 'full-access';
   const [restored, setRestored] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'loading' | 'saving' | 'saved' | 'error'>('loading');
@@ -367,9 +373,9 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     persistTimer.current = null;
     const revision = snapshotRevision.current;
     try {
-      const result = await invoke('reconnect', { view: pendingSnapshot.current, unsafeMode: preset.unsafeMode === true });
+      const result = await invoke('reconnect', { view: pendingSnapshot.current, unsafeMode: preset.unsafeMode === true, permissionMode: permissionModeRef.current });
       setAvailableAttachmentIds(new Set(Array.isArray(obj(result).attachmentIds) ? obj(result).attachmentIds as string[] : []));
-      setSessionUnsafe(obj(result).unsafeMode === true); setModel(str(obj(result).model)); setReady(true); setImportNotice(old => old === 'Interface recovered. Reconnect the agent to continue.' ? '' : old);
+      setPermissionModeValue(sessionPermissionMode(result)); setModel(str(obj(result).model)); setReady(true); setImportNotice(old => old === 'Interface recovered. Reconnect the agent to continue.' ? '' : old);
       if (revision === snapshotRevision.current) { setSaveStatus('saved'); setSaveError(''); }
       void invoke('models').then(result => { if (Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(fail);
       composer.current?.focus();
@@ -402,11 +408,12 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (event.sequence) { receivedEventSequence.current = Math.max(receivedEventSequence.current, event.sequence); if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') eventSequence.current = receivedEventSequence.current; }
       const p = event.params;
       if (event.method === 'aya/recovered') {
-        if (typeof p.unsafeMode === 'boolean') setSessionUnsafe(p.unsafeMode);
+        if (typeof p.unsafeMode === 'boolean' || p.permissionMode) setPermissionModeValue(sessionPermissionMode(p));
         setBusy(p.running === true); setTurnOutcome(old => p.running ? null : old || 'interrupted'); setRequests(old => p.running ? old : []);
         setImportNotice(p.connected === false ? 'Interface recovered. Reconnect the agent to continue.' : p.truncated ? 'Interface recovered. Some live output could not be retained while the window was unavailable. Saved messages are preserved.' : 'Interface recovered. Your agent connection was preserved.');
       }
       if (event.method === 'aya/session' && typeof p.model === 'string') setModel(p.model);
+      if (event.method === 'aya/permissionMode') { const mode = parseGuiPermissionMode(p.mode); if (mode) setPermissionModeValue(mode); }
       if (event.method === 'aya/progress') {
         const progress = p.progress as unknown as GuiProgress;
         setMessages(old => old.some(m => m.progress?.id === progress.id) ? old.map(m => m.progress?.id === progress.id ? { ...m, progress } : m) : [...old, { id: `progress-${progress.id}`, type: 'progress', text: progress.label, progress }]);
@@ -484,13 +491,15 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (Array.isArray(saved.attachments)) setAttachments(saved.attachments as Attachment[]);
       if (typeof saved.selectedModel === 'string') setSelectedModel(saved.selectedModel);
       if (typeof saved.effort === 'string') setEffort(saved.effort);
+      const savedMode = parseGuiPermissionMode(saved.permissionMode);
+      if (savedMode) setPermissionModeValue(savedMode);
       if (Array.isArray(saved.plan)) setPlan(saved.plan as { step: string; status: string }[]);
       if (saved.busy) setTurnOutcome('interrupted');
       else if (saved.turnOutcome) setTurnOutcome(saved.turnOutcome as 'complete' | 'interrupted' | 'failed');
       if (!saved.busy) setUsageLimit(parseUsageLimit(saved.usageLimit));
       setRestored(true);
-      const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true });
-      if (mounted) { setAvailableAttachmentIds(new Set(Array.isArray(obj(result).attachmentIds) ? obj(result).attachmentIds as string[] : [])); setSessionUnsafe(obj(result).unsafeMode === true); setReady(obj(result).connected !== false); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
+      const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true, permissionMode: savedMode });
+      if (mounted) { setAvailableAttachmentIds(new Set(Array.isArray(obj(result).attachmentIds) ? obj(result).attachmentIds as string[] : [])); setPermissionModeValue(sessionPermissionMode(result)); setReady(obj(result).connected !== false); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
     })().catch(e => { if (mounted) fail(e); }).finally(() => { if (mounted) setConnecting(false); });
     return () => { textDeltas.flush(); mounted = false; viewMounted.current = false; off(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; void api.invoke(terminal.id, guiRendererRecoveryInProgress() ? 'retain-for-recovery' : takeGuiPaneRecovery(terminal.id) ? 'retain-pane' : 'close', pendingSnapshot.current || undefined).catch(() => {}); };
     // A conversation belongs to a panel; editing its preset affects new panels.
@@ -498,13 +507,13 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   }, [terminal.id]);
   useLayoutEffect(() => {
     if (!restored || !api) return;
-    pendingSnapshot.current = { eventSequence: eventSequence.current, importNotice, messages, activities, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, usageLimit, queue, attachments, selectedModel, effort, plan };
+    pendingSnapshot.current = { eventSequence: eventSequence.current, importNotice, messages, activities, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, usageLimit, queue, attachments, selectedModel, effort, plan, permissionMode };
     snapshotRevision.current++;
     setSaveStatus(old => old === 'error' ? old : 'saving');
     if (persistTimer.current) clearTimeout(persistTimer.current);
     const delay = conversationSaveDelay(busy, lastSnapshotSave.current);
     persistTimer.current = setTimeout(() => { persistTimer.current = null; void persistLatest(); }, delay);
-  }, [restored, api, terminal.id, persistLatest, importNotice, messages, activities, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, usageLimit, queue, attachments, selectedModel, effort, plan]);
+  }, [restored, api, terminal.id, persistLatest, importNotice, messages, activities, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, usageLimit, queue, attachments, selectedModel, effort, plan, permissionMode]);
   useEffect(() => {
     const flush = () => { flushTextDeltas.current(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; if (pendingSnapshot.current && api) void api.invoke(terminal.id, 'close', pendingSnapshot.current).catch(() => {}); };
     window.addEventListener('pagehide', flush);
@@ -627,6 +636,29 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     setEffort(next);
     setMessages(old => [...old, { id: crypto.randomUUID(), type: 'settings', title: 'Reasoning effort changed', text: `${effort || 'Default'} → ${next || 'Default'}. Applies to the next turn.` }]);
   };
+  const permissionModeOptions = guiPermissionModes(guiAgent);
+  const noteTarget = approvalNoteTarget(requests, guiAgent, { text: prompt, attachments: attachments.length });
+  const changePermissionMode = async (next: GuiPermissionMode) => {
+    const previous = permissionModeRef.current;
+    if (next === previous || !permissionModeOptions.length) return;
+    permissionModeRef.current = next; setPermissionModeValue(next);
+    try {
+      // A disconnected pane takes the mode when it reconnects.
+      if (ready) await invoke('set-permission-mode', next);
+      setMessages(old => [...old, { id: crypto.randomUUID(), type: 'settings', title: 'Permission mode changed', text: permissionModeChangeText(previous, next, guiAgent) }]);
+    } catch (e) { if (permissionModeRef.current === next) { permissionModeRef.current = previous; setPermissionModeValue(previous); } fail(e); }
+  };
+  /** Declines a pending approval and tells the agent why: Claude reads the note as the refusal itself; Codex and Pi
+   *  get it in the turn the decline lets continue, or as the next message once that turn has ended. */
+  const declineWithNote = async (request: GuiEvent, note: string) => {
+    const reason = approvalNoteDelivery(guiAgent) === 'reason', revision = draftRevision.current;
+    await invoke('respond', { id: request.id, value: { decision: 'decline', ...(reason ? { note } : {}) } });
+    if (draftRevision.current === revision) setPrompt('');
+    const shown = () => setMessages(old => [...old, { id: crypto.randomUUID(), type: 'user', text: `↳ ${note}` }]);
+    if (reason) { shown(); return; }
+    try { await invoke('steer', note); shown(); }
+    catch { setQueue(old => [...old, { id: crypto.randomUUID(), text: note, attachments: [] }]); }
+  };
   const command = async (name: string, argument: string) => {
     const revision = ['status', 'help', 'btw', 'chrome', 'usage'].includes(name) ? ++sideRevision.current : sideRevision.current;
     if (name === 'resume') { await openHistory(argument); return; }
@@ -719,6 +751,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     if ((!text.trim() && !attachments.length) || !ready || switching) return;
     setError('');
     try {
+      const declining = !opposite && approvalNoteTarget(requests, guiAgent, { text, attachments: attachments.length });
+      if (declining) { await declineWithNote(declining, text.trim()); return; }
       if (text.startsWith('/')) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
       if (busy || sideQuestion || queue.length || dispatching.current) {
         if (!dispatching.current && sendAction({ mustWait: true, busy, steerSupported: capabilities.steer, preference: followUp, opposite, hasAttachments: attachments.length > 0, isCommand: false }) === 'steer') { await steer(text); return; }
@@ -802,7 +836,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const guiHeader = (
     <header className="aya-gui-header">
       <div className="aya-gui-heading"><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></div>
-      {sessionUnsafe && <span className="aya-gui-unsafe-badge" title={guiAgent === 'codex' ? 'This session skips approval prompts and runs without the workspace sandbox.' : 'This session uses the preset’s unsafe approval mode.'}>Unsafe approvals</span>}
+      {sessionUnsafe && <span className="aya-gui-unsafe-badge" title={guiAgent === 'codex' ? 'This session skips approval prompts and runs without the workspace sandbox.' : permissionModeOptions.length ? 'This session runs in Full access: the agent acts without asking.' : 'This session uses the preset’s unsafe approval mode.'}>Unsafe approvals</span>}
       <span className="aya-sr-only" role="status">{connecting ? 'Connecting…' : switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
       <span className="aya-gui-view" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setViewMenuOpen(false); }}><button className="aya-gui-icon-button" aria-label="Conversation view" title="Conversation view: tool calls and Zen mode" aria-haspopup="menu" aria-expanded={viewMenuOpen} data-active={view.zen || view.tools !== 'all' || undefined} onClick={() => setViewMenuOpen(open => !open)}><span className="aya-gui-icon" aria-hidden="true">{view.zen ? 'self_improvement' : 'visibility'}</span></button>
         {viewMenuOpen && <div className="aya-gui-view-menu" role="menu" aria-label="Conversation view" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setViewMenuOpen(false); } }}>
@@ -837,6 +871,11 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     }}
     onKeyDown={e => {
       if (isZenShortcut(e) && !e.nativeEvent.isComposing) { e.preventDefault(); setGuiViewPrefs({ zen: !view.zen }); return; }
+      if (isPermissionModeShortcut(e) && permissionModeOptions.length && !e.nativeEvent.isComposing) {
+        e.preventDefault();
+        void changePermissionMode(nextGuiPermissionMode(guiAgent, permissionModeRef.current));
+        return;
+      }
       if (e.key === 'Escape' && !e.defaultPrevented) {
         if (history !== null) {
           setHistory(null);
@@ -915,7 +954,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
       {usageLimit && !busy && <LimitedCard limit={usageLimit} ready={ready} onResumeNow={() => { setQueueHeld(false); void dispatch(RESUME_PROMPT); }} onChange={change => setUsageLimit(old => old && { ...old, ...change })} onDismiss={() => setUsageLimit(null)} />}
-      {requests.map((request, index) => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} active={index === 0 && !hidden} promptEmpty={!prompt} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
+      {requests.map((request, index) => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} active={index === 0 && !hidden} promptEmpty={!prompt} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} declineNote={request === noteTarget ? prompt.trim() : ''} declineWithNote={note => declineWithNote(request, note).catch(fail)} />)}
       {messages.filter(m => m.progress?.status === 'running').slice(-3).map(m => <TaskProgress key={m.id} progress={m.progress!} compact />)}
       {plan.length > 0 && <details className="aya-gui-plan"><summary>Plan <small>{plan.filter(p => p.status === 'completed').length}/{plan.length}</small></summary><ol>{plan.map((step, i) => <li key={i} data-state={step.status}>{step.status === 'completed' ? '✓' : step.status === 'inProgress' ? '◌' : '○'} {step.step}</li>)}</ol></details>}
       {queue.length > 0 && <div className="aya-gui-queue">
@@ -939,7 +978,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       <textarea
         ref={composer}
         aria-label={`Message ${agentLabel}`}
-        placeholder={`Message ${agentLabel}… (/ for commands)`}
+        placeholder={declinableApproval(requests, guiAgent) ? 'Type why to decline the request above, then press Enter…' : `Message ${agentLabel}… (/ for commands)`}
         value={prompt}
         onChange={e => setPrompt(e.target.value)}
         onPaste={e => {
@@ -1013,9 +1052,10 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         }}
       />
       <div className="aya-gui-compose-footer"><button className="aya-gui-icon-button" type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => addAttachments(files as Attachment[])).catch(fail)}><span className="aya-gui-icon" aria-hidden="true">add</span></button>
-      <span className="aya-gui-context"><button type="button" className="aya-gui-context-button" aria-haspopup="menu" aria-expanded={contextMenu !== null} aria-label="@ Context" title="Add review comments or terminal output to the message" onClick={() => void openContextMenu()}><span aria-hidden="true">@</span><span className="aya-gui-context-label"> Context</span></button>{contextMenu && <div className="aya-gui-context-menu" role="menu" aria-label="Add context">{contextMenu.comments.length > 0 && <button type="button" role="menuitem" onClick={() => addContext(() => reviewCommentsBlock(contextMenu.comments, terminal.cwd))}>Review comments <small>{contextMenu.comments.length}</small></button>}{contextMenu.terminals.map(t => <button type="button" role="menuitem" key={t.id} onClick={() => addContext(() => terminalExcerptBlock(t.name, terminalExcerpt(t.id, 60) ?? ''))}>Output of {t.name}</button>)}{!contextMenu.comments.length && !contextMenu.terminals.length && <small className="aya-gui-context-empty">Nothing to add: no unsent review comments for this checkout and no other terminal open.</small>}</div>}</span><ComposerOptions open={optionsOpen} onOpenChange={setOptionsOpen} summary={[modelName(selectedModel || model) || 'Settings', effort, planMode ? 'Plan' : ''].filter(Boolean).join(' · ')} active={planMode}>
+      <span className="aya-gui-context"><button type="button" className="aya-gui-context-button" aria-haspopup="menu" aria-expanded={contextMenu !== null} aria-label="@ Context" title="Add review comments or terminal output to the message" onClick={() => void openContextMenu()}><span aria-hidden="true">@</span><span className="aya-gui-context-label"> Context</span></button>{contextMenu && <div className="aya-gui-context-menu" role="menu" aria-label="Add context">{contextMenu.comments.length > 0 && <button type="button" role="menuitem" onClick={() => addContext(() => reviewCommentsBlock(contextMenu.comments, terminal.cwd))}>Review comments <small>{contextMenu.comments.length}</small></button>}{contextMenu.terminals.map(t => <button type="button" role="menuitem" key={t.id} onClick={() => addContext(() => terminalExcerptBlock(t.name, terminalExcerpt(t.id, 60) ?? ''))}>Output of {t.name}</button>)}{!contextMenu.comments.length && !contextMenu.terminals.length && <small className="aya-gui-context-empty">Nothing to add: no unsent review comments for this checkout and no other terminal open.</small>}</div>}</span><ComposerOptions open={optionsOpen} onOpenChange={setOptionsOpen} summary={[modelName(selectedModel || model) || 'Settings', effort, planMode ? 'Plan' : '', permissionModeOptions.length ? guiPermissionModeLabel(permissionMode) : ''].filter(Boolean).join(' · ')} active={planMode || sessionUnsafe}>
       {models.length > 0 && <><label>Model<select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select></label>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <label>Reasoning<select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select></label>}</>}
-<div className="aya-composer-options-toggles">{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}</div><div className="aya-composer-options-fan-out"><button type="button" title="Start this message in a separate worktree for each of several agents" onClick={() => { setOptionsOpen(false); requestFanOut({ projectSlug: terminal.projectSlug, text: prompt, sourceTerminalId: terminal.id, attachments: attachments.map(({ id, name, image }) => ({ id, name, image })) }); }}>Send to several agents…</button>{fanOutRunForTerminal(terminal.id) && <button type="button" title="Show each agent's branch diff side by side" onClick={() => { setOptionsOpen(false); requestFanOutCompare(fanOutRunForTerminal(terminal.id)!.id); }}>Compare agents…</button>}</div><small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small></ComposerOptions>{showStop(busy, backgroundAgents) && <button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>}{busy && <>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" className="aya-gui-steer-secondary" disabled={steerPending} title={steerPending ? "Sending steer…" : "Send into the running turn"} onClick={() => void steer(prompt)}>{steerPending ? "Sending…" : "Steer ↗"}</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
+{permissionModeOptions.length > 0 && <label>Permissions<select aria-label="Permission mode" aria-keyshortcuts="Meta+Shift+A Control+Shift+A" title={`${permissionModeOptions.find(m => m.id === permissionMode)?.description || ''} ⌘⇧A cycles.`} value={permissionMode} onChange={e => void changePermissionMode(e.target.value as GuiPermissionMode)}>{permissionModeOptions.map(m => <option key={m.id} value={m.id} title={m.description}>{m.label}</option>)}</select></label>}
+<div className="aya-composer-options-toggles">{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}</div><div className="aya-composer-options-fan-out"><button type="button" title="Start this message in a separate worktree for each of several agents" onClick={() => { setOptionsOpen(false); requestFanOut({ projectSlug: terminal.projectSlug, text: prompt, sourceTerminalId: terminal.id, attachments: attachments.map(({ id, name, image }) => ({ id, name, image })) }); }}>Send to several agents…</button>{fanOutRunForTerminal(terminal.id) && <button type="button" title="Show each agent's branch diff side by side" onClick={() => { setOptionsOpen(false); requestFanOutCompare(fanOutRunForTerminal(terminal.id)!.id); }}>Compare agents…</button>}</div><small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small></ComposerOptions>{showStop(busy, backgroundAgents) && <button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>}{busy && <>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" className="aya-gui-steer-secondary" disabled={steerPending} title={steerPending ? "Sending steer…" : "Send into the running turn"} onClick={() => void steer(prompt)}>{steerPending ? "Sending…" : "Steer ↗"}</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{noteTarget ? 'Decline with note' : sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
     </form></main>
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>
@@ -1300,7 +1340,7 @@ function LimitedCard({ limit, ready, onResumeNow, onChange, onDismiss }: { limit
     </div>
   </section>;
 }
-function GuiRequest({ request, agentLabel, codex, active, promptEmpty, respond }: { request: GuiEvent; agentLabel: string; codex: boolean; /** The first pending request of a visible pane answers the keyboard shortcuts. */ active: boolean; /** Cmd+Backspace declines only when it cannot be deleting text. */ promptEmpty: boolean; respond: (value: unknown) => Promise<unknown> }) {
+function GuiRequest({ request, agentLabel, codex, active, promptEmpty, respond, declineNote = '', declineWithNote }: { request: GuiEvent; agentLabel: string; codex: boolean; /** The first pending request of a visible pane answers the keyboard shortcuts. */ active: boolean; /** Cmd+Backspace declines only when it cannot be deleting text. */ promptEmpty: boolean; respond: (value: unknown) => Promise<unknown>; /** The composer's text, when Enter would decline this request with it. */ declineNote?: string; declineWithNote?: (note: string) => Promise<unknown> }) {
   const decisions: GuiApprovalDecision[] = codex && Array.isArray(request.params.availableDecisions)
     ? request.params.availableDecisions as GuiApprovalDecision[]
     : ['accept', ...(codex ? ['acceptForSession' as const] : []), ...(codex && Array.isArray(request.params.proposedExecpolicyAmendment) ? [{ acceptWithExecpolicyAmendment: { execpolicy_amendment: request.params.proposedExecpolicyAmendment as string[] } }] : []), 'decline'];
@@ -1328,5 +1368,5 @@ function GuiRequest({ request, agentLabel, codex, active, promptEmpty, respond }
     return () => window.removeEventListener('keydown', onKey);
   });
   if (questions.length > 0) return <GuiQuestionCard questions={questions} agentLabel={agentLabel} isRequest onSubmit={answers => submit({ answers })} />;
-  return <section className="aya-gui-request" role="group" aria-label="Approval required"><strong>Approval required</strong>{str(request.params.subagent) && <small className="aya-gui-request-origin">Requested by {str(request.params.subagent)}</small>}<pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre><div className="aya-gui-request-actions">{decisions.map((decision, index) => <button key={index} disabled={sending} data-primary={decision === 'accept' || undefined} aria-keyshortcuts={decision === 'accept' ? 'Control+Enter Meta+Enter' : decision === 'decline' && promptEmpty ? 'Control+Backspace Meta+Backspace' : undefined} onClick={() => void submit({ decision })}>{decisionLabel(decision)}</button>)}</div>{active && (canAllow || canDecline) && <small className="aya-gui-request-hint">{canAllow ? '⌘↵ allow once' : ''}{canAllow && canDecline && promptEmpty ? ' · ' : ''}{canDecline && promptEmpty ? '⌘⌫ decline' : ''}</small>}</section>;
+  return <section className="aya-gui-request" role="group" aria-label="Approval required"><strong>Approval required</strong>{str(request.params.subagent) && <small className="aya-gui-request-origin">Requested by {str(request.params.subagent)}</small>}<pre>{str(request.params.command) || str(request.params.reason) || JSON.stringify(request.params, null, 2)}</pre><div className="aya-gui-request-actions">{decisions.map((decision, index) => <button key={index} disabled={sending} data-primary={decision === 'accept' || undefined} aria-keyshortcuts={decision === 'accept' ? 'Control+Enter Meta+Enter' : decision === 'decline' && promptEmpty ? 'Control+Backspace Meta+Backspace' : undefined} onClick={() => void submit({ decision })}>{decisionLabel(decision)}</button>)}{declineNote && declineWithNote && <button type="button" disabled={sending} title={`Decline, telling ${agentLabel}: ${declineNote}`} onClick={() => { setSending(true); void declineWithNote(declineNote).finally(() => setSending(false)); }}>Decline with note</button>}</div>{active && (canAllow || canDecline) && <small className="aya-gui-request-hint">{canAllow ? '⌘↵ allow once' : ''}{canAllow && canDecline && (promptEmpty || declineNote) ? ' · ' : ''}{canDecline && promptEmpty ? '⌘⌫ decline' : ''}{declineNote ? '↵ decline with your note' : ''}</small>}</section>;
 }

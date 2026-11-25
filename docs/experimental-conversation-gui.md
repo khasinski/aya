@@ -136,9 +136,36 @@ Goal changes are also recorded as conversation entries; the goal bar shows a sep
 - `/compact` requests native context compaction.
 - Unsupported commands show an explicit error. CLI-only features remain available through Terminal mode.
 
-Current limitations: local harnesses only; custom command flags are not applied; review, skills and MCP management are not exposed yet. The preset's **Unsafe approvals** setting does apply to GUI sessions and is shown in the conversation header: for Codex it uses full filesystem access and does not ask for approval. With that setting off, Codex uses workspace-write and on-request approvals. Existing Codex session records remain managed by Codex. Local conversation snapshots are limited to 32 MiB each.
+Current limitations: local harnesses only; custom command flags are not applied; review, skills and MCP management are not exposed yet. The preset's **Unsafe approvals** setting picks the first [permission mode](#permission-modes) of a GUI pane (Full access), and the conversation header shows *Unsafe approvals* while a pane runs in Full access. Existing Codex session records remain managed by Codex. Local conversation snapshots are limited to 32 MiB each.
 
 The built-in **Violet** appearance applies the GUI prototype palette to Aya chrome and terminal defaults. Select **Settings → General → Appearance → Violet** in either development or packaged Aya. This is a saved, optional color scheme alongside System, Light and Dark; switching back removes the palette overrides. Explicit per-tab terminal themes retain their own colors.
+
+## Permission modes
+
+Each Claude and Codex pane has a permission mode, chosen under **Conversation settings → Permissions** next to the model. Ctrl/Cmd+Shift+A cycles it while the focus is in the pane. The settings button shows the current mode.
+
+| Mode | Behavior | Claude | Codex |
+| --- | --- | --- | --- |
+| **Supervised** | Asks before commands and file changes. | `default` | approval `untrusted`, read-only sandbox |
+| **Auto-accept edits** | Allows file edits; asks before other actions. | `acceptEdits` | approval `on-request`, workspace-write sandbox |
+| **Auto** | The agent's automatic review allows routine actions and asks about the rest. | `auto` | approval `on-request`, reviewer `auto_review`, workspace-write sandbox |
+| **Full access** | Runs commands and edits without asking. | `bypassPermissions` | approval `never`, no sandbox |
+
+- **When it applies.** Claude switches at once, even during a turn (Aya sends Claude's `set_permission_mode` request). Codex takes the mode with the next turn it starts; the running turn keeps its mode.
+- **First mode.** A new pane starts in Full access when its preset has **Unsafe approvals**. Otherwise Claude starts in the mode its own settings give it (normally Supervised) and Codex in Auto-accept edits, Codex's workspace-write, ask-on-request setup that Aya has always used.
+- **Kept per pane.** The mode is saved with the pane and survives a reload, a reconnect, a restart of Aya and switching conversations in that pane. Changing the preset later changes only new panes.
+- **Claude can still say no.** Aya starts Claude with `--allow-dangerously-skip-permissions` so Full access can be chosen mid-session. If Claude's settings disable bypass mode, or your account has no Auto mode, Claude refuses the switch, Aya shows its reason and the pane keeps its previous mode. When Claude changes its mode by itself, the pane follows (a mode Aya has no name for, such as plan, leaves the pane's choice unchanged).
+- **Pi and Antigravity** cannot switch modes through their GUI protocols, so their panes show no mode; the preset's **Unsafe approvals** setting still applies to them.
+
+## Declining with a note
+
+While an approval waits, type a note in the composer and press Enter (or choose **Decline with note** on the approval). Aya declines the request and gives the agent your note:
+
+- **Claude** receives it as the reason for the refusal, so the agent that asked, including a subagent, continues with it. A plain decline still sends *User declined in Aya GUI*.
+- **Codex** has no reason field. Aya declines, then sends the note into the turn the decline let continue (a steer). If that turn has already ended, the note is queued as your next message. A subagent's request is declined in its own thread; the note goes to the main agent.
+- **Pi** works like Codex: decline, then the note as a steer or the next message.
+
+The note applies to the first pending approval. A draft that starts with `/`, carries attachments, or a pending question keeps its usual meaning. Decline and Ctrl/Cmd+Backspace with an empty composer decline without a note, and Ctrl/Cmd+Enter still allows once.
 
 ## Conversation history
 
@@ -157,7 +184,7 @@ Aya only lists, and only stops, processes that descend from that pane's agent pr
 ## Talking to the agent
 
 - **Attention.** A GUI pane reports like a terminal agent running `aya status`: *working* while a turn runs, *waiting* with the question or the command when an approval or a question is pending, *done* and *error* when a turn ends. The status rail, the attention centre and the project badges treat it like any other pane. A turn restored from disk is history and reports nothing.
-- **Approvals and questions** sit above the composer, where you type. For an approval, Ctrl/Cmd+Enter allows once and Ctrl/Cmd+Backspace declines (only while the draft is empty, so it never deletes text). With the focus outside a text field, the number keys pick the numbered option of a question.
+- **Approvals and questions** sit above the composer, where you type. For an approval, Ctrl/Cmd+Enter allows once and Ctrl/Cmd+Backspace declines (only while the draft is empty, so it never deletes text). With the focus outside a text field, the number keys pick the numbered option of a question. To decline an approval and say why, type the reason in the composer and press Enter, or choose **Decline with note** on the approval; see [Declining with a note](#declining-with-a-note).
 - **While the agent works**, Enter queues or steers according to the toggle beside the send button (`Enter: queue` / `Enter: steer`, remembered), and Cmd/Ctrl+Enter does the opposite for one message. Cmd/Ctrl+Shift+Enter sends the oldest queued message into the running turn. Steering needs an agent that supports it and a text-only message.
 - **The composer** recalls sent prompts with ArrowUp/ArrowDown (from an empty composer, while the text is unedited), stashes a draft with Cmd/Ctrl+S (in an empty composer the same key brings the latest back; the stash is kept per pane), and quotes an assistant reply: select words in it, then **Quote in composer** adds them as a Markdown block quote.
 - **Find in conversation.** Cmd/Ctrl+F opens a find bar for the pane: Enter and Shift+Enter step through the matches, Escape closes it. Text inside a closed tool-activity section is not searched.

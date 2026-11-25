@@ -1,6 +1,7 @@
 import type { GuiArtifactEntry } from '../shared/codex-gui';
 import type { GuiAgentKind, GuiSessionInstance } from './codex-gui-session';
 import type { ConversationSnapshot } from './gui-conversation-store';
+import type { GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
 export interface GuiBinding { cwd: string; configDir?: string; agent?: GuiAgentKind }
 export interface GuiAttachment { id: string; name: string; path: string; image: boolean }
 export function matchesGuiBinding(snapshot: ConversationSnapshot | undefined | null, binding: GuiBinding): snapshot is ConversationSnapshot {
@@ -11,7 +12,7 @@ export function matchesGuiBinding(snapshot: ConversationSnapshot | undefined | n
 export class GuiPanelState {
   readonly artifacts = new Map<string, Map<string, GuiArtifactEntry>>();
   readonly artifactVersions = new Map<string, Map<string, GuiArtifactEntry[]>>();
-  readonly sessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind; unsafeMode: boolean; model?: string }>();
+  readonly sessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind; unsafeMode: boolean; permissionMode?: GuiPermissionMode; model?: string }>();
   readonly snapshots = new Map<string, ConversationSnapshot>();
   readonly attachments = new Map<string, Map<string, GuiAttachment>>();
   readonly closing = new Set<string>();

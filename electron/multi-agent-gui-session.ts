@@ -16,6 +16,7 @@ import { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, presentArtifact, workspaceImage } fro
 import type { CodexGuiSession } from './codex-gui-session';
 import type { GuiProgress } from '../shared/gui-progress';
 import type { GuiArtifact, GuiEvent } from '../shared/codex-gui';
+import { claudeDeclineMessage, claudePermissionMode, fromClaudePermissionMode, guiPermissionModeLabel, type GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
 
 const execFileAsync = promisify(execFile);
 const object = (value: unknown): Record<string, unknown> =>
@@ -39,7 +40,7 @@ export type GuiSessionInstance = Pick<
   | 'interrupt'
   | 'respond'
   | 'close'
-> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'stopSubagent'>>;
+> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'stopSubagent' | 'setPermissionMode'>>;
 
 const STRIPPED_AYA_ENV = [
   'ELECTRON_RUN_AS_NODE',
@@ -81,7 +82,7 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
     {
       method: string;
       params: Record<string, unknown>;
-      resolve?: (value: { decision?: 'accept' | 'decline'; answers?: Record<string, string> }) => void;
+      resolve?: (value: { decision?: 'accept' | 'decline'; answers?: Record<string, string>; note?: string }) => void;
     }
   >();
   protected artifactIds = new Set<string>();
@@ -234,7 +235,7 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
 
   async respond(
     id: string | number,
-    value: { decision?: 'accept' | 'decline'; answers?: Record<string, string> },
+    value: { decision?: 'accept' | 'decline'; answers?: Record<string, string>; note?: string },
   ) {
     const request = this.requests.get(id);
     if (!request) throw Error('This request has already ended');
@@ -279,7 +280,8 @@ abstract class BaseManagedGuiSession implements GuiSessionInstance {
     configDir?: string,
     resumeThreadId?: string,
     unsafeMode?: boolean,
-  ): Promise<{ threadId: string; model: string }>;
+    permissionMode?: GuiPermissionMode,
+  ): Promise<{ threadId: string; model: string; permissionMode?: GuiPermissionMode }>;
   abstract command(name: string, argument: string): Promise<Record<string, unknown>>;
   abstract models(): Promise<Record<string, unknown>>;
   abstract steer(prompt: string): Promise<Record<string, unknown>>;
@@ -882,6 +884,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private usageLimits = new ClaudeUsageLimitTracker();
   /** Tool calls of the current turn still waiting for their result, so a failed one can be reported as failed. */
   private openTools = new Map<string, Record<string, unknown>>();
+  private permissionMode: GuiPermissionMode = 'supervised';
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -1044,11 +1047,13 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     return 'A subagent';
   }
 
-  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false) {
+  async connect(cwd: string, model: string, configDir?: string, resumeThreadId?: string, unsafeMode = false, permissionMode?: GuiPermissionMode) {
     if (this.child) throw Error('Start a new window for a separate session');
     this.cwd = await realpath(cwd);
     if (!(await stat(this.cwd)).isDirectory()) throw Error('Workspace must be a directory');
     this.threadId = resumeThreadId || randomUUID();
+    // Full access needs bypassPermissions, which Claude only allows mid-session when launched with the allow flag.
+    const fullAccess = permissionMode ? permissionMode === 'full-access' : unsafeMode;
     const args = [...(this.customArgs ?? [
       '--output-format',
       'stream-json',
@@ -1059,7 +1064,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       '--permission-prompt-tool=stdio',
       '--chrome',
       ...(resumeThreadId ? ['--resume', resumeThreadId] : ['--session-id', this.threadId]),
-    ]), ...(unsafeMode ? ['--dangerously-skip-permissions'] : [])];
+    ]), ...(fullAccess ? ['--dangerously-skip-permissions'] : ['--allow-dangerously-skip-permissions'])];
     // Explicitly setting even ~/.claude changes Claude's macOS Keychain account.
     // Match the terminal preset: only override the environment for a custom directory.
     const claudeDir = configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir());
@@ -1119,12 +1124,20 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       if (text(responseObj.session_id)) {
         this.threadId = text(responseObj.session_id);
       }
+      // A pane with no choice yet keeps the mode Claude starts in, which its settings may set.
+      this.permissionMode = fromClaudePermissionMode(responseObj.current_permission_mode) ?? (fullAccess ? 'full-access' : 'supervised');
+      if (permissionMode && permissionMode !== this.permissionMode) {
+        try { await this.setPermissionMode(permissionMode); }
+        catch (error) {
+          this.emit({ method: 'aya/notice', params: { message: `Claude could not switch to ${guiPermissionModeLabel(permissionMode)}: ${error instanceof Error ? error.message : String(error)}. This conversation uses ${guiPermissionModeLabel(this.permissionMode)}.` } });
+        }
+      }
       const activeModel =
         text(responseObj.model) ||
         text(this.cachedModels[0]?.model) ||
         model ||
         'Claude default';
-      return { threadId: this.threadId, model: activeModel };
+      return { threadId: this.threadId, model: activeModel, permissionMode: this.permissionMode };
     } catch (error) {
       this.close();
       throw error;
@@ -1133,6 +1146,13 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
   async models() {
     return { data: this.cachedModels };
+  }
+
+  /** Takes effect at once, even mid-turn; Claude refuses Full access when its settings disable bypass mode. */
+  async setPermissionMode(mode: GuiPermissionMode) {
+    if (!this.threadId) throw Error('Connect to Claude first');
+    await this.controlRequest('set_permission_mode', { mode: claudePermissionMode(mode) }, 10000);
+    this.permissionMode = mode;
   }
 
   async command(name: string, argument: string): Promise<Record<string, unknown>> {
@@ -1412,7 +1432,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
                   request_id: reqId,
                   response: {
                     behavior: 'deny',
-                    message: 'User declined in Aya GUI',
+                    message: claudeDeclineMessage(val.note),
                     toolUseID: toolUseId,
                   },
                 },
@@ -1432,6 +1452,12 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
 
     if (type === 'rate_limit_event' || (type === 'assistant' && text(message.error) === 'rate_limit')) this.usageLimits.observe(message);
     if (type === 'rate_limit_event') return;
+    // Claude reports its mode when it changes, including the switches it makes by itself.
+    if (type === 'system' && text(message.subtype) === 'status' && 'permissionMode' in message) {
+      const mode = fromClaudePermissionMode(message.permissionMode);
+      if (mode && mode !== this.permissionMode) { this.permissionMode = mode; this.emit({ method: 'aya/permissionMode', params: { mode } }); }
+      return;
+    }
 
     if (type === 'system' && text(message.subtype) === 'init') {
       if (text(message.session_id)) this.threadId = text(message.session_id);
