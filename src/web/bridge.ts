@@ -228,6 +228,8 @@ export function createWebAya(transport: WebTransport): AyaApi {
     // result and the confirmation prompt.
     createWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),
     createWorktreeBatch: async () => ({ created: [], errors: ["Not available in Aya Web"] }),
+    createFanOutWorktrees: async () => ({ base: null, results: [], error: "Not available in Aya Web" }),
+    fanOutDiff: async () => "",
     worktreeBranchRemovalInfo: async () => ({ branch: null, canDelete: false, reason: "Not available in Aya Web", unmerged: null }),
     removeWorktreeAndBranch: async () => ({ ok: false, error: "Not available in Aya Web" }),
     removeWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),

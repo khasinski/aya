@@ -1,5 +1,6 @@
 import { createBoardInputProtection } from "./board-notices";
 import { busyGuiSessionCount,isGuiSessionBusy,prepareGuiRendererRecovery,registerCodexGuiIpc } from "./codex-gui-ipc";
+import { registerFanOutIpc } from "./gui-fan-out";
 import { registerWidgetScheme } from './gui-artifact-documents';
 import { isUserOnlyHold } from "./pane-holds";
 import { findAuthTransferTicket } from "./pty-host-auth-ticket";
@@ -607,6 +608,7 @@ function assertSpawnAllowed(): void {
 
 function registerIpc(): TeamRunner {
   registerCodexGuiIpc(externalShell.openExternal, createGuardedWindow);
+  registerFanOutIpc(ipcMain);
   handoverDisplays.register(ipcMain);
   // Aya Web reuses these handlers over WebSocket - record every registration
   // (must run before the first ipcMain.handle below).

@@ -156,6 +156,7 @@ export function useGitStatus({
     return result;
   }, [activeProjectId, projectsRef]);
 
+  const nudgeWorktrees = useCallback(() => setWorktreeNudge((n) => n + 1), []);
   const removeWorktreeForProject = useCallback(async (request: { directory: string; path: string; base: string; deleteBranch: boolean; expectedBranch: string | null }) => {
     const project = projectsRef.current.find((p) => p.slug === activeProjectId);
     if (!project || project.remote || project.directory !== request.directory) return { ok: false as const, error: "Worktrees are available for local projects only." };
@@ -201,6 +202,7 @@ export function useGitStatus({
     setGithubLinks,
     createWorktreesForProject,
     removeWorktreeForProject,
+    nudgeWorktrees,
     pinCheckout,
   };
 }

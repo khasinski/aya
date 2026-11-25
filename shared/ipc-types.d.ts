@@ -1053,6 +1053,15 @@ export interface AyaApi {
     count: number;
     base: string;
   }): Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
+  /** One worktree + `aya/<name>` branch per name from one base commit
+   *  ("Send to several agents"); each name succeeds or fails on its own. */
+  createFanOutWorktrees(req: { directory: string; base: string; names: string[] }): Promise<{
+    base: string | null;
+    results: ({ name: string; ok: true; path: string; branch: string } | { name: string; ok: false; error: string })[];
+    error?: string;
+  }>;
+  /** A fan-out checkout's diff against its base commit, for Compare. */
+  fanOutDiff(req: { checkout: string; base: string }): Promise<string>;
   worktreeBranchRemovalInfo(req: {
     directory: string;
     path: string;

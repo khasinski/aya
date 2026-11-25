@@ -327,6 +327,16 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       let owned = attachments.get(key); if (!owned) { owned = new Map(); attachments.set(key, owned); }
       return result.filePaths.map(file => { const item = { id: randomUUID(), name: path.basename(file), path: file, image: /\.(png|jpe?g|webp)$/i.test(file) }; owned!.set(item.id, item); return item; });
     }
+    if (action === 'adopt-attachments') {
+      // "Send to several agents": reuse files another pane of this window attached, by id only.
+      const p = value as { from?: unknown; ids?: unknown };
+      if (typeof p?.from !== 'string' || !Array.isArray(p.ids)) throw Error('Invalid attachments');
+      const source = attachments.get(`${event.sender.id}:${p.from}`);
+      let owned = attachments.get(key); if (!owned) { owned = new Map(); attachments.set(key, owned); }
+      const adopted = p.ids.slice(0, 20).map(fileId => { const file = typeof fileId === 'string' ? source?.get(fileId) : undefined; if (!file) throw Error('The attached files are no longer available'); return file; });
+      for (const file of adopted) owned.set(file.id, file);
+      return adopted;
+    }
     if (action === 'paste-image') {
       const img = clipboard.readImage();
       if (img.isEmpty()) return null;

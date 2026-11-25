@@ -691,10 +691,13 @@ async function untrackedFileDiff(
   }
 }
 
-export async function getGitDiff(directory: string): Promise<string> {
+/** The working tree's diff against HEAD, or against `against` (a full commit
+ *  id, so it is safe in the shell command line) for a fan-out comparison. */
+export async function getGitDiff(directory: string, against = "HEAD"): Promise<string> {
+  if (against !== "HEAD" && !/^[0-9a-f]{40,64}$/i.test(against)) return "";
   try {
     const [{ stdout: diff }, files] = await Promise.all([
-      execAsync(`${READ_ONLY_GIT} diff --no-ext-diff --no-color HEAD --`, {
+      execAsync(`${READ_ONLY_GIT} diff --no-ext-diff --no-color ${against} --`, {
         cwd: directory,
         ...TRACKED_DIFF_OPTS,
       }),

@@ -632,6 +632,8 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     githubCliAvailable: async () => false as never,
     createWorktree: async () => ({ ok: false, error: "Not available in the emulator" }),
     createWorktreeBatch: async () => ({ created: [], errors: ["Not available in the emulator"] }),
+    createFanOutWorktrees: async () => ({ base: null, results: [], error: "Not available in the emulator" }),
+    fanOutDiff: async () => "",
     worktreeBranchRemovalInfo: async () => ({ branch: null, canDelete: false, reason: "Not available in the emulator", unmerged: null }),
     removeWorktreeAndBranch: async () => ({ ok: false, error: "Not available in the emulator" }),
     removeWorktree: async () => ({ ok: false, error: "Not available in the emulator" }),
