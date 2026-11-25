@@ -349,3 +349,24 @@
 .aya-chat-image-preview { box-sizing: border-box; width: fit-content; max-width: calc(100vw - 48px); }
 .aya-chat-image-preview img { display: block; min-height: 0; max-width: 100%; max-height: calc(85vh - 96px); object-fit: contain; margin: auto; }
 .aya-gui-request-origin { display: block; margin-top: 4px; color: var(--fg-tertiary); font-size: 11px; }
+
+/* Usage limits: the Limited card above the composer. */
+.aya-gui-limited { border: 1px solid color-mix(in oklab, #c99d62 55%, var(--border)); padding: 12px 14px; border-radius: 10px; margin: 12px 0; background: var(--bg-secondary); }
+.aya-gui-limited[data-snoozed] { border-color: var(--border); }
+.aya-gui-limited > strong { color: #c99d62; }
+.aya-gui-limited > p { margin: 6px 0; }
+.aya-gui-limited > small { display: block; color: var(--fg-tertiary); }
+.aya-gui-limited-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.aya-gui-limited-actions .aya-gui-icon-button { margin-left: auto; }
+.aya-gui-limited-actions button[data-primary] { border-color: var(--accent); }
+
+/* Conversation view: tool-call visibility and Zen mode. */
+.aya-gui-view { position: relative; flex: none; }
+.aya-conversation .aya-gui-view > .aya-gui-icon-button[data-active] { color: var(--accent); }
+.aya-gui-view-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; display: flex; flex-direction: column; min-width: 190px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); box-shadow: 0 12px 40px #0005; }
+.aya-gui-view-menu > small { padding: 4px 8px; color: var(--fg-tertiary); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+.aya-conversation .aya-gui-view-menu > button { text-align: left; border-color: transparent; background: transparent; padding: 6px 8px 6px 26px; position: relative; }
+.aya-conversation .aya-gui-view-menu > button[aria-checked=true]::before { content: '✓'; position: absolute; left: 9px; color: var(--accent); }
+.aya-conversation .aya-gui-view-menu > button:hover { background: var(--bg-tertiary); }
+.aya-gui-view-menu > button[role=menuitemcheckbox] { margin-top: 4px; border-top: 1px solid var(--border); }
+.aya-gui-view-menu kbd { float: right; color: var(--fg-tertiary); font-size: 10px; }

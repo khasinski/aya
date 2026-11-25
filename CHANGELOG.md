@@ -11,6 +11,8 @@
 - Show the local servers a pane's agent started (conversation header and terminal pane header): command, pid and listening ports, an Open link for `http://localhost:<port>/` and a Stop button that ends only processes under that pane's agent.
 - Conversation GUI: see what each turn changed. In a git project, a turn that edits files ends with a "Changes in this turn" row that opens the diff of that turn only, leaving out edits made before it and pulls or commits made between turns. File edits in the activity log (Codex file changes, Claude's Edit and Write) open the diff at that file, and the diff viewer also lists the branch's commits, each with its own diff.
 
+- Conversation GUI: a turn stopped by a Claude or Codex usage limit shows a Limited state with the reset time, **Resume at reset** (sends "continue" when the limit resets, survives a reload) and **Snooze until reset**. View options hide successful or all tool calls, and Zen mode (Cmd/Ctrl+Alt+Z) shows only your messages and each turn's final reply. Screen readers hear when a turn starts, needs approval and ends, and the window title leads with the focused GUI pane's status.
+
 ## v0.20.0 - 2026-11-22
 
 - Render Mermaid diagrams and charts directly in conversations, including flowcharts, sequence diagrams, pie charts and bar/line charts, with source viewing, copying and enlarged previews.

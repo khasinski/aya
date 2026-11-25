@@ -1,4 +1,4 @@
-import { Fragment,memo,useCallback,useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type SetStateAction } from 'react';
+import { Fragment,memo,useCallback,useEffect,useLayoutEffect,useRef,useState,useSyncExternalStore,type CSSProperties,type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { ComposerOptions } from './ComposerOptions';
 import ReactMarkdown from 'react-markdown';
@@ -18,6 +18,9 @@ import { findStatus,findTextMatches,stepMatch } from '../gui-find';
 import { fileChangePaths,isTurnDiffSummary,repoRelativePath,type TurnDiffSummary } from '../gui-turn-diff';
 import { fanOutRunForTerminal,requestFanOut,requestFanOutCompare,takeFanOutMessage } from '../gui-fan-out';
 import { guiRendererRecoveryInProgress,takeGuiPaneRecovery } from '../gui-renderer-recovery';
+import { createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
+import { formatResetTime,isUsageLimitError,limitPaneStatus,limitStatusText,mergeCodexRateLimits,nextLimitEvent,parseUsageLimit,RESUME_PROMPT,timerDelay,turnUsageLimit,type CodexRateLimits,type GuiUsageLimit } from '../gui-limits';
+import { getGuiViewPrefs,isZenShortcut,setGuiViewPrefs,subscribeGuiViewPrefs,TOOL_VISIBILITY_LABELS,visibleActivities,zenMessages,type ToolCallVisibility } from '../gui-view-prefs';
 import { backgroundAgentsText,guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
 import { canStopSubagent,showStop,startsSubagent } from '../gui-subagents';
 import type { SettingsTab } from '../settings-tabs';
@@ -92,6 +95,8 @@ function extractMessageQuestions(m: Message): GuiQuestion[] {
   if (m.type === 'assistant') return parseCallMessageQuestions(m.id, m.text);
   return [];
 }
+/** The window title belongs to the focused Conversation GUI pane while its status needs the user's eyes. */
+const windowTitle = createWindowTitle(document);
 function stripQuestionBulletsFromText(textValue: string, questions: GuiQuestion[]): string {
   if (!questions.length) return textValue;
   let result = textValue;
@@ -226,6 +231,14 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const setPrompt = useCallback((value: SetStateAction<string>) => { draftRevision.current++; setPromptValue(value); }, []);
   const [busy, setBusy] = useState(false);
   const [turnOutcome, setTurnOutcome] = useState<'complete' | 'interrupted' | 'failed' | null>(null);
+  const [usageLimit, setUsageLimit] = useState<GuiUsageLimit | null>(null);
+  const [limitClock, setLimitClock] = useState(0);   // bumped when a reset passes, so the status is recomputed
+  const codexLimits = useRef<CodexRateLimits | null>(null);
+  const view = useSyncExternalStore(subscribeGuiViewPrefs, getGuiViewPrefs);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const [paneFocused, setPaneFocused] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
   const [sessionUnsafe, setSessionUnsafe] = useState(preset.unsafeMode === true);
   const [restored, setRestored] = useState(false);
@@ -403,10 +416,11 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (event.method === "aya/openArtifact") { setSelected(str(p.artifactId)); setDrawer(true); }
       if (event.id !== undefined) setRequests(old => [...old.filter(r => r.id !== event.id), event]);
       if (event.method === 'aya/requestResolved' || event.method === 'serverRequest/resolved') setRequests(old => old.filter(r => r.id !== (p.id ?? p.requestId)));
-      if (event.method === 'turn/started') { turnRevision.current++; turnExplanation.current = ''; setBusy(true); setTurnOutcome(null); }
-      if (event.method === 'turn/completed') { turnRevision.current++; setBusy(false); setRequests(old => old.filter(r => !!str(r.params.subagent))); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' && !a.background ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); if (turn.error) fail(obj(turn.error).message); }
+      if (event.method === 'account/rateLimits/updated') codexLimits.current = mergeCodexRateLimits(codexLimits.current, p);
+      if (event.method === 'turn/started') { turnRevision.current++; turnExplanation.current = ''; setBusy(true); setTurnOutcome(null); setUsageLimit(null); }
+      if (event.method === 'turn/completed') { turnRevision.current++; setBusy(false); setRequests(old => old.filter(r => !!str(r.params.subagent))); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' && !a.background ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); const limit = turn.status === 'interrupted' ? null : turnUsageLimit(turn, codexLimits.current); setUsageLimit(limit); if (limit) setQueueHeld(true); else if (turn.error) fail(obj(turn.error).message); }
       if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setRequests([]); setQueueHeld(true); setSideQuestion(''); setTurnOutcome('interrupted'); setMessages(old => old.map(m => m.progress?.status === 'running' ? { ...m, progress: { ...m.progress, status: 'paused' } } : m)); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: 'interrupted' } : a)); fail(p.message); }
-      if (event.method === 'error' || event.method === 'aya/notice') fail(p.message || obj(p.error).message);
+      if ((event.method === 'error' && !isUsageLimitError(p)) || event.method === 'aya/notice') fail(p.message || obj(p.error).message);
       if (event.method === 'turn/plan/updated' && Array.isArray(p.plan)) setPlan(p.plan as { step: string; status: string }[]);
       if (event.method === 'item/started' || event.method === 'item/completed') {
         const item = obj(p.item), type = str(item.type);
@@ -473,6 +487,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (Array.isArray(saved.plan)) setPlan(saved.plan as { step: string; status: string }[]);
       if (saved.busy) setTurnOutcome('interrupted');
       else if (saved.turnOutcome) setTurnOutcome(saved.turnOutcome as 'complete' | 'interrupted' | 'failed');
+      if (!saved.busy) setUsageLimit(parseUsageLimit(saved.usageLimit));
       setRestored(true);
       const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true });
       if (mounted) { setAvailableAttachmentIds(new Set(Array.isArray(obj(result).attachmentIds) ? obj(result).attachmentIds as string[] : [])); setSessionUnsafe(obj(result).unsafeMode === true); setReady(obj(result).connected !== false); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
@@ -483,13 +498,13 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   }, [terminal.id]);
   useLayoutEffect(() => {
     if (!restored || !api) return;
-    pendingSnapshot.current = { eventSequence: eventSequence.current, importNotice, messages, activities, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan };
+    pendingSnapshot.current = { eventSequence: eventSequence.current, importNotice, messages, activities, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, usageLimit, queue, attachments, selectedModel, effort, plan };
     snapshotRevision.current++;
     setSaveStatus(old => old === 'error' ? old : 'saving');
     if (persistTimer.current) clearTimeout(persistTimer.current);
     const delay = conversationSaveDelay(busy, lastSnapshotSave.current);
     persistTimer.current = setTimeout(() => { persistTimer.current = null; void persistLatest(); }, delay);
-  }, [restored, api, terminal.id, persistLatest, importNotice, messages, activities, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, queue, attachments, selectedModel, effort, plan]);
+  }, [restored, api, terminal.id, persistLatest, importNotice, messages, activities, artifacts, artifactHistory, seenArtifactRevisions, prompt, selected, drawer, goal, goalDetails, busy, turnOutcome, usageLimit, queue, attachments, selectedModel, effort, plan]);
   useEffect(() => {
     const flush = () => { flushTextDeltas.current(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; if (pendingSnapshot.current && api) void api.invoke(terminal.id, 'close', pendingSnapshot.current).catch(() => {}); };
     window.addEventListener('pagehide', flush);
@@ -560,12 +575,38 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     const lastQuestions = last && last.type === 'assistant' && !busy ? extractMessageQuestions(last) : [];
     const unanswered = lastQuestions.length > 0 && !(last?.questionAnswers && Object.keys(last.questionAnswers).length > 0) ? lastQuestions[0].question : undefined;
     if (busy) turnRanHere.current = true;
-    const computed = guiPaneStatus({ agentLabel, ready, busy, requests: asked, ...(unanswered ? { unansweredQuestion: unanswered } : {}), turnOutcome, queueHeld, queued: queue.length, backgroundAgents });
-    const next: GuiPaneStatus = computed !== 'clear' && (computed.level === 'done' || computed.level === 'error') && !turnRanHere.current ? 'clear' : computed;
+    const computed = (!busy && !asked.length && ready ? limitPaneStatus(usageLimit) : null) ?? guiPaneStatus({ agentLabel, ready, busy, requests: asked, ...(unanswered ? { unansweredQuestion: unanswered } : {}), turnOutcome, queueHeld, queued: queue.length, backgroundAgents });
+    const next: GuiPaneStatus = computed !== 'clear' && (computed.level === 'done' || computed.level === 'error') && !turnRanHere.current && !usageLimit ? 'clear' : computed;
     if (sameGuiPaneStatus(next, reportedStatus.current)) return;
+    const said = guiAnnouncement(reportedStatus.current, next);
+    if (said) setAnnouncement(said);
     reportedStatus.current = next;
     onReportStatus(terminal.id, next);
-  }, [onReportStatus, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length, backgroundAgents]);
+  }, [onReportStatus, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length, backgroundAgents, usageLimit, limitClock]);
+  // The window title leads with the status of the pane the user is in, while that status needs them.
+  const titleOwner = !hidden && (isActivePane || paneFocused);
+  useEffect(() => {
+    const status = reportedStatus.current;
+    windowTitle.set(terminal.id, titleOwner && status ? guiWindowTitle(status, terminal.name) : null);
+  });
+  useEffect(() => () => windowTitle.set(terminal.id, null), [terminal.id]);
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => setPaneFocused(e.target instanceof Node && !!sectionRef.current?.contains(e.target));
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, []);
+  // A limit's reset wakes a snoozed pane; a scheduled resume then sends "continue".
+  useEffect(() => {
+    const next = nextLimitEvent(usageLimit);
+    if (!next) return;
+    if (next.action === 'resume' && (!ready || busy || requests.length > 0 || dispatching.current || switching)) return;
+    const timer = setTimeout(() => {
+      if (next.action === 'wake') { setUsageLimit(old => old && old.snoozed ? { ...old, snoozed: false } : old); setLimitClock(n => n + 1); return; }
+      setQueueHeld(false);
+      void dispatchRef.current(RESUME_PROMPT);
+    }, timerDelay(next.inMs));
+    return () => clearTimeout(timer);
+  }, [usageLimit, limitClock, ready, busy, requests.length, switching]);
   useLayoutEffect(() => { if (!hidden) scrollToLatest(); }, [hidden, messages, activities, side, requests, plan, scrollToLatest]);
   useEffect(() => {
     const observer = new ResizeObserver(scrollToLatest);
@@ -642,7 +683,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     dispatching.current = true;
     if (queuedId) setPendingQueuedId(queuedId);
     const sentAtTurnRevision = turnRevision.current;
-    setBusy(true); setTurnOutcome(null); setActivities([]); if (followSent) { followHeld.current = false; follow.current = true; lastFollowTop.current = null; }
+    setBusy(true); setTurnOutcome(null); setUsageLimit(null); setActivities([]); if (followSent) { followHeld.current = false; follow.current = true; lastFollowTop.current = null; }
     const messageId = crypto.randomUUID();
     setMessages(old => [...old, { id: messageId, type: 'user', delivery: 'sending', text: text + (files.length ? `\n\n${files.map(a => `📎 ${a.name}`).join(' · ')}` : '') }]);
     try {
@@ -654,6 +695,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     } catch (e) { fail(e); setMessages(old => old.map(m => m.id === messageId ? { ...m, delivery: 'failed' } : m)); if (turnRevision.current === sentAtTurnRevision) { setBusy(false); setTurnOutcome('failed'); } setQueueHeld(true); return false; }
     finally { dispatching.current = false; if (queuedId) setPendingQueuedId(null); setDispatchRevision(revision => revision + 1); }
   };
+  const dispatchRef = useRef(dispatch);
+  dispatchRef.current = dispatch;
   useEffect(() => {
     if (!ready || busy || sideQuestion || queueHeld || !queue.length || requests.length || dispatching.current || steering.current) return;
     const next = queue[0];
@@ -741,15 +784,18 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       answerMessageQuestionsRef.current(messageId, questions, answers),
     [],
   );
-  const activityCounts = activities.reduce((counts, activity) => {
+  const zen = view.zen && !findOpen;   // Find shows the whole conversation while it is open
+  const shownMessages = zen ? zenMessages(messages, busy, m => extractMessageQuestions(m).length > 0) : messages;
+  const shownActivities = visibleActivities(activities, zen ? 'none' : view.tools);
+  const activityCounts = shownActivities.reduce((counts, activity) => {
     const status = activity.status === 'inProgress' ? 'running'
       : activity.status === 'failed' || activity.status === 'declined' ? 'failed'
       : activity.status === 'interrupted' || activity.status === 'cancelled' ? 'interrupted' : 'completed';
     counts[status]++;
     return counts;
   }, { running: 0, completed: 0, failed: 0, interrupted: 0 });
-  const activityPhaseList = activityPhases(activities.map(x => ({ kind: x.kind ?? 'tool', startedAt: x.startedAt, endedAt: x.endedAt })));
-  const activitySummary = [`${activities.length} ${activities.length === 1 ? 'action' : 'actions'}`,
+  const activityPhaseList = activityPhases(shownActivities.map(x => ({ kind: x.kind ?? 'tool', startedAt: x.startedAt, endedAt: x.endedAt })));
+  const activitySummary = [`${shownActivities.length} ${shownActivities.length === 1 ? 'action' : 'actions'}`,
     ...Object.entries(activityCounts).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`),
   ].join(' · ');
   const closeArtifacts = () => { setDrawer(false); artifactButton.current?.focus(); };
@@ -758,6 +804,13 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       <div className="aya-gui-heading"><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></div>
       {sessionUnsafe && <span className="aya-gui-unsafe-badge" title={guiAgent === 'codex' ? 'This session skips approval prompts and runs without the workspace sandbox.' : 'This session uses the preset’s unsafe approval mode.'}>Unsafe approvals</span>}
       <span className="aya-sr-only" role="status">{connecting ? 'Connecting…' : switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
+      <span className="aya-gui-view" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setViewMenuOpen(false); }}><button className="aya-gui-icon-button" aria-label="Conversation view" title="Conversation view: tool calls and Zen mode" aria-haspopup="menu" aria-expanded={viewMenuOpen} data-active={view.zen || view.tools !== 'all' || undefined} onClick={() => setViewMenuOpen(open => !open)}><span className="aya-gui-icon" aria-hidden="true">{view.zen ? 'self_improvement' : 'visibility'}</span></button>
+        {viewMenuOpen && <div className="aya-gui-view-menu" role="menu" aria-label="Conversation view" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setViewMenuOpen(false); } }}>
+          <small>Tool calls</small>
+          {(Object.keys(TOOL_VISIBILITY_LABELS) as ToolCallVisibility[]).map(option => <button type="button" role="menuitemradio" key={option} aria-checked={view.tools === option} onClick={() => setGuiViewPrefs({ tools: option })}>{TOOL_VISIBILITY_LABELS[option]}</button>)}
+          <button type="button" role="menuitemcheckbox" aria-checked={view.zen} aria-keyshortcuts="Control+Alt+Z Meta+Alt+Z" title="Only your messages and the final reply of each turn" onClick={() => setGuiViewPrefs({ zen: !view.zen })}>Zen mode <kbd>⌘⌥Z</kbd></button>
+        </div>}
+      </span>
       {!ready && restored && <button type="button" disabled={connecting} onClick={() => void reconnect()}>{connecting ? 'Connecting…' : 'Reconnect'}</button>}
       <AgentServers active={ready && !hidden} busy={busy} list={() => invoke('servers') as Promise<AgentServer[]>} stop={pid => invoke('stop-server', pid)} open={port => invoke('open-server', port)} />
       <button className="aya-gui-icon-button" disabled={!ready || switching} aria-label="Resume a saved conversation" title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button>
@@ -765,6 +818,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     </header>
   );
   return <section
+    ref={sectionRef}
+    data-zen={zen || undefined}
     className={`aya-pane aya-conversation${isActivePane ? ' aya-pane--active-split' : ''}`}
     style={{ ...paneStyle, ...(hidden ? { display: 'none' } : {}) }}
     onMouseDown={() => onActivatePane?.()}
@@ -781,6 +836,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       setError('Dragging files into a conversation is not supported yet. Use + to attach files.');
     }}
     onKeyDown={e => {
+      if (isZenShortcut(e) && !e.nativeEvent.isComposing) { e.preventDefault(); setGuiViewPrefs({ zen: !view.zen }); return; }
       if (e.key === 'Escape' && !e.defaultPrevented) {
         if (history !== null) {
           setHistory(null);
@@ -797,6 +853,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     }}
   >
     {headerSlot && !hidden ? createPortal(guiHeader, headerSlot) : guiHeader}
+    <div className="aya-sr-only" aria-live="polite" aria-atomic="true" data-testid="gui-announcer">{announcement}</div>
     {restored && <div className="aya-gui-save-state" data-state={saveStatus}><span role="status" aria-label="Conversation save status">{saveStatus === 'saved' ? 'Saved locally' : saveStatus === 'error' ? 'Not saved' : 'Saving…'}</span>{saveError && <><span>{saveError}</span><button type="button" disabled={saveStatus === 'saving'} onClick={() => void persistLatest()}>Retry save</button></>}</div>}
     {history !== null && <div ref={historyDialog} className="aya-session-picker" role="dialog" aria-modal="true" aria-label="Resume conversation" onKeyDown={e => {
       if (e.key === 'Escape') { e.preventDefault(); setHistory(null); composer.current?.focus(); }
@@ -833,8 +890,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) followHeld.current = false;
       }} onScroll={e => { const node = e.currentTarget; const maximum = Math.max(0, node.scrollHeight - node.clientHeight); follow.current = !followHeld.current && maximum - node.scrollTop < 80 && !movedUpFromFollowedPosition(node.scrollTop, maximum, lastFollowTop.current); if (follow.current) lastFollowTop.current = node.scrollTop; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
-      {messages.map((m, index) => (
-        <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= messages.length - 12} keepMounted={Boolean(m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length)} findOpen={findOpen}>
+      {shownMessages.map((m, index) => (
+        <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= shownMessages.length - 12} keepMounted={Boolean(m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length)} findOpen={findOpen}>
         {m.type === 'turnDiff' && m.turnDiff ? <TurnChanges summary={m.turnDiff} onOpen={file => setDiffView({ source: `turn:${m.turnDiff!.id}`, file })} /> : <ConversationMessageItem
           message={m}
           agentBadge={agentBadge}
@@ -846,10 +903,10 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
           onImplementPlan={m.id === messages[messages.length - 1]?.id && !busy && ready ? () => { setPlanMode(false); void send('Implement the plan.'); } : undefined}
         />}</WindowedMessage>
       ))}
-      {activities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{activities.map((a, index) => { const phase = activityPhaseList.find(p => p.index === index); const took = activityDuration(a); return <Fragment key={a.id}>{phase && <div className="aya-gui-activity-phase" role="presentation">{phaseText(phase)}</div>}<details><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}{took !== null && <small className="aya-gui-activity-time"> · {shortDuration(took)}</small>}{canStopSubagent(a) && <button type="button" className="aya-gui-activity-stop" aria-label={`Stop ${a.label}`} onClick={event => { event.preventDefault(); event.stopPropagation(); void invoke('stop-subagent', a.id).catch(fail); }}>Stop</button>}</summary>{a.files?.length && (busy || a.turnDiffId) ? <div className="aya-gui-activity-files">{a.files.map(f => <button type="button" key={f} title={`Open the diff of ${f}`} onClick={() => setDiffView({ source: a.turnDiffId ? `turn:${a.turnDiffId}` : 'current', file: f })}>Open diff <code>{repoRelativePath(f, { root: terminal.cwd, prefix: '', cwd: terminal.cwd })}</code></button>)}</div> : null}{a.output && <pre>{a.output}</pre>}</details></Fragment>; })}</div></details>}
+      {shownActivities.length > 0 && <details className="aya-gui-activity"><summary aria-label="Tool activity"><span className="aya-gui-turn-dot" />{activitySummary}<small>Details</small></summary><div className="aya-gui-activity-list" role="region" aria-label="Tool activity details" tabIndex={0}>{shownActivities.map((a, index) => { const phase = activityPhaseList.find(p => p.index === index); const took = activityDuration(a); return <Fragment key={a.id}>{phase && <div className="aya-gui-activity-phase" role="presentation">{phaseText(phase)}</div>}<details><summary>{a.status === 'inProgress' ? '◌' : a.status === 'failed' || a.status === 'declined' ? '!' : a.status === 'interrupted' ? '■' : '✓'} {a.label}{took !== null && <small className="aya-gui-activity-time"> · {shortDuration(took)}</small>}{canStopSubagent(a) && <button type="button" className="aya-gui-activity-stop" aria-label={`Stop ${a.label}`} onClick={event => { event.preventDefault(); event.stopPropagation(); void invoke('stop-subagent', a.id).catch(fail); }}>Stop</button>}</summary>{a.files?.length && (busy || a.turnDiffId) ? <div className="aya-gui-activity-files">{a.files.map(f => <button type="button" key={f} title={`Open the diff of ${f}`} onClick={() => setDiffView({ source: a.turnDiffId ? `turn:${a.turnDiffId}` : 'current', file: f })}>Open diff <code>{repoRelativePath(f, { root: terminal.cwd, prefix: '', cwd: terminal.cwd })}</code></button>)}</div> : null}{a.output && <pre>{a.output}</pre>}</details></Fragment>; })}</div></details>}
       {(messages.length > 0 || busy || turnOutcome) && <div className="aya-gui-turn-row"><div className="aya-gui-turn-status" role="status" aria-label="Turn status" data-working={(busy || backgroundAgents > 0) && requests.length === 0}>
         <span className="aya-gui-turn-dot" aria-hidden="true" />
-        {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : backgroundAgents ? `${backgroundAgentsText(backgroundAgents)}…` : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
+        {!ready ? 'Disconnected' : requests.length ? 'Waiting for your response' : busy ? `${agentLabel} is working…` : backgroundAgents ? `${backgroundAgentsText(backgroundAgents)}…` : usageLimit ? limitStatusText(usageLimit) : turnOutcome === 'interrupted' ? 'Interrupted' : turnOutcome === 'failed' ? 'Turn failed' : turnOutcome === 'complete' ? 'Turn complete' : 'Ready'}
       </div><ConversationTurnTimer busy={busy} hidden={hidden} /></div>}
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={resumeFollowing}>Jump to latest ↓</button>}</div>
@@ -857,6 +914,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     {side && <aside className="aya-gui-side"><button aria-label={`Close ${sideTitle.toLowerCase()}`} onClick={closeSide}>×</button><strong>{sideTitle}</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
+      {usageLimit && !busy && <LimitedCard limit={usageLimit} ready={ready} onResumeNow={() => { setQueueHeld(false); void dispatch(RESUME_PROMPT); }} onChange={change => setUsageLimit(old => old && { ...old, ...change })} onDismiss={() => setUsageLimit(null)} />}
       {requests.map((request, index) => <GuiRequest key={request.id} request={request} agentLabel={agentLabel} codex={guiAgent === 'codex'} active={index === 0 && !hidden} promptEmpty={!prompt} respond={value => invoke('respond', { id: request.id, value }).catch(fail)} />)}
       {messages.filter(m => m.progress?.status === 'running').slice(-3).map(m => <TaskProgress key={m.id} progress={m.progress!} compact />)}
       {plan.length > 0 && <details className="aya-gui-plan"><summary>Plan <small>{plan.filter(p => p.status === 'completed').length}/{plan.length}</small></summary><ol>{plan.map((step, i) => <li key={i} data-state={step.status}>{step.status === 'completed' ? '✓' : step.status === 'inProgress' ? '◌' : '○'} {step.step}</li>)}</ol></details>}
@@ -1221,6 +1279,25 @@ function GuiQuestionCard({
     {!answered && !queued && <div className="aya-gui-question-footer">
       <button type="button" className="aya-gui-send" disabled={!canSubmit} onClick={() => void handleSubmit()}>Send answer</button>
     </div>}
+  </section>;
+}
+/** A turn stopped by a usage limit: when it resets, and what to do until then. */
+function LimitedCard({ limit, ready, onResumeNow, onChange, onDismiss }: { limit: GuiUsageLimit; ready: boolean; onResumeNow: () => void; onChange: (change: Partial<GuiUsageLimit>) => void; onDismiss: () => void }) {
+  const reset = limit.resetsAt, passed = reset !== null && reset <= Date.now();
+  return <section className="aya-gui-limited" role="group" aria-label="Usage limit" data-snoozed={limit.snoozed || undefined}>
+    <strong>{passed ? 'Usage limit reset' : 'Limited'}</strong>
+    <p>{limit.message}</p>
+    <small>{reset === null ? 'The agent did not say when the limit resets. Retry later, or send a message.' : passed ? `The limit reset at ${formatResetTime(reset)}.` : `${limit.window ? `The ${limit.window} limit` : 'The limit'} resets at ${formatResetTime(reset)}.`}{limit.resumeAtReset && !passed ? ' Aya will send “continue” then.' : ''}{limit.snoozed && !passed ? ' Snoozed: no attention until then.' : ''}</small>
+    <div className="aya-gui-limited-actions">
+      {reset !== null && !passed && (limit.resumeAtReset
+        ? <button type="button" onClick={() => onChange({ resumeAtReset: false })}>Cancel resume</button>
+        : <button type="button" data-primary onClick={() => onChange({ resumeAtReset: true })}>Resume at reset</button>)}
+      {reset !== null && !passed && (limit.snoozed
+        ? <button type="button" onClick={() => onChange({ snoozed: false })}>Wake now</button>
+        : <button type="button" onClick={() => onChange({ snoozed: true })}>Snooze until reset</button>)}
+      {(reset === null || passed) && <button type="button" data-primary disabled={!ready} onClick={onResumeNow}>Continue now</button>}
+      <button type="button" className="aya-gui-icon-button" aria-label="Dismiss usage limit" title="Dismiss" onClick={onDismiss}><span className="aya-gui-icon" aria-hidden="true">close</span></button>
+    </div>
   </section>;
 }
 function GuiRequest({ request, agentLabel, codex, active, promptEmpty, respond }: { request: GuiEvent; agentLabel: string; codex: boolean; /** The first pending request of a visible pane answers the keyboard shortcuts. */ active: boolean; /** Cmd+Backspace declines only when it cannot be deleting text. */ promptEmpty: boolean; respond: (value: unknown) => Promise<unknown> }) {
