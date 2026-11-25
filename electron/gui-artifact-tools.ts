@@ -3,6 +3,7 @@
 // session modules import it, so it imports none of them.
 import { realpath, stat, readFile } from 'node:fs/promises';
 import * as path from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { GuiArtifact } from '../shared/codex-gui';
 import { attachArtifactMedia } from './gui-artifact-media';
@@ -30,10 +31,27 @@ export const OPEN_ARTIFACT_TOOL = {
   description: 'Open an existing artifact in Aya and select it in the artifacts drawer. Use the artifactId returned by aya_present. This does not create another copy.',
   inputSchema: { type: 'object', properties: { artifactId: { type: 'string' } }, required: ['artifactId'], additionalProperties: false },
 };
-export async function workspaceImage(root: string, file: string): Promise<string> {
+function isInside(directory: string, file: string): boolean {
+  const relative = path.relative(directory, file);
+  return !!relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+}
+
+async function isTemporaryImage(file: string, resolved: string): Promise<boolean> {
+  if (!path.isAbsolute(file)) return false;
+  for (const directory of [tmpdir(), ...(process.platform === 'win32' ? [] : ['/tmp'])]) {
+    try {
+      const canonical = await realpath(directory);
+      if ((isInside(directory, file) || isInside(canonical, file)) && isInside(canonical, resolved)) return true;
+    } catch { /* An absent temporary directory grants no access. */ }
+  }
+  return false;
+}
+
+export async function workspaceImage(root: string, file: string, options: { allowTemporary?: boolean } = {}): Promise<string> {
   const resolvedRoot = await realpath(root), resolved = await realpath(path.resolve(root, file));
-  const relative = path.relative(resolvedRoot, resolved);
-  if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw Error('Image must be a file inside the selected workspace');
+  if (!isInside(resolvedRoot, resolved) && !(options.allowTemporary && await isTemporaryImage(file, resolved))) {
+    throw Error(options.allowTemporary ? 'Image must be a file inside the selected workspace or a system temporary directory' : 'Image must be a file inside the selected workspace');
+  }
   const info = await stat(resolved);
   if (!info.isFile() || info.size > 8 * 1024 * 1024) throw Error('Image must be a regular file under 8 MB');
   const data = await readFile(resolved);

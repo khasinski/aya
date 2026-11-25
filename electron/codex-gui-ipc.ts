@@ -365,7 +365,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     }
     if (action === 'interrupt') return entry.session.interrupt();
     if (action === 'read-linked-file') return readWorkspaceFile(entry.cwd, value);
-    if (action === 'image') return workspaceImage(entry.cwd, String(value));
+    if (action === 'image') return workspaceImage(entry.cwd, String(value), { allowTemporary: true });
     if (action === 'command') { const p = value as { name: string; argument: string }; return entry.session.command(p.name, p.argument); }
     if (action === 'respond') { const p = value as { id: string | number; value: Parameters<CodexGuiSession['respond']>[1] }; return entry.session.respond(p.id, p.value); }
     throw Error('Unknown GUI action');
