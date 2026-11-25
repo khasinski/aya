@@ -210,7 +210,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return panels.close(key, value && typeof value === 'object' ? withPanelArtifacts(key, value as Record<string, unknown>) : undefined);
     }
     if (action === 'connect' || action === 'reconnect') {
-      let params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean; permissionMode?: unknown; view?: Record<string, unknown> };
+      let params = value as { cwd: string; configDir?: string; agent?: GuiAgentKind; unsafeMode?: boolean; permissionMode?: unknown; promptSuggestions?: boolean; view?: Record<string, unknown> };
       if (action === 'reconnect') {
         const saved = snapshots.get(key);
         if (!saved) throw Error('Reload the conversation before reconnecting');
@@ -256,6 +256,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       const chosenMode = guiPermissionModes(agent).length ? parseGuiPermissionMode(params.permissionMode) : undefined;
       const unsafeMode = chosenMode ? chosenMode === 'full-access' : params.unsafeMode === true;
       sessions.set(key, { session, cwd: params.cwd, agent, unsafeMode, permissionMode: chosenMode ?? initialGuiPermissionMode(agent, unsafeMode) });
+      session.setPromptSuggestions?.(params.promptSuggestions === true);
       try {
         const saved = snapshots.get(key);
         const result = await session.connect(params.cwd, '', params.configDir?.trim().replace(/^(?:~|\$HOME)(?=\/|$)/, homedir()), (saved?.view?.importNotice || (Array.isArray(saved?.view?.messages) && saved.view.messages.some((m: { type?: string; delivery?: string }) => m.type !== 'goal' && m.type !== 'settings' && m.delivery !== 'failed'))) ? saved?.threadId : undefined, unsafeMode, chosenMode);
@@ -341,6 +342,8 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     if (action === 'stop-server') return stopAgentServer(entry.session.pid, Number(value));
     if (action === 'open-server') return openExternal(localServerUrl(value));
     if (action === 'models') return entry.session.models();
+    if (action === 'skills') return entry.session.skills ? entry.session.skills() : [];
+    if (action === 'prompt-suggestions') { entry.session.setPromptSuggestions?.(value === true); return; }
     if (action === 'steer') return entry.session.steer(String(value));
     if (action === 'set-permission-mode') {
       const mode = parseGuiPermissionMode(value);

@@ -8,6 +8,14 @@ let progressStep = 0;
 let holdProgress = false;
 let currentModel = 'fake-claude';
 let chromeConnected = process.argv.includes('--chrome');
+// Composer assistance: suggestions only when initialize asked for them; the context grows per turn.
+let promptSuggestions = false;
+let contextTokens = 12000;
+const FAKE_COMMANDS = [
+  { name: 'compact', description: 'Clear history but keep a summary', argumentHint: '', builtin: true },
+  { name: 'fake-review', description: 'Review the current change like a picky colleague', argumentHint: '[focus]' },
+  { name: 'docs:write', description: 'Write user documentation (claude.ai sync)', argumentHint: '' },
+];
 
 const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 
@@ -114,8 +122,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
           configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
           sdkMcpServers: req.sdkMcpServers,
           appendSystemPrompt: req.appendSystemPrompt,
+          promptSuggestions: req.promptSuggestions,
         },
       });
+      promptSuggestions = req.promptSuggestions === true;
       write({
         type: 'control_response',
         response: {
@@ -124,6 +134,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
           response: {
             session_id: 'claude-test-thread',
             model: 'fake-claude',
+            commands: FAKE_COMMANDS,
             models: [
               { value: 'fake-claude', displayName: 'Fake Claude' },
               { value: 'fake-claude-opus', displayName: 'Fake Claude Opus' },
@@ -132,6 +143,11 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         },
       });
       if (process.argv.includes('--late-init')) setTimeout(() => write({ type: 'system', subtype: 'init', session_id: 'claude-late-thread', model: 'fake-claude-opus' }), 50);
+      return;
+    }
+    if (subtype === 'get_context_usage') {
+      write({ method: 'fixture/context-usage', params: { detail: req.detail } });
+      write({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: { totalTokens: contextTokens, maxTokens: 200000, rawMaxTokens: 200000, percentage: Math.round(contextTokens / 2000), model: currentModel, categories: [] } } });
       return;
     }
     if (subtype === 'set_model') {
@@ -204,6 +220,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     const content = Array.isArray(message.message?.content) ? message.message.content : [];
     const prompt = content.find((c) => c.type === 'text')?.text || '';
     if (prompt.startsWith('/compact')) { complete('Context compacted'); return; }
+    if (prompt.startsWith('/fake-review')) { busy = true; contextTokens += 30000; complete(`Skill ran: ${prompt}`); return; }
+    if (prompt.startsWith('suggest')) {
+      busy = true; contextTokens += 50000;
+      complete('Here is the change.');
+      if (promptSuggestions) setTimeout(() => write({ type: 'prompt_suggestion', suggestion: 'Now run the tests', uuid: 'suggestion-1', session_id: 'claude-test-thread' }), 50);
+      return;
+    }
     if (message.steer) {
       write({ method: 'fixture/steer', params: { prompt } });
       return;

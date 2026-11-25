@@ -3,7 +3,6 @@
 ## Unreleased
 
 - Conversation GUI: send one prompt, with its attached images, to several agents or models at once, each in its own worktree and branch from the same base, then compare each branch's diff side by side. A worktree that cannot be created is reported for that agent without stopping the others.
-
 - Conversation GUI: show subagents as their own activity rows with the task they were given, their tool calls and their final report. Claude's background subagents stay running after the turn that started them, and the pane reports how many are still working.
 - Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.
 - Conversation GUI: stop a single subagent with the Stop button on its activity row, for Claude and Codex. Stop in the composer stops the turn and every subagent it started, including background subagents still running after the turn ended. A running Claude subagent's row shows what its shell commands print while they run.
@@ -12,9 +11,9 @@
 - Fix Claude GUI appending the reply Claude writes when a background subagent finishes to the previous reply, and replacing that reply's text; the follow-up is now a turn and reply of its own. A subagent's own text no longer appears as Claude's reply.
 - Show the local servers a pane's agent started (conversation header and terminal pane header): command, pid and listening ports, an Open link for `http://localhost:<port>/` and a Stop button that ends only processes under that pane's agent.
 - Conversation GUI: see what each turn changed. In a git project, a turn that edits files ends with a "Changes in this turn" row that opens the diff of that turn only, leaving out edits made before it and pulls or commits made between turns. File edits in the activity log (Codex file changes, Claude's Edit and Write) open the diff at that file, and the diff viewer also lists the branch's commits, each with its own diff.
-
 - Conversation GUI: a turn stopped by a Claude or Codex usage limit shows a Limited state with the reset time, **Resume at reset** (sends "continue" when the limit resets, survives a reload) and **Snooze until reset**. View options hide successful or all tool calls, and Zen mode (Cmd/Ctrl+Alt+Z) shows only your messages and each turn's final reply. Screen readers hear when a turn starts, needs approval and ends, and the window title leads with the focused GUI pane's status.
 - Add **Edit from here** to Claude and Codex conversations: an earlier message goes back into the composer, and sending it continues the conversation as if the later messages never happened (Claude resumes a fork cut at that point, Codex reverts the thread). An optional **Also revert files** restores the files from Claude's file checkpoints or, in a git worktree, from a snapshot Aya takes when each message is sent.
+- Conversation GUI: show the agent's suggested next prompt in the empty composer (Tab inserts it; can be turned off), a context-window meter in the header, a `$` skills picker (also in the `/` menu) for Claude and Codex, and a Restart agent session action (`/restart`) that reloads skills and MCP servers and resumes the conversation.
 
 ## v0.20.0 - 2026-11-22
 

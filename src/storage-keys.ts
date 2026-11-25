@@ -26,6 +26,8 @@ export const DEBUG_TERMINAL_INPUT_STORAGE_KEY = "aya:debug-terminal-input";
 
 /** What Enter does in the Conversation GUI composer while the agent works: "queue" or "steer". */
 export const GUI_FOLLOW_UP_STORAGE_KEY = "aya:gui-follow-up";
+/** Whether the Conversation GUI composer shows the agent's suggested next prompt: "1" or "0" (default on). */
+export const GUI_PROMPT_SUGGESTIONS_STORAGE_KEY = "aya:gui-prompt-suggestions";
 
 /** A project whose .aya launchers the user ignored or already imported. */
 export function repoConfigIgnoredKey(directory: string): string {

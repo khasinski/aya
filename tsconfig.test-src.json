@@ -42,6 +42,7 @@
     "src/gui-approval-modes.ts",
     "src/gui-composer.ts",
     "src/gui-edit-from-here.ts",
+    "src/gui-composer-assist.ts",
     "src/gui-context.ts",
     "src/gui-a11y.ts",
     "src/gui-find.ts",

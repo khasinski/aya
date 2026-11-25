@@ -1,6 +1,7 @@
 import { Fragment,memo,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,useSyncExternalStore,type CSSProperties,type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { ComposerOptions } from './ComposerOptions';
+import { ContextMeter,useComposerAssist } from './ComposerAssist';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { GuiApprovalDecision,GuiArtifact,GuiArtifactEntry,GuiEvent } from '../../shared/codex-gui';
@@ -16,6 +17,7 @@ import { approvalNoteTarget,declinableApproval,isPermissionModeShortcut,permissi
 import { activityDuration,activityKind,activityPhases,phaseText,shortDuration,subagentLabel,subagentStates,type ActivityKind } from '../gui-activity';
 import { followUpHint,parseFollowUpPreference,pasteBecomesAttachment,recallStep,sendAction,sendLabel,sentPromptText,stashStep,withQuote,type FollowUpPreference,type Recall } from '../gui-composer';
 import { reviewCommentsBlock,terminalExcerptBlock,withContextBlock } from '../gui-context';
+import { isSkillInvocation } from '../gui-composer-assist';
 import { findStatus,findTextMatches,stepMatch } from '../gui-find';
 import { fileChangePaths,isTurnDiffSummary,repoRelativePath,type TurnDiffSummary } from '../gui-turn-diff';
 import { fanOutRunForTerminal,requestFanOut,requestFanOutCompare,takeFanOutMessage } from '../gui-fan-out';
@@ -369,14 +371,16 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     persistInFlight.current = write;
     return write;
   }, [api, terminal.id]);
-  const reconnect = async () => {
-    if (connecting || ready || busy) return;
-    setConnecting(true); setError(''); setQueueHeld(true);
+  /** restart: stop the running agent process and resume this conversation in a new one (after changing skills or MCP servers). */
+  const reconnect = async (restart = false) => {
+    if (connecting || (ready && !restart) || busy) return;
+    setConnecting(true); setError(''); setQueueHeld(true); if (restart) setReady(false);
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = null;
     const revision = snapshotRevision.current;
     try {
-      const result = await invoke('reconnect', { view: pendingSnapshot.current, unsafeMode: preset.unsafeMode === true, permissionMode: permissionModeRef.current });
+      const result = await invoke('reconnect', { view: pendingSnapshot.current, unsafeMode: preset.unsafeMode === true, permissionMode: permissionModeRef.current, promptSuggestions: assist.suggestionsOn });
+      if (restart) setMessages(old => [...old, { id: crypto.randomUUID(), type: 'settings', title: 'Agent session restarted', text: `${agentLabel} restarted and resumed this conversation with its current skills and MCP servers.` }]);
       setAvailableAttachmentIds(new Set(Array.isArray(obj(result).attachmentIds) ? obj(result).attachmentIds as string[] : []));
       setPermissionModeValue(sessionPermissionMode(result)); setModel(str(obj(result).model)); setReady(true); setImportNotice(old => old === 'Interface recovered. Reconnect the agent to continue.' ? '' : old);
       if (revision === snapshotRevision.current) { setSaveStatus('saved'); setSaveError(''); }
@@ -391,6 +395,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const loadArtifactPreview = useCallback((id: string, revision?: number) => api ? api.invoke(terminal.id, 'artifact-preview', { id, revision }) : Promise.reject(Error('Desktop app required')), [api, terminal.id]);
   const availableCommands = guiCommands(guiAgent);
   const capabilities = guiCapabilities(guiAgent);
+  const assist = useComposerAssist({ agent: guiAgent, ready, prompt, setPrompt, composer, invoke, commands: availableCommands });
 
   useEffect(() => {
     if (!api) { setError('Conversation GUI requires the Aya desktop app.'); return; }
@@ -410,6 +415,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') textDeltas.flush();
       if (event.sequence) { receivedEventSequence.current = Math.max(receivedEventSequence.current, event.sequence); if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') eventSequence.current = receivedEventSequence.current; }
       const p = event.params;
+      assist.handleEvent(event);
       if (event.method === 'aya/recovered') {
         if (typeof p.unsafeMode === 'boolean' || p.permissionMode) setPermissionModeValue(sessionPermissionMode(p));
         setBusy(p.running === true); setTurnOutcome(old => p.running ? null : old || 'interrupted'); setRequests(old => p.running ? old : []);
@@ -502,7 +508,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       else if (saved.turnOutcome) setTurnOutcome(saved.turnOutcome as 'complete' | 'interrupted' | 'failed');
       if (!saved.busy) setUsageLimit(parseUsageLimit(saved.usageLimit));
       setRestored(true);
-      const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true, permissionMode: savedMode });
+      const result = await api.invoke(terminal.id, 'connect', { cwd: terminal.cwd, configDir: preset.configDir, agent: guiAgent, unsafeMode: preset.unsafeMode === true, permissionMode: savedMode, promptSuggestions: assist.suggestionsOn });
       if (mounted) { setAvailableAttachmentIds(new Set(Array.isArray(obj(result).attachmentIds) ? obj(result).attachmentIds as string[] : [])); setPermissionModeValue(sessionPermissionMode(result)); setReady(obj(result).connected !== false); setModel(str(obj(result).model)); setRestored(true); void api.invoke(terminal.id, 'models').then(result => { if (mounted && Array.isArray(obj(result).data)) setModels(obj(result).data as ModelOption[]); }).catch(() => {}); }
     })().catch(e => { if (mounted) fail(e); }).finally(() => { if (mounted) setConnecting(false); });
     return () => { textDeltas.flush(); mounted = false; viewMounted.current = false; off(); if (persistTimer.current) clearTimeout(persistTimer.current); persistTimer.current = null; void api.invoke(terminal.id, guiRendererRecoveryInProgress() ? 'retain-for-recovery' : takeGuiPaneRecovery(terminal.id) ? 'retain-pane' : 'close', pendingSnapshot.current || undefined).catch(() => {}); };
@@ -667,6 +673,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     const revision = ['status', 'help', 'btw', 'chrome', 'usage'].includes(name) ? ++sideRevision.current : sideRevision.current;
     if (name === 'resume') { await openHistory(argument); return; }
     if (name === 'new' || name === 'clear') { await switchConversation(); return; }
+    if (name === 'restart') { if (busy) throw Error('Stop the current turn before restarting the agent session.'); await reconnect(true); return; }
     if (name === 'model') {
       if (argument) { const option = models.find(item => item.model === argument || item.displayName.toLowerCase() === argument.toLowerCase()); if (!option) throw Error('Unknown model. Choose an available model below the composer.'); changeModel(option.model); }
       setOptionsOpen(true); return;
@@ -782,7 +789,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     try {
       const declining = !opposite && approvalNoteTarget(requests, guiAgent, { text, attachments: attachments.length });
       if (declining) { await declineWithNote(declining, text.trim()); return; }
-      if (text.startsWith('/')) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
+      if (text.startsWith('/') && !isSkillInvocation(guiAgent, text, assist.skills, availableCommands)) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
       if (edit.editing) { await sendEdited(text); return; }
       if (busy || sideQuestion || queue.length || dispatching.current) {
         if (!dispatching.current && sendAction({ mustWait: true, busy, steerSupported: capabilities.steer, preference: followUp, opposite, hasAttachments: attachments.length > 0, isCommand: false }) === 'steer') { await steer(text); return; }
@@ -877,6 +884,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       </span>
       {!ready && restored && <button type="button" disabled={connecting} onClick={() => void reconnect()}>{connecting ? 'Connecting…' : 'Reconnect'}</button>}
       <AgentServers active={ready && !hidden} busy={busy} list={() => invoke('servers') as Promise<AgentServer[]>} stop={pid => invoke('stop-server', pid)} open={port => invoke('open-server', port)} />
+      <ContextMeter usage={assist.usage} />
+      {ready && <button className="aya-gui-icon-button" disabled={busy || switching} aria-label="Restart agent session" title="Restart agent session: reload skills and MCP servers and resume this conversation (/restart)" onClick={() => void reconnect(true)}><span className="aya-gui-icon" aria-hidden="true">restart_alt</span></button>}
       <button className="aya-gui-icon-button" disabled={!ready || switching} aria-label="Resume a saved conversation" title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button>
       <button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>
     </header>
@@ -1004,16 +1013,19 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       </div>}
       {suggestion && <div className="aya-widget-suggestion"><div><small>FROM ARTIFACT</small><p>{suggestion}</p></div><button type="button" onClick={() => { setPrompt(old => old ? `${old}\n\n${suggestion}` : suggestion); setSuggestion(''); composer.current?.focus(); }}>Add to message</button><button type="button" aria-label="Dismiss suggestion" onClick={() => setSuggestion('')}>×</button></div>}
       {error && <div role="alert" className="aya-gui-error"><span>{error}</span><button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={() => { setError(''); composer.current?.focus(); }}>×</button></div>}
-      {prompt.startsWith('/') && <div className="aya-gui-commands">{availableCommands.filter(item => item.name.startsWith(prompt.slice(1).split(/\s/)[0])).map(item => <button type="button" key={item.name} title={item.description} onClick={() => setPrompt('/' + item.name + ' ')}>/{item.name}</button>)}</div>}
+      {prompt.startsWith('/') && <div className="aya-gui-commands">{availableCommands.filter(item => item.name.startsWith(prompt.slice(1).split(/\s/)[0])).map(item => <button type="button" key={item.name} title={item.description} onClick={() => setPrompt('/' + item.name + ' ')}>/{item.name}</button>)}{assist.slashMenuItems}</div>}
+      {assist.menu}
       {attachments.length > 0 && <div className="aya-gui-attachments">{attachments.map(a => <span key={a.id} title={a.path}>📎 {a.name}{needsReattachment(a) && <strong role="status"> · Reattach</strong>}<button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments(old => old.filter(f => f.id !== a.id))}>×</button></span>)}</div>}
       {attachments.some(needsReattachment) && <div className="aya-gui-attachment-notice" role="status">Remove and reattach the marked files before sending.</div>}
       {edit.editing && <EditFromHereBar state={edit.editing} agentLabel={agentLabel} busy={busy} onRevertFiles={edit.setRevertFiles} onCancel={() => { edit.cancel(); composer.current?.focus(); }} />}
       <textarea
         ref={composer}
         aria-label={`Message ${agentLabel}`}
-        placeholder={declinableApproval(requests, guiAgent) ? 'Type why to decline the request above, then press Enter…' : `Message ${agentLabel}… (/ for commands)`}
+        placeholder={declinableApproval(requests, guiAgent) ? 'Type why to decline the request above, then press Enter…' : assist.placeholder(`Message ${agentLabel}… (/ for commands${assist.supported ? ', $ for skills' : ''})`)}
+        data-suggestion={assist.nextPrompt || undefined}
         value={prompt}
         onChange={e => setPrompt(e.target.value)}
+        onSelect={e => assist.onCaret(e.currentTarget.selectionStart)}
         onPaste={e => {
           const data = e.clipboardData;
           if (!data || !ready) return;
@@ -1039,6 +1051,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
           }).catch(fail);
         }}
         onKeyDown={e => {
+          if (assist.onKeyDown(e)) return;
           if (!e.nativeEvent.isComposing) {
             const el = e.currentTarget;
             if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
@@ -1088,7 +1101,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       <span className="aya-gui-context"><button type="button" className="aya-gui-context-button" aria-haspopup="menu" aria-expanded={contextMenu !== null} aria-label="@ Context" title="Add review comments or terminal output to the message" onClick={() => void openContextMenu()}><span aria-hidden="true">@</span><span className="aya-gui-context-label"> Context</span></button>{contextMenu && <div className="aya-gui-context-menu" role="menu" aria-label="Add context">{contextMenu.comments.length > 0 && <button type="button" role="menuitem" onClick={() => addContext(() => reviewCommentsBlock(contextMenu.comments, terminal.cwd))}>Review comments <small>{contextMenu.comments.length}</small></button>}{contextMenu.terminals.map(t => <button type="button" role="menuitem" key={t.id} onClick={() => addContext(() => terminalExcerptBlock(t.name, terminalExcerpt(t.id, 60) ?? ''))}>Output of {t.name}</button>)}{!contextMenu.comments.length && !contextMenu.terminals.length && <small className="aya-gui-context-empty">Nothing to add: no unsent review comments for this checkout and no other terminal open.</small>}</div>}</span><ComposerOptions open={optionsOpen} onOpenChange={setOptionsOpen} summary={[modelName(selectedModel || model) || 'Settings', effort, planMode ? 'Plan' : '', permissionModeOptions.length ? guiPermissionModeLabel(permissionMode) : ''].filter(Boolean).join(' · ')} active={planMode || sessionUnsafe}>
       {models.length > 0 && <><label>Model<select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select></label>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <label>Reasoning<select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select></label>}</>}
 {permissionModeOptions.length > 0 && <label>Permissions<select aria-label="Permission mode" aria-keyshortcuts="Meta+Shift+A Control+Shift+A" title={`${permissionModeOptions.find(m => m.id === permissionMode)?.description || ''} ⌘⇧A cycles.`} value={permissionMode} onChange={e => void changePermissionMode(e.target.value as GuiPermissionMode)}>{permissionModeOptions.map(m => <option key={m.id} value={m.id} title={m.description}>{m.label}</option>)}</select></label>}
-<div className="aya-composer-options-toggles">{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}</div><div className="aya-composer-options-fan-out"><button type="button" title="Start this message in a separate worktree for each of several agents" onClick={() => { setOptionsOpen(false); requestFanOut({ projectSlug: terminal.projectSlug, text: prompt, sourceTerminalId: terminal.id, attachments: attachments.map(({ id, name, image }) => ({ id, name, image })) }); }}>Send to several agents…</button>{fanOutRunForTerminal(terminal.id) && <button type="button" title="Show each agent's branch diff side by side" onClick={() => { setOptionsOpen(false); requestFanOutCompare(fanOutRunForTerminal(terminal.id)!.id); }}>Compare agents…</button>}</div><small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small></ComposerOptions>{showStop(busy, backgroundAgents) && <button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>}{busy && <>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" className="aya-gui-steer-secondary" disabled={steerPending} title={steerPending ? "Sending steer…" : "Send into the running turn"} onClick={() => void steer(prompt)}>{steerPending ? "Sending…" : "Steer ↗"}</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{noteTarget ? 'Decline with note' : sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') }))}</button></div>
+<div className="aya-composer-options-toggles">{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{assist.supported && <button type="button" className="aya-gui-suggest-toggle" aria-pressed={assist.suggestionsOn} title="Show the agent's predicted next message in the empty composer; Tab uses it" onClick={() => assist.setSuggestionsOn(!assist.suggestionsOn)}>Suggestions {assist.suggestionsOn ? 'on' : 'off'}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}</div><div className="aya-composer-options-fan-out"><button type="button" title="Start this message in a separate worktree for each of several agents" onClick={() => { setOptionsOpen(false); requestFanOut({ projectSlug: terminal.projectSlug, text: prompt, sourceTerminalId: terminal.id, attachments: attachments.map(({ id, name, image }) => ({ id, name, image })) }); }}>Send to several agents…</button>{fanOutRunForTerminal(terminal.id) && <button type="button" title="Show each agent's branch diff side by side" onClick={() => { setOptionsOpen(false); requestFanOutCompare(fanOutRunForTerminal(terminal.id)!.id); }}>Compare agents…</button>}</div><small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small></ComposerOptions>{showStop(busy, backgroundAgents) && <button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>}{busy && <>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" className="aya-gui-steer-secondary" disabled={steerPending} title={steerPending ? "Sending steer…" : "Send into the running turn"} onClick={() => void steer(prompt)}>{steerPending ? "Sending…" : "Steer ↗"}</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{noteTarget ? 'Decline with note' : sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') && !isSkillInvocation(guiAgent, prompt, assist.skills, availableCommands) }))}</button></div>
     </form></main>
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}
     </div>
