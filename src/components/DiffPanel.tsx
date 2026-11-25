@@ -14,6 +14,8 @@ import type {
 
 export { EXT_TO_LANGUAGE } from "../syntax-highlight";
 
+export interface DiffSource { id: string; label: string; group?: string }
+
 export interface DiffLine {
   text: string;
   kind: "file" | "hunk" | "add" | "del" | "ctx" | "meta";
@@ -116,6 +118,10 @@ export function DiffPanel({
   onTargetChange,
   sending,
   onSend,
+  sources,
+  sourceId,
+  onSourceChange,
+  emptyText = "No diff available.",
 }: {
   diff: string;
   loading: boolean;
@@ -135,6 +141,11 @@ export function DiffPanel({
   onTargetChange: (id: string) => void;
   sending: boolean;
   onSend: (target: ReviewTarget, ids: string[]) => void;
+  /** Optional choice of what to show (a turn, a commit...), drawn above the search box. */
+  sources?: DiffSource[];
+  sourceId?: string;
+  onSourceChange?: (id: string) => void;
+  emptyText?: string;
 }) {
   const lines = useMemo(() => annotateDiff(diff), [diff]);
   const highlightedLines = useMemo(() => lines.map((line) => {
@@ -202,6 +213,19 @@ export function DiffPanel({
   }, [query, diff, loading]);
   return (
     <div className="aya-diff-panel">
+      {sources && sources.length > 0 && (
+        <label className="aya-diff-source">
+          <span>Show</span>
+          <select aria-label="Diff to show" value={sourceId} onChange={(event) => onSourceChange?.(event.target.value)}>
+            {[...new Set(sources.map((source) => source.group ?? ""))].map((group) => {
+              const options = sources.filter((source) => (source.group ?? "") === group).map((source) => (
+                <option key={source.id} value={source.id}>{source.label}</option>
+              ));
+              return group ? <optgroup key={group} label={group}>{options}</optgroup> : options;
+            })}
+          </select>
+        </label>
+      )}
       <div className="aya-diff-search">
         <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 14 }}>search</span>
         <input
@@ -225,7 +249,7 @@ export function DiffPanel({
       {loading ? (
         <div className="aya-statusbar-popover-empty">Loading diff...</div>
       ) : !diff ? (
-        <div className="aya-statusbar-popover-empty">No diff available.</div>
+        <div className="aya-statusbar-popover-empty">{emptyText}</div>
       ) : (
         <div className="aya-diff-view" ref={diffViewRef}>
           {lines.map((line, index) => {

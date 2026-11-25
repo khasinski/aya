@@ -7,6 +7,7 @@
 - Conversation GUI: stop a single subagent with the Stop button on its activity row, for Claude and Codex. Stop in the composer stops the turn and every subagent it started, including background subagents still running after the turn ended. A running Claude subagent's row shows what its shell commands print while they run.
 - Fix Claude GUI appending the reply Claude writes when a background subagent finishes to the previous reply, and replacing that reply's text; the follow-up is now a turn and reply of its own. A subagent's own text no longer appears as Claude's reply.
 - Show the local servers a pane's agent started (conversation header and terminal pane header): command, pid and listening ports, an Open link for `http://localhost:<port>/` and a Stop button that ends only processes under that pane's agent.
+- Conversation GUI: see what each turn changed. In a git project, a turn that edits files ends with a "Changes in this turn" row that opens the diff of that turn only, leaving out edits made before it and pulls or commits made between turns. File edits in the activity log (Codex file changes, Claude's Edit and Write) open the diff at that file, and the diff viewer also lists the branch's commits, each with its own diff.
 
 ## v0.20.0 - 2026-11-22
 

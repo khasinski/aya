@@ -45,6 +45,16 @@ While a Claude subagent runs a shell command, its row shows what the command pri
 
 An approval or question from a subagent says which subagent asked (*Requested by Subagent: Read the config*) and stays above the composer after the main turn ends, because the subagent is still waiting for the answer. A subagent's own messages never become the conversation's reply.
 
+## Changes in each turn
+
+In a git project, Aya records the working tree when a turn starts and when it ends. A turn that changed files ends with a **Changes in this turn** row listing them with added and removed lines; **View changes** (or a file name) opens that turn's diff. It shows only what changed during the turn: edits you made before it, and a pull, rebase or commit you made between turns, are left out. Edits you make while the turn runs are included, since Aya cannot tell them from the agent's.
+
+File edits in the tool activity (Codex file changes, Claude's Edit, Write and MultiEdit, Pi's edit and write) have an **Open diff** button that opens the diff at that file: the finished turn's diff, or the running turn's changes so far.
+
+The **Show** menu at the top of the diff switches between turns and the branch's commits: the commits not on the default branch (`origin/HEAD`, `main` or `master`), or, when you work on the default branch itself, the commits made since the conversation's first recorded turn. Each commit shows its own changes. Line comments work as in the status bar's diff; **Send** adds them to this conversation's message.
+
+The snapshots are tree objects built in a temporary index, so your index, stash, branches and files are never touched; nothing is committed. They are not referenced by any branch, so `git gc` may remove them after a few weeks, and an older turn's diff then says so. Folders outside git have no turn diffs, and a repository whose snapshot takes longer than three seconds is not snapshotted again until Aya restarts.
+
 ## Measured task progress
 
 For tasks with measurable units, Codex is given the `aya_progress` tool. Call it with `label`, `current`, `total`, and optionally `detail`; it returns a `progressId`. Reuse that ID to update the existing bar. For example, decompiling ten functions can report 0/10, 4/10 and 10/10. Percentages are derived from these counts, never invented by Aya. Optional `status` is `running`, `complete`, `paused` or `failed`; completion requires current equal to total.

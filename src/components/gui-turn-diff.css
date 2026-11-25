@@ -1,0 +1,22 @@
+/* "Changes in this turn" rows, "Open diff" in the activity log, and the GUI diff dialog. */
+.aya-gui-turn-changes { margin: 4px 0 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.aya-gui-turn-changes header { display: flex; align-items: center; gap: 8px; }
+.aya-gui-turn-changes header small { color: var(--fg-tertiary); flex: 1; }
+.aya-gui-turn-changes button { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
+.aya-gui-turn-changes button:hover { text-decoration: underline; }
+.aya-gui-turn-changes ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+.aya-gui-turn-changes li { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.aya-gui-turn-changes li code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aya-gui-turn-changes li button { min-width: 0; overflow: hidden; color: var(--fg-secondary); }
+.aya-gui-turn-changes-add { color: var(--status-active, #5fbf7a); }
+.aya-gui-turn-changes-del { color: var(--status-error, #e06c75); }
+.aya-gui-activity-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 4px 16px; }
+.aya-gui-activity-files button { border: 1px solid var(--border); border-radius: 6px; background: none; color: var(--fg-secondary); font: 11px var(--font-sans); padding: 2px 6px; cursor: pointer; }
+.aya-gui-activity-files button:hover { color: var(--fg-primary); border-color: var(--accent); }
+.aya-gui-diff-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: #0007; }
+.aya-gui-diff-dialog { display: flex; flex-direction: column; width: min(960px, calc(100vw - 32px)); max-height: calc(100vh - 64px); border: 1px solid var(--border); border-radius: 12px; background: var(--bg-primary, var(--bg)); color: var(--fg-primary); box-shadow: 0 12px 40px #0006; overflow: hidden; }
+.aya-gui-diff-dialog:focus { outline: none; }
+.aya-gui-diff-dialog > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); font: 600 12px var(--font-sans); }
+.aya-gui-diff-dialog > header button { border: 0; background: none; color: var(--fg-secondary); font-size: 18px; cursor: pointer; }
+.aya-gui-diff-dialog .aya-diff-panel { max-height: calc(100vh - 120px); min-height: 320px; }
+.aya-gui-diff-dialog > [role="alert"] { margin: 8px 12px 0; }

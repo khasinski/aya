@@ -245,6 +245,17 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       const server = require('node:child_process').spawn(process.execPath, ['-e', "require('http').createServer((q,s)=>s.end('fake dev server')).listen(0,'127.0.0.1',function(){process.stdout.write(this.address().port+String.fromCharCode(10))})"], { stdio: ['ignore', 'pipe', 'ignore'] });
       server.stdout.once('data', chunk => complete(`Dev server on port ${String(chunk).trim()} pid ${server.pid}`));
     }
+    else if (prompt === 'edit-files' || prompt === 'edit-files-wait') {
+      // Edits the project like apply_patch would: one tracked file, one new file.
+      const fs = require('node:fs'), path = require('node:path');
+      const edited = path.join(process.cwd(), 'committed.txt'), added = path.join(process.cwd(), 'notes', 'turn.md');
+      fs.appendFileSync(edited, 'added by the turn\n');
+      fs.mkdirSync(path.dirname(added), { recursive: true }); fs.writeFileSync(added, '# Written in this turn\n');
+      const item = { id: 'patch-1', type: 'fileChange', changes: [{ path: edited, kind: { type: 'update', move_path: null }, diff: '' }, { path: added, kind: { type: 'add' }, diff: '' }] };
+      event('item/started', { item: { ...item, status: 'inProgress' } });
+      event('item/completed', { item: { ...item, status: 'completed' } });
+      if (prompt === 'edit-files') complete('Edited two files.');
+    }
     else write({ id: 'present', method: 'item/tool/call', params: { threadId: 'test-thread', turnId: 'turn', tool: 'aya_present', arguments: { open: prompt === 'open-widget', kind: 'table', title: prompt === 'open-widget' ? 'Opened by Codex' : 'A real tool result', columns: ['Name', 'State'], rows: [['Aya', 'Ready']] } } });
   } else if (message.method === 'turn/interrupt' && p.threadId === 'child-run-thread') {
     // Interrupting a subagent's thread ends only that thread's turn.
