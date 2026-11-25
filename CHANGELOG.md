@@ -6,6 +6,8 @@
 - Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.
 - Fix Claude GUI appending the reply Claude writes when a background subagent finishes to the previous reply, and replacing that reply's text; the follow-up is now a turn and reply of its own. A subagent's own text no longer appears as Claude's reply.
 
+- Conversation GUI: a turn stopped by a Claude or Codex usage limit shows a Limited state with the reset time, **Resume at reset** (sends "continue" when the limit resets, survives a reload) and **Snooze until reset**. View options hide successful or all tool calls, and Zen mode (Cmd/Ctrl+Alt+Z) shows only your messages and each turn's final reply. Screen readers hear when a turn starts, needs approval and ends, and the window title leads with the focused GUI pane's status.
+
 ## v0.20.0 - 2026-11-22
 
 - Render Mermaid diagrams and charts directly in conversations, including flowcharts, sequence diagrams, pie charts and bar/line charts, with source viewing, copying and enlarged previews.

@@ -2,6 +2,7 @@ import { GuiProtocolWriter } from './gui-protocol-writer';
 import { GuiJsonLines } from './gui-json-lines';
 import { claudeChromeCommand } from './claude-chrome';
 import { formatClaudeUsage } from './claude-usage';
+import { ClaudeUsageLimitTracker, claudeLimitMessage } from './gui-usage-limit';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat, readFile, mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
@@ -870,6 +871,10 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
   private chromeCommandPending = false;
   /** Subagents started with the Agent tool, by that tool call's ID. Reported as Codex `collabAgentToolCall` items. */
   private agents = new Map<string, ClaudeSubagent>();
+  /** The usage limits Claude reported during the current turn. */
+  private usageLimits = new ClaudeUsageLimitTracker();
+  /** Tool calls of the current turn still waiting for their result, so a failed one can be reported as failed. */
+  private openTools = new Map<string, Record<string, unknown>>();
 
   constructor(
     emit: (event: GuiEvent) => void,
@@ -933,6 +938,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     this.currentAssistantText = '';
     this.handledQuestionToolIds.clear();
     this.pendingAssistantQuestions = null;
+    this.usageLimits.reset();
+    this.openTools.clear();
   }
 
   /** Claude starts a turn by itself when a background subagent reports back. Without its own turn, its answer would
@@ -1371,6 +1378,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       return;
     }
 
+    if (type === 'rate_limit_event' || (type === 'assistant' && text(message.error) === 'rate_limit')) this.usageLimits.observe(message);
+    if (type === 'rate_limit_event') return;
+
     if (type === 'system' && text(message.subtype) === 'init') {
       if (text(message.session_id)) this.threadId = text(message.session_id);
       this.emit({ method: 'aya/session', params: { threadId: this.threadId, ...(text(message.model) ? { model: text(message.model) } : {}) } });
@@ -1416,6 +1426,11 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
         const b = object(block);
         const id = text(b.tool_use_id);
         const agent = this.agents.get(id);
+        const tool = text(b.type) === 'tool_result' ? this.openTools.get(id) : undefined;
+        if (tool) {
+          this.openTools.delete(id);
+          this.emit({ method: 'item/completed', params: { item: { ...tool, status: b.is_error === true ? 'failed' : 'completed' } } });
+        }
         if (text(b.type) !== 'tool_result' || !agent || agent.done) continue;
         const result = Array.isArray(b.content) ? b.content.map(part => text(object(part).text)).join('\n') : text(b.content);
         if (agent.background || /^Async agent launched/.test(result)) {
@@ -1451,18 +1466,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
             this.reportAgent(id, 'item/started');
             return;
           }
-          this.emit({
-            method: 'item/started',
-            params: {
-              item: {
-                id,
-                type: toolName === 'Bash' ? 'commandExecution' : 'mcpToolCall',
-                tool: toolName,
-                command: toolName,
-                status: 'inProgress',
-              },
-            },
-          });
+          const item = { id, type: toolName === 'Bash' ? 'commandExecution' : 'mcpToolCall', tool: toolName, command: toolName };
+          this.openTools.set(id, item);
+          this.emit({ method: 'item/started', params: { item: { ...item, status: 'inProgress' } } });
         }
       }
       return;
@@ -1533,6 +1539,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       }
       const isInterrupted = text(message.subtype) === 'interrupted' || text(message.terminal_reason) === 'aborted_streaming';
       const isError = message.is_error === true && !isInterrupted;
+      const usageLimit = isError ? this.usageLimits.limitFor(message) : null;
       this.pauseRunningProgressOnTurnEnd(isError);
       const finishedTurnId = this.turnId || 'turn';
       this.busy = false;
@@ -1544,7 +1551,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
           turn: {
             id: finishedTurnId,
             status: isInterrupted ? 'interrupted' : isError ? 'failed' : 'completed',
-            ...(isError && text(message.error)
+            ...(usageLimit
+              ? { error: { message: claudeLimitMessage(usageLimit, text(message.result)), usageLimit } }
+              : isError && text(message.error)
               ? { error: { message: text(message.error) } }
               : {}),
           },

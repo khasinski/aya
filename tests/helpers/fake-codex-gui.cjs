@@ -196,6 +196,25 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       event('item/completed', { item: { id: 'check', type: 'commandExecution', command: 'check', status: prompt === 'mixed-tools-wait' ? 'failed' : 'completed' } });
       if (prompt === 'mixed-tools-wait') event('item/started', { item: { id: 'test', type: 'commandExecution', command: 'npm test' } });
     }
+    else if (prompt === 'usage-limit') {
+      // Codex's sparse rate-limit update, the non-retrying error and the failed turn (reset in AYA_FAKE_LIMIT_RESET_S seconds).
+      const resetsAt = Math.floor(Date.now() / 1000) + Number(process.env.AYA_FAKE_LIMIT_RESET_S || 3600);
+      event('account/rateLimits/updated', { rateLimits: { limitId: 'codex', limitName: null, primary: { usedPercent: 100, windowDurationMins: 300, resetsAt }, secondary: null, credits: null, planType: 'plus', rateLimitReachedType: 'rate_limit_reached' } });
+      const error = { message: "You've hit your usage limit. Try again later.", codexErrorInfo: 'usageLimitExceeded', additionalDetails: null };
+      event('error', { error, willRetry: false, threadId: p.threadId, turnId: 'turn' });
+      event('turn/completed', { turn: { id: 'turn', status: 'failed', error } }); busy = false;
+    }
+    else if (prompt === 'continue') complete('Continuing where I left off.');
+    else if (prompt === 'zen-turn') {
+      // In-between replies, a successful and a failed command, then the final reply.
+      event('item/completed', { item: { id: 'interim', type: 'agentMessage', text: 'Let me look at the project first.' } });
+      event('item/started', { item: { id: 'ls', type: 'commandExecution', command: 'ls -la' } });
+      event('item/completed', { item: { id: 'ls', type: 'commandExecution', command: 'ls -la', status: 'completed' } });
+      event('item/started', { item: { id: 'cat', type: 'commandExecution', command: 'cat missing.txt' } });
+      event('item/completed', { item: { id: 'cat', type: 'commandExecution', command: 'cat missing.txt', status: 'failed' } });
+      event('item/completed', { item: { id: 'zen-final', type: 'agentMessage', text: 'Final answer: the project has no missing.txt.' } });
+      event('turn/completed', { turn: { id: 'turn', status: 'completed' } }); busy = false;
+    }
     else if (prompt === 'approval-options') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'git status', proposedExecpolicyAmendment: ['git', 'status'], availableDecisions: ['accept', 'acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'status'] } }, 'decline'] } });
     else if (prompt === 'permissions') write({ id: 'approve', method: 'item/permissions/requestApproval', params: { permissions: { network: { enabled: true } } } });
     else if (prompt === 'disconnect-approval') {

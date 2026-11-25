@@ -231,6 +231,22 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         write({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_agent', content: [{ type: 'text', text: 'a.txt says hello' }] }] } });
         complete('The file says hello.');
       }
+    } else if (prompt === 'usage-limit') {
+      // What Claude Code writes when the subscription's 5-hour window runs out (reset in AYA_FAKE_LIMIT_RESET_S seconds).
+      const resetsAt = Math.floor(Date.now() / 1000) + Number(process.env.AYA_FAKE_LIMIT_RESET_S || 3600);
+      write({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt, overageStatus: 'rejected' } });
+      write({ type: 'assistant', error: 'rate_limit', message: { content: [{ type: 'text', text: "You've hit your limit" }] } });
+      write({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your limit · resets 5pm" });
+      busy = false;
+    } else if (prompt === 'continue') {
+      complete('Continuing where I left off.');
+    } else if (prompt === 'mixed-tools') {
+      // A successful and a failed tool call between two replies.
+      write({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', id: 'toolu_ok', name: 'Bash', input: {} } } });
+      write({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_ok', content: 'ok' }] } });
+      write({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', id: 'toolu_bad', name: 'Read', input: {} } } });
+      write({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_bad', content: 'no such file', is_error: true }] } });
+      complete('Both tools ran.');
     } else if (prompt === 'wait') {
       return;
     } else if (prompt === 'question') {

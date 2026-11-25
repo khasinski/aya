@@ -33,6 +33,25 @@ The status bar's **snippets** button opens the same saved snippets in a GUI pane
 
 Conversation history, drafts, pending queue, goal, selected artifact and artifact versions are saved locally under Aya's config directory. Reopening the same panel resumes its native Codex thread. An interrupted turn is not automatically reissued, and a recovered queue stays paused. A resumed session must use the same workspace and account configuration.
 
+## Usage limits
+
+When a turn stops because the account hit a usage or rate limit, the pane shows **Limited** instead of a failed turn: the agent's own message, which limit ran out (for example the 5-hour window) and when it resets. The pane reports *Limited · resets 15:05* to the status rail and attention centre. Aya reads the reset time from Claude Code's `rate_limit_event` (or the text of its failed result) and from Codex's `account/rateLimits/updated` with a `usageLimitExceeded` or `rateLimitExceeded` error.
+
+- **Resume at reset** sends `continue` a few seconds after the limit resets, then lets held queued messages run. **Cancel resume** takes it back. The schedule is saved with the conversation, so it survives a window reload; Aya must be running at the reset, and an overdue resume runs when the pane reconnects.
+- **Snooze until reset** keeps the pane quiet until then: no status in the rail and no attention. **Wake now** ends the snooze. Snooze alone sends nothing: at the reset the pane says *Usage limit reset · ready to continue* and offers **Continue now**.
+- Without a reset time, send a message or choose **Continue now** when you want to retry. Sending any message clears the Limited state.
+
+## Less noise
+
+The eye icon in the conversation header holds the view options. They apply to every GUI pane and are remembered.
+
+- **Tool calls: Show all / Hide successful / Hide all.** *Hide successful* shows a call while it runs and keeps it only if it failed or was declined. Approvals, questions and errors always show.
+- **Zen mode** (Cmd/Ctrl+Alt+Z) shows only your messages and the agent's final reply of each turn, which appears when the turn ends. In-between replies, tool calls, progress and goal entries are hidden. A reply that asks a question stays. Find (Cmd/Ctrl+F) shows the whole conversation while it is open.
+
+## Screen readers
+
+A polite live region announces when a turn starts, needs an approval or an answer, hits a usage limit and finishes. While a GUI pane has the focus (or is the active split cell), the window title leads with its status and name: *Working — Claude GUI*, *Needs approval — Claude GUI*, *Needs your input — …*, *Limited — …*. The usual title comes back when the turn ends or the focus leaves the pane. Anyone who can see your window switcher or shared screen sees the title too.
+
 ## Subagents
 
 A subagent appears in the tool activity as its own row: **Subagent (type): task** for a Claude Agent call, **Subagent: task** for a Codex spawned agent, and Codex's wait, message and close calls as **Waiting for 2 subagents** and so on. Expand the row to see the tools the subagent used (Claude) or each agent's last state (Codex), then its final report.
