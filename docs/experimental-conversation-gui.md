@@ -151,6 +151,14 @@ Aya only lists, and only stops, processes that descend from that pane's agent pr
 
 Only Codex has side chat and plan mode so far.
 
+## Sending one prompt to several agents
+
+To see how different agents or models handle the same task, open the conversation settings (the tune button in the composer) and choose **Send to several agents…**, or use **+ Send to several agents…** in the sidebar of a local git project. The dialog takes the composer's draft and attached files, and lists every preset with **Conversation GUI** turned on (add one preset per model you want to compare, e.g. a Claude Opus preset and a Codex preset). Pick up to six, check the starting branch, and **Start**.
+
+For each agent Aya creates a worktree and branch `aya/<name>-<preset>` next to the repository (in `<repo>.worktrees/`), all from the same base commit, opens a Conversation pane there, and sends the prompt with the attached files as soon as the agent connects. The sidebar groups each pane under its worktree with the branch name. If one worktree cannot be created (for example the path is taken), the dialog says why for that agent and starts the others; a name already used by a branch or a worktree gets a `-2` suffix instead.
+
+**Compare** (in the dialog after starting, and in the conversation settings of each pane of the run) shows each branch's diff against the shared base commit in a tab per agent: commits, uncommitted edits and new files. Review comments you add there belong to that worktree, so they appear under **@ Context** in that agent's composer. Compare is kept for the current window session; after a reload, use each pane's status bar diff. Remove worktrees you no longer need from the sidebar as usual.
+
 ## Claude in Chrome
 
 Claude GUI starts with `--chrome`, so Chrome tools are available when the extension,

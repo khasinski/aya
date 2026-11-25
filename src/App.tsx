@@ -29,6 +29,7 @@ import {
 } from "./project-helpers";
 import { TeamsModal, SearchModal, SettingsModal, UsageDashboard } from "./components/LazyModals";
 import { PaneGrid } from "./components/PaneGrid";
+import { FanOutHost } from "./components/FanOutDialog";
 import { AttentionCenter } from "./components/AttentionCenter";
 
 import { StatusRail } from "./components/StatusRail";
@@ -315,6 +316,7 @@ export function App() {
     setGithubLinks,
     createWorktreesForProject,
     removeWorktreeForProject,
+    nudgeWorktrees,
     pinCheckout,
   } = useGitStatus({
     projects,
@@ -1203,6 +1205,8 @@ export function App() {
   const startWorktrees = useCallback<NonNullable<React.ComponentProps<typeof Sidebar>['onStartWorktrees']>>((projectId, preset, checkouts, prompt) => {
     for (const checkout of checkouts) launchTerminal(preset, checkout.path, undefined, prompt, projectId);
   }, [launchTerminal]);
+  const launchFanOutPane = useCallback((preset: Preset, cwd: string, projectSlug: string, terminalId: string) =>
+    !!launchTerminal(preset, cwd, undefined, undefined, projectSlug, terminalId), [launchTerminal]);
   const startCardInNewPane = useCallback(async (preset: Preset, cardId: string, projectSlug: string, cwd?: string) => {
     if (preset.interfaceMode === "gui" && guiSupportedAgent(preset)) throw new Error("Board task startup is available for terminal presets.");
     const paneId = uuid();
@@ -1517,6 +1521,7 @@ export function App() {
           }}
         />
       )}
+      <FanOutHost projects={projects} activeProjectId={activeProjectId} presets={activePresets} launch={launchFanOutPane} onWorktreesChanged={nudgeWorktrees} onOpenChange={setWorktreeDialogOpen} />
       {showSearch && (
         <SearchModal
           projects={projects}

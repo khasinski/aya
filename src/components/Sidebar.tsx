@@ -15,6 +15,7 @@ import { TerminalStatusDot } from "./TerminalStatusDot";
 import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
 import { WorktreeCreateDialog, WorktreeRemoveDialog } from "./WorktreeDialogs";
 import { KanbanLauncher } from "./KanbanLauncher";
+import { requestFanOut } from "../gui-fan-out";
 
 // Clamp bounds for drag-resizing the sidebar (px).
 const SIDEBAR_MIN_WIDTH_PX = 180;
@@ -508,6 +509,11 @@ function SidebarImpl({
             title={projectRemote ? "Worktrees are available for local projects only" : "Create worktrees for this repository"}
           >
             + New worktrees{projectRemote ? " · available for local projects" : "…"}
+          </button>
+        )}
+        {!projectRemote && projectDir && onCreateWorktrees && (
+          <button type="button" className="aya-fan-out-add" onClick={() => requestFanOut({ projectSlug: projectId })} title="Send one prompt to several Conversation GUI agents, each in its own worktree">
+            + Send to several agents…
           </button>
         )}
         <div className="aya-mobile-pane-add" ref={mobileLauncherRef}>
