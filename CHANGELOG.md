@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Show the local servers a pane's agent started (conversation header and terminal pane header): command, pid and listening ports, an Open link for `http://localhost:<port>/` and a Stop button that ends only processes under that pane's agent.
+
 ## v0.20.0 - 2026-11-22
 
 - Render Mermaid diagrams and charts directly in conversations, including flowcharts, sequence diagrams, pie charts and bar/line charts, with source viewing, copying and enlarged previews.

@@ -107,6 +107,12 @@ Codex also lists native CLI history through app-server `thread/list` and reads c
 
 `/new` and `/clear` start a fresh conversation while keeping history. `/help` lists GUI commands, `/model [name]` selects an available model (or focuses the model picker), and `/status` shows current model, workspace, goal and queue state. Unknown commands produce an error rather than becoming a prompt. Escape closes the history picker and returns focus to the composer; Tab stays inside it.
 
+## Local servers
+
+When the agent starts something that listens on a TCP port (a dev server, a preview, a debugger), the conversation header shows a badge such as **2 servers**. It opens a list with each server's command, pid and ports, an **Open :port** button per port that opens `http://localhost:<port>/` in your browser, and **Stop**, which sends SIGTERM to the server and its own child processes and SIGKILL to whatever is still running 3 seconds later. Terminal panes show the same badge in their header for servers started by their shell or agent.
+
+Aya only lists, and only stops, processes that descend from that pane's agent process (or the terminal's process): it reads the process tree with `ps` and asks `lsof -nP -iTCP -sTCP:LISTEN` about those processes only (`ss -ltnp` on Linux without lsof). Before a Stop it reads the tree again, so a process that has exited and had its pid reused is never signalled. A server that detached itself from the agent (for example with `nohup … &` and `setsid`, or a daemon that double-forks) is not a descendant any more and is not listed. Aya never connects to a listed port, so a port can be something other than a web page. It looks only while the pane is visible: every 4 seconds while the agent works or a server is listed, every 15 seconds otherwise. Remote terminals and Aya Web do not list servers. Windows is not supported.
+
 ## Talking to the agent
 
 - **Attention.** A GUI pane reports like a terminal agent running `aya status`: *working* while a turn runs, *waiting* with the question or the command when an approval or a question is pending, *done* and *error* when a turn ends. The status rail, the attention centre and the project badges treat it like any other pane. A turn restored from disk is history and reports nothing.

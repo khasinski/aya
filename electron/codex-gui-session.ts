@@ -28,6 +28,8 @@ export class CodexGuiSession {
   private samplingEpoch = 0;
   private samplingWaiters = new Set<() => void>();
   get running() { return this.busy; }
+  /** The agent process: servers it starts are listed under it (agent-servers.ts). */
+  get pid() { return this.child?.pid; }
   private closing = false;
   private artifactIds = new Set<string>();
   private artifactRevisions = new Map<string, number>();

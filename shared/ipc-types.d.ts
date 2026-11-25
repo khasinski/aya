@@ -3,6 +3,9 @@ import type { AgentKind, Preset, WorkingTab, ProjectConfig, RepoProjectConfig, P
 
 
 
+/** A process under a pane's agent (or shell) that listens on TCP ports (electron/agent-servers.ts). */
+export interface AgentServer { pid: number; command: string; ports: number[] }
+
 export interface HarnessDef {
   id: string;
   binary: string;
@@ -865,6 +868,10 @@ export interface AyaApi {
    *  `cd`, not the cwd Aya spawned it with. null when it can't be read (old
    *  PTY host, dead process, unsupported platform). */
   ptyCwd(ptyId: string): Promise<string | null>;
+  /** Local servers the pane's process started: its descendants listening on TCP ports. [] when unknown. */
+  ptyServers(ptyId: string): Promise<AgentServer[]>;
+  /** SIGTERM (then SIGKILL) one of them; refused unless it still runs under the pane's process. */
+  ptyStopServer(ptyId: string, pid: number): Promise<{ forced: boolean }>;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */

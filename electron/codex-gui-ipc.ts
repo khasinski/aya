@@ -16,6 +16,7 @@ import { exportArtifactMedia } from './gui-artifact-media';
 import { archiveConversation,hydrateConversationArtifact,listConversations,loadConversation,readArchivedConversation,saveConversation } from './gui-conversation-store';
 import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
 import { GuiRecoveryJournal } from './gui-recovery-journal';
+import { listAgentServers,localServerUrl,stopAgentServer } from './agent-servers';
 import { AYA_HOME } from './paths';
 import { readWorkspaceFile } from './workspace-file';
 function normalizeGuiAgent(raw: unknown): GuiAgentKind {
@@ -315,6 +316,9 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return saveGuiArtifact(artifact, event.sender);
     }
     if (!entry) throw Error('Panel is disconnected');
+    if (action === 'servers') return listAgentServers(entry.session.pid);
+    if (action === 'stop-server') return stopAgentServer(entry.session.pid, Number(value));
+    if (action === 'open-server') return openExternal(localServerUrl(value));
     if (action === 'models') return entry.session.models();
     if (action === 'steer') return entry.session.steer(String(value));
     if (action === 'pick-attachments') {
