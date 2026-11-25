@@ -161,7 +161,7 @@ test("Claude restarts on a fork cut at the previous turn and reverts its checkpo
     const result = await session.editFromHere({ claudeUser: b.claudeUser, resumeAt: a.head });
     assert.notEqual(result.threadId, first.threadId);
     const args = events.slice(before).find(e => e.method === "fixture/config").params.args;
-    assert.deepEqual(args.slice(args.indexOf("--resume")), ["--resume", first.threadId, "--resume-session-at", a.head, "--fork-session", "--session-id", result.threadId]);
+    assert.deepEqual(args.slice(args.indexOf("--resume")), ["--resume", first.threadId, "--resume-session-at", a.head, "--fork-session", "--session-id", result.threadId, "--allow-dangerously-skip-permissions"]);
     assert.equal(events.slice(before).some(e => e.method === "aya/disconnected"), false, "the restart is not a disconnect");
     assert.equal(events.slice(before).find(e => e.method === "aya/session").params.threadId, result.threadId);
     assert.equal((await turn("note delta")).text, "I remember: alpha, delta");
