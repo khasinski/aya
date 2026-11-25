@@ -4,6 +4,7 @@
 
 - Conversation GUI: show subagents as their own activity rows with the task they were given, their tool calls and their final report. Claude's background subagents stay running after the turn that started them, and the pane reports how many are still working.
 - Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.
+- Conversation GUI: stop a single subagent with the Stop button on its activity row, for Claude and Codex. Stop in the composer stops the turn and every subagent it started, including background subagents still running after the turn ended. A running Claude subagent's row shows what its shell commands print while they run.
 - Fix Claude GUI appending the reply Claude writes when a background subagent finishes to the previous reply, and replacing that reply's text; the follow-up is now a turn and reply of its own. A subagent's own text no longer appears as Claude's reply.
 
 ## v0.20.0 - 2026-11-22

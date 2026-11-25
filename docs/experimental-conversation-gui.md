@@ -39,6 +39,10 @@ A subagent appears in the tool activity as its own row: **Subagent (type): task*
 
 Claude Code runs subagents in the background by default: the turn that started one ends while it keeps working. Its row stays running, the turn status reads *1 subagent working in the background…*, and the pane stays *working* in the status rail. When the subagent finishes, Claude continues by itself in a new turn with a reply of its own.
 
+A running subagent's row has its own **Stop** button, which stops that subagent alone: Claude is sent `stop_task` for its task, and Codex has the turn on the subagent's thread interrupted. The row ends as stopped (■), and Claude usually replies by itself to say the subagent was stopped. The composer's **Stop** stays while subagents work in the background, even after the turn ended, and stops the turn and every subagent still running, so no *working in the background* status is left behind.
+
+While a Claude subagent runs a shell command, its row shows what the command prints as it runs. Claude Code writes that output to a task file under its temporary directory (`/tmp/claude-<uid>` on macOS, or `CLAUDE_CODE_TMPDIR` when set); Aya reads the end of it about four times a second until the command ends. The file layout is Claude Code's own: if it cannot be found, the row still shows the subagent's tool calls and its final report. Codex subagents show their last state instead.
+
 An approval or question from a subagent says which subagent asked (*Requested by Subagent: Read the config*) and stays above the composer after the main turn ends, because the subagent is still waiting for the answer. A subagent's own messages never become the conversation's reply.
 
 ## Measured task progress

@@ -364,6 +364,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) });
     }
     if (action === 'interrupt') return entry.session.interrupt();
+    if (action === 'stop-subagent') { if (!entry.session.stopSubagent) throw Error('This agent cannot stop a single subagent'); return entry.session.stopSubagent(String(value)); }
     if (action === 'read-linked-file') return readWorkspaceFile(entry.cwd, value);
     if (action === 'image') return workspaceImage(entry.cwd, String(value));
     if (action === 'command') { const p = value as { name: string; argument: string }; return entry.session.command(p.name, p.argument); }

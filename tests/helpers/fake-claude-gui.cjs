@@ -11,6 +11,29 @@ let chromeConnected = process.argv.includes('--chrome');
 
 const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 
+// A background subagent running a shell command that prints a line every 150 ms into the task output file Claude
+// Code 2.1.332 writes: <CLAUDE_CODE_TMPDIR>/claude-<uid>/<cwd slug>/<session>/tasks/<task>.output.
+let runningAgent = null;
+const startTickingAgent = () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const dir = path.join(path.resolve(process.env.CLAUDE_CODE_TMPDIR || '/tmp', `claude-${process.getuid()}`), process.cwd().replace(/[^a-zA-Z0-9]/g, '-'), 'claude-test-thread', 'tasks');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'bash-1.output');
+  fs.writeFileSync(file, '');
+  let tick = 0;
+  const timer = setInterval(() => { if (tick < 200) fs.appendFileSync(file, `tick ${++tick}\n`); }, 150);
+  runningAgent = { timer };
+  write({ type: 'system', subtype: 'task_started', task_id: 'bash-1', tool_use_id: 'toolu_tick', description: 'Print ticks', is_backgrounded: false, parent_task_id: 'agent-2', owned_by_subagent: true, task_type: 'local_bash', session_id: 'claude-test-thread' });
+};
+/** Stops the ticking subagent as Claude does: the shell task, then the agent. */
+const stopTickingAgent = () => {
+  if (!runningAgent) return false;
+  clearInterval(runningAgent.timer); runningAgent = null;
+  write({ type: 'system', subtype: 'task_notification', task_id: 'agent-2', tool_use_id: 'toolu_agent2', status: 'stopped', summary: 'Print ticks' });
+  write({ type: 'system', subtype: 'task_notification', task_id: 'bash-1', tool_use_id: 'toolu_tick', status: 'stopped', output_file: '', summary: 'Print ticks' });
+  return true;
+};
+
 const complete = (text) => {
   write({
     type: 'stream_event',
@@ -130,7 +153,21 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       });
       return;
     }
+    if (subtype === 'stop_task') {
+      write({ method: 'fixture/stop-task', params: { taskId: req.task_id } });
+      const stopped = req.task_id === 'agent-2' && stopTickingAgent();
+      write({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: {} } });
+      if (stopped && !busy) {
+        // Claude reports the stop in a turn it starts by itself.
+        write({ type: 'system', subtype: 'init', session_id: 'claude-test-thread', model: currentModel });
+        write({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'The subagent was stopped.' } } });
+        write({ type: 'result', subtype: 'success', is_error: false, result: 'The subagent was stopped.' });
+      }
+      return;
+    }
     if (subtype === 'interrupt') {
+      // Claude 2.1.332's interrupt also stops background agents, for a client without its own per-task stop.
+      if (!process.argv.includes('--interrupt-spares-agents')) stopTickingAgent();
       write({
         type: 'control_response',
         response: { subtype: 'success', request_id: message.request_id, response: {} },
@@ -231,6 +268,16 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         write({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_agent', content: [{ type: 'text', text: 'a.txt says hello' }] }] } });
         complete('The file says hello.');
       }
+    } else if (prompt === 'stoppable-agent' || prompt === 'stoppable-agent-busy') {
+      write({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', content_block: { type: 'tool_use', id: 'toolu_agent2', name: 'Agent', input: {} } } });
+      write({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'toolu_agent2', name: 'Agent', input: { description: 'Print ticks', subagent_type: 'general-purpose', prompt: 'Print ticks' } }] } });
+      write({ type: 'system', subtype: 'task_started', task_id: 'agent-2', tool_use_id: 'toolu_agent2', description: 'Print ticks', subagent_type: 'general-purpose', is_backgrounded: true, task_type: 'local_agent', session_id: 'claude-test-thread' });
+      write({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_agent2', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }] } });
+      write({ type: 'assistant', parent_tool_use_id: 'toolu_agent2', message: { content: [{ type: 'tool_use', id: 'toolu_tick', name: 'Bash', input: { command: 'for i in $(seq 200); do echo tick $i; sleep 0.15; done', description: 'Print ticks' } }] } });
+      startTickingAgent();
+      // The busy variant keeps its turn running alongside the subagent.
+      if (prompt === 'stoppable-agent-busy') return;
+      complete('A subagent is printing ticks.');
     } else if (prompt === 'wait') {
       return;
     } else if (prompt === 'question') {

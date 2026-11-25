@@ -9,6 +9,7 @@ import type { GuiEvent, GuiArtifact, GuiApprovalDecision } from '../shared/codex
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
+const receivers = (item: Record<string, unknown> | undefined): string[] => Array.isArray(item?.receiverThreadIds) ? item.receiverThreadIds.filter((thread): thread is string => typeof thread === 'string') : [];
 import { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, presentArtifact } from './gui-artifact-tools';
 export { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, workspaceImage, presentArtifact } from './gui-artifact-tools';
 
@@ -26,6 +27,10 @@ export class CodexGuiSession {
   private sideThreads = new Map<string, { text: string; done: (error?: Error) => void }>();
   /** Spawned subagents' threads and what each was asked to do, from the main thread's collab calls. */
   private subagentThreads = new Map<string, string>();
+  /** Spawn calls by item ID, and the running turn of each subagent thread: a spawn call ends at once, but its row
+   *  runs (and can be stopped) for as long as its agent's turn does. */
+  private subagentSpawns = new Map<string, Record<string, unknown>>();
+  private childTurns = new Map<string, string>();
   private busy = false;
   private samplingEpoch = 0;
   private samplingWaiters = new Set<() => void>();
@@ -50,6 +55,7 @@ export class CodexGuiSession {
     this.writer?.close(); this.writer = null;
     for (const entry of this.pending.values()) { clearTimeout(entry.timer); entry.reject(Error(message)); }
     this.pending.clear(); this.requests.clear(); this.busy = false; this.turnId = null;
+    this.subagentSpawns.clear(); this.childTurns.clear();
     for (const wake of this.samplingWaiters) wake();
     if (!this.closing) this.emit({ method: 'aya/disconnected', params: { message } });
   }
@@ -226,9 +232,27 @@ export class CodexGuiSession {
       void this.rpc('thread/unsubscribe', { threadId: sideId }).catch(() => {});
     }
   }
+  /** Stops the turn and every subagent still running, including one that outlived it. */
   async interrupt() {
     if (this.busy && !this.turnId && this.startingTurn) await this.startingTurn;
-    if (this.turnId) await this.rpc('turn/interrupt', { threadId: this.threadId, turnId: this.turnId });
+    const children = [...this.childTurns].map(([threadId, turnId]) => this.rpc('turn/interrupt', { threadId, turnId }).catch(() => {}));
+    await Promise.all([...(this.turnId ? [this.rpc('turn/interrupt', { threadId: this.threadId, turnId: this.turnId })] : []), ...children]);
+  }
+  /** Stops one spawned subagent by interrupting its thread's turn; its row ends when that turn does. */
+  async stopSubagent(itemId: string) {
+    const threads = receivers(this.subagentSpawns.get(itemId)).filter(thread => this.childTurns.has(thread));
+    if (!threads.length) throw Error('This subagent is not running');
+    await Promise.all(threads.map(threadId => this.rpc('turn/interrupt', { threadId, turnId: this.childTurns.get(threadId)! })));
+  }
+  private spawnRunning(item: Record<string, unknown>) { return receivers(item).some(thread => this.childTurns.has(thread)); }
+  /** A subagent's turn started or ended: its spawn call's row runs, or ends with that turn. */
+  private childTurnChanged(thread: string, method: string, turn: Record<string, unknown>) {
+    if (method === 'turn/started') this.childTurns.set(thread, text(turn.id)); else this.childTurns.delete(thread);
+    for (const item of this.subagentSpawns.values()) {
+      if (!receivers(item).includes(thread)) continue;
+      if (method === 'turn/started') this.emit({ method: 'item/started', params: { threadId: this.threadId, item: { ...item, status: 'inProgress', background: true } } });
+      else if (!this.spawnRunning(item)) this.emit({ method: 'item/completed', params: { threadId: this.threadId, item: { ...item, status: turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' ? 'failed' : 'completed', background: true } } });
+    }
   }
   async respond(id: string | number, value: { decision?: GuiApprovalDecision; answers?: Record<string, string> }) {
     const request = this.requests.get(id);
@@ -321,11 +345,20 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
     // App-server can also publish notifications for a spawned agent's thread.
     // Those turns must not change this pane's active turn or its conversation.
     // Server requests above still need their own replies regardless of origin.
-    if (/^(?:turn\/|item\/|thread\/goal\/)/.test(method) && this.threadId && typeof params.threadId === 'string' && params.threadId !== this.threadId) return;
+    if (/^(?:turn\/|item\/|thread\/goal\/)/.test(method) && this.threadId && typeof params.threadId === 'string' && params.threadId !== this.threadId) {
+      if (method === 'turn/started' || method === 'turn/completed') this.childTurnChanged(params.threadId, method, object(params.turn));
+      return;
+    }
     const item = object(params.item);
     if (item.type === 'collabAgentToolCall' && item.tool === 'spawnAgent' && Array.isArray(item.receiverThreadIds)) {
       const task = text(item.prompt).trim().split('\n')[0]!.slice(0, 80);
       for (const thread of item.receiverThreadIds) if (typeof thread === 'string') this.subagentThreads.set(thread, task);
+    }
+    if (item.type === 'collabAgentToolCall' && item.tool === 'spawnAgent' && text(item.id)) {
+      this.subagentSpawns.delete(text(item.id)); this.subagentSpawns.set(text(item.id), item);
+      if (this.subagentSpawns.size > 100) this.subagentSpawns.delete(this.subagentSpawns.keys().next().value!);
+      // The call ended, but the agent it started still works: its row keeps running.
+      if (method === 'item/completed' && this.spawnRunning(item)) { this.emit({ method: 'item/started', params: { ...params, item: { ...item, status: 'inProgress', background: true } } }); return; }
     }
     if (method === 'turn/started') { this.samplingEpoch++; this.turnId = text(object(params.turn).id); this.busy = true; }
     if (method === 'turn/completed') {
