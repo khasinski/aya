@@ -3,7 +3,7 @@
 // files are never touched. The diff between the two trees is what the agent changed in that turn, without edits made
 // before it or a pull/rebase done between turns. Idea after T3 Code's checkpoints (MIT); T3 keeps them as hidden refs,
 // Aya keeps the tree ids in the conversation instead and says so when git has since pruned them.
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { copyFile,lstat,mkdtemp,readdir,rm,stat,utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,11 +16,16 @@ const DIFF_MAX_BYTES = 5_000_000;
 const TRUNCATED_MARKER = '[Diff shortened to stay within the 5 MB limit.]';
 const OBJECT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
-export interface WorkingTreeSnapshot { root: string; tree: string; head: string | null }
+/** `large`: files over SNAPSHOT_FILE_LIMIT the tree leaves out, with what is cheap to compare between snapshots. */
+export interface WorkingTreeSnapshot { root: string; tree: string; head: string | null; large?: LargeFile[] }
+export interface LargeFile { path: string; size: number; mtimeMs: number }
 export interface TurnDiffFile { path: string; additions: number | null; deletions: number | null }
 /** What the conversation keeps for one finished turn: enough to show its diff again after a restart. */
 /** `files` holds at most MAX_TURN_DIFF_FILES; `totals` counts all of them when there were more. */
-export interface TurnDiffSummary { id: string; turnId: string; root: string; start: string; end: string; startHead: string | null; files: TurnDiffFile[]; totals?: TurnDiffTotals }
+export interface TurnDiffSummary { id: string; turnId: string; root: string; start: string; end: string; startHead: string | null; files: TurnDiffFile[]; totals?: TurnDiffTotals; largeFiles?: LargeFilesChanged }
+/** Files too large to snapshot that the turn created, changed or removed: the first MAX_LARGE_NAMES names and the count. */
+export interface LargeFilesChanged { count: number; paths: string[] }
+export const MAX_LARGE_NAMES = 10;
 export interface TurnDiffTotals { files: number; additions: number; deletions: number }
 /** A turn's summary lists this many files; the diff viewer still shows all of them. */
 export const MAX_TURN_DIFF_FILES = 200;
@@ -28,8 +33,13 @@ export interface DiffCommit { sha: string; short: string; subject: string; autho
 
 interface GitResult { code: number | null; stdout: string; truncated: boolean; timedOut: boolean }
 
-function git(cwd: string, args: string[], options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; maxBytes?: number; input?: string } = {}): Promise<GitResult> {
+/** Snapshot git processes still running: killed when their pane closes, and when Aya exits, so none writes into the
+ *  repository or the temp directory afterwards. */
+const children = new Set<ChildProcess>();
+
+function git(cwd: string, args: string[], options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; maxBytes?: number; input?: string; signal?: AbortSignal } = {}): Promise<GitResult> {
   return new Promise(resolve => {
+    if (options.signal?.aborted) { resolve({ code: null, stdout: '', truncated: false, timedOut: false }); return; }
     const child = spawn('git', ['-c', 'core.quotePath=false', ...args], { cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', ...options.env }, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     const chunks: Buffer[] = []; let bytes = 0, truncated = false, timedOut = false, settled = false;
     const max = options.maxBytes ?? DIFF_MAX_BYTES;
@@ -39,7 +49,10 @@ function git(cwd: string, args: string[], options: { env?: NodeJS.ProcessEnv; ti
       if (bytes + chunk.length > max) { chunks.push(chunk.subarray(0, max - bytes)); bytes = max; truncated = true; child.kill('SIGKILL'); return; }
       chunks.push(chunk); bytes += chunk.length;
     });
-    const done = (code: number | null) => { if (settled) return; settled = true; clearTimeout(timer); resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), truncated, timedOut }); };
+    children.add(child);
+    const abort = () => child.kill('SIGKILL');
+    options.signal?.addEventListener('abort', abort, { once: true });
+    const done = (code: number | null) => { if (settled) return; settled = true; clearTimeout(timer); children.delete(child); options.signal?.removeEventListener('abort', abort); resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), truncated, timedOut }); };
     child.on('error', () => done(null));
     child.on('close', code => done(code));
   });
@@ -66,6 +79,19 @@ const temporary = new Set<string>();
 let exitHook = false;
 const TEMP_PREFIXES = ['aya-turn-', 'aya-snapshot-', 'aya-restore-'];
 
+/** Kills every snapshot git still running and removes its temp directory, at once (Aya exiting). */
+export function stopAllSnapshots() {
+  for (const child of children) { try { child.kill('SIGKILL'); } catch { /* gone */ } }
+  for (const entry of temporary) { try { rmSync(entry, { recursive: true, force: true }); } catch { /* quitting */ } }
+}
+
+/** Large files that differ between two snapshots (new, removed, or another size or modification time). */
+export function largeFilesChanged(start: LargeFile[] = [], end: LargeFile[] = []): LargeFilesChanged | undefined {
+  const before = new Map(start.map(file => [file.path, file])), after = new Set(end.map(file => file.path));
+  const changed = [...end.filter(file => { const was = before.get(file.path); return !was || was.size !== file.size || was.mtimeMs !== file.mtimeMs; }).map(file => file.path), ...start.filter(file => !after.has(file.path)).map(file => file.path)].sort();
+  return changed.length ? { count: changed.length, paths: changed.slice(0, MAX_LARGE_NAMES) } : undefined;
+}
+
 /** Removes what an earlier run left in the temp directory when it quit mid-snapshot. Only entries older than `minAgeMs`,
  *  so a snapshot another running Aya is taking is not touched. */
 export async function sweepSnapshotTemp(dir = tmpdir(), minAgeMs = 60 * 60 * 1000): Promise<void> {
@@ -87,13 +113,13 @@ async function filterOverrides(root: string): Promise<string[]> {
 }
 
 /** Untracked and modified files over SNAPSHOT_FILE_LIMIT, relative to the root. Null when there are too many to list. */
-async function largeFiles(root: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string[] | null> {
-  const listed = await git(root, ['ls-files', '-z', '--others', '--modified', '--exclude-standard'], { env, timeoutMs, maxBytes: 16 * 1024 * 1024 });
+async function largeFiles(root: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal): Promise<LargeFile[] | null> {
+  const listed = await git(root, ['ls-files', '-z', '--others', '--modified', '--exclude-standard'], { env, timeoutMs, maxBytes: 16 * 1024 * 1024, signal });
   if (!ok(listed) || listed.truncated) return null;
-  const files = [...new Set(listed.stdout.split('\0').filter(Boolean))], large: string[] = [];
+  const files = [...new Set(listed.stdout.split('\0').filter(Boolean))], large: LargeFile[] = [];
   for (let i = 0; i < files.length; i += 64) {
-    const sizes = await Promise.all(files.slice(i, i + 64).map(file => lstat(path.join(root, file)).then(info => info.isFile() ? info.size : 0, () => 0)));
-    sizes.forEach((size, j) => { if (size > SNAPSHOT_FILE_LIMIT) large.push(files[i + j]); });
+    const infos = await Promise.all(files.slice(i, i + 64).map(file => lstat(path.join(root, file)).then(info => info.isFile() ? info : null, () => null)));
+    infos.forEach((info, j) => { if (info && info.size > SNAPSHOT_FILE_LIMIT) large.push({ path: files[i + j], size: info.size, mtimeMs: info.mtimeMs }); });
     if (large.length > MAX_SKIPPED_FILES) return null;
   }
   return large;
@@ -102,14 +128,14 @@ async function largeFiles(root: string, env: NodeJS.ProcessEnv, timeoutMs: numbe
 /** Record the working tree (tracked and untracked files, minus ignored ones) as a tree object. Null when `cwd` is not
  *  in a git repository, or when it takes longer than `timeLimitMs`. Files over SNAPSHOT_FILE_LIMIT keep what the
  *  index has (an untracked one is left out), and no clean filter runs. */
-export async function snapshotWorkingTree(cwd: string, timeLimitMs = SNAPSHOT_TIME_LIMIT_MS, known?: Repository): Promise<WorkingTreeSnapshot | null> {
+export async function snapshotWorkingTree(cwd: string, timeLimitMs = SNAPSHOT_TIME_LIMIT_MS, known?: Repository, signal?: AbortSignal): Promise<WorkingTreeSnapshot | null> {
   const deadline = Date.now() + timeLimitMs;
   const left = () => Math.max(1, deadline - Date.now());
   const repo = known ?? await repositoryOf(cwd);
-  if (!repo) return null;
+  if (!repo || signal?.aborted) return null;
   const dir = await mkdtemp(path.join(tmpdir(), 'aya-turn-'));
   temporary.add(dir);
-  if (!exitHook) { exitHook = true; process.once('exit', () => { for (const entry of temporary) { try { rmSync(entry, { recursive: true, force: true }); } catch { /* quitting */ } } }); }
+  if (!exitHook) { exitHook = true; process.once('exit', stopAllSnapshots); }
   try {
     const index = path.join(dir, 'index');
     // Starting from a copy of the real index lets `git add` skip files whose stat data is unchanged. The copy keeps the
@@ -117,15 +143,15 @@ export async function snapshotWorkingTree(cwd: string, timeLimitMs = SNAPSHOT_TI
     const existing = await stat(repo.index).catch(() => null);
     if (existing) { await copyFile(repo.index, index); await utimes(index, existing.atime, existing.mtime); }
     const env = { GIT_INDEX_FILE: index };
-    const [filters, large] = await Promise.all([filterOverrides(repo.root), largeFiles(repo.root, env, left())]);
-    if (!large || Date.now() >= deadline) return null;
+    const [filters, large] = await Promise.all([filterOverrides(repo.root), largeFiles(repo.root, env, left(), signal)]);
+    if (!large || Date.now() >= deadline || signal?.aborted) return null;
     const config = ['-c', 'core.splitIndex=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', ...filters];
-    const skip = large.map(file => `:(exclude,literal)${file}`);
-    if (!ok(await git(repo.root, [...config, 'add', '-A', '--', '.', ...skip], { env, timeoutMs: left(), maxBytes: 64 * 1024 }))) return null;
-    const tree = await git(repo.root, [...config, 'write-tree'], { env, timeoutMs: left(), maxBytes: 1024 });
+    const skip = large.map(file => `:(exclude,literal)${file.path}`);
+    if (!ok(await git(repo.root, [...config, 'add', '-A', '--', '.', ...skip], { env, timeoutMs: left(), maxBytes: 64 * 1024, signal }))) return null;
+    const tree = await git(repo.root, [...config, 'write-tree'], { env, timeoutMs: left(), maxBytes: 1024, signal });
     if (!ok(tree) || !OBJECT_ID.test(tree.stdout.trim())) return null;
-    const head = await git(repo.root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { timeoutMs: left(), maxBytes: 1024 });
-    return { root: repo.root, tree: tree.stdout.trim(), head: ok(head) && OBJECT_ID.test(head.stdout.trim()) ? head.stdout.trim() : null };
+    const head = await git(repo.root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { timeoutMs: left(), maxBytes: 1024, signal });
+    return { root: repo.root, tree: tree.stdout.trim(), head: ok(head) && OBJECT_ID.test(head.stdout.trim()) ? head.stdout.trim() : null, ...(large.length ? { large } : {}) };
   } catch {
     return null;
   } finally {
@@ -224,11 +250,22 @@ export class GuiTurnDiffs {
 
   constructor() { if (!swept) { swept = true; void sweepSnapshotTemp(); } }
 
-  private async take(cwd: string) {
+  /** Abort controllers of each pane's snapshots in progress. */
+  private running = new Map<string, Set<AbortController>>();
+
+  private async take(cwd: string, key?: string) {
+    const controller = new AbortController();
+    if (key) { let set = this.running.get(key); if (!set) { set = new Set(); this.running.set(key, set); } set.add(controller); }
+    try { return await this.measure(cwd, controller.signal); }
+    finally { const set = key ? this.running.get(key) : undefined; set?.delete(controller); if (key && set && !set.size) this.running.delete(key); }
+  }
+
+  private async measure(cwd: string, signal: AbortSignal) {
     const repo = await repositoryOf(cwd).catch(() => null);
-    if (!repo || this.slow.has(repo.root)) return null;
+    if (!repo || this.slow.has(repo.root) || signal.aborted) return null;
     const started = Date.now();
-    const snapshot = await snapshotWorkingTree(cwd, SNAPSHOT_TIME_LIMIT_MS, repo).catch(() => null);
+    const snapshot = await snapshotWorkingTree(cwd, SNAPSHOT_TIME_LIMIT_MS, repo, signal).catch(() => null);
+    if (signal.aborted) return null;
     const took = Date.now() - started;
     if (took >= SNAPSHOT_TIME_LIMIT_MS - 50 || (took >= SLOW_SNAPSHOT_MS && this.slowOnce.has(repo.root))) this.slow.add(repo.root);
     else if (took >= SLOW_SNAPSHOT_MS) this.slowOnce.add(repo.root);
@@ -239,7 +276,7 @@ export class GuiTurnDiffs {
    *  Waits at most SEND_WAIT_MS; the snapshot (the edit-from-here checkpoint too) or null when it is not ready. */
   beginTurn(key: string, cwd: string): Promise<WorkingTreeSnapshot | null> {
     let pending = this.active.get(key);
-    if (!pending) { pending = this.take(cwd); this.active.set(key, pending); }
+    if (!pending) { pending = this.take(cwd, key); this.active.set(key, pending); }
     return within(pending, SEND_WAIT_MS);
   }
 
@@ -253,8 +290,8 @@ export class GuiTurnDiffs {
   /** Watch a pane's events: a turn the agent started by itself gets a (late) start snapshot, and a finished turn that
    *  changed files is reported with an `aya/turnDiff` event. */
   observe(key: string, cwd: string, payload: { method?: string; params?: Record<string, unknown> }, emit: (event: { method: string; params: Record<string, unknown> }) => void) {
-    if (payload.method === 'aya/disconnected') { this.active.delete(key); return; }
-    if (payload.method === 'turn/started' && !this.active.has(key)) this.active.set(key, this.take(cwd));
+    if (payload.method === 'aya/disconnected') { this.forget(key); return; }
+    if (payload.method === 'turn/started' && !this.active.has(key)) this.active.set(key, this.take(cwd, key));
     if (payload.method !== 'turn/completed') return;
     const pending = this.active.get(key);
     if (!pending) return;
@@ -263,17 +300,24 @@ export class GuiTurnDiffs {
     void (async () => {
       const start = await pending;
       if (!start) return;
-      const end = await this.take(cwd);
-      if (!end || end.tree === start.tree) return;
-      const files = await changedFiles(start.root, start.tree, end.tree).catch(() => []);
-      if (!files.length) return;
+      const end = await this.take(cwd, key);
+      if (!end) return;
+      const large = largeFilesChanged(start.large, end.large);
+      if (end.tree === start.tree && !large) return;
+      const files = end.tree === start.tree ? [] : await changedFiles(start.root, start.tree, end.tree).catch(() => []);
+      if (!files.length && !large) return;
       const totals = files.length > MAX_TURN_DIFF_FILES ? { files: files.length, additions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0), deletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0) } : undefined;
-      const summary: TurnDiffSummary = { id: `turn-diff-${Date.now().toString(36)}-${++nextSummaryId}`, turnId: typeof turn.id === 'string' ? turn.id : '', root: start.root, start: start.tree, end: end.tree, startHead: start.head, files: files.slice(0, MAX_TURN_DIFF_FILES), ...(totals ? { totals } : {}) };
+      const summary: TurnDiffSummary = { id: `turn-diff-${Date.now().toString(36)}-${++nextSummaryId}`, turnId: typeof turn.id === 'string' ? turn.id : '', root: start.root, start: start.tree, end: end.tree, startHead: start.head, files: files.slice(0, MAX_TURN_DIFF_FILES), ...(totals ? { totals } : {}), ...(large ? { largeFiles: large } : {}) };
       emit({ method: 'aya/turnDiff', params: { turnDiff: summary } });
     })().catch(() => {});
   }
 
-  forget(key: string) { this.active.delete(key); }
+  /** Drops the pane's running turn and kills its snapshots in progress (the pane closed or reconnects). */
+  forget(key: string) {
+    this.active.delete(key);
+    for (const controller of this.running.get(key) ?? []) controller.abort();
+    this.running.delete(key);
+  }
 }
 
 /** The `codex-gui` IPC actions behind the diff viewer. `cwd` comes from the main process's record of the pane. */

@@ -2,7 +2,7 @@ import { useEffect,useMemo,useRef,useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DiffAnchor } from '../diff-review';
 import { reviewCommentsBlock } from '../gui-context';
-import { parseDiffSourceId,repoRelativePath,turnDiffFileCount,turnDiffSummaryText,type TurnDiffSummary } from '../gui-turn-diff';
+import { largeFilesText,parseDiffSourceId,repoRelativePath,turnDiffFileCount,turnDiffSummaryText,type TurnDiffSummary } from '../gui-turn-diff';
 import type { DiffComment } from '../types';
 import { uuid } from '../uuid';
 import { DiffPanel,type DiffSource } from './DiffPanel';
@@ -18,6 +18,7 @@ export function TurnChanges({ summary, onOpen }: { summary: TurnDiffSummary; onO
     <header><strong>Changes in this turn</strong><small>{turnDiffSummaryText(summary.files, summary.totals)}</small><button type="button" onClick={() => onOpen(null)}>View changes</button></header>
     <ul>{summary.files.slice(0, SHOWN_FILES).map(file => <li key={file.path}><button type="button" title={`Show ${file.path} in the diff`} onClick={() => onOpen(file.path)}><code>{file.path}</code></button><small>{file.additions === null ? 'binary' : <><span className="aya-gui-turn-changes-add">+{file.additions}</span> <span className="aya-gui-turn-changes-del">−{file.deletions}</span></>}</small></li>)}
       {more > 0 && <li><button type="button" onClick={() => onOpen(null)}>{more} more {more === 1 ? 'file' : 'files'}</button></li>}</ul>
+    {summary.largeFiles && <p className="aya-gui-turn-changes-large" title={summary.largeFiles.paths.join('\n')}>{largeFilesText(summary.largeFiles)}</p>}
   </section>;
 }
 

@@ -7,9 +7,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { GuiTurnDiffs, MAX_TURN_DIFF_FILES, SEND_WAIT_MS, SNAPSHOT_FILE_LIMIT, changedFiles, commitDiff, diffSnapshots, handleGuiDiffAction, listBranchCommits, repositoryOf, snapshotWorkingTree, sweepSnapshotTemp } from "../dist-electron/gui-turn-diff.js";
+import { GuiTurnDiffs, MAX_LARGE_NAMES, MAX_TURN_DIFF_FILES, largeFilesChanged, stopAllSnapshots, SEND_WAIT_MS, SNAPSHOT_FILE_LIMIT, changedFiles, commitDiff, diffSnapshots, handleGuiDiffAction, listBranchCommits, repositoryOf, snapshotWorkingTree, sweepSnapshotTemp } from "../dist-electron/gui-turn-diff.js";
 import { GuiPanelState } from "../dist-electron/gui-panel-state.js";
-import { fileChangePaths, parseDiffSourceId, repoRelativePath, turnDiffSummaryText } from "../dist-test/gui-turn-diff.js";
+import { fileChangePaths, largeFilesText, parseDiffSourceId, repoRelativePath, turnDiffSummaryText } from "../dist-test/gui-turn-diff.js";
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), "aya-turn-diff-"));
@@ -276,4 +276,78 @@ test("a turn that changed many files lists the first ones with totals for all", 
     assert.deepEqual(turnDiff.totals, { files: MAX_TURN_DIFF_FILES + 5, additions: 2 * (MAX_TURN_DIFF_FILES + 5), deletions: 0 });
     assert.equal(turnDiffSummaryText(turnDiff.files, turnDiff.totals), `${MAX_TURN_DIFF_FILES + 5} files changed · +${2 * (MAX_TURN_DIFF_FILES + 5)} −0`);
   } finally { done(); }
+});
+
+test("a turn that changed files too large to snapshot names them in its summary", async () => {
+  const { dir, done } = repo();
+  try {
+    const big = (name, byte) => writeFileSync(join(dir, name), Buffer.alloc(SNAPSHOT_FILE_LIMIT + 1, byte));
+    big("same.db", 1); big("gone.log", 2); big("edited.sqlite3", 3);
+    const diffs = new GuiTurnDiffs(), events = [];
+    await diffs.beginTurn("pane", dir);
+    big("new.bin", 4);
+    rmSync(join(dir, "gone.log"));
+    writeFileSync(join(dir, "edited.sqlite3"), Buffer.alloc(SNAPSHOT_FILE_LIMIT + 9, 5));
+    diffs.observe("pane", dir, { method: "turn/completed", params: { turn: { id: "t" } } }, event => events.push(event));
+    await waitForEvent(events);
+    const { turnDiff } = events[0].params;
+    assert.deepEqual(turnDiff.files, [], "nothing small changed, and the turn is still reported");
+    assert.deepEqual(turnDiff.largeFiles, { count: 3, paths: ["edited.sqlite3", "gone.log", "new.bin"] });
+    assert.equal(largeFilesText(turnDiff.largeFiles, 2), "3 large files changed (not shown): edited.sqlite3, gone.log, and 1 more");
+  } finally { done(); }
+});
+
+test("large-file changes compare size and modification time, and cap the names", () => {
+  const f = (path, size = 9, mtimeMs = 1) => ({ path, size, mtimeMs });
+  assert.equal(largeFilesChanged([f("a")], [f("a")]), undefined);
+  assert.deepEqual(largeFilesChanged([f("a")], [f("a", 9, 2)]), { count: 1, paths: ["a"] });
+  assert.deepEqual(largeFilesChanged(undefined, [f("b", 10)]), { count: 1, paths: ["b"] });
+  const many = Array.from({ length: MAX_LARGE_NAMES + 3 }, (_, i) => f(`f${String(i).padStart(2, "0")}`));
+  assert.deepEqual(largeFilesChanged([], many), { count: MAX_LARGE_NAMES + 3, paths: many.slice(0, MAX_LARGE_NAMES).map(x => x.path) });
+});
+
+/** A git whose `add -A` takes 2 s and then leaves a marker, as a late snapshot writing into the repository would. */
+function lateGit() {
+  const bin = mkdtempSync(join(tmpdir(), "aya-late-git-")), temp = mkdtempSync(join(tmpdir(), "aya-late-tmp-"));
+  const marker = join(bin, "wrote-after-close");
+  const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
+  writeFileSync(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" add -A "*) sleep 2; touch '${marker}';; esac\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const saved = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR };
+  process.env.PATH = `${bin}:${saved.PATH}`; process.env.TMPDIR = temp;
+  return {
+    marker, temp,
+    restore: () => { process.env.PATH = saved.PATH; if (saved.TMPDIR === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved.TMPDIR; rmSync(bin, { recursive: true, force: true }); rmSync(temp, { recursive: true, force: true }); },
+  };
+}
+const until = async (check, ms = 3000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 25))) if (check()) return true; return check(); };
+
+test("closing a pane kills its snapshot in progress and removes the temp index", async () => {
+  const { dir, done } = repo();
+  const late = lateGit();
+  try {
+    const diffs = new GuiTurnDiffs();
+    const pending = diffs.beginTurn("pane", dir);
+    assert.ok(await until(() => readdirSync(late.temp).some(n => n.startsWith("aya-turn-"))), "the snapshot started");
+    await new Promise(r => setTimeout(r, 200));
+    diffs.forget("pane");
+    assert.equal(await pending, null);
+    assert.ok(await until(() => readdirSync(late.temp).length === 0), "the temp index is gone");
+    await new Promise(r => setTimeout(r, 2300));
+    assert.equal(existsSync(late.marker), false, "the killed git never wrote");
+  } finally { late.restore(); done(); }
+});
+
+test("quitting kills every snapshot git at once and removes their temp folders synchronously", async () => {
+  const { dir, done } = repo();
+  const late = lateGit();
+  try {
+    const pending = new GuiTurnDiffs().snapshotNow(dir, 5000);
+    assert.ok(await until(() => readdirSync(late.temp).some(n => n.startsWith("aya-turn-"))));
+    await new Promise(r => setTimeout(r, 200));
+    stopAllSnapshots();
+    assert.deepEqual(readdirSync(late.temp), [], "removed before the exit handler returns");
+    assert.equal(await pending, null);
+    await new Promise(r => setTimeout(r, 2300));
+    assert.equal(existsSync(late.marker), false);
+  } finally { late.restore(); done(); }
 });
