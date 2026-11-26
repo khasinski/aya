@@ -20,6 +20,8 @@ import {
 } from "../types";
 import { projectBaseCwd } from "../worktree";
 import { ConversationView } from "./ConversationView";
+import { PaneModeVeil } from "./PaneModeVeil";
+import { usePaneModeTransitions } from "../pane-mode-transition";
 import { KanbanView } from "./KanbanView";
 import { LocalErrorBoundary } from './LocalErrorBoundary';
 import { SplitResizeHandle } from "./SplitResizeHandle";
@@ -134,6 +136,7 @@ export const PaneGrid = memo(function PaneGrid({
   onSwitchToConversation,
   onSwitchToTerminal,
 }: Props) {
+  const modeTransitions = usePaneModeTransitions();
   // A stable lookup, so a GUI pane (memoised) does not re-render whenever another terminal's status changes.
   const terminalsRef = useRef(terminals);
   terminalsRef.current = terminals;
@@ -382,6 +385,12 @@ export const PaneGrid = memo(function PaneGrid({
             headerSlot={headerSlot}
           /></LocalErrorBoundary>
         );
+      })}
+      {[...modeTransitions].map(([id, state]) => {
+        // Terminal ⇄ Conversation: one veil over the pane body while either view loads (PaneModeVeil).
+        const pane = paneRects.find((p) => p.terminalId === id);
+        if (!state.transition || !pane || terminals[id]?.projectSlug !== activeProjectId) return null;
+        return <PaneModeVeil key={`veil:${id}`} terminalId={id} transition={state.transition} style={paneStyleFromRect(isSplit, pane.rect)} />;
       })}
       {activeProjectId &&
         paneDividers.map((divider) => (

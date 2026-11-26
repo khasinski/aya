@@ -5,6 +5,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback } from "react";
 import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
 import { paneCanSwitchMode, paneMode, PANE_MODE_SWITCH_EVENT, terminalSwitchRefusal, terminalSwitchWarning } from "../pane-mode";
+import { beginPaneModeSwitch, cancelPaneModeSwitch, paneModeSwapped } from "../pane-mode-transition";
 import { findProject } from "../project-helpers";
 import { forgetSpawn } from "../spawnSession";
 import { terminalKillRefusal } from "../terminal-kill-refusal";
@@ -50,10 +51,13 @@ export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTe
     if (refusal) return refusal;
     const warning = force ? null : terminalSwitchWarning(t);
     if (warning) return warning;
+    // From here the body fades into the loading veil; the views swap only once it covers the pane.
+    // The agent stops only under the veil, so its last screen ("exited") never shows.
+    await beginPaneModeSwitch(id, "gui", !!t.sessionId);
     if (t.exitCode === null && !t.stopped && !t.spawnDeferred) {
       const release = cancelPendingTerminalAttach(id);
       try { await window.aya.ptyKill(id); }
-      catch (error) { return terminalKillRefusal("restart", t.name, error); }
+      catch (error) { cancelPaneModeSwitch(id); return terminalKillRefusal("restart", t.name, error); }
       finally { release(); }
     }
     forgetSpawn(id);
@@ -83,6 +87,7 @@ export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTe
       const { sessionId: _old, ...rest } = restarted(cur);
       return { ...prev, [id]: { ...rest, ...(resume ? { sessionId: resume } : {}), interfaceMode: "terminal", resumeOnSwitch: true } };
     });
+    paneModeSwapped(id);
     appendProjectEvent({ projectSlug: t.projectSlug, terminalId: id, level: "active", title: `${t.name} switched to Terminal` });
   }, [terminalsRef, setTerminals, appendProjectEvent]);
 

@@ -539,4 +539,6 @@ function paneModeSession() {
   const arg = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
   return arg('--resume') || arg('--session-id') || '';
 }
+// A launch fails like a broken install while AYA_FAKE_CLAUDE_FAIL_FILE exists.
+if (process.env.AYA_FAKE_CLAUDE_FAIL_FILE && require('node:fs').existsSync(process.env.AYA_FAKE_CLAUDE_FAIL_FILE)) { process.stderr.write('fake claude: cannot start\n'); process.exit(3); }
 if (process.env.AYA_FAKE_CLAUDE_LAUNCH_LOG) require('node:fs').appendFileSync(process.env.AYA_FAKE_CLAUDE_LAUNCH_LOG, JSON.stringify({ args: process.argv.slice(2) }) + '\n');

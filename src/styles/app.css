@@ -1767,3 +1767,41 @@ body {
 }
 .aya-stacked-headerslot .aya-pane-mode-option { -webkit-app-region: no-drag; }
 .aya-tui-artifacts-empty { margin: 4px 0; max-width: 260px; color: var(--fg-secondary); font-size: 12px; line-height: 1.45; }
+
+/* Terminal ⇄ Conversation (src/pane-mode-transition.ts): the header stays, the body cross-fades through a veil. */
+:root { --aya-pane-mode-fade: 150ms; }
+.aya-pane-header-anchor { flex: none; }
+/* One fixed height in both modes, so a switch never moves the pane's body (32px buttons fit). */
+.aya-pane-header-anchor > header.aya-pane-header.aya-pane-header--unified { height: 40px; min-height: 0; padding-top: 0; padding-bottom: 0; }
+.aya-pane-header-detail { display: inline-flex; align-items: center; gap: 8px; min-width: 0; transition: opacity var(--aya-pane-mode-fade) ease; }
+.aya-pane-header-detail:empty { display: none; }
+.aya-pane-header--switching .aya-pane-header-detail { opacity: 0; pointer-events: none; }
+.aya-pane-header--switching .aya-pane-mode-option:disabled { opacity: 1; cursor: progress; }
+.aya-pane-mode-option { position: relative; }
+.aya-pane-mode-spinner {
+  position: absolute; inset: 2px; border-radius: 50%; pointer-events: none;
+  border: 1.5px solid transparent; border-top-color: var(--accent);
+  animation: aya-pane-mode-spin 0.8s linear infinite;
+}
+.aya-pane-mode-veil { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.aya-pane-mode-veil-body {
+  position: absolute; left: 0; right: 0; bottom: 0; top: 0; pointer-events: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  background: var(--aya-pane-bg, var(--bg)); color: var(--fg-secondary); font: 13px/1.4 var(--font-sans);
+  animation: aya-pane-mode-fade-in var(--aya-pane-mode-fade) ease both;
+  transition: opacity var(--aya-pane-mode-fade) ease;
+}
+.aya-pane-mode-veil-body strong { color: var(--fg-primary); font-weight: 500; }
+.aya-pane-mode-veil-body small { color: var(--fg-tertiary); font-size: 11px; }
+.aya-pane-mode-veil[data-phase="revealing"] .aya-pane-mode-veil-body { opacity: 0; }
+.aya-pane-mode-veil-spinner {
+  width: 18px; height: 18px; margin-bottom: 4px; border-radius: 50%;
+  border: 2px solid color-mix(in oklab, var(--accent) 22%, transparent); border-top-color: var(--accent);
+  animation: aya-pane-mode-spin 0.8s linear infinite;
+}
+@keyframes aya-pane-mode-fade-in { from { opacity: 0; } }
+@keyframes aya-pane-mode-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  :root { --aya-pane-mode-fade: 0ms; }
+  .aya-pane-mode-spinner, .aya-pane-mode-veil-spinner { animation-duration: 2.4s; }
+}

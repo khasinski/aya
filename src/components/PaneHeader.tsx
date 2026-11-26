@@ -1,9 +1,15 @@
 // The one header bar of an agent pane, in both of its modes: the terminal (TerminalView) and the Conversation
 // (ConversationView). Same layout and controls either way: icon and name, what the pane is doing, local servers,
 // the Terminal ⇄ Conversation switch and the Artifacts button; controls only a Conversation has go in `actions`.
+//
+// The <header> element itself belongs to the pane, not to the view: one element per pane id, which each view
+// renders its content into (a portal) and places at its top or in the stacked layout's slot. A switch swaps the
+// views in one commit, so the bar never unmounts, blinks or changes height; only its content changes.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { PANE_MODE_SHORTCUT_LABEL, PANE_MODE_SWITCH_EVENT, type PaneMode } from "../pane-mode";
+import { paneModeSwitching, setPaneModeMessage, usePaneModeTransition } from "../pane-mode-transition";
 
 export interface PaneModeSwitch {
   /** Switches the pane to its other mode; resolves to why it did not, or null. */
@@ -27,35 +33,54 @@ interface Props {
   /** Absent for a pane that has one mode only (no Conversation GUI for its agent, or a remote project). */
   modeSwitch?: PaneModeSwitch;
   /** The Artifacts button. In a Conversation the artifact drawer toggle; in a terminal the TUI artifacts control
-   *  (`aya present`), which the terminal pane passes in once it has one. */
+   *  (`aya present`). */
   artifacts?: ReactNode;
+  /** Draw the bar here (the stacked layout's top bar) instead of at the top of the view. */
+  slot?: HTMLElement | null;
 }
 
-export function PaneHeader({ mode, terminalId, icon, color, title, children, status, actions, servers, modeSwitch, artifacts }: Props) {
-  const [switching, setSwitching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const errorRef = useRef<string | null>(null);
-  errorRef.current = error;
+const hosts = new Map<string, HTMLElement>();
+/** The pane's header element, the same one for every view the pane shows. */
+export function paneHeaderElement(terminalId: string): HTMLElement {
+  let host = hosts.get(terminalId);
+  if (!host) { host = document.createElement("header"); hosts.set(terminalId, host); }
+  return host;
+}
+
+export function PaneHeader({ mode, terminalId, icon, color, title, children, status, actions, servers, modeSwitch, artifacts, slot = null }: Props) {
+  const host = paneHeaderElement(terminalId);
+  const anchor = useRef<HTMLDivElement>(null);
+  const { transition, message } = usePaneModeTransition(terminalId);
+  const shownMode = transition?.to ?? mode;
+  const className = `aya-pane-header aya-pane-header--unified${shownMode === "gui" ? " aya-gui-header" : ""}${transition ? " aya-pane-header--switching" : ""}`;
+  // Before paint: the old view's cleanup may have detached the bar in this same commit.
+  useLayoutEffect(() => {
+    const target = slot ?? anchor.current;
+    if (!target) return;
+    if (host.parentNode !== target) target.appendChild(host);
+    return () => { if (host.parentNode === target) host.remove(); };
+  }, [host, slot]);
+  useLayoutEffect(() => {
+    host.className = className;
+    host.dataset.paneMode = shownMode;
+  });
+
   const runRef = useRef(modeSwitch?.run);
   runRef.current = modeSwitch?.run;
-  const switchingRef = useRef(false);
-  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageRef = useRef(message);
+  messageRef.current = message;
   const toggle = async () => {
     const run = runRef.current;
-    if (!run || switchingRef.current) return;
+    if (!run || paneModeSwitching(terminalId)) return;
     // A second request while the last one's reason still shows overrides it (a warning; a refusal stays one).
-    const force = errorRef.current !== null;
-    switchingRef.current = true; setSwitching(true); setError(null);
+    const force = messageRef.current !== null;
+    setPaneModeMessage(terminalId, null);
     try {
       const why = await run(force);
-      if (why) {
-        setError(why);
-        if (errorTimer.current) clearTimeout(errorTimer.current);
-        errorTimer.current = setTimeout(() => setError(null), 8000);
-      }
+      if (why) setPaneModeMessage(terminalId, why);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally { switchingRef.current = false; setSwitching(false); }
+      setPaneModeMessage(terminalId, e instanceof Error ? e.message : String(e));
+    }
   };
   const toggleRef = useRef(toggle);
   toggleRef.current = toggle;
@@ -66,37 +91,45 @@ export function PaneHeader({ mode, terminalId, icon, color, title, children, sta
     window.addEventListener(PANE_MODE_SWITCH_EVENT, onRequest);
     return () => window.removeEventListener(PANE_MODE_SWITCH_EVENT, onRequest);
   }, [switchable, terminalId]);
-  useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current); }, []);
 
   const option = (value: PaneMode, label: string, glyph: string) => (
     <button
       type="button"
       className="aya-pane-mode-option"
       aria-label={label}
-      aria-pressed={mode === value}
-      title={mode === value ? label.replace("Show as", "Showing as") : `${label} (${PANE_MODE_SHORTCUT_LABEL}): stops the agent and resumes the same conversation`}
-      disabled={switching}
+      // Optimistic: the target shows pressed from the click on, with a spinner until it is ready.
+      aria-pressed={shownMode === value}
+      title={shownMode === value ? label.replace("Show as", "Showing as") : `${label} (${PANE_MODE_SHORTCUT_LABEL}): stops the agent and resumes the same conversation`}
+      disabled={!!transition}
       onClick={() => { if (mode !== value) void toggle(); }}
     >
       <span className="aya-pane-mode-icon" aria-hidden="true">{glyph}</span>
+      {transition?.to === value && <span className="aya-pane-mode-spinner" aria-hidden="true" />}
     </button>
   );
-  return (
-    <header className={`aya-pane-header aya-pane-header--unified${mode === "gui" ? " aya-gui-header" : ""}`} data-pane-mode={mode}>
+  const content = (
+    <>
       <span className="aya-sidebar-icon" style={color ? { color } : undefined}>{icon}</span>
       <span className="aya-pane-header-title">{title}</span>
-      {children}
-      <div className="aya-pane-header-meta">{status}</div>
-      {error && <span className="aya-pane-mode-error" role="alert">{error}</span>}
-      {actions}
+      {/* What belongs to one mode fades while the pane switches, so the old mode's details never flash. */}
+      <span className="aya-pane-header-detail">{children}</span>
+      <div className="aya-pane-header-meta"><span className="aya-pane-header-detail">{status}</span></div>
+      {message && <span className="aya-pane-mode-error" role="alert">{message}</span>}
+      <span className="aya-pane-header-detail aya-pane-header-actions">{actions}</span>
       {servers}
       {modeSwitch && (
-        <span className="aya-pane-mode" role="group" aria-label="Pane mode" aria-busy={switching || undefined}>
+        <span className="aya-pane-mode" role="group" aria-label="Pane mode" aria-busy={transition ? true : undefined}>
           {option("terminal", "Show as terminal", "terminal")}
           {option("gui", "Show as conversation", "forum")}
         </span>
       )}
       {artifacts}
-    </header>
+    </>
+  );
+  return (
+    <>
+      {!slot && <div ref={anchor} className="aya-pane-header-anchor" />}
+      {createPortal(content, host)}
+    </>
   );
 }

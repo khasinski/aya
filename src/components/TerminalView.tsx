@@ -13,7 +13,6 @@ import {
 	type MouseEvent,
 	type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
 import { AgentServers } from "./AgentServers";
 import { TuiArtifactsButton } from "./TuiArtifactsButton";
 import { PaneHeader } from "./PaneHeader";
@@ -1579,6 +1578,7 @@ function TerminalViewComponent({
       <PaneHeader
         mode="terminal"
         terminalId={terminal.id}
+        slot={headerSlot && isVisible ? headerSlot : null}
         icon={preset.icon}
         color={preset.color}
         title={terminal.name}
@@ -1638,7 +1638,7 @@ function TerminalViewComponent({
       onMouseDown={onActivatePane}
     >
       <div className="aya-pane-active" />
-      {headerSlot && isVisible ? createPortal(paneHeader, headerSlot) : paneHeader}
+      {paneHeader}
       {terminal.spawnFailure && (
         <div className="aya-pane-recovery">
           <div className="aya-pane-recovery-text">

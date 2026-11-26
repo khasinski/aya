@@ -1,5 +1,4 @@
 import { Fragment,memo,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,useSyncExternalStore,type CSSProperties,type SetStateAction } from 'react';
-import { createPortal } from 'react-dom';
 import { ComposerOptions } from './ComposerOptions';
 import { ContextMeter,useComposerAssist } from './ComposerAssist';
 import ReactMarkdown from 'react-markdown';
@@ -36,6 +35,7 @@ import './conversation.css';
 import { AgentServers } from './AgentServers';
 import { PaneHeader } from './PaneHeader';
 import { conversationSwitchRefusal } from '../pane-mode';
+import { beginPaneModeSwitch,cancelPaneModeSwitch,paneModeFailed,paneModeReady,paneModeTarget } from '../pane-mode-transition';
 import type { AgentServer } from '../../shared/ipc-types';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { ConversationTurnTimer } from './ConversationTurnTimer';
@@ -631,6 +631,12 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     return () => clearTimeout(timer);
   }, [usageLimit, limitClock, ready, busy, requests.length, switching]);
   useLayoutEffect(() => { if (!hidden) scrollToLatest(); }, [hidden, messages, activities, side, requests, plan, scrollToLatest]);
+  // Terminal ⇄ Conversation: the loading veil lifts once this conversation is connected with its history shown.
+  useEffect(() => {
+    if (connecting || paneModeTarget(terminal.id) !== 'gui') return;
+    if (ready) paneModeReady(terminal.id);
+    else paneModeFailed(terminal.id, `Could not open the conversation${error ? `: ${error}` : ''}. Reconnect, or switch back to the terminal.`);
+  }, [connecting, ready, error, terminal.id]);
   useEffect(() => {
     const observer = new ResizeObserver(scrollToLatest);
     if (scrollViewport.current) observer.observe(scrollViewport.current);
@@ -879,10 +885,14 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     const refusal = conversationSwitchRefusal({ busy: busy || dispatching.current, requests: requests.length, switching, connecting });
     if (refusal) return refusal;
     if (!api || !onSwitchToTerminal) return 'The terminal needs the Aya desktop app.';
+    // The agent stops only under the veil, so a disconnected conversation never shows.
+    await beginPaneModeSwitch(terminal.id, 'terminal', true);
     flushTextDeltas.current();
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = null;
-    const result = obj(await api.invoke(terminal.id, 'detach-for-terminal', pendingSnapshot.current || undefined));
+    let result: Record<string, unknown>;
+    try { result = obj(await api.invoke(terminal.id, 'detach-for-terminal', pendingSnapshot.current || undefined)); }
+    catch (error) { cancelPaneModeSwitch(terminal.id); return `Could not switch to the terminal: ${ipcMessage(error)}`; }
     onSwitchToTerminal(str(result.threadId) || undefined);
     return null;
   };
@@ -890,6 +900,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     <PaneHeader
       mode="gui"
       terminalId={terminal.id}
+      slot={headerSlot && !hidden ? headerSlot : null}
       icon={preset.icon}
       color={preset.color}
       title={terminal.name}
@@ -955,7 +966,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       }
     }}
   >
-    {headerSlot && !hidden ? createPortal(guiHeader, headerSlot) : guiHeader}
+    {guiHeader}
     <div className="aya-sr-only" aria-live="polite" aria-atomic="true" data-testid="gui-announcer">{announcement}</div>
     {restored && <div className="aya-gui-save-state" data-state={saveStatus}><span role="status" aria-label="Conversation save status">{saveStatus === 'saved' ? 'Saved locally' : saveStatus === 'error' ? 'Not saved' : 'Saving…'}</span>{saveError && <><span>{saveError}</span><button type="button" disabled={saveStatus === 'saving'} onClick={() => void persistLatest()}>Retry save</button></>}</div>}
     {history !== null && <div ref={historyDialog} className="aya-session-picker" role="dialog" aria-modal="true" aria-label="Resume conversation" onKeyDown={e => {

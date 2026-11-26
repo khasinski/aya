@@ -25,7 +25,7 @@ function seedClaudePane() {
   const bin = join(seed.root, "gui-bin"); mkdirSync(bin);
   copyFileSync(resolve("tests/helpers/fake-claude-gui.cjs"), join(bin, "claude")); chmodSync(join(bin, "claude"), 0o755);
   const guiLog = join(seed.root, "gui-launches.jsonl");
-  seed.launchEnv = { ...seed.launchEnv, AYA_E2E_CLAUDE_BIN: join(bin, "claude"), AYA_FAKE_CLAUDE_LAUNCH_LOG: guiLog };
+  seed.launchEnv = { ...seed.launchEnv, AYA_E2E_CLAUDE_BIN: join(bin, "claude"), AYA_FAKE_CLAUDE_LAUNCH_LOG: guiLog, AYA_FAKE_CLAUDE_FAIL_FILE: join(seed.root, "claude-gui-fails") };
   const lines = (file: string) => existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
   const terminalLaunches = () => lines(join(seed.projectDir, `claude-${seed.tabIds.left}.jsonl`)) as { args: string[]; sessionId: string | null }[];
   const guiLaunches = () => lines(guiLog) as { args: string[] }[];
@@ -102,7 +102,7 @@ test("a Claude pane switches terminal → conversation → terminal on the same 
     expect(terminalLaunches()).toHaveLength(2);
     expect(guiLaunches().length).toBe(launchesBefore + 1);
     expect(guiLaunches().at(-1)!.args).toEqual(expect.arrayContaining(["--resume", sessionId]));
-  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test("a Codex pane carries its thread from the terminal to the conversation and back", async () => {
@@ -144,7 +144,128 @@ test("a Codex pane carries its thread from the terminal to the conversation and 
     // The conversation resumed the terminal's thread (thread/resume), and the terminal resumes it again.
     expect(launches()[1]).toMatchObject({ args: ["resume", thread], session: thread });
     await expect.poll(() => savedTab().interfaceMode).toBe("terminal");
-  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+type Frame = { t: number; sameHeader: boolean; headerH: number; headerTop: number; veil: number; phase: string | null; term: boolean; rows: number; gui: boolean; guiStatus: string; articles: number; alert: string };
+
+/** Records every animation frame from now on: the header node and its box, the veil's opacity, and which view is
+ *  on screen with what it shows. */
+async function recordFrames(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __frames: unknown[]; __stopFrames?: boolean };
+    const first = document.querySelector("header.aya-pane-header--unified");
+    const t0 = performance.now();
+    w.__frames = []; w.__stopFrames = false;
+    const tick = () => {
+      const header = document.querySelector("header.aya-pane-header--unified");
+      const box = header?.getBoundingClientRect();
+      const veil = document.querySelector<HTMLElement>('[data-testid="pane-mode-veil"]');
+      const term = document.querySelector<HTMLElement>('[data-testid="terminal-pane"]');
+      const termShown = !!term && getComputedStyle(term).display !== "none";
+      const gui = document.querySelector<HTMLElement>(".aya-conversation");
+      const guiShown = !!gui && getComputedStyle(gui).display !== "none";
+      w.__frames.push({
+        t: Math.round(performance.now() - t0), sameHeader: header === first, headerH: box?.height ?? 0, headerTop: box?.top ?? -1,
+        veil: veil ? Number(getComputedStyle(veil).opacity) : 0, phase: veil?.closest(".aya-pane-mode-veil")?.getAttribute("data-phase") ?? null,
+        term: termShown, rows: termShown ? (term!.querySelector(".xterm-rows")?.textContent ?? "").trim().length : 0,
+        gui: guiShown, guiStatus: guiShown ? header?.querySelector('.aya-sr-only[role="status"]')?.textContent ?? "" : "",
+        articles: guiShown ? gui!.querySelectorAll("article").length : 0,
+        alert: header?.querySelector('[role="alert"]')?.textContent ?? "",
+      });
+      if (!w.__stopFrames) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  return async () => page.evaluate(() => {
+    const w = window as unknown as { __frames: Frame[]; __stopFrames?: boolean };
+    w.__stopFrames = true;
+    return w.__frames;
+  });
+}
+
+/** Every frame where any of the pane's body shows through the veil shows one settled view: a terminal with
+ *  output, or a connected conversation with its history. Never both, never neither, never "Connecting…". */
+function assertNoFlash(frames: Frame[]) {
+  expect(frames.length).toBeGreaterThan(10);
+  expect(frames.every((f) => f.sameHeader), "the header is the same element throughout").toBe(true);
+  expect(new Set(frames.map((f) => f.headerH)).size, `the header keeps its height: ${JSON.stringify([...new Set(frames.map((f) => f.headerH))])}`).toBe(1);
+  expect(new Set(frames.map((f) => f.headerTop)).size, "the header keeps its place").toBe(1);
+  expect(frames.some((f) => f.veil >= 0.999), "the veil covered the pane at some point").toBe(true);
+  for (const f of frames) {
+    if (f.veil >= 0.999) continue;
+    const what = JSON.stringify(f);
+    expect(Number(f.term) + Number(f.gui), `one view shows through: ${what}`).toBe(1);
+    if (f.term) expect(f.rows, `a terminal shows output, not a blank screen: ${what}`).toBeGreaterThan(0);
+    if (f.gui) {
+      expect(f.guiStatus, `a conversation shows through only once connected: ${what}`).toBe("Ready");
+      expect(f.articles, `a conversation shows its history: ${what}`).toBeGreaterThan(0);
+    }
+  }
+}
+
+test("switching never flashes an empty pane or a half-loaded view, and the header stays put", async () => {
+  const { seed, transcript, terminalLaunches } = seedClaudePane();
+  const app = await launchApp(seed);
+  try {
+    const page = await app.firstWindow();
+    await expect.poll(() => terminalLaunches().length, { timeout: SLOW_EXPECT_TIMEOUT_MS }).toBe(1);
+    const sessionId = terminalLaunches()[0].sessionId!;
+    appendFileSync(transcript(sessionId), JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: "Remember the word PELICAN." } }) + "\n");
+    await expect(page.locator('[data-testid="terminal-pane"]:visible .xterm-rows')).toContainText("fake claude ready");
+
+    // Terminal → Conversation.
+    let stop = await recordFrames(page);
+    await page.getByRole("button", { name: "Show as conversation" }).click();
+    // Optimistic toggle, a spinner on it, and the loading veil, before anything is ready.
+    await expect(page.getByRole("button", { name: "Show as conversation" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".aya-pane-mode-spinner")).toHaveCount(1);
+    await expect(page.getByTestId("pane-mode-veil")).toContainText("Opening conversation…");
+    await expect(page.getByTestId("pane-mode-veil")).toContainText("Resuming session");
+    await expect(page.getByTestId("pane-mode-veil")).toHaveCount(0);
+    await expect(page.locator(".aya-conversation header").getByRole("status")).toHaveText("Ready");
+    let frames = await stop();
+    assertNoFlash(frames);
+    const toGui = frames.filter((f) => f.phase !== null);
+    console.log(`terminal → conversation: ${frames.length} frames, veil up ${toGui.length} frames (${toGui.at(-1)!.t - toGui[0].t} ms), ` +
+      `terminal shown through it ${frames.filter((f) => f.term && f.veil < 0.999).length}, conversation ${frames.filter((f) => f.gui && f.veil < 0.999).length}, ` +
+      `frames with neither and veil < 1: ${frames.filter((f) => !f.term && !f.gui && f.veil < 0.999).length}`);
+
+    // Conversation → terminal.
+    stop = await recordFrames(page);
+    await page.getByRole("button", { name: "Show as terminal" }).click();
+    await expect(page.getByTestId("pane-mode-veil")).toContainText("Starting terminal…");
+    await expect(page.getByTestId("pane-mode-veil")).toHaveCount(0);
+    await expect(page.locator('[data-testid="terminal-pane"]:visible .xterm-rows')).toContainText("fake claude ready");
+    frames = await stop();
+    assertNoFlash(frames);
+    const toTerm = frames.filter((f) => f.phase !== null);
+    console.log(`conversation → terminal: ${frames.length} frames, veil up ${toTerm.length} frames (${toTerm.at(-1)!.t - toTerm[0].t} ms), ` +
+      `conversation shown through it ${frames.filter((f) => f.gui && f.veil < 0.999).length}, terminal ${frames.filter((f) => f.term && f.veil < 0.999).length}, ` +
+      `frames with neither and veil < 1: ${frames.filter((f) => !f.term && !f.gui && f.veil < 0.999).length}`);
+
+    // A failure mid-switch: the conversation cannot start. The veil lifts on the pane as it is, the reason shows next
+    // to the toggle, and Reconnect retries.
+    const fail = join(seed.root, "claude-gui-fails");
+    appendFileSync(fail, "");
+    await page.getByRole("button", { name: "Show as conversation" }).click();
+    const alert = page.locator('header.aya-pane-header--unified [role="alert"]');
+    await expect(alert).toContainText("Could not open the conversation");
+    await expect(page.getByTestId("pane-mode-veil")).toHaveCount(0);
+    rmSync(fail);
+    await page.locator(".aya-conversation").getByRole("button", { name: "Reconnect" }).click();
+    await expect(page.locator(".aya-conversation header").getByRole("status")).toHaveText("Ready");
+
+    // A refusal (a pending approval) keeps the view and says why next to the toggle; no veil, nothing moves.
+    const prompt = page.locator(".aya-conversation").getByRole("textbox", { name: "Message Claude" });
+    await prompt.fill("approval"); await prompt.press("Enter");
+    await expect(page.locator(".aya-conversation").getByRole("group", { name: "Approval required" })).toBeVisible();
+    stop = await recordFrames(page);
+    await page.getByRole("button", { name: "Show as terminal" }).click();
+    await expect(alert).toContainText("Answer the pending approval");
+    frames = await stop();
+    expect(frames.every((f) => f.sameHeader && f.gui && !f.term && f.phase === null)).toBe(true);
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test("a pane whose agent has no Conversation has no switch", async () => {
@@ -157,7 +278,7 @@ test("a pane whose agent has no Conversation has no switch", async () => {
     await expect(header.getByRole("group", { name: "Pane mode" })).toHaveCount(0);
     await fireShortcut(app, "toggle-pane-mode");
     await expect(page.locator(".aya-conversation")).toHaveCount(0);
-  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test("Claude and Claude GUI twin presets merge into one, and the GUI pane keeps opening as a conversation", async () => {
@@ -180,5 +301,5 @@ test("Claude and Claude GUI twin presets merge into one, and the GUI pane keeps 
     expect(presets.map((p) => p.id)).toEqual(["claude", "shell"]);
     const tab = JSON.parse(readFileSync(join(seed.ayaHome, "projects", "e2e-proj.json"), "utf8")).tabs[0];
     expect(tab).toMatchObject({ presetId: "claude", interfaceMode: "gui", name: "Claude GUI" });
-  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

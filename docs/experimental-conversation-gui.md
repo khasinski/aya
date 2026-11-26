@@ -11,7 +11,7 @@ Any pane of a **Codex**, **Claude Code**, **Pi**, or **Antigravity** preset in a
 
 Both modes share one header: the preset's icon and the pane's name, what the agent is doing, its [local servers](#local-servers), the **Terminal / Conversation** switch and the **Artifacts** button. Controls only a conversation has (view options, context meter, restart, history) appear only in Conversation mode.
 
-Switching stops the agent between turns and starts it in the other mode on the same session, so it keeps the whole conversation:
+While a pane switches, its header stays where it is with the new mode already selected and a spinner on it, and the body fades to a short "Opening conversation… / Starting terminal…" placeholder until the other mode is ready (connected with its history, or the terminal's first output); with reduced motion it switches without fading. Switching stops the agent between turns and starts it in the other mode on the same session, so it keeps the whole conversation:
 
 - **Claude Code** resumes the session id in both directions (`claude --resume <id>` in the terminal, `--resume <id>` over stream-json in the conversation).
 - **Codex** resumes the same thread: `codex resume <id>` in the terminal, `thread/resume` in the conversation. Both read the same rollout.
