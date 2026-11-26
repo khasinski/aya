@@ -28,6 +28,9 @@ test('long tool activity scrolls internally while its collapse heading stays rea
     await list.focus(); await window.keyboard.press('End');
     await expect.poll(() => list.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
     await expect(heading).toBeInViewport();
+    // Scrolled past the top of the list (a short window, or focus scrolling the list into view, as on Linux CI): the heading stays pinned.
+    await gui.locator('.aya-gui-messages').evaluate(m => { const l = m.querySelector('.aya-gui-activity-list')!; m.scrollTop += l.getBoundingClientRect().top - m.getBoundingClientRect().top + 40; });
+    await expect(heading).toBeInViewport();
     await heading.click(); await expect(list).toBeHidden();
     await expect(gui.getByText('Saved locally', { exact: true })).toBeVisible();
     await window.reload();
