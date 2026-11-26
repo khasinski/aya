@@ -210,7 +210,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       const saved = await loadConversation(id, { lazyArtifacts: true }).catch(() => null);
       // What the terminal presented with `aya present` shows in the Conversation's artifact drawer.
       const snapshot = withTerminalArtifacts(
-        await adoptTerminalSession({ cwd: params.cwd, configDir: params.configDir, agent: normalizeGuiAgent(params.agent), sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined }, saved),
+        await adoptTerminalSession({ cwd: params.cwd, configDir: params.configDir, agent: normalizeGuiAgent(params.agent), sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined, command: typeof params.command === 'string' ? params.command : undefined }, saved),
         await paneTuiArtifacts(id).catch(() => []),
       );
       await saveConversation(id, snapshot);

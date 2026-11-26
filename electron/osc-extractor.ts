@@ -206,6 +206,9 @@ export const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
 
 export const isSafeSessionId = (id: string): boolean => SESSION_ID_RE.test(id);
 
+/** Claude and Codex session ids also name files Aya reads (transcripts, rollouts): never a path (no `/`, no `.`). */
+export const isFileSessionId = (id: string): boolean => /^[A-Za-z0-9_-]{1,200}$/.test(id);
+
 /** Parse an `aya.session` event's id. Returns null for any other key or an id
  *  that isn't shell-safe. */
 export function parseAyaOscSession(event: AyaOscEvent): string | null {

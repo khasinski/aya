@@ -7,7 +7,7 @@ import { promises as fs, realpath } from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
-import { isSafeSessionId } from "./osc-extractor";
+import { isFileSessionId, isSafeSessionId } from "./osc-extractor";
 import { pathExists } from "./path-exists";
 import { collectDescendants } from "./pty-host-registry";
 import { simpleShellWords, type ShellWord } from "./shell-words";
@@ -147,7 +147,7 @@ export async function readGrokSessionId(
     .sort((a, b) => (openedAt(b) || 0) - (openedAt(a) || 0));
   const row = mine[0];
   if (typeof row?.session_id !== "string" || typeof row.cwd !== "string") return null;
-  if (!isSafeSessionId(row.session_id)) return null;
+  if (!isFileSessionId(row.session_id)) return null;
   return (await pathExists(grokSessionDir(home, row.cwd, row.session_id))) ? row.session_id : null;
 }
 
@@ -194,6 +194,15 @@ export function withOwnSessionId(command: string): { command: string; sessionId:
   if (!words?.length || resuming || !program || !TAKES_SESSION_ID.has(program)) return { command, sessionId: null };
   const sessionId = randomUUID();
   return { command: `${trimmed} --session-id ${sessionId}`, sessionId };
+}
+
+/** A continue flag (`-c`, `--continue`) goes when `any` says there is nothing to continue: claude then exits with "No
+ *  conversation found to continue", and so would every Restart. Only unquoted words are options. */
+export async function dropDeadContinue(command: string, any: () => Promise<boolean>): Promise<string> {
+  if (!launchesAgentDirectly(command)) return command;
+  const flag = (simpleShellWords(command) ?? []).find((w) => CONTINUE_FLAGS.includes(w.text) && command.slice(w.start, w.end) === w.text);
+  if (!flag || (await any())) return command;
+  return command.slice(0, flag.start).trimEnd() + command.slice(flag.end);
 }
 
 const RESUME_INLINE = "--resume=";

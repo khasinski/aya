@@ -362,6 +362,20 @@ test("claude: a conversation with no transcript restarts under the same id, neve
   assert.equal(await withLiveClaudeResume(`claude --resume ${GONE}`, config, A), `claude --session-id ${GONE}`);
 });
 
+test("claude: --continue in a folder with no conversation yet starts fresh, as after the folder-trust prompt", async () => {
+  // A first launch that ended at "Do you trust this folder?" saved no transcript: `claude --continue` would exit with
+  // "No conversation found to continue", and so would every Restart.
+  const config = scratch();
+  assert.equal(await withLiveClaudeResume("claude --continue", config, A), "claude");
+  assert.equal(await withLiveClaudeResume("claude -c --model opus", config, A), "claude --model opus");
+  assert.equal(await withLiveClaudeResume("claude '--continue'", config, A), "claude '--continue'", "only unquoted words are options");
+  claudeTranscript(config, HERE);
+  assert.equal(await withLiveClaudeResume("claude --continue", config, A), "claude --continue");
+  // A pane shell that cannot say which config dir it uses keeps the flag.
+  const failing = async () => { throw new Error("no answer"); };
+  assert.equal(await withLiveClaudeResume("claude --continue", undefined, scratch(), failing), "claude --continue");
+});
+
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 
 test("a fresh launch of claude or grok is given a session id of its own", () => {
