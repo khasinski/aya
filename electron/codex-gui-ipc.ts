@@ -19,6 +19,7 @@ import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
 import { GuiRecoveryJournal } from './gui-recovery-journal';
 import { listAgentServers,localServerUrl,stopAgentServer } from './agent-servers';
 import { GuiTurnDiffs,handleGuiDiffAction } from './gui-turn-diff';
+import { adoptTerminalSession,type AdoptTerminalRequest } from './gui-mode-switch';
 import { guiPermissionModes,initialGuiPermissionMode,parseGuiPermissionMode } from '../shared/gui-permission-mode.cjs';
 import { AYA_HOME } from './paths';
 import { readWorkspaceFile } from './workspace-file';
@@ -186,6 +187,27 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       saveRevisions.set(snapshot, revision + 1);
       journals.get(key)?.acknowledge(Number(view.eventSequence || 0));
       return { revision: revision + 1 };
+    }
+    if (action === 'detach-for-terminal') {
+      // Terminal ⇄ Conversation: stop the agent and hand its session id to the terminal that resumes it.
+      if (sessions.get(key)?.session.running) throw Error('Stop the current turn before switching to the terminal');
+      const threadId = snapshots.get(key)?.threadId;
+      turnDiffs.forget(key); recoverablePanels.delete(key); journals.delete(key); searches.delete(key);
+      if (snapshots.has(key)) await panels.close(key, value && typeof value === 'object' ? withPanelArtifacts(key, value as Record<string, unknown>) : undefined);
+      return { threadId };
+    }
+    if (action === 'adopt-terminal-session') {
+      if (sessions.has(key)) throw Error('Close the current connection before switching');
+      panels.forget(key);
+      const params = value as AdoptTerminalRequest;
+      if (typeof params?.cwd !== 'string') throw Error('Invalid switch');
+      const saved = await loadConversation(id, { lazyArtifacts: true }).catch(() => null);
+      // TODO(tui-artifacts): once TUI artifacts (`aya present` in a terminal pane) persist with a main-process getter,
+      // merge this pane's into snapshot.view.artifacts / artifactHistory here, so the Conversation's drawer shows
+      // what the terminal presented before the switch.
+      const snapshot = await adoptTerminalSession({ cwd: params.cwd, configDir: params.configDir, agent: normalizeGuiAgent(params.agent), sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined }, saved);
+      await saveConversation(id, snapshot);
+      return { resumed: !!snapshot.threadId };
     }
     if (action === 'dispose-pane') {
       turnDiffs.forget(key);
@@ -422,7 +444,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     }
     throw Error('Unknown GUI action');
     };
-    return ['load', 'connect', 'reconnect', 'persist', 'close', 'dispose-pane', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
+    return ['load', 'connect', 'reconnect', 'persist', 'close', 'dispose-pane', 'detach-for-terminal', 'adopt-terminal-session', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
   });
   app.on('before-quit', () => { for (const { session } of sessions.values()) session.close(); });
 }

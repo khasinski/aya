@@ -31,12 +31,13 @@
   font-size: 14px;
   container-type: inline-size;
 }
-.aya-conversation .aya-gui-header {
-  flex: none;
-  gap: 6px;
-  padding: 10px 16px;
-}
-.aya-gui-header .aya-gui-heading { min-width: 0; margin-right: auto; }
+.aya-conversation .aya-gui-header { flex: none; }
+/* The shared pane header (PaneHeader) keeps the terminal's spacing inside a conversation too. */
+.aya-conversation header.aya-pane-header--unified { gap: 8px; padding: 4px 14px; }
+.aya-conversation header.aya-pane-header--unified small { margin-top: 0; }
+.aya-conversation .aya-pane-mode .aya-pane-mode-option { padding: 0; border: 0; border-radius: 5px; background: transparent; }
+.aya-conversation .aya-pane-mode .aya-pane-mode-option[aria-pressed="true"] { background: var(--bg); }
+.aya-gui-header .aya-gui-heading { min-width: 0; }
 .aya-gui-heading strong { font-size: 13px; font-weight: 600; }
 .aya-gui-header small { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .aya-gui-unsafe-badge { flex:none; font-size:10px; font-weight:600; line-height:1.2; padding:4px 7px; border:1px solid color-mix(in oklab,var(--status-error) 40%,var(--border)); border-radius:6px; color:var(--fg-primary); background:color-mix(in oklab,var(--status-error) 10%,var(--bg)); }

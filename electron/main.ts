@@ -119,6 +119,7 @@ import {
 	SPAWN_PREP_DELAY_MS,
 } from "./paths";
 import { listPresets,type AgentKind } from "./presets";
+import { migrateInterfaceTwinPresets } from "./preset-mode-migration";
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import { PtyHostClient,waitForExit } from "./pty-host-client";
 import { createPtyHostHealth,probeSocketPid } from "./pty-host-health";
@@ -1048,6 +1049,8 @@ app.whenReady().then(async () => {
     notePathRepaired(resolved !== null);
     return resolved;
   });
+  // "Claude" + "Claude GUI" twins become one preset now that a pane switches modes; before anything reads presets.
+  await migrateInterfaceTwinPresets().catch((err) => console.warn("Preset merge skipped", err));
   // Codex gets the brief at launch now; AGENTS.md files earlier versions wrote lose it once.
   void dropCodexBriefSections(AGENT_BRIEF_FILES_FILE);
   // Presets can change on disk without a save through Settings.

@@ -71,7 +71,7 @@ for (const platform of ["darwin", "linux", "win32"]) {
         "Previous Terminal [CmdOrCtrl+[]", "Next Terminal [CmdOrCtrl+]]", "role:separator",
         "Focus Pane Left [CmdOrCtrl+Alt+Left]", "Focus Pane Right [CmdOrCtrl+Alt+Right]",
         "Focus Pane Up [CmdOrCtrl+Alt+Up]", "Focus Pane Down [CmdOrCtrl+Alt+Down]",
-        "Split Pane Right [CmdOrCtrl+Alt+\\]", "Split Pane Below [CmdOrCtrl+Alt+-]",
+        "Split Pane Right [CmdOrCtrl+Alt+\\]", "Split Pane Below [CmdOrCtrl+Alt+-]", "Switch Pane: Terminal / Conversation [CmdOrCtrl+Alt+G]",
         "role:separator", "role:toggleDevTools", "role:separator", "role:resetZoom", "role:zoomIn",
         "role:zoomOut", "role:separator", `Toggle Full Screen [${mac ? "Ctrl+Command+F" : "F11"}]`,
       ]],
@@ -94,7 +94,7 @@ for (const platform of ["darwin", "linux"]) {
       ["Find in Terminal", "find-in-pane"], ["Previous Terminal", "prev-tab"], ["Next Terminal", "next-tab"],
       ["Focus Pane Left", "focus-pane-left"], ["Focus Pane Right", "focus-pane-right"],
       ["Focus Pane Up", "focus-pane-up"], ["Focus Pane Down", "focus-pane-down"],
-      ["Split Pane Right", "split-pane-right"], ["Split Pane Below", "split-pane-below"],
+      ["Split Pane Right", "split-pane-right"], ["Split Pane Below", "split-pane-below"], ["Switch Pane: Terminal / Conversation", "toggle-pane-mode"],
       ...Array.from({ length: 9 }, (_, i) => [`Select Project ${i + 1}`, `project-${i + 1}`]),
     ];
     for (const [label, action] of shortcuts) {

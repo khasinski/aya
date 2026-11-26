@@ -22,6 +22,8 @@ export type AgentKind =
   | "custom";
 
 export interface Preset {
+  /** How a new pane of this preset opens ("Opens as" in Settings): absent is the terminal. A pane can switch either
+   *  way later (WorkingTab.interfaceMode) when its agent has a Conversation GUI. */
   interfaceMode?: "terminal" | "gui";
   id: string;
   name: string;
@@ -61,6 +63,8 @@ export interface WorkingTab {
   /** A tab opened on a machine from the machines popover: it runs `ssh -- <sshTarget>` instead of its preset's command. */
   sshTarget?: string;
   initialBoardCard?: { cardId: string; since: string; previousColumn: string; previousAssignee?: string };
+  /** The pane's own mode, set when it was opened or switched; absent follows the preset's `interfaceMode`. */
+  interfaceMode?: "terminal" | "gui";
 }
 
 export interface SplitLayout {

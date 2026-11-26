@@ -148,6 +148,7 @@ function validateWorkingTab(value: unknown, name: string): WorkingTab {
     ...(sessionId ? { sessionId } : {}),
     ...(initialBoardCard ? { initialBoardCard } : {}),
     ...(value.sharedDir === true ? { sharedDir: true as const } : {}),
+    ...(value.interfaceMode === "gui" || value.interfaceMode === "terminal" ? { interfaceMode: value.interfaceMode } : {}),
     ...(optionalFlag(value.teamLaunch, `${name}.teamLaunch`) ? { teamLaunch: true } : {}),
   };
 }

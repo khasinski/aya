@@ -80,21 +80,13 @@ test("Claude in print mode is flagged for what it does to the pane, not for bill
   await expect(warning).toHaveCount(0);
 });
 
-test("conversation GUI toggle stays beside its label and saves the chosen interface", async ({ window, app, seeded }) => {
+test("Opens as saves the mode new panes start in", async ({ window, app, seeded }) => {
   const settings = await openPresetsTab(window, app);
   await settings.locator(".aya-settings-add", { hasText: "Add Codex" }).click();
-  const toggle = settings.getByRole("checkbox", { name: "Conversation GUI · Experimental", exact: true });
-  await expect(toggle).toBeEnabled();
-  await toggle.check();
-  const label = toggle.locator("..");
-  const textBox = await label.locator("span").boundingBox();
-  const checkboxBox = await toggle.boundingBox();
-  expect(textBox).not.toBeNull();
-  expect(checkboxBox).not.toBeNull();
-  expect(checkboxBox!.width).toBe(16);
-  expect(checkboxBox!.height).toBe(16);
-  expect(checkboxBox!.x).toBeGreaterThan(textBox!.x + textBox!.width);
-  expect(checkboxBox!.y).toBeLessThan(textBox!.y + textBox!.height);
+  const opensAs = settings.locator('.aya-settings-segmented[aria-label="Opens as"]');
+  await expect(opensAs.getByRole("button", { name: "Terminal", exact: true })).toHaveClass(/aya-settings-segment--active/);
+  await opensAs.getByRole("button", { name: "Conversation", exact: true }).click();
+  await expect(opensAs.getByRole("button", { name: "Conversation", exact: true })).toHaveClass(/aya-settings-segment--active/);
   await nameInput(settings).fill("GUI Codex");
   await settings.locator(".aya-modal-btn--primary", { hasText: "Save" }).click();
   await expect(settings).toBeHidden();
@@ -109,7 +101,7 @@ for (const agent of ["pi", "antigravity"] as const) {
     await settings.getByRole("combobox", { name: "Type", exact: true }).selectOption(agent);
     await commandInput(settings).fill(agent === "pi" ? "pi" : "agy");
     await nameInput(settings).fill(`${agent} GUI`);
-    await settings.getByRole("checkbox", { name: "Conversation GUI · Experimental", exact: true }).check();
+    await settings.locator('.aya-settings-segmented[aria-label="Opens as"]').getByRole("button", { name: "Conversation", exact: true }).click();
     const unsafe = settings.getByRole("checkbox", { name: /Unsafe approvals/ });
     await expect(unsafe).toBeVisible();
     await unsafe.check();

@@ -63,6 +63,7 @@ export function normalizeTab(raw: unknown): WorkingTab | null {
     ...(sessionId ? { sessionId } : {}),
     ...(initialBoardCard ? { initialBoardCard } : {}),
     ...(r.sharedDir === true ? { sharedDir: true as const } : {}),
+    ...(r.interfaceMode === "gui" || r.interfaceMode === "terminal" ? { interfaceMode: r.interfaceMode } : {}),
     ...(r.teamLaunch === true ? { teamLaunch: true } : {}),
     ...(r.remoteTerminal === true ? { remoteTerminal: true as const } : {}),
     // Only a plain alias or user@host, as a machine's: never an ssh option or shell text.

@@ -132,7 +132,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
           subtype: 'success',
           request_id: message.request_id,
           response: {
-            session_id: 'claude-test-thread',
+            session_id: paneModeSession() || 'claude-test-thread',
             model: 'fake-claude',
             commands: FAKE_COMMANDS,
             models: [
@@ -530,3 +530,13 @@ function editScenario(message) {
   write({ type: 'result', subtype: 'success', is_error: false, result: text });
   return true;
 }
+
+// Terminal ⇄ Conversation (AYA_FAKE_CLAUDE_LAUNCH_LOG set): every launch's arguments go to that file, one JSON line
+// each, and the session is the one --resume or --session-id names, as real Claude keeps it.
+function paneModeSession() {
+  const log = process.env.AYA_FAKE_CLAUDE_LAUNCH_LOG;
+  if (!log) return '';
+  const arg = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
+  return arg('--resume') || arg('--session-id') || '';
+}
+if (process.env.AYA_FAKE_CLAUDE_LAUNCH_LOG) require('node:fs').appendFileSync(process.env.AYA_FAKE_CLAUDE_LAUNCH_LOG, JSON.stringify({ args: process.argv.slice(2) }) + '\n');

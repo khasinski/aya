@@ -1,11 +1,29 @@
 # Experimental Conversation GUI
 
-In Settings → Presets, select a **Codex**, **Claude Code**, **Pi**, or **Antigravity** preset and enable **Conversation GUI · Experimental**. Open a new panel using that preset. Terminal remains the default. Each agent runs over its native structured local wire protocol while keeping ownership of its own tools, sandbox and permissions:
+Any pane of a **Codex**, **Claude Code**, **Pi**, or **Antigravity** preset in a local project can show its agent as a Conversation instead of a terminal: use the **Terminal / Conversation** switch in the pane's header, **View → Switch Pane: Terminal / Conversation**, or **Cmd/Ctrl+Alt+G** (see [Switching a pane between terminal and conversation](#switching-a-pane-between-terminal-and-conversation)). In Settings → Presets, **Opens as** picks the mode a new pane of that preset starts in; Terminal remains the default. Each agent runs over its native structured local wire protocol while keeping ownership of its own tools, sandbox and permissions:
 
 - **Codex (`codex`)**: `codex app-server --listen stdio://` (`CODEX_HOME`, dynamic tools `aya_present`, `aya_open_artifact`, `aya_progress`).
 - **Pi (`pi`)**: `pi --mode rpc` (`PI_CODING_AGENT_DIR`, bundled Aya Pi extension registering `aya_present`, `aya_open_artifact`, `aya_progress` and interactive `extension_ui_request` tool approvals).
 - **Claude Code (`claude`)**: `claude --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool=stdio --chrome` (`CLAUDE_CONFIG_DIR`, in-band SDK MCP server `aya` for `aya_present`, `aya_open_artifact`, `aya_progress` and `can_use_tool` interactive approvals/questions).
 - **Antigravity (`agy`)**: `agy --input-format stream-json --output-format stream-json` (`ANTIGRAVITY_GEMINI_DIR`, `step_update` streaming, `denied_actions` permission prompts, `ask_question` prompts, and `aya_present` / `aya_open_artifact` / `aya_progress` tool steps).
+
+## Switching a pane between terminal and conversation
+
+Both modes share one header: the preset's icon and the pane's name, what the agent is doing, its [local servers](#local-servers), the **Terminal / Conversation** switch and the **Artifacts** button. Controls only a conversation has (view options, context meter, restart, history) appear only in Conversation mode.
+
+Switching stops the agent between turns and starts it in the other mode on the same session, so it keeps the whole conversation:
+
+- **Claude Code** resumes the session id in both directions (`claude --resume <id>` in the terminal, `--resume <id>` over stream-json in the conversation).
+- **Codex** resumes the same thread: `codex resume <id>` in the terminal, `thread/resume` in the conversation. Both read the same rollout.
+- **Pi** and **Antigravity** resume the conversation's session in the terminal (`pi --session <id>`, `agy --conversation <id>`). Their terminals do not tell Aya which session they are in, so going from the terminal to a conversation starts a new conversation, and the pane says so.
+
+Going to the conversation, Aya reads the session's messages back from Claude's transcript or Codex's rollout, so the pane shows what was said in the terminal (prompts and replies; tool calls stay in the terminal's history). If Aya cannot find the session, for example because nothing was sent yet, the conversation starts fresh and a notice says so.
+
+Aya refuses to switch while a turn is running or an approval or question waits for an answer, and says why in the header. The pane keeps its place in the layout, its folder or worktree, its name and its team role, and its mode is saved with it: it opens the same way after a restart. A remote project's panes stay terminals.
+
+Kanban tasks always start in a terminal pane; switch it afterwards if you like. **Send to several agents** always opens conversations.
+
+When you update from a version before this switch, Aya merges presets that differed only in the old **Conversation GUI** checkbox (say "Claude" and "Claude GUI" with the same command, account and flags) into the terminal one. Panes of the removed preset keep opening as conversations. Presets that differ in anything else that changes what runs are left alone.
 
 ## Conversation
 
@@ -229,7 +247,7 @@ Only Codex has side chat and plan mode so far.
 
 ## Sending one prompt to several agents
 
-To see how different agents or models handle the same task, open the conversation settings (the tune button in the composer) and choose **Send to several agents…**, or use **+ Send to several agents…** in the sidebar of a local git project. The dialog takes the composer's draft and attached files, and lists every preset with **Conversation GUI** turned on (add one preset per model you want to compare, e.g. a Claude Opus preset and a Codex preset). Pick up to six, check the starting branch, and **Start**.
+To see how different agents or models handle the same task, open the conversation settings (the tune button in the composer) and choose **Send to several agents…**, or use **+ Send to several agents…** in the sidebar of a local git project. The dialog takes the composer's draft and attached files, and lists every Claude, Codex, Pi and Antigravity preset (add one preset per model you want to compare, e.g. a Claude Opus preset and a Codex preset); each pane opens as a conversation. Pick up to six, check the starting branch, and **Start**.
 
 For each agent Aya creates a worktree and branch `aya/<name>-<preset>` next to the repository (in `<repo>.worktrees/`), all from the same base commit, opens a Conversation pane there, and sends the prompt with the attached files as soon as the agent connects. The sidebar groups each pane under its worktree with the branch name. If one worktree cannot be created (for example the path is taken), the dialog says why for that agent and starts the others; a name already used by a branch or a worktree gets a `-2` suffix instead.
 

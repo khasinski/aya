@@ -78,6 +78,11 @@ export interface TerminalState {
   sessionId?: string;
   /** Mirrors WorkingTab.sharedDir. */
   sharedDir?: true;
+  /** Mirrors WorkingTab.interfaceMode: the pane's own Terminal / Conversation choice. */
+  interfaceMode?: "terminal" | "gui";
+  /** The pane just switched from its Conversation: the next spawn resumes `sessionId` even when the preset does not
+   *  auto-resume, and never falls back to "latest". Never persisted. */
+  resumeOnSwitch?: true;
   /** One-time prompt for a newly-created worktree pane; never persisted. */
   initialPrompt?: string;
   initialBoardCard?: WorkingTab["initialBoardCard"];

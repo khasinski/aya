@@ -201,7 +201,7 @@ export function terminalSpawn(
   const key = sessionDir(project, terminal);
   const spawn = resumeSpawn(
     preset,
-    { id: terminal.id, cwd: key, restored: terminal.restored, sessionId: terminal.sessionId, sharedDir: terminal.sharedDir },
+    { id: terminal.id, cwd: key, restored: terminal.restored, sessionId: terminal.sessionId, sharedDir: terminal.sharedDir, resumeOnSwitch: terminal.resumeOnSwitch },
     panes,
   );
   const wrap = (command: string) => (project ? remoteTerminalCommand(project, { ...preset, command }) : command);

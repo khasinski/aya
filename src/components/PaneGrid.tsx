@@ -1,5 +1,5 @@
 import { memo,useCallback,useRef,type RefObject } from "react";
-import { guiSupportedAgent } from "../agentPreset";
+import { paneCanSwitchMode,paneMode } from "../pane-mode";
 import { beginGuiPaneRecovery, guiRendererRecoveryInProgress } from '../gui-renderer-recovery';
 import type { GuiPaneStatus } from "../gui-status";
 import { emptyProjectPaneTitle,paneStyleFromRect } from "../pane-grid";
@@ -77,6 +77,9 @@ interface Props {
   onCreateWorktrees?: (req: { directory: string; slug: string; count: number; base: string }) => Promise<{ created: { path: string; branch: string }[]; errors: string[] }>;
   onFocusTerminal?: (terminalId: string) => void;
   onSplitBesideTerminal?: (anchorId: string, targetId: string) => void;
+  /** Terminal ⇄ Conversation (usePaneModeSwitch). */
+  onSwitchToConversation?: (terminalId: string) => Promise<string | null>;
+  onSwitchToTerminal?: (terminalId: string, sessionId?: string) => void;
 }
 
 export const PaneGrid = memo(function PaneGrid({
@@ -128,6 +131,8 @@ export const PaneGrid = memo(function PaneGrid({
   onCreateWorktrees,
   onFocusTerminal,
   onSplitBesideTerminal,
+  onSwitchToConversation,
+  onSwitchToTerminal,
 }: Props) {
   // A stable lookup, so a GUI pane (memoised) does not re-render whenever another terminal's status changes.
   const terminalsRef = useRef(terminals);
@@ -261,7 +266,7 @@ export const PaneGrid = memo(function PaneGrid({
             /></LocalErrorBoundary>
           );
         }
-        return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !activeProject?.remote ? null : (
+        return paneMode(preset, terminal, !!activeProject?.remote) === "gui" ? null : (
           <LocalErrorBoundary key={terminal.id} label="Terminal" className={errorPaneClass} onActivate={activatePane} style={paneStyle}><TerminalView
             paneStyle={paneStyle}
             terminal={terminal}
@@ -299,6 +304,7 @@ export const PaneGrid = memo(function PaneGrid({
             onActivatePane={() =>
               activeProjectId && setActiveSplitCell(activeProjectId, leafId)
             }
+            onSwitchMode={onSwitchToConversation && paneCanSwitchMode(preset, !!activeProject?.remote) ? () => onSwitchToConversation(terminal.id) : undefined}
             enableWebgl={!isSplit}
           /></LocalErrorBoundary>
         );
@@ -316,7 +322,7 @@ export const PaneGrid = memo(function PaneGrid({
         const colorsForTerminal: ThemeColors =
           overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
         if (t.presetId === PRESET_ID_BOARD) return null;
-        return preset.interfaceMode === "gui" && guiSupportedAgent(preset) !== null && !project?.remote ? null : (
+        return paneMode(preset, t, !!project?.remote) === "gui" ? null : (
           <LocalErrorBoundary key={t.id} label="Terminal" className="aya-pane" style={{ display: "none" }}><TerminalView
             terminal={t}
             preset={preset}
@@ -338,6 +344,7 @@ export const PaneGrid = memo(function PaneGrid({
             onSpawnFailure={onSpawnFailure}
             restartTrigger={restartTriggers[t.id] ?? 0}
             macOptionKeyMode={macOptionKeyMode}
+            onSwitchMode={onSwitchToConversation && paneCanSwitchMode(preset, !!project?.remote) ? () => onSwitchToConversation(t.id) : undefined}
             enableWebgl={false}
           /></LocalErrorBoundary>
         );
@@ -345,7 +352,7 @@ export const PaneGrid = memo(function PaneGrid({
       {Object.values(terminals).map(terminal => {
         const project = findProject(projects, terminal.projectSlug);
         const preset = getPreset(presets, terminal.presetId);
-        if (preset.interfaceMode !== "gui" || !guiSupportedAgent(preset) || project?.remote || terminal.spawnDeferred) return null;
+        if (paneMode(preset, terminal, !!project?.remote) !== "gui" || terminal.spawnDeferred) return null;
         const pane = paneRects.find(p => p.terminalId === terminal.id);
         return (
           <LocalErrorBoundary key={`${terminal.id}:${restartTriggers[terminal.id] ?? 0}`} label="Conversation"
@@ -370,6 +377,7 @@ export const PaneGrid = memo(function PaneGrid({
             onReportStatus={onReportPaneStatus}
             listSiblingTerminals={listSiblingTerminals}
             findOpen={findInPaneFor === terminal.id}
+            onSwitchToTerminal={onSwitchToTerminal ? (sessionId) => onSwitchToTerminal(terminal.id, sessionId) : undefined}
             onCloseFind={closeFindPane}
             headerSlot={headerSlot}
           /></LocalErrorBoundary>

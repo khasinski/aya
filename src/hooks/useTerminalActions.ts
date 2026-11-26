@@ -12,6 +12,7 @@ import {
 	projectSplitTree,
 	resolveActiveLeafId,
 } from "../split-tree";
+import { initialPaneMode,paneCanSwitchMode,type PaneMode } from "../pane-mode";
 import { nextActiveTerminalId,projectLaunchCwd,shellPresetForTab } from "../terminal-actions";
 import { terminalKillRefusal } from "../terminal-kill-refusal";
 import { BUILTIN_BOARD,getPreset,type Preset,type ProjectConfig,type ProjectEvent,type TerminalState,type WorkingTab } from "../types";
@@ -81,6 +82,8 @@ export function useTerminalActions({
       targetProjectId?: string,
       terminalId?: string,
       initialBoardCard?: TerminalState["initialBoardCard"],
+      /** Terminal or Conversation, for an agent with both; default: the preset's "Opens as". */
+      mode?: PaneMode,
     ): TerminalState | null => {
       const slug = targetProjectId ?? activeProjectIdRef.current;
       if (!slug) return null;
@@ -118,6 +121,7 @@ export function useTerminalActions({
         ...(initialPrompt ? { initialPrompt } : {}),
         ...(initialBoardCard ? { initialBoardCard } : {}),
         ...(sshTarget ? { sshTarget } : {}),
+        ...(paneCanSwitchMode(preset, !!project.remote) && !sshTarget ? { interfaceMode: mode ?? initialPaneMode(preset, false) } : {}),
       };
       const nextTerminals = { ...terminalsRef.current, [id]: term };
       terminalsRef.current = nextTerminals;

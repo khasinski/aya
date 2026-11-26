@@ -3,7 +3,10 @@ import { agentBriefHint, guiSupportedAgent } from "../../agentPreset";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../../colors";
 import { looksNonInteractive, type HarnessDef, type Preset, type Theme } from "../../types";
 import { DEFAULT_CLAUDE_CONFIG_DIR, DEFAULT_CODEX_CONFIG_DIR, agentCommand, type DraftPreset } from "./drafts";
-import { SettingsHeader, SettingsIcon } from "./parts";
+import { PANE_MODE_SHORTCUT_LABEL } from "../../pane-mode";
+import { Segmented, SettingsHeader, SettingsIcon } from "./parts";
+
+const OPENS_AS_OPTIONS = [["terminal", "Terminal"], ["gui", "Conversation"]] as const;
 
 interface PresetsTabProps {
   addClaudeAccount: () => void;
@@ -223,29 +226,19 @@ export function PresetsTab({
       </div>
 
       <div className="aya-preset-section">
-        <div className="aya-settings-section-title">Interface</div>
-        <label className="aya-preset-toggle">
-          <span>
-            <strong>Conversation GUI · Experimental</strong>
-            <small id="preset-gui-hint">
-              {guiAgent
-                ? "Show conversations in Aya instead of the terminal."
-                : "Choose Claude, Codex, Pi or Antigravity to use conversation GUI."}
-            </small>
-          </span>
-          <input
-            type="checkbox"
-            aria-label="Conversation GUI · Experimental"
-            aria-describedby="preset-gui-hint"
-            checked={row.interfaceMode === "gui"}
-            disabled={!guiAgent}
-            onChange={(e) =>
-              updateRow(row.__key, {
-                interfaceMode: e.target.checked ? "gui" : "terminal",
-              })
-            }
-          />
-        </label>
+        <div className="aya-settings-section-title">Opens as</div>
+        <Segmented
+          label="Opens as"
+          options={OPENS_AS_OPTIONS}
+          value={guiAgent && row.interfaceMode === "gui" ? "gui" : "terminal"}
+          disabled={!guiAgent}
+          onChange={(mode) => updateRow(row.__key, { interfaceMode: mode })}
+        />
+        <small className="aya-preset-hint" id="preset-gui-hint">
+          {guiAgent
+            ? `How a new pane starts. Any pane switches between Terminal and Conversation (Experimental) from its header or with ${PANE_MODE_SHORTCUT_LABEL}, and keeps its conversation.`
+            : "Choose Claude, Codex, Pi or Antigravity to open panes as a Conversation."}
+        </small>
       </div>
 
       <div className="aya-preset-section">

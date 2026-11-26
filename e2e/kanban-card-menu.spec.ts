@@ -63,17 +63,18 @@ test("a full board keeps assignment choices inside the viewport and selectable a
 });
 }
 
-test.describe("GUI presets without board-task startup support", () => {
+test.describe("presets that open as a Conversation start board tasks too", () => {
   test.use({ seedOptions: seedBoard(board, {
     pane: "single",
     presetList: [
-      { id: "gui", name: "Unsupported GUI start", icon: "◆", color: "", command: "codex", agent: "codex", interfaceMode: "gui" },
+      { id: "gui", name: "Conversation start", icon: "◆", color: "", command: "codex", agent: "codex", interfaceMode: "gui" },
       { id: "shell", name: "Supported terminal", icon: "$", color: "", command: "$SHELL" },
     ],
   }) });
-  test("does not offer an action that would leave a phantom reservation", async ({ window }) => {
+  // A board task always starts in the agent's terminal; the pane can switch to its Conversation afterwards.
+  test("offers every agent preset without reserving the card before a pick", async ({ window }) => {
     await openCardMenu(window, "t-1");
-    await expect(window.getByRole("menuitem", { name: /Unsupported GUI start/ })).toHaveCount(0);
+    await expect(window.getByRole("menuitem", { name: /Conversation start/ })).toHaveCount(1);
     await expect(window.getByRole("menuitem", { name: /Supported terminal/ })).toHaveCount(1);
     const snapshot = await window.evaluate(() => window.aya.getBoard("e2e-proj"));
     expect(snapshot.cards[0].claim).toBeUndefined();

@@ -12,6 +12,8 @@ export interface ShortcutActions {
   focusPane: (direction: "left" | "right" | "up" | "down") => void;
   splitPaneRight: () => void;
   splitPaneBelow: () => void;
+  /** Terminal ⇄ Conversation for the active pane (⌘⌥G). */
+  togglePaneMode: () => void;
 }
 
 export function useAppShortcuts(actions: ShortcutActions): void {
@@ -30,6 +32,7 @@ export function useAppShortcuts(actions: ShortcutActions): void {
       else if (action === "find-in-pane") a.findInPane();
       else if (action === "split-pane-right") a.splitPaneRight();
       else if (action === "split-pane-below") a.splitPaneBelow();
+      else if (action === "toggle-pane-mode") a.togglePaneMode();
       else if (action.startsWith("focus-pane-")) {
         const dir = action.slice("focus-pane-".length);
         if (dir === "left" || dir === "right" || dir === "up" || dir === "down") {

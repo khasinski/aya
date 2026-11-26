@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Switch any Claude, Codex, Pi or Antigravity pane between its terminal and the Conversation GUI from the pane header, the View menu or Cmd/Ctrl+Alt+G. The agent stops between turns and resumes the same session in the other mode (Claude and Codex both ways; Pi and Antigravity from the conversation to the terminal), the pane keeps its place, folder, name and team role, and its mode survives a restart. Terminal and conversation panes now share one header. A preset's Conversation GUI checkbox becomes **Opens as: Terminal / Conversation**, and presets that only differed by it ("Claude" and "Claude GUI") are merged into one on update, with their panes kept as they were.
 - Conversation GUI: send one prompt, with its attached images, to several agents or models at once, each in its own worktree and branch from the same base, then compare each branch's diff side by side. A worktree that cannot be created is reported for that agent without stopping the others.
 - Conversation GUI: show subagents as their own activity rows with the task they were given, their tool calls and their final report. Claude's background subagents stay running after the turn that started them, and the pane reports how many are still working.
 - Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.

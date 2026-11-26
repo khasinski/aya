@@ -382,8 +382,8 @@ export function useProjectSessionPersistence(options: ProjectSessionPersistenceO
   // restore may fall back to "latest session".
   const savedSessionSignatures = useRef(new Map<string, string>());
   const sessionIdSignature = Object.values(terminals)
-    .filter((t) => t.sessionId || t.sharedDir)
-    .map((t) => `${t.id}:${t.sessionId}:${t.sharedDir}`)
+    .filter((t) => t.sessionId || t.sharedDir || t.interfaceMode)
+    .map((t) => `${t.id}:${t.sessionId}:${t.sharedDir}:${t.interfaceMode}`)
     .sort()
     .join("\n");
   useEffect(() => {
@@ -391,12 +391,12 @@ export function useProjectSessionPersistence(options: ProjectSessionPersistenceO
     const { terminalsRef } = initial.current;
     const slugs = new Set(
       Object.values(terminalsRef.current)
-        .filter((t) => t.sessionId || t.sharedDir)
+        .filter((t) => t.sessionId || t.sharedDir || t.interfaceMode)
         .map((t) => t.projectSlug),
     );
     for (const slug of savedSessionSignatures.current.keys()) if (!slugs.has(slug)) savedSessionSignatures.current.delete(slug);
     for (const slug of slugs) {
-      const signature = Object.values(terminalsRef.current).filter(t => t.projectSlug === slug).map(t => `${t.id}:${t.sessionId || ''}:${t.sharedDir === true}`).sort().join('\n');
+      const signature = Object.values(terminalsRef.current).filter(t => t.projectSlug === slug).map(t => `${t.id}:${t.sessionId || ''}:${t.sharedDir === true}:${t.interfaceMode || ''}`).sort().join('\n');
       if (savedSessionSignatures.current.get(slug) === signature) continue;
       savedSessionSignatures.current.set(slug, signature);
       persistProject(slug, terminalsRef.current);
