@@ -52,6 +52,9 @@ test('Claude: suggested next prompt, context meter, skills picker and restart', 
     await expect(skills.getByRole('option')).toHaveText(['/docs:writeWrite user documentation', '/fake-review [focus]Review the current change like a picky colleague']);
     await prompt.pressSequentially('fak');
     await expect(skills.getByRole('option')).toHaveCount(1);
+    // Enter takes a skill only after the arrows moved through the list; Tab takes it at once.
+    await prompt.press('ArrowDown');
+    await expect(prompt).toHaveAttribute('aria-activedescendant', /.+/);
     await prompt.press('Enter');
     await expect(prompt).toHaveValue('/fake-review ');
     await expect(skills).toHaveCount(0);
@@ -82,6 +85,16 @@ test('Claude: suggested next prompt, context meter, skills picker and restart', 
     await prompt.fill('/fake-review again'); await prompt.press('Enter');
     await expect(gui.locator('article').filter({ hasText: 'Skill ran: /fake-review again' })).toBeVisible();
     await expect(gui.locator('article.user')).toHaveCount(4);
+    // A $word that only a description mentions opens no picker; with a match, Enter still sends the message as typed.
+    await prompt.fill('');
+    await prompt.pressSequentially('suggest $colleague');
+    await expect(gui.getByRole('listbox', { name: 'Skills' })).toHaveCount(0);
+    await prompt.fill('');
+    await prompt.pressSequentially('suggest $fake');
+    await expect(gui.getByRole('listbox', { name: 'Skills' }).getByRole('option')).toHaveCount(1);
+    await prompt.press('Enter');
+    await expect(gui.locator('article.user').last()).toContainText('suggest $fake');
+    await expect(prompt).toHaveValue('');
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 

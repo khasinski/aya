@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isZenShortcut, parseGuiViewPrefs, visibleActivities, zenMessages } from "../dist-test/gui-view-prefs.js";
-import { createWindowTitle, guiAnnouncement, guiWindowTitle } from "../dist-test/gui-a11y.js";
+import { createAnnouncer, createWindowTitle, guiAnnouncement, guiWindowTitle } from "../dist-test/gui-a11y.js";
 
 test("the view preference falls back to showing everything", () => {
   assert.deepEqual(parseGuiViewPrefs(null), { tools: "all", zen: false });
@@ -71,4 +71,18 @@ test("one pane owns the title at a time and releasing it restores the window's o
   title.set("b", null);
   assert.equal(doc.title, "Aya");
   assert.equal(title.owner, null);
+});
+
+test("the same announcement twice is read twice: the region is emptied, then filled on the next frame", () => {
+  const said = [], frames = [];
+  const announce = createAnnouncer(text => said.push(text), run => frames.push(run));
+  announce("Turn complete");
+  frames.shift()();
+  announce("Turn complete");
+  frames.shift()();
+  assert.deepEqual(said, ["", "Turn complete", "", "Turn complete"]);
+  // A newer announcement wins over one still waiting for its frame.
+  announce("Working"); announce("Approval needed");
+  frames.forEach(run => run());
+  assert.deepEqual(said.slice(4), ["", "", "Approval needed"]);
 });

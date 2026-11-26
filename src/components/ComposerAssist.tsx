@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { GuiEvent } from '../../shared/codex-gui';
-import { assistSupported, contextMeterText, contextUsageFromParams, filterSkills, insertSkill, parseSuggestionsPreference, skillQueryAt, type GuiAssistAgent, type GuiContextUsage, type GuiSkill, type SkillQuery } from '../gui-composer-assist';
+import { assistSupported, contextMeterText, contextUsageFromParams, filterSkills, insertSkill, parseSuggestionsPreference, skillPickerKey, skillQueryAt, type GuiAssistAgent, type GuiContextUsage, type GuiSkill, type SkillQuery } from '../gui-composer-assist';
 import { GUI_PROMPT_SUGGESTIONS_STORAGE_KEY } from '../storage-keys';
 
 /** The suggested next prompt, the context meter and the skills picker of one conversation pane. */
@@ -22,6 +22,8 @@ export function useComposerAssist({ agent, ready, prompt, setPrompt, composer, i
   const [skillsRevision, setSkillsRevision] = useState(0);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
+  /** The draft the user last moved through the picker in: Enter picks only then. */
+  const [navigatedIn, setNavigatedIn] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const promptRef = useRef(prompt);
   promptRef.current = prompt;
@@ -56,7 +58,8 @@ export function useComposerAssist({ agent, ready, prompt, setPrompt, composer, i
   };
   const at = Math.min(caret, prompt.length);
   const query: SkillQuery | null = supported && dismissed !== prompt ? skillQueryAt(prompt, at) : null;
-  const matches = query ? filterSkills(skills, query.query) : [];
+  // Names only: a `$word` that is no skill's name must not catch Enter through some description.
+  const matches = query ? filterSkills(skills, query.query, 8, true) : [];
   const slashToken = prompt.startsWith('/') && !/\s/.test(prompt.slice(1)) ? prompt.slice(1) : null;
   const slashSkills = supported && prompt.startsWith('/') ? filterSkills(skills, prompt.slice(1).split(/\s/)[0], 6, true) : [];
   const pick = (skill: GuiSkill, from: SkillQuery | null = query) => place(insertSkill(agent, prompt, from, skill.name));
@@ -66,17 +69,20 @@ export function useComposerAssist({ agent, ready, prompt, setPrompt, composer, i
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
     if (e.nativeEvent.isComposing || e.altKey || e.metaKey || e.ctrlKey) return false;
     if (query && matches.length) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setActive(i => (i + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return true; }
-      if ((e.key === 'Tab' || e.key === 'Enter') && !e.shiftKey) { e.preventDefault(); pick(matches[Math.min(active, matches.length - 1)]); return true; }
-      if (e.key === 'Escape') { e.preventDefault(); setDismissed(prompt); return true; }
+      const action = skillPickerKey(e.key, e.shiftKey, navigatedIn === prompt);
+      if (action === 'move') { e.preventDefault(); setNavigatedIn(prompt); setActive(i => (i + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return true; }
+      if (action === 'pick') { e.preventDefault(); pick(matches[Math.min(active, matches.length - 1)]); return true; }
+      if (action === 'dismiss') { e.preventDefault(); setDismissed(prompt); return true; }
     }
     if (e.key === 'Tab' && !e.shiftKey && slashToken !== null && slashSkills.length && !commands.some(command => command.name.startsWith(slashToken))) { e.preventDefault(); pickSlash(slashSkills[0]); return true; }
     if (e.key === 'Tab' && !e.shiftKey && showSuggestion) { e.preventDefault(); place({ prompt: nextPrompt, caret: nextPrompt.length }); return true; }
     return false;
   };
   const sigil = agent === 'claude' ? '/' : '$';
-  const menu = query && (matches.length || !query.query) ? <div className="aya-gui-skills" role="listbox" aria-label="Skills">
-    {matches.length ? matches.map((skill, index) => <button type="button" role="option" aria-selected={index === Math.min(active, matches.length - 1)} key={skill.name} title={skill.description} onMouseDown={e => e.preventDefault()} onClick={() => pick(skill)}><b>{sigil}{skill.name}</b>{skill.argumentHint && <i> {skill.argumentHint}</i>}<small>{skill.description}</small></button>)
+  const listboxId = useId(), optionId = (index: number) => `${listboxId}-option-${index}`;
+  const activeIndex = Math.min(active, matches.length - 1);
+  const menu = query && (matches.length || !query.query) ? <div className="aya-gui-skills" id={listboxId} role="listbox" aria-label="Skills">
+    {matches.length ? matches.map((skill, index) => <button type="button" role="option" id={optionId(index)} aria-selected={index === activeIndex} key={skill.name} title={skill.description} onMouseDown={e => e.preventDefault()} onClick={() => pick(skill)}><b>{sigil}{skill.name}</b>{skill.argumentHint && <i> {skill.argumentHint}</i>}<small>{skill.description}</small></button>)
       : <small className="aya-gui-skills-empty">{skills.length ? 'No matching skill.' : 'No skills found for this agent.'}</small>}
   </div> : null;
   const slashMenuItems = slashSkills.map(skill => <button type="button" key={`skill:${skill.name}`} className="aya-gui-skill-command" title={skill.description} onClick={() => pickSlash(skill)}>{sigil}{skill.name}<small> skill</small></button>);
@@ -85,13 +91,15 @@ export function useComposerAssist({ agent, ready, prompt, setPrompt, composer, i
     onCaret: (value: number) => setCaret(value),
     placeholder: (fallback: string) => showSuggestion ? nextPrompt : fallback,
     menu, slashMenuItems,
+    /** The composer textarea's link to the picker, for screen readers. */
+    inputProps: menu ? { 'aria-controls': listboxId, 'aria-autocomplete': 'list' as const, ...(matches.length ? { 'aria-activedescendant': optionId(activeIndex) } : {}) } : {},
   };
 }
 
 export function ContextMeter({ usage }: { usage: GuiContextUsage | null }) {
   if (!usage) return null;
   const { label, title, percent } = contextMeterText(usage);
-  return <span className="aya-gui-context-meter" role={percent === null ? 'status' : 'meter'} aria-label="Context window used" aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined} title={title} data-level={percent === null ? undefined : percent >= 90 ? 'high' : percent >= 70 ? 'warn' : 'ok'}>
+  return <span className="aya-gui-context-meter" role={percent === null ? 'img' : 'meter'} aria-label={percent === null ? `Context window used: ${label}` : 'Context window used'} aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined} title={title} data-level={percent === null ? undefined : percent >= 90 ? 'high' : percent >= 70 ? 'warn' : 'ok'}>
     {percent !== null && <span className="aya-gui-context-meter-bar" aria-hidden="true"><span style={{ width: `${percent}%` }} /></span>}
     <span className="aya-gui-context-meter-label">{label}</span>
   </span>;

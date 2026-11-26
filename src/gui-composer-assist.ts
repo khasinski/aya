@@ -51,6 +51,16 @@ export function filterSkills(skills: GuiSkill[], query: string, limit = 8, names
     .sort((a, b) => a.rank - b.rank || a.skill.name.localeCompare(b.skill.name)).slice(0, limit).map(entry => entry.skill);
 }
 
+/** What a key does while the skills picker is open. Tab takes the highlighted skill; Enter takes it only once the user
+ *  moved through the list with the arrows, so a message that merely contains `$word` (`why is $PATH empty`) still sends. */
+export function skillPickerKey(key: string, shift: boolean, navigated: boolean): "move" | "pick" | "dismiss" | null {
+  if (key === "ArrowDown" || key === "ArrowUp") return "move";
+  if (key === "Tab" && !shift) return "pick";
+  if (key === "Enter" && !shift && navigated) return "pick";
+  if (key === "Escape") return "dismiss";
+  return null;
+}
+
 /** The text the agent understands as a skill: Codex reads `$name` anywhere; Claude runs `/name` only at the start of the message. */
 export function insertSkill(agent: GuiAssistAgent, prompt: string, at: SkillQuery | null, name: string): { prompt: string; caret: number } {
   const start = at ? at.start : 0, end = at ? at.end : prompt.length;

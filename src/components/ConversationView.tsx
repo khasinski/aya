@@ -21,7 +21,7 @@ import { findStatus,findTextMatches,stepMatch } from '../gui-find';
 import { fileChangePaths,isTurnDiffSummary,repoRelativePath,type TurnDiffSummary } from '../gui-turn-diff';
 import { fanOutRunForTerminal,requestFanOut,requestFanOutCompare,takeFanOutMessage } from '../gui-fan-out';
 import { guiRendererRecoveryInProgress,takeGuiPaneRecovery } from '../gui-renderer-recovery';
-import { createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
+import { createAnnouncer,createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
 import { formatResetTime,isUsageLimitError,limitPaneStatus,limitStatusText,mergeCodexRateLimits,nextLimitEvent,parseUsageLimit,RESUME_PROMPT,timerDelay,turnUsageLimit,type CodexRateLimits,type GuiUsageLimit } from '../gui-limits';
 import { getGuiViewPrefs,isZenShortcut,setGuiViewPrefs,subscribeGuiViewPrefs,TOOL_VISIBILITY_LABELS,visibleActivities,zenMessages,type ToolCallVisibility } from '../gui-view-prefs';
 import { backgroundAgentsText,guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
@@ -248,6 +248,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const view = useSyncExternalStore(subscribeGuiViewPrefs, getGuiViewPrefs);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [announcement, setAnnouncement] = useState('');
+  const [announce] = useState(() => createAnnouncer(setAnnouncement));
   const [paneFocused, setPaneFocused] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
@@ -604,10 +605,10 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     const next: GuiPaneStatus = computed !== 'clear' && (computed.level === 'done' || computed.level === 'error') && !turnRanHere.current && !usageLimit ? 'clear' : computed;
     if (sameGuiPaneStatus(next, reportedStatus.current)) return;
     const said = guiAnnouncement(reportedStatus.current, next);
-    if (said) setAnnouncement(said);
+    if (said) announce(said);
     reportedStatus.current = next;
     onReportStatus(terminal.id, next);
-  }, [onReportStatus, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length, backgroundAgents, usageLimit, limitClock]);
+  }, [onReportStatus, announce, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length, backgroundAgents, usageLimit, limitClock]);
   // The window title leads with the status of the pane the user is in, while that status needs them.
   const titleOwner = !hidden && (isActivePane || paneFocused);
   useEffect(() => {
@@ -1058,6 +1059,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       {edit.editing && <EditFromHereBar state={edit.editing} agentLabel={agentLabel} busy={busy} onRevertFiles={edit.setRevertFiles} onCancel={() => { edit.cancel(); composer.current?.focus(); }} />}
       <textarea
         ref={composer}
+        {...assist.inputProps}
         aria-label={`Message ${agentLabel}`}
         placeholder={declinableApproval(requests, guiAgent) ? 'Type why to decline the request above, then press Enter…' : assist.placeholder(`Message ${agentLabel}… (/ for commands${assist.supported ? ', $ for skills' : ''})`)}
         data-suggestion={assist.nextPrompt || undefined}
