@@ -188,6 +188,7 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 import { InstalledBuild,installedBuildFile } from "./installed-build";
 import { HandoverDisplays } from "./pty-handover-display";
 import { PlannedUpdate } from "./pty-planned-update";
+import { installQuitSignals } from "./quit-signals";
 
 configureAppIdentity();
 
@@ -549,6 +550,14 @@ let ordinaryQuitAnnounced = false;
 let ordinaryQuitAnnouncementPending = false;
 let quitDiagnosticsFlushed = false;
 let quitDiagnosticsFlushPending = false;
+// A signal quits without the busy-turn question: no one can answer it, and its
+// sender escalates to SIGKILL, which skips the terminal host transfer announced
+// below and leaves the next launch unable to reattach any pane.
+void app.whenReady().then(() => installQuitSignals(process, (signal) => {
+  diagnosticsLog.append("quit-signal", { signal });
+  quitConfirmed = true;
+  app.quit();
+}));
 
 const ayaWeb = createAyaWeb({
   watchConfig: notify => startConfigWatcher({ isDestroyed: () => false, webContents: { send: (_channel, value) => notify(value.slice) } }),

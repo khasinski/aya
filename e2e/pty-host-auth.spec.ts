@@ -139,6 +139,32 @@ for(const loss of ['main crash'] as const)test(`${loss} opens a window without a
 });
 
 
+for(const signal of ['SIGTERM','SIGINT','SIGHUP'] as const)test(`a ${signal} during a running conversation turn quits without asking and the relaunch reattaches the same terminals`,async({seeded})=>{
+ // A signal's sender cannot answer the busy-turn quit question. While that
+ // question vetoed the quit, a task runner escalated to SIGKILL, the transfer
+ // was never announced and the relaunch could not reattach any pane.
+ const root=join(__dirname,'..'),entry=join(seeded.root,'busy-turn-main.cjs'),asked=join(seeded.root,'busy-turn-questions.log');
+ writeFileSync(entry,`const path=require('path'),fs=require('fs');require(path.join(process.env.AYA_TEST_APP_ROOT,'dist-electron/codex-gui-ipc.js')).busyGuiSessionCount=()=>1;const electron=require('electron'),original=electron.dialog.showMessageBox.bind(electron.dialog);electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);if(options.message!=='Work in progress will stop')return original(...args);fs.appendFileSync(process.env.AYA_TEST_QUESTIONS,options.detail+'\\n');return{response:1,checkboxChecked:false};};require(path.join(process.env.AYA_TEST_APP_ROOT,'dist-electron/main.js'));`);
+ const first=await launchE2eElectron({cwd:root,args:[entry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,AYA_TEST_QUESTIONS:asked}})}),child=first.process();
+ let next:Awaited<ReturnType<typeof launchApp>>|null=null;
+ try{
+  await waitForShellReady(await first.firstWindow());await expect.poll(()=>record(seeded.ayaHome).panes.length).toBe(2);
+  const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome);expect(hosts).toHaveLength(1);
+  child.kill(signal);
+  await expect.poll(()=>alive(child.pid!),{timeout:10_000,message:`Aya did not quit on ${signal}`}).toBe(false);
+  expect(existsSync(asked)?readFileSync(asked,'utf8'):'').toBe('');
+  expect(alive(hosts[0])).toBe(true);for(const pane of before.panes)expect(alive(pane.pid)).toBe(true);
+  expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(1);
+  expect(readFileSync(join(seeded.ayaHome,'diagnostics.log'),'utf8')).toContain(`"ev":"quit-signal","signal":"${signal}"`);
+  next=await launchApp({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}});
+  const view=await next.firstWindow();await waitForShellReady(view);
+  expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(record(seeded.ayaHome).pid).toBe(before.pid);expect(record(seeded.ayaHome).panes).toEqual(before.panes);
+  await expect(view.getByTestId('terminal-history-notice')).toHaveCount(0);
+  const terminal=view.getByTestId('xterm-host').first();await terminal.click();await view.keyboard.type("printf 'SIGNAL_QUIT_IO\\n'");await view.keyboard.press('Enter');
+  await expect.poll(()=>view.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('SIGNAL_QUIT_IO\r\n');
+ }finally{if(next)await closeAndWait(next);else if(alive(child.pid!))await closeAndWait(first);}
+});
+
 test('normal quit keeps its one-use transfer across six simulated months before relaunch',async({seeded})=>{
  const root=join(__dirname,'..'),clockFile=join(seeded.root,'auth-clock.json'),hostEntry=join(seeded.root,'long-closed-host.cjs'),mainEntry=join(seeded.root,'long-closed-main.cjs');
  writeFileSync(clockFile,'0');
