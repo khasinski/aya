@@ -98,10 +98,14 @@ function parseCallMessageQuestions(id: string, textValue: string): GuiQuestion[]
   }
   return normalizeQuestions(parsed);
 }
+// Per message object: a streamed delta replaces only the message it extends, so the others are parsed once.
+const messageQuestions = new WeakMap<Message, GuiQuestion[]>();
 function extractMessageQuestions(m: Message): GuiQuestion[] {
-  if (Array.isArray(m.questions) && m.questions.length > 0) return normalizeQuestions(m.questions);
-  if (m.type === 'assistant') return parseCallMessageQuestions(m.id, m.text);
-  return [];
+  const known = messageQuestions.get(m);
+  if (known) return known;
+  const questions = Array.isArray(m.questions) && m.questions.length > 0 ? normalizeQuestions(m.questions) : m.type === 'assistant' ? parseCallMessageQuestions(m.id, m.text) : [];
+  messageQuestions.set(m, questions);
+  return questions;
 }
 /** The window title belongs to the focused Conversation GUI pane while its status needs the user's eyes. */
 const windowTitle = createWindowTitle(document);
@@ -884,7 +888,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     [],
   );
   const zen = view.zen && !findOpen;   // Find shows the whole conversation while it is open
-  const shownMessages = zen ? zenMessages(messages, busy, m => extractMessageQuestions(m).length > 0) : messages;
+  const shownMessages = useMemo(() => zen ? zenMessages(messages, busy, m => extractMessageQuestions(m).length > 0) : messages, [messages, busy, zen]);
+  const keptMounted = useMemo(() => new Set(shownMessages.filter(m => m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length).map(m => m.id)), [shownMessages]);
   const shownActivities = visibleActivities(activities, zen ? 'none' : view.tools);
   const activityCounts = shownActivities.reduce((counts, activity) => {
     const status = activity.status === 'inProgress' ? 'running'
@@ -1034,7 +1039,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       }} onScroll={e => { const node = e.currentTarget; const maximum = Math.max(0, node.scrollHeight - node.clientHeight); follow.current = !followHeld.current && maximum - node.scrollTop < 80 && !movedUpFromFollowedPosition(node.scrollTop, maximum, lastFollowTop.current); if (follow.current) lastFollowTop.current = node.scrollTop; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {shownMessages.map((m, index) => (
-        <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= shownMessages.length - 12} keepMounted={Boolean(m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length)} findOpen={findOpen}>
+        <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= shownMessages.length - 12} keepMounted={keptMounted.has(m.id)} findOpen={findOpen}>
         {m.type === 'turnDiff' && m.turnDiff ? <TurnChanges summary={m.turnDiff} onOpen={file => setDiffView({ source: `turn:${m.turnDiff!.id}`, file })} /> : <ConversationMessageItem
           message={m}
           agentBadge={agentBadge}
