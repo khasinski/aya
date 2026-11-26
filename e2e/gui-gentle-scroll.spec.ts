@@ -123,10 +123,12 @@ test("scrolling nested tool results does not detach the conversation", async ({ 
   // Chromium animates keyboard scrolling; measure the wheel only after End finishes.
   await expect.poll(() => tools.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1);
   await painted(window);
-  // Focusing a nested region may scroll the outer viewport to reveal it.
-  // Explicitly resume following before testing the nested wheel gesture.
+  // Focusing a nested region may scroll the outer viewport to reveal it: past the 80px follow band that detaches
+  // (Jump to latest), within it the view still follows but sits above the bottom. How far depends on the pane's
+  // header and viewport height, so return to the bottom either way before testing the nested wheel gesture.
   const jump = gui.getByRole("button", { name: "Jump to latest" });
   if (await jump.isVisible()) await jump.click();
+  else await gui.getByLabel("Conversation with Codex", { exact: true }).evaluate(node => { node.scrollTop = node.scrollHeight; });
   await expect.poll(gap).toBeLessThanOrEqual(1);
   const before = await tools.evaluate(node => node.scrollTop);
   await wheel(window, tools, -12);
