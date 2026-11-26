@@ -1744,7 +1744,8 @@ body {
 /* One header for an agent pane in both modes (components/PaneHeader.tsx): terminal and Conversation share layout. */
 .aya-pane-header--unified { gap: 8px; min-height: 40px; box-sizing: border-box; padding-top: 4px; padding-bottom: 4px; }
 .aya-pane-header--unified .aya-servers-button,
-.aya-pane-header--unified .aya-pane-header-meta + .aya-servers-button { margin-left: 0; }
+.aya-pane-header--unified .aya-pane-header-meta + .aya-servers-button,
+.aya-pane-header--unified > .aya-tui-artifacts-button { margin-left: 0; }
 .aya-pane-header--unified .aya-gui-heading { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
 .aya-pane-mode {
   flex: none; display: inline-flex; padding: 1px; gap: 1px;
