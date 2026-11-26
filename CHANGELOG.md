@@ -3,7 +3,6 @@
 ## Unreleased
 
 - Terminal agents now present charts, tables, diagrams, reports and images with `aya present` instead of drawing them as ASCII art: the brief Aya gives them at launch says so, and Pi panes can now receive the brief too (`--append-system-prompt`). A pane's header shows an artifacts button with the count that lists its artifacts and opens each one. The button is coloured when one arrives unseen. Artifacts are now kept per pane across Aya restarts.
-
 - Conversation GUI: Quit asks before interrupting a turn that has just been sent, while Aya is still snapshotting the workspace, and cancelling that Quit no longer disconnects the conversation behind a still-visible Stop button
 - Switch any Claude, Codex, Pi or Antigravity pane between its terminal and the Conversation GUI from the pane header, the View menu or Cmd/Ctrl+Alt+G. The agent stops between turns and resumes the same session in the other mode (Claude and Codex both ways; Pi and Antigravity from the conversation to the terminal), the pane keeps its place, folder, name and team role, and its mode survives a restart. Terminal and conversation panes now share one header. A preset's Conversation GUI checkbox becomes **Opens as: Terminal / Conversation**, and presets that only differed by it ("Claude" and "Claude GUI") are merged into one on update, with their panes kept as they were.
 - Conversation GUI: send one prompt, with its attached images, to several agents or models at once, each in its own worktree and branch from the same base, then compare each branch's diff side by side. A worktree that cannot be created is reported for that agent without stopping the others.
@@ -18,6 +17,7 @@
 - Conversation GUI: a turn stopped by a Claude or Codex usage limit shows a Limited state with the reset time, **Resume at reset** (sends "continue" when the limit resets, survives a reload) and **Snooze until reset**. View options hide successful or all tool calls, and Zen mode (Cmd/Ctrl+Alt+Z) shows only your messages and each turn's final reply. Screen readers hear when a turn starts, needs approval and ends, and the window title leads with the focused GUI pane's status.
 - Add **Edit from here** to Claude and Codex conversations: an earlier message goes back into the composer, and sending it continues the conversation as if the later messages never happened (Claude resumes a fork cut at that point, Codex reverts the thread). An optional **Also revert files** restores the files from Claude's file checkpoints or, in a git worktree, from a snapshot Aya takes when each message is sent.
 - Conversation GUI: show the agent's suggested next prompt in the empty composer (Tab inserts it; can be turned off), a context-window meter in the header, a `$` skills picker (also in the `/` menu) for Claude and Codex, and a Restart agent session action (`/restart`) that reloads skills and MCP servers and resumes the conversation.
+- Keep the restart warnings short when many terminals are open: they list the first 8 processes and count the rest, so the buttons stay on screen.
 
 ## v0.20.0 - 2026-11-22
 
