@@ -13,6 +13,13 @@ import type { EditSendInfo, EditTarget } from './gui-edit-from-here';
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
 const receivers = (item: Record<string, unknown> | undefined): string[] => Array.isArray(item?.receiverThreadIds) ? item.receiverThreadIds.filter((thread): thread is string => typeof thread === 'string') : [];
+/** Codex's `subAgentActivity` item of kind `started`, shown as the spawnAgent call older Codex reported. It carries no
+ *  task, so the agent's path names it ("/root/run_tests" → "run tests"). Other kinds return null. */
+function subagentActivitySpawn(item: Record<string, unknown>, senderThreadId: string): Record<string, unknown> | null {
+  if (item.kind !== 'started' || !text(item.id)) return null;
+  const thread = text(item.agentThreadId), name = text(item.agentPath).split('/').filter(Boolean).at(-1)?.replace(/_/g, ' ') ?? '';
+  return { type: 'collabAgentToolCall', tool: 'spawnAgent', id: text(item.id), status: item.completedAtMs ? 'completed' : 'inProgress', senderThreadId, receiverThreadIds: thread ? [thread] : [], prompt: name, model: item.model ?? null, agentsStates: {} };
+}
 import { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, presentArtifact } from './gui-artifact-tools';
 export { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, workspaceImage, presentArtifact } from './gui-artifact-tools';
 
@@ -34,6 +41,8 @@ export class CodexGuiSession {
    *  runs (and can be stopped) for as long as its agent's turn does. */
   private subagentSpawns = new Map<string, Record<string, unknown>>();
   private childTurns = new Map<string, string>();
+  /** The files of recent file change items by item ID, for their approval requests. */
+  private fileChanges = new Map<string, string[]>();
   private busy = false;
   /** The pane's mode, and the one Codex last received; a change goes with the next turn/start. */
   private permissionMode: GuiPermissionMode = 'auto-accept-edits';
@@ -331,7 +340,15 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
     this.emit({ method: 'aya/requestResolved', params: { id } });
   }
   private async receive(raw: unknown) {
-    const message = object(raw), method = text(message.method), params = object(message.params);
+    const message = object(raw), method = text(message.method);
+    let params = object(message.params);
+    // A file change's approval names only its item: remember which files each change edits, so the request can say.
+    const changed = object(params.item);
+    if (changed.type === 'fileChange' && text(changed.id) && Array.isArray(changed.changes)) {
+      const files = changed.changes.map(change => text(object(change).path)).filter(Boolean);
+      this.fileChanges.delete(text(changed.id)); this.fileChanges.set(text(changed.id), files);
+      if (this.fileChanges.size > 100) this.fileChanges.delete(this.fileChanges.keys().next().value!);
+    }
     if (!method && typeof message.id === 'number') {
       const entry = this.pending.get(message.id); if (!entry) return;
       this.pending.delete(message.id); clearTimeout(entry.timer);
@@ -389,6 +406,8 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
       if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput'].includes(method)) {
         // A subagent's request is marked so the main turn's end does not drop it while that agent still waits.
         const thread = text(params.threadId), task = this.subagentThreads.get(thread);
+        const files = method === 'item/fileChange/requestApproval' ? this.fileChanges.get(text(params.itemId)) : undefined;
+        if (files?.length) params = { ...params, files: files.map(file => file.startsWith(this.cwd + '/') ? file.slice(this.cwd.length + 1) : file) };
         const request = { method, params: thread && this.threadId && thread !== this.threadId ? { ...params, subagent: task ? `Subagent: ${task}` : 'A subagent' } : params };
         this.requests.set(id, request); this.emit({ ...request, id }); return;
       }
@@ -402,6 +421,13 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
     if (/^(?:turn\/|item\/|thread\/goal\/)/.test(method) && this.threadId && typeof params.threadId === 'string' && params.threadId !== this.threadId) {
       if (method === 'turn/started' || method === 'turn/completed') this.childTurnChanged(params.threadId, method, object(params.turn));
       return;
+    }
+    if (object(params.item).type === 'subAgentActivity') {
+      // Newer Codex reports a subagent as activity items instead of a spawnAgent call. Its start becomes the spawn
+      // row; the other kinds are left out, as the row follows the subagent's own turns.
+      const spawn = subagentActivitySpawn(object(params.item), this.threadId);
+      if (!spawn) return;
+      params = { ...params, item: spawn };
     }
     const item = object(params.item);
     if (item.type === 'collabAgentToolCall' && item.tool === 'spawnAgent' && Array.isArray(item.receiverThreadIds)) {

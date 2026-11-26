@@ -439,7 +439,7 @@ export function resolveActiveLeafId(
 /** Leaf id for the synthetic one-pane tree used when a project has no stored
  *  split (or is showing a single terminal). Constant so React keys and focus
  *  stay stable across renders. */
-const SINGLE_VIEW_LEAF_ID = "single";
+export const SINGLE_VIEW_LEAF_ID = "single";
 
 /** The tree actually rendered: a single-terminal view collapses to one pane,
  *  and a project with no stored split still renders through the same path so

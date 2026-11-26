@@ -160,6 +160,19 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       if (prompt === 'subagent-runs') { event('turn/completed', { threadId: p.threadId, turn: { id: 'turn', status: 'completed' } }); busy = false; }
       return;
     }
+    if (prompt === 'subagent-activity') {
+      // Codex 0.172 reports a spawned agent as subAgentActivity items, not a spawnAgent call; its thread's turns follow.
+      write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
+      event('turn/started', { threadId: p.threadId, turn: { id: 'turn' } });
+      const activity = { type: 'subAgentActivity', id: 'call_spawn', kind: 'started', agentThreadId: 'child-run-thread', agentPath: '/root/watch_build', model: 'gpt-test', reasoningEffort: 'low', startedAtMs: 1 };
+      event('item/started', { threadId: p.threadId, item: { ...activity, completedAtMs: null } });
+      event('item/completed', { threadId: p.threadId, item: { ...activity, completedAtMs: 1 } });
+      event('turn/started', { threadId: 'child-run-thread', turn: { id: 'child-run-turn' } });
+      event('item/started', { threadId: p.threadId, item: { type: 'collabAgentToolCall', id: 'call_wait', tool: 'wait', status: 'inProgress', senderThreadId: p.threadId, receiverThreadIds: [], agentsStates: {} } });
+      event('item/completed', { threadId: p.threadId, item: { type: 'subAgentActivity', id: 'subagent-completed-1', kind: 'completed', agentThreadId: 'child-run-thread', agentPath: '/root/watch_build', startedAtMs: 2, completedAtMs: 2 } });
+      event('turn/completed', { threadId: p.threadId, turn: { id: 'turn', status: 'completed' } }); busy = false;
+      return;
+    }
     if (prompt === 'subagent-outlives-turn') {
       // A spawned agent asks for approval; the main turn ends before anyone answers.
       write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
@@ -260,6 +273,12 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       setTimeout(() => process.exit(0), 1000);
     }
     else if (prompt === 'approval') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval' } });
+    else if (prompt === 'file-approval') {
+      // As Codex 0.172 asks: the request names only the file change item, which was announced just before.
+      const changes = [{ path: require('node:path').join(process.cwd(), 'notes.md'), kind: { type: 'add' }, diff: '+hi' }];
+      event('item/started', { threadId: p.threadId, item: { id: 'exec-patch', type: 'fileChange', changes, status: 'inProgress' } });
+      write({ id: 'approve', method: 'item/fileChange/requestApproval', params: { threadId: p.threadId, turnId: 'turn', itemId: 'exec-patch', startedAtMs: 1, reason: null, grantRoot: null } });
+    }
     // After a decline the turn goes on, so a note can still steer it.
     else if (prompt === 'approval-continue') write({ id: 'approve-continue', method: 'item/commandExecution/requestApproval', params: { command: 'rm -rf build', reason: 'Test approval' } });
     else if (prompt === 'wait' || prompt === 'slow-steer-wait') return;

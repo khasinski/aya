@@ -60,13 +60,15 @@ export function claudeTranscriptMessages(jsonl: string): TranscriptMessage[] {
 
 /** The user and agent messages of a Codex rollout (JSONL), oldest first. Codex has written two shapes: event_msg
  *  `user_message` / `agent_message`, and later event_msg `item_completed` with UserMessage / AgentMessage items. */
-export function codexRolloutMessages(jsonl: string): TranscriptMessage[] {
+export function codexRolloutMessages(jsonl: string, beforeOrdinal?: number): TranscriptMessage[] {
   const out: TranscriptMessage[] = [];
   for (const line of jsonl.split("\n")) {
     if (!line.trim()) continue;
     let entry: Record<string, unknown>;
     try { entry = record(JSON.parse(line)); } catch { continue; }
     if (entry.type !== "event_msg") continue;
+    // A later segment rewrote the thread from this ordinal on (Edit from here's rollback): what follows is gone.
+    if (beforeOrdinal !== undefined && typeof entry.ordinal === "number" && entry.ordinal >= beforeOrdinal) continue;
     const payload = record(entry.payload);
     if (payload.type === "user_message" || payload.type === "agent_message") {
       const text = str(payload.message).trim();
@@ -112,18 +114,53 @@ export async function findClaudeTranscript(configDir: string | undefined, cwd: s
   return null;
 }
 
-/** Codex's rollout for a thread: sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl, newest days first. */
-export async function findCodexRollout(home: string, threadId: string): Promise<string | null> {
+/** Codex's rollout files for a thread, oldest first: sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl, then (Codex
+ *  0.172) a segment rollout-<time>-<id>_<segment>.jsonl for each rollback of the thread, which goes on from the
+ *  ordinal the rollback returned to. Newest days first, down to the day of the thread's first file. */
+export async function findCodexRolloutSegments(home: string, threadId: string): Promise<string[]> {
   const root = path.join(home, CODEX_SESSIONS_SUBDIR);
   const desc = async (dir: string) => (await fs.readdir(dir).catch(() => [] as string[])).sort().reverse();
+  const found: string[] = [];
   let days = 0;
   for (const year of await desc(root)) for (const month of await desc(path.join(root, year))) for (const day of await desc(path.join(root, year, month))) {
-    if (++days > 400) return null;
+    if (++days > 400) return [];
     const dir = path.join(root, year, month, day);
-    const match = (await desc(dir)).find((name) => name.endsWith(`-${threadId}.jsonl`));
-    if (match) return path.join(dir, match);
+    const names = (await desc(dir)).filter((name) => name.endsWith(`-${threadId}.jsonl`) || (name.includes(`-${threadId}_`) && name.endsWith(".jsonl")));
+    found.push(...names.map((name) => path.join(dir, name)));
+    if (names.some((name) => name.endsWith(`-${threadId}.jsonl`))) return found.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
   }
-  return null;
+  return [];
+}
+
+/** The rollout a Codex thread started in. */
+export async function findCodexRollout(home: string, threadId: string): Promise<string | null> {
+  return (await findCodexRolloutSegments(home, threadId))[0] ?? null;
+}
+
+/** The ordinal of a rollout's first line, which starts `{"timestamp":…,"ordinal":N,`; undefined for older rollouts. */
+async function firstOrdinal(file: string): Promise<number | undefined> {
+  const handle = await fs.open(file, "r");
+  try {
+    const buffer = Buffer.alloc(512);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const match = /^[^\n]*?"ordinal":(\d+)/.exec(buffer.toString("utf8", 0, bytesRead));
+    return match ? Number(match[1]) : undefined;
+  } finally { await handle.close(); }
+}
+
+/** A Codex thread's messages across its rollout segments: each segment replaces what the one before held from the
+ *  segment's first ordinal on, so the turns a rollback dropped stay out. */
+export async function codexThreadMessages(files: string[]): Promise<TranscriptMessage[]> {
+  let out: TranscriptMessage[] = [];
+  let before: number | undefined;
+  for (let index = files.length - 1; index >= 0; index--) {
+    const messages = codexRolloutMessages(await readTail(files[index]!), before).map((m) => (files.length > 1 ? { ...m, id: `${m.id}-s${index}` } : m));
+    out = [...messages, ...out];
+    if (out.length >= MESSAGE_LIMIT || index === 0) break;
+    before = await firstOrdinal(files[index]!);
+    if (before === undefined) break;
+  }
+  return out.slice(-MESSAGE_LIMIT);
 }
 
 /** The transcript messages of a terminal session, or null when Aya cannot find the session on disk (it was never
@@ -135,8 +172,8 @@ export async function terminalSessionMessages(agent: SwitchAgent, cwd: string, c
   }
   if (agent === "codex") {
     const home = codexHomeFor({ configDir }, DEFAULT_CODEX_HOME, expandUserPath, cwd) ?? DEFAULT_CODEX_HOME;
-    const file = await findCodexRollout(home, sessionId);
-    return file ? codexRolloutMessages(await readTail(file)) : null;
+    const files = await findCodexRolloutSegments(home, sessionId);
+    return files.length ? codexThreadMessages(files) : null;
   }
   return null;
 }

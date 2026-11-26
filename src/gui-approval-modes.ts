@@ -29,3 +29,11 @@ export function isPermissionModeShortcut(e: { key: string; metaKey: boolean; ctr
 export function permissionModeChangeText(previous: GuiPermissionMode, next: GuiPermissionMode, agent: Agent): string {
   return `${guiPermissionModeLabel(previous)} → ${guiPermissionModeLabel(next)}. ${agent === 'codex' ? 'Applies to the next turn.' : 'Applies now.'}`;
 }
+
+/** What an approval asks for: the command, or the files a change edits and why, before falling back to the raw
+ *  request (Codex names only the item of a file change; Aya adds its `files`). */
+export function approvalSummary(params: Record<string, unknown>): string {
+  const files = Array.isArray(params.files) ? params.files.filter((file): file is string => typeof file === 'string') : [];
+  const command = typeof params.command === 'string' ? params.command : '', reason = typeof params.reason === 'string' ? params.reason : '';
+  return command || [files.length ? `Edit ${files.join(', ')}` : '', reason].filter(Boolean).join('\n') || JSON.stringify(params, null, 2);
+}

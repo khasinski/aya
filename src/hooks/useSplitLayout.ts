@@ -24,6 +24,7 @@ import {
   renderedSplitTree,
   resizeSplit as resizeSplitNode,
   resolveActiveLeafId,
+  SINGLE_VIEW_LEAF_ID,
   splitLeaf,
   type SplitNode,
 } from "../split-tree";
@@ -230,6 +231,8 @@ export function useSplitLayout({
       // Before the split guard: a click on the pane is the pick that ends a hold in any layout.
       setCloseFocusHold(null);
       if (!splitEnabledRef.current) return;
+      // The pane shown on its own is already the focused one; leaving single view here would hide it.
+      if (leafId === SINGLE_VIEW_LEAF_ID) return;
       setSingleViewByProject((prev) => prev[slug] === null ? prev : ({ ...prev, [slug]: null }));
       updateProjectSplitTree(slug, (tree) => ({ tree, activeLeafId: leafId }));
     },
