@@ -23,7 +23,7 @@ import { fanOutRunForTerminal,requestFanOut,requestFanOutCompare,takeFanOutMessa
 import { guiRendererRecoveryInProgress,takeGuiPaneRecovery } from '../gui-renderer-recovery';
 import { createAnnouncer,createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
 import { formatResetTime,isUsageLimitError,limitPaneStatus,limitStatusText,mergeCodexRateLimits,nextLimitEvent,parseUsageLimit,RESUME_PROMPT,timerDelay,turnUsageLimit,type CodexRateLimits,type GuiUsageLimit } from '../gui-limits';
-import { getGuiViewPrefs,isZenShortcut,setGuiViewPrefs,subscribeGuiViewPrefs,TOOL_VISIBILITY_LABELS,visibleActivities,zenMessages,type ToolCallVisibility } from '../gui-view-prefs';
+import { getGuiViewPrefs,isZenShortcut,memoizeByObject,setGuiViewPrefs,subscribeGuiViewPrefs,TOOL_VISIBILITY_LABELS,visibleActivities,zenMessages,type ToolCallVisibility } from '../gui-view-prefs';
 import { backgroundAgentsText,guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
 import { activitiesForNewTurn,canStopSubagent,interruptActivities,showStop,startsSubagent } from '../gui-subagents';
 import type { SettingsTab } from '../settings-tabs';
@@ -99,14 +99,8 @@ function parseCallMessageQuestions(id: string, textValue: string): GuiQuestion[]
   return normalizeQuestions(parsed);
 }
 // Per message object: a streamed delta replaces only the message it extends, so the others are parsed once.
-const messageQuestions = new WeakMap<Message, GuiQuestion[]>();
-function extractMessageQuestions(m: Message): GuiQuestion[] {
-  const known = messageQuestions.get(m);
-  if (known) return known;
-  const questions = Array.isArray(m.questions) && m.questions.length > 0 ? normalizeQuestions(m.questions) : m.type === 'assistant' ? parseCallMessageQuestions(m.id, m.text) : [];
-  messageQuestions.set(m, questions);
-  return questions;
-}
+const extractMessageQuestions = memoizeByObject((m: Message): GuiQuestion[] =>
+  Array.isArray(m.questions) && m.questions.length > 0 ? normalizeQuestions(m.questions) : m.type === 'assistant' ? parseCallMessageQuestions(m.id, m.text) : []);
 /** The window title belongs to the focused Conversation GUI pane while its status needs the user's eyes. */
 const windowTitle = createWindowTitle(document);
 function stripQuestionBulletsFromText(textValue: string, questions: GuiQuestion[]): string {

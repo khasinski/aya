@@ -65,3 +65,15 @@ export function zenMessages<T extends { type: string }>(messages: readonly T[], 
   if (!busy) closeTurn();
   return shown;
 }
+
+/** `compute` once per object: messages are replaced, never changed in place, when a streamed delta extends one, so the
+ *  questions of every other message are parsed once instead of on each frame (Zen's filter, keepMounted, rendering). */
+export function memoizeByObject<T extends object, R>(compute: (value: T) => R): (value: T) => R {
+  const known = new WeakMap<T, R>();
+  return value => {
+    if (known.has(value)) return known.get(value) as R;
+    const result = compute(value);
+    known.set(value, result);
+    return result;
+  };
+}
