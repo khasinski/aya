@@ -131,9 +131,8 @@ test('a worktree that cannot be created does not stop the other agents', async (
   try {
     const page = await app.firstWindow();
     await expect(page.locator('.aya-conversation').first().locator('header').getByRole('status')).toHaveText('Ready');
-    // A plain file where Claude's checkout would go makes git refuse that one worktree.
-    mkdirSync(seed.projectDir + '.worktrees', { recursive: true });
-    writeFileSync(join(seed.projectDir + '.worktrees', 'blocked-claude-gui'), 'in the way');
+    // A branch under aya/blocked-claude-gui/ makes git refuse the branch, and so that one worktree.
+    execFileSync('git', ['branch', 'aya/blocked-claude-gui/old'], { cwd: seed.projectDir });
     await page.getByRole('button', { name: '+ Send to several agents…' }).click();
     const dialog = page.getByRole('dialog', { name: 'Send to several agents' });
     await dialog.getByLabel('Prompt').fill('Readable C please');
