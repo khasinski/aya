@@ -6,6 +6,10 @@ import type { Preset, TerminalState } from "./types";
 
 export type PaneMode = "terminal" | "gui";
 
+/** What a switch request resolves to: null when it switched, else why not, as a refusal (a string) or as a warning
+ *  that a second request right after overrides. */
+export type PaneModeSwitchResult = string | { warning: string } | null;
+
 /** Fired on window with the pane id as detail: the view showing that pane switches it (header toggle, ⌘⌥G, menu). */
 export const PANE_MODE_SWITCH_EVENT = "aya:pane-mode-switch";
 
@@ -37,6 +41,14 @@ type SwitchState = Pick<TerminalState, "status" | "working" | "externalStatus" |
 
 const liveAgent = (t: SwitchState) => t.exitCode === null && !t.stopped && !t.spawnFailure && !t.spawnDeferred;
 
+/** A session id handed from one mode to the other, or undefined when it is not safe to pass on. Claude and Codex
+ *  ids name files Aya reads (transcripts, rollouts), so no `/` or `.`; Pi's may be a session file's path. */
+export function switchSessionId(agent: GuiSupportedAgent | null, sessionId: string | undefined): string | undefined {
+  if (!sessionId) return undefined;
+  const safe = agent === "claude" || agent === "codex" ? /^[A-Za-z0-9_-]{1,200}$/ : /^[A-Za-z0-9_.:/-]{1,200}$/;
+  return safe.test(sessionId) ? sessionId : undefined;
+}
+
 /** Why a terminal pane cannot switch to its Conversation at all right now, or null when it can: a remote pane, a
  *  lost connection, or a CLI dialog on screen (an approval the switch would throw away). */
 export function terminalSwitchRefusal(t: SwitchState): string | null {
@@ -56,9 +68,11 @@ export function terminalSwitchWarning(t: SwitchState): string | null {
 }
 
 /** Why a Conversation pane cannot switch to the terminal right now, or null when it can. */
-export function conversationSwitchRefusal(state: { busy: boolean; requests: number; switching: boolean; connecting: boolean }): string | null {
+export function conversationSwitchRefusal(state: { busy: boolean; requests: number; switching: boolean; connecting: boolean; queued?: number }): string | null {
   if (state.connecting || state.switching) return "Wait for the conversation to finish connecting before switching.";
   if (state.requests > 0) return "Answer the pending approval or question before switching.";
   if (state.busy) return "Wait for the turn to finish, or stop it, before switching.";
+  // The terminal has no queue: the queued prompts (and a resume scheduled for a usage limit's reset) would be lost.
+  if (state.queued) return "Send or remove the queued messages before switching.";
   return null;
 }

@@ -110,9 +110,18 @@ export function applyReportedStatus(
   };
 }
 
+/** A resume a mode switch started that exits (non-zero) within this long failed: the session is not there to resume. */
+export const SWITCH_RESUME_FAILED_MS = 15_000;
+
+/** Whether a restart resumes: a pane that ran a session does, unless the resume its switch ran failed at once. */
+export function restartResumes(t: Pick<TerminalState, "restored" | "freshRestart">, hadSession: boolean): boolean {
+  return !t.freshRestart && (!!t.restored || hadSession);
+}
+
 export function applyPtyEvent(
   prev: Record<string, TerminalState>,
   event: PtyEvent,
+  now: number = Date.now(),
 ): Record<string, TerminalState> {
   if (event.type === "spawn-failed") {
     const t = prev[event.ptyId];
@@ -176,9 +185,17 @@ export function applyPtyEvent(
   }
   if (event.type === "exit") {
     const t = prev[event.ptyId];
-    // A pane that switched to its Conversation stopped this terminal on purpose; the late exit is not the pane's.
-    if (!t || t.interfaceMode === "gui") return prev;
-    const next = { ...t, bell: false, disconnected: undefined, disconnectedReason:undefined, recoveryScreenUnknown:false, exitCode: event.exitCode };
+    // A pane that switches to its Conversation stops this terminal on purpose; that exit is not the pane's.
+    if (!t || t.interfaceMode === "gui" || t.modeSwitching) return prev;
+    let next: TerminalState = { ...t, bell: false, disconnected: undefined, disconnectedReason:undefined, recoveryScreenUnknown:false, exitCode: event.exitCode };
+    // The spawn a switch to the terminal started has ended: later ones follow the preset again. One that failed at
+    // once (`codex resume` of a thread never saved) leaves no session to resume, so Restart starts a new one.
+    if (t.resumeOnSwitch !== undefined) {
+      const { resumeOnSwitch: _at, ...rest } = next;
+      next = event.exitCode !== 0 && now - t.resumeOnSwitch < SWITCH_RESUME_FAILED_MS
+        ? { ...rest, sessionId: undefined, restored: false, freshRestart: true }
+        : rest;
+    }
     return {
       ...prev,
       [event.ptyId]: { ...next, status: deriveLifecycleStatus(next) },

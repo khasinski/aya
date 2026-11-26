@@ -81,9 +81,13 @@ export interface TerminalState {
   sharedDir?: true;
   /** Mirrors WorkingTab.interfaceMode: the pane's own Terminal / Conversation choice. */
   interfaceMode?: "terminal" | "gui";
-  /** The pane just switched from its Conversation: the next spawn resumes `sessionId` even when the preset does not
-   *  auto-resume, and never falls back to "latest". Never persisted. */
-  resumeOnSwitch?: true;
+  /** When the pane switched from its Conversation (ms): the spawn right after resumes `sessionId` even when the preset
+   *  does not auto-resume, and never falls back to "latest". The first exit or restart ends it. Never persisted. */
+  resumeOnSwitch?: number;
+  /** The pane's terminal is being stopped for a switch to its Conversation: that exit is not the pane's. */
+  modeSwitching?: true;
+  /** The resume a switch ran failed at once: the next restart starts a new session, not "latest". */
+  freshRestart?: true;
   /** One-time prompt for a newly-created worktree pane; never persisted. */
   initialPrompt?: string;
   initialBoardCard?: WorkingTab["initialBoardCard"];

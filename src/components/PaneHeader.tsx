@@ -8,12 +8,12 @@
 
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
-import { PANE_MODE_SHORTCUT_LABEL, PANE_MODE_SWITCH_EVENT, type PaneMode } from "../pane-mode";
-import { paneModeSwitching, setPaneModeMessage, usePaneModeTransition } from "../pane-mode-transition";
+import { PANE_MODE_SHORTCUT_LABEL, PANE_MODE_SWITCH_EVENT, type PaneMode, type PaneModeSwitchResult } from "../pane-mode";
+import { paneModeSwitching, paneModeWarned, setPaneModeMessage, usePaneModeTransition } from "../pane-mode-transition";
 
 export interface PaneModeSwitch {
-  /** Switches the pane to its other mode; resolves to why it did not, or null. */
-  run: (force?: boolean) => Promise<string | null>;
+  /** Switches the pane to its other mode; resolves to why it did not (a warning a second request overrides), or null. */
+  run: (force?: boolean) => Promise<PaneModeSwitchResult>;
 }
 
 interface Props {
@@ -47,6 +47,17 @@ export function paneHeaderElement(terminalId: string): HTMLElement {
   return host;
 }
 
+const mounted = new Map<string, number>();
+/** A closed pane's header goes with it. Checked after the commit: a switch unmounts one view's header and mounts the
+ *  other's for the same pane in one commit, which keeps the element. */
+export function holdPaneHeaderElement(terminalId: string): () => void {
+  mounted.set(terminalId, (mounted.get(terminalId) ?? 0) + 1);
+  return () => {
+    mounted.set(terminalId, (mounted.get(terminalId) ?? 1) - 1);
+    queueMicrotask(() => { if (!mounted.get(terminalId)) { mounted.delete(terminalId); hosts.delete(terminalId); } });
+  };
+}
+
 export function PaneHeader({ mode, terminalId, icon, color, title, children, status, actions, servers, modeSwitch, artifacts, slot = null }: Props) {
   const host = paneHeaderElement(terminalId);
   const anchor = useRef<HTMLDivElement>(null);
@@ -67,17 +78,21 @@ export function PaneHeader({ mode, terminalId, icon, color, title, children, sta
 
   const runRef = useRef(modeSwitch?.run);
   runRef.current = modeSwitch?.run;
-  const messageRef = useRef(message);
-  messageRef.current = message;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  useEffect(() => holdPaneHeaderElement(terminalId), [terminalId]);
   const toggle = async () => {
     const run = runRef.current;
     if (!run || paneModeSwitching(terminalId)) return;
-    // A second request while the last one's reason still shows overrides it (a warning; a refusal stays one).
-    const force = messageRef.current !== null;
+    // A second request while a warning about this same switch still shows overrides it; a refusal or a failure
+    // never does: the user may have dealt with it, and what the warning would say now was never shown.
+    const to: PaneMode = modeRef.current === "gui" ? "terminal" : "gui";
+    const force = paneModeWarned(terminalId, to);
     setPaneModeMessage(terminalId, null);
     try {
       const why = await run(force);
-      if (why) setPaneModeMessage(terminalId, why);
+      if (typeof why === "string") setPaneModeMessage(terminalId, why);
+      else if (why) setPaneModeMessage(terminalId, why.warning, to);
     } catch (e) {
       setPaneModeMessage(terminalId, e instanceof Error ? e.message : String(e));
     }

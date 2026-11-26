@@ -3,7 +3,7 @@ import { useCallback,useEffect,useRef,useState } from "react";
 import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
 import { PRESET_ID_BOARD,PRESET_ID_SHELL } from "../preset-ids";
 import { defaultTabName,findProject,remoteTerminalCommand } from "../project-helpers";
-import { clearedTerminalStatus } from "../pty-event-reducer";
+import { clearedTerminalStatus, restartResumes } from "../pty-event-reducer";
 import { clearMountDecision,forgetSpawn,releaseSpawn,wasSpawned } from "../spawnSession";
 import {
 	assignTerminal,
@@ -457,7 +457,7 @@ export function useTerminalActions({
           spawnFailure: undefined,
           stopped: undefined,
           disconnected: undefined, remoteDisconnected: undefined, remoteReplayTruncated: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
-          restored: t.restored || hadSession,
+          restored: restartResumes(t, hadSession), resumeOnSwitch: undefined, freshRestart: undefined,
         },
       };
     });
@@ -547,7 +547,7 @@ export function useTerminalActions({
           spawnFailure: undefined,
           stopped: undefined,
           disconnected: undefined, remoteDisconnected: undefined, remoteReplayTruncated: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
-          restored: cur.restored || hadSession,
+          restored: restartResumes(cur, hadSession), resumeOnSwitch: undefined, freshRestart: undefined,
         },
       };
     });
