@@ -99,10 +99,13 @@ test.describe("same-folder Claude restart without an observed session id", () =>
 
   test("starts fresh without continuing a sibling's session or sending a resume-only note", async ({ window, seeded }) => {
     const read = teamLog(seeded.projectDir);
-    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/^LAUNCH resumed$/m);
-    expect(loggedArgs(read("tab-left"))).toContain("--continue");
+    // The preset says --continue, but the folder has no Claude conversation yet: Aya drops the flag, or claude would
+    // exit with "No conversation found to continue" on this and every later restart.
+    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/^LAUNCH fresh$/m);
+    expect(loggedArgs(read("tab-left"))).not.toContain("--continue");
     expect(read("tab-left")).toContain("SESSION none");
-    expect(savedSession(seeded.ayaHome, "tab-left")?.sessionId).toBeUndefined();
+    // Started fresh, the pane gets a conversation id of its own, so a restart never lands in a sibling's.
+    expect(loggedArgs(read("tab-left"))).toContain("--session-id");
 
     await window.locator(".aya-launcher .aya-launcher-btn", { hasText: "Agent" }).click();
     await expect(window.getByTestId("sidebar-terminal")).toHaveCount(2);
