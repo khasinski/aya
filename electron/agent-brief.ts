@@ -17,6 +17,8 @@ export type RoleChannel =
 export function roleChannel(agent: string | undefined): RoleChannel {
   if (agent === "claude") return { kind: "arg", flag: "--append-system-prompt" };
   if (agent === "grok") return { kind: "arg", flag: "--rules" };
+  // pi 1.5.0: --append-system-prompt <text>, repeatable (measured 2026-11-26).
+  if (agent === "pi") return { kind: "arg", flag: "--append-system-prompt" };
   if (agent === "opencode") return { kind: "env", name: "OPENCODE_CONFIG", inline: "OPENCODE_CONFIG_CONTENT" };
   if (agent === "codex") return { kind: "config" };
   return { kind: "none", reason: `${agent ?? "an unrecognized CLI"} takes no per-session instruction` };
@@ -26,6 +28,7 @@ const BRIEF_BODY = [
   "the `aya` command reaches the Aya app: it can show your status on your tab,",
   "notify the user, and open, read or type into the other panes of the project.",
   "Run `aya capabilities` for the full command list (JSON) before using it.",
+  "Show charts, tables, diagrams, HTML reports, images and metrics with `aya present` (an Aya window), never as ASCII art.",
   "In an Aya team, `aya team whoami` tells you your role; run it after /clear or /resume.",
   'Teams: `aya team new "<what for>"` defines one, `aya team open` gives its roles panes, `aya team start <team> "<task>"` starts it; open and start only on the user\'s word, never to give a role work (that is `aya team send`).',
 ];

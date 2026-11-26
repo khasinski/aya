@@ -554,10 +554,11 @@ async function handleRequest(
     const art = options.tuiArtifacts;
     if (!art) throw new Error("artifacts are not available");
     if (request.type === "artifact-present") {
-      const { stored, updated } = await art.store.present(request.input, caller.terminalId);
+      const { stored, updated } = await art.store.present(request.input, caller.terminalId, request.open);
       if (request.open) art.show(stored.artifact);
       return { output: `${updated ? "updated" : "created"} artifact ${stored.artifact.id} (r${stored.artifact.revision ?? 1})${request.open ? ", opened in a window" : "; open it with aya artifact open " + stored.artifact.id}\n` };
     }
+    await art.store.load();
     if (request.type === "artifact-open") {
       const item = art.store.get(request.artifactId);
       if (!item || (caller.terminalId && item.terminalId !== caller.terminalId)) throw new Error(`no artifact "${request.artifactId}"; list them with aya artifact list`);

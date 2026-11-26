@@ -34,7 +34,7 @@ test("channels: claude/grok by argument, opencode by env, codex by config, antig
   assert.deepEqual(roleChannel("opencode"), { kind: "env", name: "OPENCODE_CONFIG", inline: "OPENCODE_CONFIG_CONTENT" });
   assert.deepEqual(roleChannel("codex"), { kind: "config" });
   assert.deepEqual(roleChannel("antigravity"), { kind: "none", reason: "antigravity takes no per-session instruction" });
-  assert.deepEqual(roleChannel("pi"), { kind: "none", reason: "pi takes no per-session instruction" });
+  assert.deepEqual(roleChannel("pi"), { kind: "arg", flag: "--append-system-prompt" });
   assert.deepEqual(roleChannel(undefined), { kind: "none", reason: "an unrecognized CLI takes no per-session instruction" });
 });
 
@@ -93,7 +93,9 @@ test("the brief points at aya capabilities; the file form is conditional", () =>
   assert.doesNotMatch(briefText(false), /AYA_TERMINAL_ID/);
   // A global file is read outside Aya too.
   assert.match(briefText(true), /^If the AYA_TERMINAL_ID environment variable is set/);
-  assert.ok(briefText(false).split("\n").length <= 6);
+  assert.ok(briefText(false).split("\n").length <= 7);
+  // A terminal agent shows rich results as artifacts, not ASCII art, in both brief forms.
+  for (const conditional of [false, true]) assert.match(briefText(conditional), /`aya present`[^\n]*never as ASCII art/);
 });
 
 test("every agent learns from one brief line how to define, give panes to and start a team", () => {

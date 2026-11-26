@@ -269,7 +269,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: [
       "Use it for comparisons, charts and anything better seen than printed; do not paste the artifact's markup into the chat. Pass - to read the HTML or table JSON from stdin.",
       "It prints the artifact id; pass it back with --id to update that artifact in place (revision bumps) instead of opening another window. --no-open stores it without opening a window.",
-      "A widget's window.ayaWidget.suggest(text) copies the text to the user's clipboard. Artifacts live until Aya quits.",
+      "A widget's window.ayaWidget.suggest(text) copies the text to the user's clipboard. The pane's header lists its artifacts, and they are kept across Aya restarts.",
       "Local video/audio sources, video posters and captions are attached automatically (up to 256 MiB per file). Paths resolve beside the HTML file, or from the working directory for stdin. Use --asset for JS-created players and window.ayaWidget.asset(path) for their URLs.",
     ],
   },
