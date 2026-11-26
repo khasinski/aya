@@ -18,6 +18,9 @@ export interface GuiUsageLimit {
 
 /** How long after the reset a scheduled resume waits, so the provider has reopened the window. */
 export const RESUME_GRACE_MS = 3000;
+/** A scheduled resume this long past its reset (Aya was closed, the machine slept) is dropped: the card offers
+ *  "Continue now" instead of sending "continue" the moment the pane reconnects, maybe the next day. */
+export const RESUME_STALE_MS = 15 * 60 * 1000;
 /** What a scheduled resume sends. */
 export const RESUME_PROMPT = "continue";
 
@@ -128,7 +131,7 @@ export function limitPaneStatus(limit: GuiUsageLimit | null, now = Date.now()): 
 export function nextLimitEvent(limit: GuiUsageLimit | null, now = Date.now()): { action: "wake" | "resume"; inMs: number } | null {
   if (!limit || limit.resetsAt === null) return null;
   if (limit.resetsAt > now) return { action: "wake", inMs: limit.resetsAt - now };
-  if (limit.resumeAtReset) return { action: "resume", inMs: Math.max(0, limit.resetsAt + RESUME_GRACE_MS - now) };
+  if (limit.resumeAtReset && now - limit.resetsAt <= RESUME_STALE_MS) return { action: "resume", inMs: Math.max(0, limit.resetsAt + RESUME_GRACE_MS - now) };
   return null;
 }
 

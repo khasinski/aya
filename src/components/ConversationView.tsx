@@ -622,18 +622,19 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     document.addEventListener('focusin', onFocusIn);
     return () => document.removeEventListener('focusin', onFocusIn);
   }, []);
-  // A limit's reset wakes a snoozed pane; a scheduled resume then sends "continue".
+  // A limit's reset wakes a snoozed pane; a scheduled resume then sends "continue", but never over a draft or an edit.
+  const draftOpen = !!prompt.trim() || !!edit.editing;
   useEffect(() => {
     const next = nextLimitEvent(usageLimit);
     if (!next) return;
-    if (next.action === 'resume' && (!ready || busy || requests.length > 0 || dispatching.current || switching)) return;
+    if (next.action === 'resume' && (!ready || busy || requests.length > 0 || dispatching.current || switching || draftOpen)) return;
     const timer = setTimeout(() => {
       if (next.action === 'wake') { setUsageLimit(old => old && old.snoozed ? { ...old, snoozed: false } : old); setLimitClock(n => n + 1); return; }
       setQueueHeld(false);
       void dispatchRef.current(RESUME_PROMPT);
     }, timerDelay(next.inMs));
     return () => clearTimeout(timer);
-  }, [usageLimit, limitClock, ready, busy, requests.length, switching]);
+  }, [usageLimit, limitClock, ready, busy, requests.length, switching, draftOpen]);
   useLayoutEffect(() => { if (!hidden) scrollToLatest(); }, [hidden, messages, activities, side, requests, plan, scrollToLatest]);
   // Terminal ⇄ Conversation: the loading veil lifts once this conversation is connected with its history shown.
   useEffect(() => {
