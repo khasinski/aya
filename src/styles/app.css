@@ -1296,6 +1296,18 @@ body {
   padding: 8px 0;
   background: var(--bg);
 }
+.aya-diff-show-more {
+  display: block;
+  margin: 4px 0 4px 48px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
 .aya-diff-view-line {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
