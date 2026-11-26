@@ -17,9 +17,9 @@ import { DiffPanel } from "./DiffPanel";
 import "./fan-out.css";
 import { useModalFocus } from "./useModalFocus";
 
-/** Presets that open as a Conversation GUI pane. */
+/** Presets whose agent has a Conversation GUI: a fan-out pane always opens as a Conversation. */
 export function fanOutPresets(presets: Preset[]): Preset[] {
-  return presets.filter(p => p.interfaceMode === "gui" && guiSupportedAgent(p) !== null);
+  return presets.filter(p => guiSupportedAgent(p) !== null);
 }
 
 interface HostProps {

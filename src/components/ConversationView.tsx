@@ -34,6 +34,8 @@ import type { Preset,Snippet,TerminalState } from '../types';
 import { ArtifactPanel } from './ArtifactPanel';
 import './conversation.css';
 import { AgentServers } from './AgentServers';
+import { PaneHeader } from './PaneHeader';
+import { conversationSwitchRefusal } from '../pane-mode';
 import type { AgentServer } from '../../shared/ipc-types';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { ConversationTurnTimer } from './ConversationTurnTimer';
@@ -132,12 +134,14 @@ type ConversationProps = {
   onCloseFind?: () => void;
   /** The other terminals of this project, for "Add context". */
   listSiblingTerminals?: (self: { id: string; projectSlug: string }) => { id: string; name: string }[];
+  /** Terminal ⇄ Conversation: the agent stopped; the pane continues `sessionId` in its terminal. */
+  onSwitchToTerminal?: (sessionId?: string) => void;
 };
 export const ConversationView = memo(function ConversationView(props: ConversationProps) {
   const [generation, setGeneration] = useState(0);
   return <WorkspaceFileLinks key={`${props.terminal.id}:${generation}`} terminalId={props.terminal.id} hidden={props.hidden}><ConversationSession {...props} onSwitch={() => setGeneration(n => n + 1)} /></WorkspaceFileLinks>;
 });
-function ConversationSession({ headerSlot = null, terminal, preset, snippets, snippetsOpen, onSnippetsOpenChange, onOpenSettings, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, listSiblingTerminals, onSwitch }: ConversationProps & { onSwitch: () => void }) {
+function ConversationSession({ headerSlot = null, terminal, preset, snippets, snippetsOpen, onSnippetsOpenChange, onOpenSettings, paneStyle, hidden = false, isActivePane = false, onActivatePane, onReportStatus, findOpen = false, onCloseFind, listSiblingTerminals, onSwitch, onSwitchToTerminal }: ConversationProps & { onSwitch: () => void }) {
   const api = window.ayaGui;
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
   const agentLabel = guiAgent === 'pi' ? 'Pi' : guiAgent === 'claude' ? 'Claude' : guiAgent === 'antigravity' ? 'Antigravity' : 'Codex';
@@ -870,11 +874,29 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     ...Object.entries(activityCounts).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`),
   ].join(' · ');
   const closeArtifacts = () => { setDrawer(false); artifactButton.current?.focus(); };
+  /** Terminal ⇄ Conversation (PaneHeader): stop the agent between turns and let the terminal resume its session. */
+  const switchToTerminal = async (): Promise<string | null> => {
+    const refusal = conversationSwitchRefusal({ busy: busy || dispatching.current, requests: requests.length, switching, connecting });
+    if (refusal) return refusal;
+    if (!api || !onSwitchToTerminal) return 'The terminal needs the Aya desktop app.';
+    flushTextDeltas.current();
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = null;
+    const result = obj(await api.invoke(terminal.id, 'detach-for-terminal', pendingSnapshot.current || undefined));
+    onSwitchToTerminal(str(result.threadId) || undefined);
+    return null;
+  };
   const guiHeader = (
-    <header className="aya-gui-header">
-      <div className="aya-gui-heading"><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></div>
-      {sessionUnsafe && <span className="aya-gui-unsafe-badge" title={guiAgent === 'codex' ? 'This session skips approval prompts and runs without the workspace sandbox.' : permissionModeOptions.length ? 'This session runs in Full access: the agent acts without asking.' : 'This session uses the preset’s unsafe approval mode.'}>Unsafe approvals</span>}
-      <span className="aya-sr-only" role="status">{connecting ? 'Connecting…' : switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
+    <PaneHeader
+      mode="gui"
+      terminalId={terminal.id}
+      icon={preset.icon}
+      color={preset.color}
+      title={terminal.name}
+      servers={<AgentServers active={ready && !hidden} busy={busy} list={() => invoke('servers') as Promise<AgentServer[]>} stop={pid => invoke('stop-server', pid)} open={port => invoke('open-server', port)} />}
+      modeSwitch={onSwitchToTerminal ? { run: switchToTerminal } : undefined}
+      artifacts={<button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>}
+      actions={<>
       <span className="aya-gui-view" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setViewMenuOpen(false); }}><button className="aya-gui-icon-button" aria-label="Conversation view" title="Conversation view: tool calls and Zen mode" aria-haspopup="menu" aria-expanded={viewMenuOpen} data-active={view.zen || view.tools !== 'all' || undefined} onClick={() => setViewMenuOpen(open => !open)}><span className="aya-gui-icon" aria-hidden="true">{view.zen ? 'self_improvement' : 'visibility'}</span></button>
         {viewMenuOpen && <div className="aya-gui-view-menu" role="menu" aria-label="Conversation view" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setViewMenuOpen(false); } }}>
           <small>Tool calls</small>
@@ -883,12 +905,15 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
         </div>}
       </span>
       {!ready && restored && <button type="button" disabled={connecting} onClick={() => void reconnect()}>{connecting ? 'Connecting…' : 'Reconnect'}</button>}
-      <AgentServers active={ready && !hidden} busy={busy} list={() => invoke('servers') as Promise<AgentServer[]>} stop={pid => invoke('stop-server', pid)} open={port => invoke('open-server', port)} />
       <ContextMeter usage={assist.usage} />
       {ready && <button className="aya-gui-icon-button" disabled={busy || switching} aria-label="Restart agent session" title="Restart agent session: reload skills and MCP servers and resume this conversation (/restart)" onClick={() => void reconnect(true)}><span className="aya-gui-icon" aria-hidden="true">restart_alt</span></button>}
       <button className="aya-gui-icon-button" disabled={!ready || switching} aria-label="Resume a saved conversation" title="Resume a saved conversation" onClick={() => void openHistory().catch(fail)}><span className="aya-gui-icon" aria-hidden="true">history</span></button>
-      <button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>
-    </header>
+      </>}
+    >
+      <span className="aya-gui-heading"><strong>Conversation</strong><small>{model} · <span>Experimental</span></small></span>
+      {sessionUnsafe && <span className="aya-gui-unsafe-badge" title={guiAgent === 'codex' ? 'This session skips approval prompts and runs without the workspace sandbox.' : permissionModeOptions.length ? 'This session runs in Full access: the agent acts without asking.' : 'This session uses the preset’s unsafe approval mode.'}>Unsafe approvals</span>}
+      <span className="aya-sr-only" role="status">{connecting ? 'Connecting…' : switching ? 'Switching conversation…' : busy ? `${agentLabel} is working…` : ready ? 'Ready' : 'Disconnected'}</span>
+    </PaneHeader>
   );
   return <section
     ref={sectionRef}

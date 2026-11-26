@@ -284,7 +284,11 @@ presets from agent CLIs found on your login-shell PATH, plus a shell fallback.
 A login shell that does not answer within 2.5 s is not read as "not installed":
 that launch shows what it found but saves nothing, and the next launch scans again.
 Settings can add suggested harnesses, edit commands, set agent metadata, and
-label unsafe-mode presets.
+label unsafe-mode presets. For Claude Code, Codex, Pi and Antigravity, a
+preset's **Opens as** picks whether a new pane starts as a terminal or as an
+[experimental Conversation](docs/experimental-conversation-gui.md); any such pane
+switches between the two from its header (or Cmd/Ctrl+Alt+G) and keeps its
+conversation, so one preset per agent and account is enough.
 
 Aya launches commands with `node-pty` under a login shell in the selected
 project directory. The built-in agent presets are interactive CLIs, not

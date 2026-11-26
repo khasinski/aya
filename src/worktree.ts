@@ -36,6 +36,7 @@ export function tabFromTerminal(t: TerminalState, baseCwd: string): WorkingTab {
     ...(t.cwd && t.cwd !== baseCwd ? { cwd: t.cwd } : {}),
     ...(t.sessionId ? { sessionId: t.sessionId } : {}),
     ...(t.sharedDir ? { sharedDir: true as const } : {}),
+    ...(t.interfaceMode ? { interfaceMode: t.interfaceMode } : {}),
     ...(t.teamLaunch ? { teamLaunch: true } : {}),
     ...(t.sshTarget ? { sshTarget: t.sshTarget } : {}),
     ...(t.initialBoardCard ? { initialBoardCard: t.initialBoardCard } : {}),

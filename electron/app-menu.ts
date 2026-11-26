@@ -206,6 +206,12 @@ export function buildMenuTemplate(deps: MenuTemplateDeps): MenuItemConstructorOp
           accelerator: "CmdOrCtrl+Alt+-",
           click: () => deps.dispatchShortcut("split-pane-below"),
         },
+        {
+          // Terminal ⇄ Conversation for an agent with a Conversation GUI (src/pane-mode.ts).
+          label: "Switch Pane: Terminal / Conversation",
+          accelerator: "CmdOrCtrl+Alt+G",
+          click: () => deps.dispatchShortcut("toggle-pane-mode"),
+        },
         { type: "separator" },
         { role: "toggleDevTools" },
         { type: "separator" },

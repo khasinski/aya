@@ -22,6 +22,7 @@ export function hydrateProjectTerminalStates(
       ...(project.remote ? { remoteHost: project.remote.label } : {}),
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
       ...(tab.sharedDir ? { sharedDir: true as const } : {}),
+      ...(tab.interfaceMode ? { interfaceMode: tab.interfaceMode } : {}),
       ...(tab.teamLaunch ? { teamLaunch: true } : {}),
       ...(tab.sshTarget ? { sshTarget: tab.sshTarget } : {}),
       ...(tab.initialBoardCard ? { initialBoardCard: tab.initialBoardCard } : {}),

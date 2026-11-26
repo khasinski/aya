@@ -51,6 +51,7 @@ export function terminalsForNewTabs(
       spawnDeferred: true,
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
       ...(tab.sharedDir ? { sharedDir: true as const } : {}),
+      ...(tab.interfaceMode ? { interfaceMode: tab.interfaceMode } : {}),
       ...(tab.teamLaunch ? { teamLaunch: true } : {}),
       ...(tab.initialBoardCard ? { initialBoardCard: tab.initialBoardCard } : {}),
     }));

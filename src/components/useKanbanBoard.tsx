@@ -13,7 +13,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent
 } from "react";
-import { guiSupportedAgent } from "../agentPreset";
 import { PRESET_ID_BOARD } from "../preset-ids";
 import type {
   BoardSnapshot,
@@ -999,11 +998,8 @@ export function useKanbanBoard({
     }
     return map;
   }, [siblingTerminals]);
-  const launchablePresets = presets.filter(
-    (p) =>
-      p.id !== PRESET_ID_BOARD &&
-      !(p.interfaceMode === "gui" && guiSupportedAgent(p)),
-  );
+  // Every agent can take a task: the pane starts as a terminal and can switch to its Conversation later.
+  const launchablePresets = presets.filter((p) => p.id !== PRESET_ID_BOARD);
 
   const archivedCards = useMemo(
     () => board?.archivedCards ?? [],

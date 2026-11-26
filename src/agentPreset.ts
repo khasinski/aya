@@ -253,6 +253,16 @@ export function commandWithAutoResume(
   return arg ? `${command} ${arg}` : preset.command;
 }
 
+/** The command a pane runs right after switching from its Conversation to the terminal: it resumes the conversation
+ *  the GUI had (`sessionId`), whatever the preset's auto-resume says, and never "continue latest", which could pick
+ *  another pane's session. Without an id, or for a command Aya cannot add a flag to, the preset's own command. */
+export function modeSwitchCommand(preset: Preset, sessionId: string | undefined): string {
+  const command = preset.command.trim();
+  if (!sessionId || !command || commandHasResumeFlag(preset, command) || !launchesAgentDirectly(command)) return preset.command;
+  const arg = sessionResumeArg(preset, sessionId);
+  return arg ? `${command} ${arg}` : preset.command;
+}
+
 const BRIEF_HINTS = new Map<Agent, string>([
   ["claude", "Adds a short note via --append-system-prompt when the pane starts."],
   ["codex", "Adds a short note via -c developer_instructions when the pane starts; not when your Codex config or the command already sets developer_instructions, which Aya never replaces."],
@@ -272,9 +282,10 @@ export function agentBriefHint(agent: Agent | undefined): string | null {
  *  out, by real path at the host, to run in the same folder. */
 export function resumeSpawn(
   preset: Preset,
-  pane: { id: string; cwd: string; restored?: boolean; sessionId?: string; sharedDir?: boolean },
+  pane: { id: string; cwd: string; restored?: boolean; sessionId?: string; sharedDir?: boolean; resumeOnSwitch?: boolean },
   panes: Array<{ id: string; preset: Preset; cwd: string }>,
 ): SpawnCommand {
+  if (pane.resumeOnSwitch) return { command: modeSwitchCommand(preset, pane.sessionId) };
   const command = commandWithAutoResume(preset, pane.restored, pane.sessionId, pane.sharedDir);
   const sharedDirCommand = commandWithAutoResume(preset, pane.restored, pane.sessionId, true);
   if (sharedDirCommand === command) return { command };

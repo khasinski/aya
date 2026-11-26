@@ -67,6 +67,7 @@ import { useTerminalSounds } from "./hooks/useTerminalSounds";
 import { useAcknowledgeWatchedDone } from "./hooks/useAcknowledgeWatchedDone";
 import { useTeams } from "./hooks/useTeams";
 import { useProjectPersistence, useProjectSessionPersistence } from "./hooks/useProjectPersistence";
+import { usePaneModeSwitch } from "./hooks/usePaneModeSwitch";
 import { useTerminalActions } from "./hooks/useTerminalActions";
 import { useSplitLayout, useSplitLayoutView } from "./hooks/useSplitLayout";
 import { useHarnessScan, useUsagePolling } from "./hooks/useUsagePolling";
@@ -79,7 +80,6 @@ import {
 } from "./storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { uuid } from "./uuid";
-import { guiSupportedAgent } from "./agentPreset";
 import type { ReviewTarget } from "./diff-review";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
@@ -666,6 +666,9 @@ export function App() {
     appendProjectEvent,
     persistProject,
   });
+  const { switchToConversation, completeSwitchToTerminal, requestPaneModeSwitch } = usePaneModeSwitch({
+    terminalsRef, projectsRef, presetsRef, setTerminals, appendProjectEvent,
+  });
 
   const selectTerminalFromSidebar = useCallback(
     (id: string) => {
@@ -1139,6 +1142,10 @@ export function App() {
       if (anyOverlayOpen) return;
       if (activeTabId) setFindInPaneFor(activeTabId);
     },
+    togglePaneMode: () => {
+      if (anyOverlayOpen) return;
+      requestPaneModeSwitch(activeTabId);
+    },
     focusPane: (direction) => {
       if (anyOverlayOpen) return;
       setCloseFocusHold(null);
@@ -1206,15 +1213,14 @@ export function App() {
     for (const checkout of checkouts) launchTerminal(preset, checkout.path, undefined, prompt, projectId);
   }, [launchTerminal]);
   const launchFanOutPane = useCallback((preset: Preset, cwd: string, projectSlug: string, terminalId: string) =>
-    !!launchTerminal(preset, cwd, undefined, undefined, projectSlug, terminalId), [launchTerminal]);
+    !!launchTerminal(preset, cwd, undefined, undefined, projectSlug, terminalId, undefined, "gui"), [launchTerminal]);
   const startCardInNewPane = useCallback(async (preset: Preset, cardId: string, projectSlug: string, cwd?: string) => {
-    if (preset.interfaceMode === "gui" && guiSupportedAgent(preset)) throw new Error("Board task startup is available for terminal presets.");
     const paneId = uuid();
     const { board, previous } = await window.aya.reserveBoardCardStart({ projectSlug, cardId, paneId, paneName: defaultTabName(preset) });
     const card = board.cards.find(c => c.id === cardId)!;
     const launched = launchTerminal(preset, cwd, undefined, undefined, projectSlug, paneId, {
       cardId, since: card.claim!.since, previousColumn: previous.columnId, previousAssignee: previous.assignee,
-    });
+    }, "terminal");  // A board task is typed into the agent's terminal; the pane can switch to its Conversation later.
     if (!launched) {
       await window.aya.cancelBoardCardStart({ projectSlug, cardId, paneId, claimSince: card.claim!.since,
         previousColumn: previous.columnId, previousAssignee: previous.assignee });
@@ -1302,6 +1308,8 @@ export function App() {
             onCreateWorktrees={createWorktreesForProject}
             onFocusTerminal={selectTerminalFromSidebar}
             onSplitBesideTerminal={splitEnabled ? splitBesideTerminal : undefined}
+            onSwitchToConversation={switchToConversation}
+            onSwitchToTerminal={completeSwitchToTerminal}
           />
         );
         const sidebarNode = (

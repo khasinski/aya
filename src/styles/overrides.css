@@ -3628,3 +3628,11 @@ select.aya-modal-input {
   font-size: 11px;
   color: var(--fg-secondary);
 }
+/* Settings > Presets > Opens as: the hint under the Terminal / Conversation choice. */
+.aya-preset-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}

@@ -15,6 +15,7 @@
   },
   "include": [
     "src/agentPreset.ts",
+    "src/pane-mode.ts",
     "src/app-preferences.ts",
     "src/conversation-scroll.ts",
     "src/preference-codecs.ts",

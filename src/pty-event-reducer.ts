@@ -176,7 +176,8 @@ export function applyPtyEvent(
   }
   if (event.type === "exit") {
     const t = prev[event.ptyId];
-    if (!t) return prev;
+    // A pane that switched to its Conversation stopped this terminal on purpose; the late exit is not the pane's.
+    if (!t || t.interfaceMode === "gui") return prev;
     const next = { ...t, bell: false, disconnected: undefined, disconnectedReason:undefined, recoveryScreenUnknown:false, exitCode: event.exitCode };
     return {
       ...prev,

@@ -11,10 +11,12 @@ import {
 	useState,
 	type CSSProperties,
 	type MouseEvent,
+	type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { AgentServers } from "./AgentServers";
 import { TuiArtifactsButton } from "./TuiArtifactsButton";
+import { PaneHeader } from "./PaneHeader";
 import { effectiveAgent } from "../agentPreset";
 import { focusReportingState } from "../focus-reporting";
 import { registerPendingTerminalAttach } from "../pending-terminal-attach";
@@ -141,6 +143,11 @@ interface Props {
   isActive?: boolean;
   onActivatePane?: () => void;
   enableWebgl?: boolean;
+  /** Terminal ⇄ Conversation for an agent with a Conversation GUI; absent for a pane with the terminal only. */
+  onSwitchMode?: () => Promise<string | null>;
+  /** The header's Artifacts slot (PaneHeader); defaults to the pane's `aya present` artifacts, in the same spot as
+   *  the Conversation's artifact drawer toggle. */
+  artifacts?: ReactNode;
 }
 
 function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
@@ -208,6 +215,8 @@ function terminalViewPropsEqual(a: Props, b: Props): boolean {
     a.paneStyle?.height === b.paneStyle?.height &&
     a.isActive === b.isActive &&
     a.enableWebgl === b.enableWebgl &&
+    !!a.onSwitchMode === !!b.onSwitchMode &&
+    a.artifacts === b.artifacts &&
     a.macOptionKeyMode === b.macOptionKeyMode
   );
 }
@@ -243,6 +252,8 @@ function TerminalViewComponent({
   onActivatePane,
   enableWebgl = true,
   macOptionKeyMode,
+  onSwitchMode,
+  artifacts,
 }: Props) {
   const shouldUseWebgl =
     shouldUseTerminalWebgl(enableWebgl, preset.id) &&
@@ -261,6 +272,9 @@ function TerminalViewComponent({
       : null;
   const lastActivityLabel = lastActivity ? formatLastActivity(lastActivity) : null;
   const reported = terminal.externalStatus;
+  // The comparator only checks that a switch exists; the latest closure runs.
+  const switchModeRef = useRef(onSwitchMode);
+  switchModeRef.current = onSwitchMode;
   const headerStatusText = reported ? `${reported.on ? `waiting on ${reported.on}: ` : ""}${reported.text}` : lastActivityLabel;
   const headerStatusTitle = terminal.externalStatus
     ? new Date(terminal.externalStatus.updatedAt).toLocaleString()
@@ -1562,14 +1576,36 @@ function TerminalViewComponent({
   };
 
   const paneHeader = (
-      <div className="aya-pane-header">
-        <span
-          className="aya-sidebar-icon"
-          style={preset.color ? { color: preset.color } : undefined}
-        >
-          {preset.icon}
-        </span>
-        <span className="aya-pane-header-title">{terminal.name}</span>
+      <PaneHeader
+        mode="terminal"
+        terminalId={terminal.id}
+        icon={preset.icon}
+        color={preset.color}
+        title={terminal.name}
+        status={headerStatusText ? (
+            <span
+              className={`aya-pane-header-activity ${
+                terminal.externalStatus
+                  ? `aya-pane-header-activity--${terminal.externalStatus.level}`
+                  : ""
+              }`}
+              title={headerStatusTitle}
+            >
+              {headerStatusText}
+            </span>
+        ) : null}
+        servers={
+          <AgentServers
+            active={isVisible && !terminal.remoteHost && terminal.exitCode === null && !terminal.spawnFailure && !terminal.spawnDeferred}
+            busy={terminal.working === true}
+            list={() => window.aya.ptyServers(terminal.id)}
+            stop={(pid) => window.aya.ptyStopServer(terminal.id, pid)}
+            open={(port) => window.aya.openUrl(`http://localhost:${port}/`)}
+          />
+        }
+        modeSwitch={onSwitchMode ? { run: () => switchModeRef.current?.() ?? Promise.resolve(null) } : undefined}
+        artifacts={artifacts ?? <TuiArtifactsButton terminalId={terminal.id} focused={isActive && isVisible} />}
+      >
         {terminal.remoteHost && (
           <span className="aya-pane-remote-label" title={`Remote: ${terminal.remoteHost}`}>
             <span aria-hidden="true" style={{ fontFamily: "Material Symbols Outlined" }}>lan</span>
@@ -1586,29 +1622,7 @@ function TerminalViewComponent({
             </span>
           </>
         )}
-        {headerStatusText && (
-          <div className="aya-pane-header-meta">
-            <span
-              className={`aya-pane-header-activity ${
-                terminal.externalStatus
-                  ? `aya-pane-header-activity--${terminal.externalStatus.level}`
-                  : ""
-              }`}
-              title={headerStatusTitle}
-            >
-              {headerStatusText}
-            </span>
-          </div>
-        )}
-        <TuiArtifactsButton terminalId={terminal.id} focused={isActive && isVisible} />
-        <AgentServers
-          active={isVisible && !terminal.remoteHost && terminal.exitCode === null && !terminal.spawnFailure && !terminal.spawnDeferred}
-          busy={terminal.working === true}
-          list={() => window.aya.ptyServers(terminal.id)}
-          stop={(pid) => window.aya.ptyStopServer(terminal.id, pid)}
-          open={(port) => window.aya.openUrl(`http://localhost:${port}/`)}
-        />
-      </div>
+      </PaneHeader>
   );
   return (
     <div
