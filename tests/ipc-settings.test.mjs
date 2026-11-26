@@ -48,6 +48,7 @@ test("registers exactly the settings channels", () => {
     "omarchy:read",
     "omarchy:status",
     "presets:list",
+    "presets:merged",
     "presets:save",
     "presets:scan-harnesses",
     "sessions:list-monitored",

@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 const home = mkdtempSync(join(tmpdir(), "aya-pane-mode-test-"));
 process.env.AYA_HOME = home;
-const { mergeInterfaceTwins, remapProjectTabs, migrateInterfaceTwinPresets } = await import("../dist-electron/preset-mode-migration.js");
+const { mergeInterfaceTwins, remapProjectTabs, migrateInterfaceTwinPresets, startupPresetMerges } = await import("../dist-electron/preset-mode-migration.js");
 const { claudeTranscriptMessages, codexRolloutMessages, codexThreadMessages, adoptTerminalSession, findClaudeTranscript, findCodexRollout, findCodexRolloutSegments, terminalSessionMessages, withTerminalArtifacts } = await import("../dist-electron/gui-mode-switch.js");
 const { claudeProjectDirName } = await import("../dist-electron/claude-session.js");
 const { modeSwitchCommand, resumeSpawn } = await import("../dist-test/agentPreset.js");
@@ -347,6 +347,8 @@ test("the startup migration rewrites presets and projects once, and a second run
   writeFileSync(join(projects, "bad.json"), "{");
   const first = await migrateInterfaceTwinPresets(presetsFile, projects);
   assert.deepEqual(first.remap, { "claude-gui": "claude" });
+  // The renderer asks for it (presets:merged) to move the removed preset's chime exception.
+  assert.deepEqual(startupPresetMerges(), { "claude-gui": "claude" });
   assert.deepEqual(JSON.parse(readFileSync(presetsFile, "utf8")), { presets: [claude, extra], other: 1 });
   assert.deepEqual(JSON.parse(readFileSync(join(projects, "a.json"), "utf8")).tabs, [{ id: "1", presetId: "claude", name: "G", interfaceMode: "gui" }]);
   assert.equal(readFileSync(join(projects, "bad.json"), "utf8"), "{");
@@ -354,6 +356,7 @@ test("the startup migration rewrites presets and projects once, and a second run
   const projectAfter = readFileSync(join(projects, "a.json"), "utf8");
   const second = await migrateInterfaceTwinPresets(presetsFile, projects);
   assert.deepEqual(second.remap, {});
+  assert.deepEqual(startupPresetMerges(), { "claude-gui": "claude" }, "a run that merges nothing keeps this start's merge");
   assert.equal(readFileSync(presetsFile, "utf8"), presetsAfter);
   assert.equal(readFileSync(join(projects, "a.json"), "utf8"), projectAfter);
   // No presets file (first launch): nothing to do, and the harness scan is left to listPresets.

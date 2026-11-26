@@ -954,6 +954,8 @@ export interface AyaApi {
   agentWaiting(): Promise<WaitingPanes>;
   savePresets(presets: Preset[]): Promise<void>;
   scanHarnesses(): Promise<HarnessDef[]>;
+  /** The presets this start merged into their twin (removed id → kept id); absent outside the desktop app. */
+  presetMerges?(): Promise<Record<string, string>>;
 
   listSnippets(): Promise<Snippet[]>;
   saveSnippets(snippets: Snippet[]): Promise<void>;

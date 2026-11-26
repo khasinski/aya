@@ -65,6 +65,18 @@ export const SOUND_OVERRIDES_CODEC: PreferenceCodec<Record<string, boolean>> = {
   },
   serialize: (value) => JSON.stringify(value),
 };
+/** A merged-away preset's chime exception moves to the preset its panes use now, unless that one has its own. The
+ *  same map when nothing moves. */
+export function carrySoundOverrides(overrides: Record<string, boolean>, merges: Record<string, string>): Record<string, boolean> {
+  const moved = Object.entries(merges).filter(([from]) => from in overrides);
+  if (!moved.length) return overrides;
+  const next = { ...overrides };
+  for (const [from, to] of moved) {
+    if (!(to in next)) next[to] = next[from]!;
+    delete next[from];
+  }
+  return next;
+}
 export const SOUND_PATH_CODEC: PreferenceCodec<string | null> = {
   fallback: null,
   parse: (raw) => (raw.trim() ? raw : null),
