@@ -22,6 +22,7 @@
 - Conversation GUI: show Codex 0.172's subagents (reported as subagent activity instead of a spawn call) as their own rows with a Stop button, instead of "Using a tool".
 - Fix a Codex pane switched from its terminal to the Conversation showing the turns that **Edit from here** removed and missing every later one: Codex 0.172 continues a rolled-back thread in a new rollout file, which Aya now reads.
 - Fix a pane picked from the sidebar that is not in the project's split disappearing on the first click inside it (the split came back), which made a conversation's approval impossible to answer there.
+- Fix an idle Claude or Codex terminal refusing the first switch to the Conversation ("The agent may still be working"), and its status reading "?" or "state=done:app=codex": Aya now reads Codex's `state=` program status (OSC 7501) and ignores Claude Code's support query.
 - Keep the restart warnings short when many terminals are open: they list the first 8 processes and count the rest, so the buttons stay on screen.
 
 ## v0.20.0 - 2026-11-22

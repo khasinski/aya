@@ -134,15 +134,36 @@ function stripControlChars(s: string): string {
   return s.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim();
 }
 
+/** Program states sent as `state=<state>[:key=value…]` (Codex 0.172: `state=working:app=codex`, `state=done:app=codex`,
+ *  `state=idle:app=codex`, `state=clear`), by the level Aya shows and its text. */
+const PROGRAM_STATES: Record<string, AyaOscStatus | undefined> = {
+  working: { level: "active", text: "Working" }, busy: { level: "active", text: "Working" }, running: { level: "active", text: "Working" },
+  waiting: { level: "waiting", text: "Needs input" }, blocked: { level: "waiting", text: "Needs input" },
+  done: { level: "done", text: "Done" }, complete: { level: "done", text: "Done" }, completed: { level: "done", text: "Done" },
+  error: { level: "error", text: "Error" }, failed: { level: "error", text: "Error" },
+  idle: { level: "clear", text: "" }, clear: { level: "clear", text: "" },
+};
+
+/** The status of a `state=…` payload, or null for a state Aya does not know (an unknown state is not proof of work). */
+function programStatusFields(payload: string): AyaOscStatus | null {
+  const state = payload.split(/[:;]/)[0]!.slice("state=".length).trim().toLowerCase();
+  const known = Object.hasOwn(PROGRAM_STATES, state) ? PROGRAM_STATES[state] : undefined;
+  return known ? { ...known } : null;
+}
+
 /** Parse an `OSC 7501` Program Status Escape Sequence payload (`ESC ] 7501 ; ... ST`).
  *  Supports:
  *  - empty payload (`\x1b]7501;\x07`) -> `{ level: "clear", text: "" }`
  *  - level-prefixed payload (`waiting : Approval needed` or `done : Tests passed`)
  *  - bare status text (`Running tests`) -> `{ level: "active", text: "Running tests" }`
+ *  - `state=<state>[:key=value…]` (Codex) -> the state's level; `?` (Claude Code's support query) -> null
  *  Capped at 80 chars and stripped of C0/C1 control characters per the spec. */
 export function parseProgramStatusOsc(raw: string): AyaOscStatus | null {
   const cleaned = stripControlChars(raw);
   if (!cleaned) return { level: "clear", text: "" };
+  // Claude Code asks whether the terminal supports program status (`OSC 7501 ; ?`): a question, not a status.
+  if (cleaned === "?") return null;
+  if (/^state=/i.test(cleaned)) return programStatusFields(cleaned);
   const sep = cleaned.indexOf(":");
   if (sep >= 0) {
     const maybeLevel = cleaned.slice(0, sep).trim();

@@ -175,6 +175,20 @@ test("OSC 7501 level-prefixed payload maps to that level, while ordinary colons 
   });
 });
 
+test("OSC 7501 from the agent CLIs: Claude Code's support query is not a status, Codex's state= fields map to levels", () => {
+  // Measured 2026-11-26: Claude Code 2.1.332 sends `7501;?` at start; Codex 0.172.0 `7501;state=<s>:app=codex`.
+  assert.equal(parseProgramStatusOsc("?"), null);
+  assert.deepEqual(extractAyaOsc("\x1b]7501;?\x07", "").events, [{ key: PROGRAM_STATUS_OSC_KEY, value: "?" }]);
+  assert.deepEqual(parseProgramStatusOsc("state=working:app=codex"), { level: "active", text: "Working" });
+  assert.deepEqual(parseProgramStatusOsc("state=done:app=codex"), { level: "done", text: "Done" });
+  assert.deepEqual(parseProgramStatusOsc("state=idle:app=codex"), { level: "clear", text: "" });
+  assert.deepEqual(parseProgramStatusOsc("state=clear"), { level: "clear", text: "" });
+  assert.deepEqual(parseProgramStatusOsc("state=waiting:app=codex"), { level: "waiting", text: "Needs input" });
+  assert.deepEqual(parseProgramStatusOsc("state=error:app=codex"), { level: "error", text: "Error" });
+  assert.equal(parseProgramStatusOsc("state=thinking-hard:app=x"), null, "an unknown state is no evidence of work");
+  assert.equal(parseProgramStatusOsc("state=toString"), null);
+});
+
 test("OSC 7501 truncates status text to 80 characters and strips control chars", () => {
   const longText = "x".repeat(120);
   assert.deepEqual(parseProgramStatusOsc(longText), {

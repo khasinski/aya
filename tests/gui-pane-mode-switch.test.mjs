@@ -14,6 +14,8 @@ const { claudeTranscriptMessages, codexRolloutMessages, codexThreadMessages, ado
 const { claudeProjectDirName } = await import("../dist-electron/claude-session.js");
 const { modeSwitchCommand, resumeSpawn } = await import("../dist-test/agentPreset.js");
 const { paneMode, initialPaneMode, terminalSwitchRefusal, terminalSwitchWarning, conversationSwitchRefusal } = await import("../dist-test/pane-mode.js");
+const { applyPtyEvent } = await import("../dist-test/pty-event-reducer.js");
+const { extractAyaOsc, parseAyaOscStatus } = await import("../dist-electron/osc-extractor.js");
 
 const preset = (over) => ({ id: "p", name: "P", icon: "", color: "", command: "claude", ...over });
 
@@ -50,6 +52,24 @@ test("a switch waits for the turn and for any approval or question", () => {
   assert.match(conversationSwitchRefusal({ busy: true, requests: 0, switching: false, connecting: false }), /turn/);
   assert.match(conversationSwitchRefusal({ busy: true, requests: 1, switching: false, connecting: false }), /approval/);
   assert.match(conversationSwitchRefusal({ busy: false, requests: 0, switching: false, connecting: true }), /connecting/);
+});
+
+test("an idle Claude or Codex terminal switches on the first request, whatever program status the CLI sent", () => {
+  // The pane as pty-core sees it: OSC 7501 out of the output, as osc-status events into the renderer's state.
+  const afterOutput = (chunks) => chunks.reduce((state, chunk) => {
+    for (const event of extractAyaOsc(chunk, "").events) {
+      const status = parseAyaOscStatus(event);
+      if (status) state = applyPtyEvent(state, { type: "osc-status", ptyId: "t1", level: status.level, text: status.text, updatedAt: 1 });
+    }
+    return state;
+  }, { t1: { id: "t1", projectSlug: "p", presetId: "p", name: "t1", cwd: "/w", status: "running", bell: false, exitCode: null } }).t1;
+  // Claude Code 2.1.332 asks `7501;?` at start and, with no reply, sends nothing more.
+  assert.equal(terminalSwitchWarning(afterOutput(["\x1b]7501;?\x07"])), null);
+  // Codex 0.172.0 ends a turn with state=done (later idle).
+  const codexTurn = ["\x1b]7501;state=idle:app=codex\x07", "\x1b]7501;state=working:app=codex\x07"];
+  assert.match(terminalSwitchWarning(afterOutput(codexTurn)), /still be working/, "a turn that runs still warns");
+  assert.equal(terminalSwitchWarning(afterOutput([...codexTurn, "\x1b]7501;state=done:app=codex\x07"])), null);
+  assert.equal(terminalSwitchWarning(afterOutput([...codexTurn, "\x1b]7501;state=idle:app=codex\x07"])), null);
 });
 
 // --- resume arguments ---
