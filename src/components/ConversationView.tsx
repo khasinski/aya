@@ -247,6 +247,10 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const codexLimits = useRef<CodexRateLimits | null>(null);
   const view = useSyncExternalStore(subscribeGuiViewPrefs, getGuiViewPrefs);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const viewMenuButton = useRef<HTMLButtonElement>(null);
+  const viewMenu = useRef<HTMLDivElement>(null);
+  // An opened menu takes the focus on its checked item (or its first), so the arrows move through it at once.
+  useEffect(() => { if (viewMenuOpen) (viewMenu.current?.querySelector<HTMLElement>('[aria-checked="true"]') ?? viewMenu.current?.querySelector<HTMLElement>('[role^="menuitem"]'))?.focus(); }, [viewMenuOpen]);
   const [announcement, setAnnouncement] = useState('');
   const [announce] = useState(() => createAnnouncer(setAnnouncement));
   const [paneFocused, setPaneFocused] = useState(false);
@@ -915,8 +919,17 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       modeSwitch={onSwitchToTerminal ? { run: switchToTerminal } : undefined}
       artifacts={<button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>}
       actions={<>
-      <span className="aya-gui-view" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setViewMenuOpen(false); }}><button className="aya-gui-icon-button" aria-label="Conversation view" title="Conversation view: tool calls and Zen mode" aria-haspopup="menu" aria-expanded={viewMenuOpen} data-active={view.zen || view.tools !== 'all' || undefined} onClick={() => setViewMenuOpen(open => !open)}><span className="aya-gui-icon" aria-hidden="true">{view.zen ? 'self_improvement' : 'visibility'}</span></button>
-        {viewMenuOpen && <div className="aya-gui-view-menu" role="menu" aria-label="Conversation view" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setViewMenuOpen(false); } }}>
+      <span className="aya-gui-view" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setViewMenuOpen(false); }} onKeyDown={e => {
+        // On the wrapper: Escape closes the menu from its toggle as well, and never reaches the pane.
+        if (e.key === 'Escape' && viewMenuOpen) { e.preventDefault(); e.stopPropagation(); setViewMenuOpen(false); viewMenuButton.current?.focus(); }
+      }}><button ref={viewMenuButton} className="aya-gui-icon-button" aria-label="Conversation view" title="Conversation view: tool calls and Zen mode" aria-haspopup="menu" aria-expanded={viewMenuOpen} data-active={view.zen || view.tools !== 'all' || undefined} onClick={() => setViewMenuOpen(open => !open)}><span className="aya-gui-icon" aria-hidden="true">{view.zen ? 'self_improvement' : 'visibility'}</span></button>
+        {viewMenuOpen && <div ref={viewMenu} className="aya-gui-view-menu" role="menu" aria-label="Conversation view" onKeyDown={e => {
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+          e.preventDefault();
+          const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]')), at = items.indexOf(document.activeElement as HTMLElement);
+          const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowDown' ? 1 : items.length - 1 + (at < 0 ? 1 : 0))) % items.length;
+          items[next]?.focus();
+        }}>
           <small>Tool calls</small>
           {(Object.keys(TOOL_VISIBILITY_LABELS) as ToolCallVisibility[]).map(option => <button type="button" role="menuitemradio" key={option} aria-checked={view.tools === option} onClick={() => setGuiViewPrefs({ tools: option })}>{TOOL_VISIBILITY_LABELS[option]}</button>)}
           <button type="button" role="menuitemcheckbox" aria-checked={view.zen} aria-keyshortcuts="Control+Alt+Z Meta+Alt+Z" title="Only your messages and the final reply of each turn" onClick={() => setGuiViewPrefs({ zen: !view.zen })}>Zen mode <kbd>⌘⌥Z</kbd></button>

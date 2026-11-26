@@ -120,6 +120,18 @@ test('tool calls can be hidden, Zen shows only your messages and final replies, 
     const viewButton = gui.getByRole('button', { name: 'Conversation view' });
     await viewButton.click();
     const menu = gui.getByRole('menu', { name: 'Conversation view' });
+    // The menu takes the focus on its checked item; the arrows move through it.
+    await expect(menu.getByRole('menuitemradio', { name: 'Show all' })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(menu.getByRole('menuitemradio', { name: 'Hide successful' })).toBeFocused();
+    await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp');
+    await expect(menu.getByRole('menuitemcheckbox', { name: /Zen mode/ })).toBeFocused();
+    // Escape closes it from the toggle too, and gives the focus back to the toggle.
+    await viewButton.focus();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(viewButton).toBeFocused();
+    await viewButton.click();
     await menu.getByRole('menuitemradio', { name: 'Hide successful' }).click();
     await expect(activity).toContainText('cat missing.txt');
     await expect(activity).not.toContainText('ls -la');
