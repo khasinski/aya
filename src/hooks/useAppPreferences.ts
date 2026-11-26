@@ -1,4 +1,4 @@
-import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import {
   THEME_CODEC,
   MAC_OPTION_CODEC,
@@ -12,6 +12,7 @@ import {
   STATUS_RAIL_COLLAPSED_CODEC,
   SOUND_OVERRIDES_CODEC,
   SOUND_PATH_CODEC,
+  carrySoundOverrides,
   readTerminalFontFamily,
 } from "../app-preferences";
 import {
@@ -68,6 +69,15 @@ export function useAppPreferences() {
   );
   const [terminalSoundOverrides, setTerminalSoundOverrides] =
     usePersistentPreference(SOUND_OVERRIDES_STORAGE_KEY, SOUND_OVERRIDES_CODEC);
+  // "Claude GUI" merged into "Claude" this start (preset-mode-migration): its chime exception goes along.
+  useEffect(() => {
+    void window.aya?.presetMerges?.().then((merges) => {
+      let saved: Record<string, boolean>;
+      try { saved = SOUND_OVERRIDES_CODEC.parse(localStorage.getItem(SOUND_OVERRIDES_STORAGE_KEY) ?? "{}"); } catch { return; }
+      const next = carrySoundOverrides(saved, merges ?? {});
+      if (next !== saved) setTerminalSoundOverrides(next);
+    }, () => {});
+  }, [setTerminalSoundOverrides]);
   const [customWaitingSound, setCustomWaitingSound] = usePersistentPreference(
     CUSTOM_WAITING_SOUND_STORAGE_KEY,
     SOUND_PATH_CODEC,

@@ -78,6 +78,10 @@ export function remapProjectTabs(project: Record<string, unknown>, remap: Readon
   return changed ? { ...project, tabs } : null;
 }
 
+let startupMerge: Record<string, string> = {};
+/** What this start's migration merged (removed preset id → kept id), for the renderer's per-preset settings. */
+export const startupPresetMerges = (): Record<string, string> => ({ ...startupMerge });
+
 /** Run at startup, before any window loads presets or projects. Projects are rewritten first: if Aya stops halfway,
  *  the twins are still there and the next start finishes, and no tab ever names a preset that is gone. */
 export async function migrateInterfaceTwinPresets(
@@ -103,5 +107,6 @@ export async function migrateInterfaceTwinPresets(
   const removed = new Set(Object.keys(merge.remap));
   const presets = data.presets.filter((p) => !(isPreset(p) && removed.has(p.id)));
   await writeFileAtomic(presetsFile, JSON.stringify({ ...data, presets }, null, 2) + "\n");
+  startupMerge = { ...merge.remap };
   return merge;
 }

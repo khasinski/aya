@@ -153,6 +153,7 @@ const api: AyaApi = {
   agentWaiting: () => ipcRenderer.invoke("agent:waiting"),
   savePresets: (presets) => ipcRenderer.invoke("presets:save", presets),
   scanHarnesses: () => ipcRenderer.invoke("presets:scan-harnesses"),
+  presetMerges: () => ipcRenderer.invoke("presets:merged"),
 
   listSnippets: () => ipcRenderer.invoke("snippets:list"),
   saveSnippets: (snippets) => ipcRenderer.invoke("snippets:save", snippets),

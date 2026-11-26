@@ -7,6 +7,7 @@ import type { BrowserWindow, Dialog, IpcMain, IpcMainInvokeEvent } from "electro
 import { scanHarnesses } from "../harnesses";
 import { readOmarchyStatus, readOmarchyTheme } from "../omarchy";
 import { listPresets, savePresets } from "../presets";
+import { startupPresetMerges } from "../preset-mode-migration";
 import { listMonitoredSessions } from "../session-monitor";
 import { listSnippets, saveSnippets } from "../snippets";
 import { validatePresetArray, validateSnippetArray, validateThemesFile } from "../validation";
@@ -36,6 +37,7 @@ export function registerSettingsIpc(deps: SettingsIpcDeps): void {
     await deps.presetsSaved();
   });
   ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
+  ipcMain.handle("presets:merged", async () => startupPresetMerges());
 
   ipcMain.handle("snippets:list", async () => listSnippets());
   ipcMain.handle("snippets:save", async (_e, snippets: unknown) =>

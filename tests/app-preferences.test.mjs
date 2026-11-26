@@ -115,3 +115,12 @@ test("terminal font reader still propagates storage failures", (t) => {
   useStorage(t, { getItem() { throw error; } });
   assert.throws(() => readTerminalFontFamily(), (caught) => caught === error);
 });
+
+test("a merged-away preset's chime exception moves to the preset its panes use now, unless that one has its own", async () => {
+  const { carrySoundOverrides } = await import("../dist-test/app-preferences.js");
+  assert.deepEqual(carrySoundOverrides({ "claude-gui": false, other: true }, { "claude-gui": "claude" }), { other: true, claude: false });
+  assert.deepEqual(carrySoundOverrides({ "claude-gui": false, claude: true }, { "claude-gui": "claude" }), { claude: true }, "the kept preset's own setting wins");
+  const untouched = { claude: false };
+  assert.equal(carrySoundOverrides(untouched, { "claude-gui": "claude" }), untouched, "nothing to move: the same map");
+  assert.equal(carrySoundOverrides(untouched, {}), untouched);
+});
