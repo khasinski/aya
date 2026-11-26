@@ -1,5 +1,5 @@
 import hljs, { EXT_TO_LANGUAGE } from "../syntax-highlight";
-import { useEffect,useMemo,useRef,useState } from "react";
+import { memo,useEffect,useMemo,useRef,useState } from "react";
 import { diffFileLineIndex } from "../diff-navigation";
 import {
   commentRowIndexInDiff,
@@ -99,7 +99,8 @@ export function markHtmlOccurrences(html: string, query: string): string {
 }
 
 
-export function DiffPanel({
+/** Memoized: the Conversation GUI's diff viewer stays open while a reply streams in, and a large diff is many rows. */
+export const DiffPanel = memo(function DiffPanel({
   diff,
   loading,
   query,
@@ -433,4 +434,4 @@ export function DiffPanel({
       )}
     </div>
   );
-}
+});

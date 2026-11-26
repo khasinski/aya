@@ -1,4 +1,4 @@
-import { useEffect,useMemo,useRef,useState } from 'react';
+import { memo,useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DiffAnchor } from '../diff-review';
 import { reviewCommentsBlock } from '../gui-context';
@@ -26,10 +26,10 @@ interface CommitsResult { label?: string; commits?: { sha: string; short: string
 
 /** A Conversation GUI pane's diff viewer: the changes of one turn (or of the running turn so far), or of one commit
  *  of this branch. Review comments are the project's diff comments; "Send" adds them to this conversation's message. */
-export function GuiDiffDialog({ terminal, invoke, turns, busy, initialSource, focusFile, onClose, onAddToMessage }: {
+export const GuiDiffDialog = memo(function GuiDiffDialog({ terminal, invoke, turns, busy, initialSource, focusFile, onClose, onAddToMessage }: {
   terminal: { id: string; cwd: string; projectSlug: string };
   invoke: (action: string, value?: unknown) => Promise<unknown>;
-  turns: TurnDiffSummary[];
+  turns: readonly TurnDiffSummary[];
   busy: boolean;
   initialSource: string;
   focusFile: string | null;
@@ -91,21 +91,28 @@ export function GuiDiffDialog({ terminal, invoke, turns, busy, initialSource, fo
     ...(commits.commits || []).map(commit => ({ id: `commit:${commit.sha}`, label: `${commit.short} ${commit.subject}`, group: commits.label || 'Commits' })),
   ], [busy, turns, commits]);
   // The running turn ended while it was on screen: keep it selectable until another diff is chosen.
-  const sources = listed.some(source => source.id === sourceId) ? listed : [{ id: sourceId, label: sourceId === 'current' ? 'Current turn so far' : 'Selected diff' }, ...listed];
+  const sources = useMemo(() => listed.some(source => source.id === sourceId) ? listed : [{ id: sourceId, label: sourceId === 'current' ? 'Current turn so far' : 'Selected diff' }, ...listed], [listed, sourceId]);
 
-  const checkoutComments = comments.filter(comment => comment.checkout === terminal.cwd);
-  const saveFailed = (err: unknown, fallback: string) => { setCommentError(ipcMessage(err) || fallback); throw err; };
-  const addComment = async (anchor: DiffAnchor, note: string) => {
-    const comment: DiffComment = { ...anchor, id: uuid(), checkout: terminal.cwd, note, createdAt: new Date().toISOString(), sentAt: null, sentTo: null };
-    try { setComments(await window.aya.addDiffComment(terminal.projectSlug, comment)); setCommentError(null); }
-    catch (err) { saveFailed(err, 'Aya could not save that comment.'); }
-  };
-  const editComment = async (id: string, note: string) => {
-    try { setComments(await window.aya.editDiffComment(terminal.projectSlug, id, note)); setCommentError(null); }
-    catch (err) { saveFailed(err, 'Aya could not save that comment.'); }
-  };
-  const deleteComment = (id: string) => void window.aya.deleteDiffComment(terminal.projectSlug, id).then(setComments).catch((err: unknown) => setCommentError(ipcMessage(err) || 'Aya could not delete that comment.'));
-  const clearSent = () => void window.aya.clearSentDiffComments(terminal.projectSlug).then(setComments).catch((err: unknown) => setCommentError(ipcMessage(err) || 'Aya could not clear sent comments.'));
+  // Stable props, so the memoized DiffPanel re-renders only for what it shows.
+  const { cwd, projectSlug } = terminal;
+  const checkoutComments = useMemo(() => comments.filter(comment => comment.checkout === cwd), [comments, cwd]);
+  const addComment = useCallback(async (anchor: DiffAnchor, note: string) => {
+    const comment: DiffComment = { ...anchor, id: uuid(), checkout: cwd, note, createdAt: new Date().toISOString(), sentAt: null, sentTo: null };
+    try { setComments(await window.aya.addDiffComment(projectSlug, comment)); setCommentError(null); }
+    catch (err) { setCommentError(ipcMessage(err) || 'Aya could not save that comment.'); throw err; }
+  }, [cwd, projectSlug]);
+  const editComment = useCallback(async (id: string, note: string) => {
+    try { setComments(await window.aya.editDiffComment(projectSlug, id, note)); setCommentError(null); }
+    catch (err) { setCommentError(ipcMessage(err) || 'Aya could not save that comment.'); throw err; }
+  }, [projectSlug]);
+  const deleteComment = useCallback((id: string) => void window.aya.deleteDiffComment(projectSlug, id).then(setComments).catch((err: unknown) => setCommentError(ipcMessage(err) || 'Aya could not delete that comment.')), [projectSlug]);
+  const clearSent = useCallback(() => void window.aya.clearSentDiffComments(projectSlug).then(setComments).catch((err: unknown) => setCommentError(ipcMessage(err) || 'Aya could not clear sent comments.')), [projectSlug]);
+  const onScrolled = useCallback(() => setScrollToPath(null), []);
+  const targets = useMemo(() => [{ id: terminal.id, projectSlug, name: 'This conversation' }], [terminal.id, projectSlug]);
+  const onSend = useCallback((_target: unknown, ids: string[]) => {
+    try { onAddToMessage(reviewCommentsBlock(checkoutComments.filter(comment => ids.includes(comment.id)), cwd)); onClose(); }
+    catch (err) { setCommentError(ipcMessage(err) || 'Aya could not add these comments.'); }
+  }, [checkoutComments, cwd, onAddToMessage, onClose]);
 
   return createPortal(<div className="aya-gui-diff-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div ref={dialog} className="aya-gui-diff-dialog" role="dialog" aria-modal="true" aria-label="Changes" tabIndex={-1} onKeyDown={e => {
@@ -120,7 +127,7 @@ export function GuiDiffDialog({ terminal, invoke, turns, busy, initialSource, fo
         query={query}
         onQueryChange={setQuery}
         scrollToPath={scrollToPath}
-        onScrolled={() => setScrollToPath(null)}
+        onScrolled={onScrolled}
         comments={checkoutComments}
         commentsLoading={commentsLoading}
         commentError={commentError}
@@ -128,14 +135,11 @@ export function GuiDiffDialog({ terminal, invoke, turns, busy, initialSource, fo
         onEditComment={editComment}
         onDeleteComment={deleteComment}
         onClearSent={clearSent}
-        targets={[{ id: terminal.id, projectSlug: terminal.projectSlug, name: 'This conversation' }]}
+        targets={targets}
         targetId={terminal.id}
-        onTargetChange={() => {}}
+        onTargetChange={ignoreTarget}
         sending={false}
-        onSend={(_target, ids) => {
-          try { onAddToMessage(reviewCommentsBlock(checkoutComments.filter(comment => ids.includes(comment.id)), terminal.cwd)); onClose(); }
-          catch (err) { setCommentError(ipcMessage(err) || 'Aya could not add these comments.'); }
-        }}
+        onSend={onSend}
         sources={sources}
         sourceId={sourceId}
         onSourceChange={setSourceId}
@@ -143,4 +147,5 @@ export function GuiDiffDialog({ terminal, invoke, turns, busy, initialSource, fo
       />
     </div>
   </div>, document.body);
-}
+});
+const ignoreTarget = () => {};

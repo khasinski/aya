@@ -52,3 +52,10 @@ export function parseDiffSourceId(id: string, turns: readonly TurnDiffSummary[])
   if (id.startsWith('commit:') && /^[0-9a-f]{40,64}$/.test(id.slice(7))) return { kind: 'commit', sha: id.slice(7) };
   return null;
 }
+
+/** The turn summaries in a conversation's messages. The previous list comes back unchanged while the summaries are
+ *  the same, so a streamed message does not hand the open diff viewer a new list (and a re-render) every frame. */
+export function turnDiffsOf(messages: readonly { type: string; turnDiff?: TurnDiffSummary }[], previous: readonly TurnDiffSummary[] = []): readonly TurnDiffSummary[] {
+  const next = messages.flatMap(m => m.type === 'turnDiff' && m.turnDiff ? [m.turnDiff] : []);
+  return next.length === previous.length && next.every((summary, index) => summary === previous[index]) ? previous : next;
+}

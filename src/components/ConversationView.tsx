@@ -18,7 +18,7 @@ import { followUpHint,parseFollowUpPreference,pasteBecomesAttachment,recallStep,
 import { reviewCommentsBlock,terminalExcerptBlock,withContextBlock } from '../gui-context';
 import { isSkillInvocation } from '../gui-composer-assist';
 import { findStatus,findTextMatches,stepMatch } from '../gui-find';
-import { fileChangePaths,isTurnDiffSummary,repoRelativePath,type TurnDiffSummary } from '../gui-turn-diff';
+import { fileChangePaths,isTurnDiffSummary,repoRelativePath,turnDiffsOf,type TurnDiffSummary } from '../gui-turn-diff';
 import { fanOutRunForTerminal,requestFanOut,requestFanOutCompare,takeFanOutMessage } from '../gui-fan-out';
 import { guiRendererRecoveryInProgress,takeGuiPaneRecovery } from '../gui-renderer-recovery';
 import { createAnnouncer,createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
@@ -146,7 +146,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
   const agentLabel = guiAgent === 'pi' ? 'Pi' : guiAgent === 'claude' ? 'Claude' : guiAgent === 'antigravity' ? 'Antigravity' : 'Codex';
   const agentBadge = guiAgent === 'pi' ? 'PI' : guiAgent === 'claude' ? 'CLAUDE' : guiAgent === 'antigravity' ? 'ANTIGRAVITY' : 'CODEX';
-  const invoke = (action: string, value?: unknown) => { if (!api) return Promise.reject(Error('Conversation GUI is available in the desktop app only.')); return api.invoke(terminal.id, action, value); };
+  const invoke = useCallback((action: string, value?: unknown) => { if (!api) return Promise.reject(Error('Conversation GUI is available in the desktop app only.')); return api.invoke(terminal.id, action, value); }, [api, terminal.id]);
   const [messages, setMessages] = useState<Message[]>([]);
   const edit = useEditFromHere(invoke);
   const [artifacts, setArtifacts] = useState<GuiArtifactEntry[]>([]);
@@ -219,7 +219,14 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     catch (e) { fail(e); setContextMenu(null); }
   };
   const [diffView, setDiffView] = useState<{ source: string; file: string | null } | null>(null);
-  const turnDiffs = messages.flatMap(m => m.type === 'turnDiff' && m.turnDiff ? [m.turnDiff] : []);
+  // Stable while no turn summary changes, so the open diff viewer (memoized) skips the frames of a streamed reply.
+  const turnDiffsRef = useRef<readonly TurnDiffSummary[]>([]);
+  const turnDiffs = turnDiffsRef.current = turnDiffsOf(messages, turnDiffsRef.current);
+  const diffTerminal = useMemo(() => ({ id: terminal.id, cwd: terminal.cwd, projectSlug: terminal.projectSlug }), [terminal.id, terminal.cwd, terminal.projectSlug]);
+  const closeDiff = useCallback(() => setDiffView(null), []);
+  const addContextRef = useRef(addContext);
+  addContextRef.current = addContext;
+  const addDiffToMessage = useCallback((block: string) => addContextRef.current(() => block), []);
   const [planMode, setPlanModeValue] = useState(false);
   const planRef = useRef(false);   // read by dispatch in the same tick that /plan or Implement changes it
   const setPlanMode = (value: boolean | ((old: boolean) => boolean)) => { const next = typeof value === 'function' ? value(planRef.current) : value; planRef.current = next; setPlanModeValue(next); };
@@ -1048,7 +1055,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       </div><ConversationTurnTimer busy={busy} hidden={hidden} /></div>}
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={resumeFollowing}>Jump to latest ↓</button>}</div>
-    {diffView && <GuiDiffDialog terminal={terminal} invoke={invoke} turns={turnDiffs} busy={busy} initialSource={diffView.source} focusFile={diffView.file} onClose={() => setDiffView(null)} onAddToMessage={block => addContext(() => block)} />}
+    {diffView && <GuiDiffDialog terminal={diffTerminal} invoke={invoke} turns={turnDiffs} busy={busy} initialSource={diffView.source} focusFile={diffView.file} onClose={closeDiff} onAddToMessage={addDiffToMessage} />}
     {side && <aside className="aya-gui-side"><button aria-label={`Close ${sideTitle.toLowerCase()}`} onClick={closeSide}>×</button><strong>{sideTitle}</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
