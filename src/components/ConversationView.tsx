@@ -755,12 +755,13 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const dispatchRef = useRef(dispatch);
   dispatchRef.current = dispatch;
   useEffect(() => {
-    if (!ready || busy || sideQuestion || queueHeld || !queue.length || requests.length || dispatching.current || steering.current) return;
+    // Not while editing an earlier message: a queued turn would land before the edit and be rewound with it.
+    if (!ready || busy || sideQuestion || queueHeld || !queue.length || requests.length || edit.editing || dispatching.current || steering.current) return;
     const next = queue[0];
     void dispatch(next.text, next.attachments, false, next.id, next.questionAnswer);
     // Queue changes drive dispatch. Model/effort changes apply to the next turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, busy, sideQuestion, queueHeld, queue, requests.length, dispatchRevision, steerPending]);
+  }, [ready, busy, sideQuestion, queueHeld, queue, requests.length, edit.editing, dispatchRevision, steerPending]);
   useEffect(() => {
     // A pane opened by "Send to several agents" sends its prompt once, when the agent first connects.
     if (!ready || !restored || switching) return;
@@ -800,10 +801,11 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     if ((!text.trim() && !attachments.length) || !ready || switching) return;
     setError('');
     try {
+      if (text.startsWith('/') && !isSkillInvocation(guiAgent, text, assist.skills, availableCommands)) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
+      // The edited text is never a decline note (a note is never a command, so the order above does not matter to it).
+      if (edit.editing) { await sendEdited(text); return; }
       const declining = !opposite && approvalNoteTarget(requests, guiAgent, { text, attachments: attachments.length });
       if (declining) { await declineWithNote(declining, text.trim()); return; }
-      if (text.startsWith('/') && !isSkillInvocation(guiAgent, text, assist.skills, availableCommands)) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
-      if (edit.editing) { await sendEdited(text); return; }
       if (busy || sideQuestion || queue.length || dispatching.current) {
         if (!dispatching.current && sendAction({ mustWait: true, busy, steerSupported: capabilities.steer, preference: followUp, opposite, hasAttachments: attachments.length > 0, isCommand: false }) === 'steer') { await steer(text); return; }
         setQueue(old => [...old, { id: crypto.randomUUID(), text: text || 'Inspect the attached files.', attachments }]); setPrompt(''); setAttachments([]); return;
