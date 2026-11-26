@@ -172,6 +172,15 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     }
     if (subtype === 'stop_task') {
       write({ method: 'fixture/stop-task', params: { taskId: req.task_id } });
+      // An older Claude without stop_task.
+      if (process.argv.includes('--stop-task-unsupported')) { write({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'Unknown control request subtype: stop_task' } }); return; }
+      // The subagent finished just before the stop reached it.
+      if (process.argv.includes('--stop-task-finished') && runningAgent) {
+        clearInterval(runningAgent.timer); runningAgent = null;
+        write({ type: 'system', subtype: 'task_notification', task_id: 'agent-2', tool_use_id: 'toolu_agent2', status: 'completed', summary: 'Printed ticks' });
+        write({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: `Task ${req.task_id} is not running (status: completed)` } });
+        return;
+      }
       const stopped = req.task_id === 'agent-2' && stopTickingAgent();
       write({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: {} } });
       if (stopped && !busy) {

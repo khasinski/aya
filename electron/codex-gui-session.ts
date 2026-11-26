@@ -323,7 +323,12 @@ export class CodexGuiSession {
   private spawnRunning(item: Record<string, unknown>) { return receivers(item).some(thread => this.childTurns.has(thread)); }
   /** A subagent's turn started or ended: its spawn call's row runs, or ends with that turn. */
   private childTurnChanged(thread: string, method: string, turn: Record<string, unknown>) {
-    if (method === 'turn/started') this.childTurns.set(thread, text(turn.id)); else this.childTurns.delete(thread);
+    if (method === 'turn/started') this.childTurns.set(thread, text(turn.id));
+    else {
+      this.childTurns.delete(thread);
+      // Nobody waits for what the subagent asked once its turn is over.
+      for (const [id, request] of this.requests) if (text(request.params.threadId) === thread) { this.requests.delete(id); this.emit({ method: 'aya/requestResolved', params: { id } }); }
+    }
     for (const item of this.subagentSpawns.values()) {
       if (!receivers(item).includes(thread)) continue;
       if (method === 'turn/started') this.emit({ method: 'item/started', params: { threadId: this.threadId, item: { ...item, status: 'inProgress', background: true } } });

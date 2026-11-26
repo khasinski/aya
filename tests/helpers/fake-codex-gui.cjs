@@ -173,6 +173,18 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       event('turn/completed', { threadId: p.threadId, turn: { id: 'turn', status: 'completed' } }); busy = false;
       return;
     }
+    if (prompt === 'subagent-turn-ends-asking') {
+      // A spawned agent asks for approval, then its turn ends without Codex resolving the request.
+      write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });
+      event('turn/started', { threadId: p.threadId, turn: { id: 'turn' } });
+      const spawn = { id: 'spawn-ask', type: 'collabAgentToolCall', tool: 'spawnAgent', senderThreadId: p.threadId, receiverThreadIds: ['child-ask-thread'], prompt: 'Check the logs', agentsStates: {} };
+      event('item/completed', { threadId: p.threadId, item: { ...spawn, status: 'completed' } });
+      event('turn/started', { threadId: 'child-ask-thread', turn: { id: 'child-ask-turn' } });
+      write({ id: 'child-ask', method: 'item/commandExecution/requestApproval', params: { threadId: 'child-ask-thread', command: 'cat app.log' } });
+      event('turn/completed', { threadId: p.threadId, turn: { id: 'turn', status: 'completed' } }); busy = false;
+      setTimeout(() => event('turn/completed', { threadId: 'child-ask-thread', turn: { id: 'child-ask-turn', status: 'interrupted' } }), 50);
+      return;
+    }
     if (prompt === 'subagent-outlives-turn') {
       // A spawned agent asks for approval; the main turn ends before anyone answers.
       write({ id: message.id, result: { turn: { id: 'turn', status: 'inProgress' } } });

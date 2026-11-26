@@ -137,6 +137,63 @@ test('Claude GUI ignores a stop for a subagent it does not know', async t => {
   assert.equal(events.some(e => e.method === 'fixture/stop-task'), false);
 });
 
+test('Claude GUI Stop leaves running a subagent an older Claude could not stop', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture, '--interrupt-spares-agents', '--stop-task-unsupported']);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('stoppable-agent');
+  await wait(() => events.some(e => e.method === 'turn/completed'));
+  await session.interrupt();
+  assert.equal(events.filter(e => e.method === 'fixture/stop-task').length, 1);
+  // It still runs, so its row does too, and it still ends when Claude reports it.
+  assert.equal(agentItems(events).some(e => e.method === 'item/completed'), false);
+  await session.receive({ type: 'system', subtype: 'task_notification', task_id: 'agent-2', tool_use_id: 'toolu_agent2', status: 'completed', summary: 'Printed ticks' });
+  assert.deepEqual(agentItems(events).filter(e => e.method === 'item/completed').map(e => e.params.item.status), ['completed']);
+});
+
+test('Claude GUI Stop of a subagent that just finished is not an error', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture, '--stop-task-finished']);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('stoppable-agent');
+  await wait(() => events.some(e => e.method === 'turn/completed'));
+  await session.stopSubagent('toolu_agent2');
+  assert.deepEqual(agentItems(events).filter(e => e.method === 'item/completed').map(e => e.params.item.status), ['completed']);
+});
+
+test('Claude GUI keeps only the last 100 finished subagents, without their output', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  for (let i = 0; i < 105; i++) {
+    const id = `toolu_many_${i}`;
+    await session.receive({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', content_block: { type: 'tool_use', id, name: 'Agent', input: {} } } });
+    await session.receive({ type: 'system', subtype: 'task_started', task_id: `many-${i}`, tool_use_id: id, description: `Agent ${i}`, task_type: 'local_agent' });
+    await session.receive({ type: 'assistant', parent_tool_use_id: id, message: { content: [{ type: 'tool_use', id: `read-${i}`, name: 'Read', input: { file_path: `f${i}.txt` } }] } });
+    await session.receive({ type: 'system', subtype: 'task_notification', task_id: `many-${i}`, tool_use_id: id, status: 'completed', summary: 'done' });
+  }
+  assert.equal(session.agents.size, 100);
+  assert.equal(session.agents.has('toolu_many_0'), false);
+  assert.ok([...session.agents.values()].every(agent => agent.done && agent.output === ''));
+  // The finished row was reported with its output.
+  assert.equal(agentItems(events).filter(e => e.method === 'item/completed').at(-1).params.item.aggregatedOutput, 'Read: f104.txt\n\ndone');
+});
+
+test('Claude GUI drops an approval that Claude withdraws', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('cancelled-approval');
+  await wait(() => events.some(e => e.id === 'approve-cancel'));
+  await wait(() => events.some(e => e.method === 'aya/requestResolved' && e.params.id === 'approve-cancel'));
+  await assert.rejects(session.respond('approve-cancel', { decision: 'accept' }), /already ended/);
+});
+
+test('Codex GUI drops what a subagent asked once its turn is over', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [codexFixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('subagent-turn-ends-asking');
+  await wait(() => events.some(e => e.id === 'child-ask'));
+  await wait(() => events.some(e => e.method === 'aya/requestResolved' && e.params.id === 'child-ask'));
+  await assert.rejects(session.respond('child-ask', { decision: 'accept' }), /already ended/);
+});
+
 const codexSpawns = events => events.filter(e => e.params?.item?.id === 'spawn-run');
 
 test('Codex GUI keeps a spawned subagent running while its thread works, and stops it alone', async t => {

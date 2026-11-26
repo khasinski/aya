@@ -1022,6 +1022,9 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       if (agent.taskId && request.params.subagentTaskId === agent.taskId) { this.requests.delete(requestId); this.emit({ method: 'aya/requestResolved', params: { id: requestId } }); }
     }
     this.reportAgent(id, 'item/completed', status);
+    // The finished row has its output; only the last 100 finished agents are kept, without it, for late events.
+    agent.output = '';
+    for (const [agentId, entry] of this.agents) { if (this.agents.size <= 100) break; if (entry.done) this.agents.delete(agentId); }
   }
 
   /** Streams what a shell command a subagent runs prints, from the file Claude writes it to. */
@@ -1050,7 +1053,12 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     const agent = this.agents.get(id);
     if (!agent || agent.done) return;
     if (!agent.taskId) throw Error('This subagent has not started yet');
-    await this.controlRequest('stop_task', { task_id: agent.taskId }, 15000);
+    try { await this.controlRequest('stop_task', { task_id: agent.taskId }, 15000); }
+    catch (error) {
+      // It finished while the stop was on its way: its own report ends the row.
+      if (agent.done || /not running|no task found/i.test(error instanceof Error ? error.message : String(error))) return;
+      throw error;
+    }
     this.finishAgent(id, 'interrupted', '');
   }
 
@@ -1112,7 +1120,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       if (this.child !== child) return;
       try {
         frames.push(String(data), message => {
-          void this.receive(message).catch(error => { this.failSession(String(error)); this.close(); });
+          // A reply still on its way from a Claude that Edit from here replaced must not end the new one.
+          void this.receive(message).catch(error => { if (this.child !== child) return; this.failSession(String(error)); this.close(); });
         });
       } catch (error) {
         this.failSession(`Claude: ${error instanceof Error ? error.message : String(error)}`);
@@ -1358,8 +1367,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     if (!this.busy && !running.length) return;
     // Idle, an older Claude may refuse the interrupt; its subagents are still stopped one by one.
     try { await this.controlRequest('interrupt'); } catch (error) { if (this.busy) throw error; }
+    // A subagent whose stop failed (an older Claude, a timeout) keeps its row: it still runs, and reports when it ends.
     await Promise.all(running.map(id => this.stopSubagent(id).catch(() => {})));
-    for (const id of running) this.finishAgent(id, 'interrupted', '');
   }
 
   private async receive(raw: unknown) {
@@ -1381,12 +1390,20 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       return;
     }
 
+    // Claude withdrew a request it sent (a tool call that was cancelled while it waited for an answer).
+    if (type === 'control_cancel_request') {
+      const id = text(message.request_id);
+      if (this.requests.delete(id)) this.emit({ method: 'aya/requestResolved', params: { id } });
+      return;
+    }
+
     if (type === 'control_request') {
       const reqId = text(message.request_id) || randomUUID();
       const req = object(message.request);
       const subtype = text(req.subtype);
 
       if (subtype === 'mcp_message' && text(req.server_name) === 'aya') {
+        const owner = this.child;
         const mcpMsg = object(req.message);
         const mcpMethod = text(mcpMsg.method);
         const mcpId = mcpMsg.id ?? null;
@@ -1434,6 +1451,8 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
             error: { code: -32601, message: `Unsupported MCP method: ${mcpMethod}` },
           };
         }
+        // The tool ran while Claude was restarted (Edit from here): the Claude that asked is gone.
+        if (this.child !== owner) return;
         this.write({
           type: 'control_response',
           response: {
