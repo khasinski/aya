@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.21.0 - 2026-11-27
 
 - Conversation GUI turn diffs and Edit from here: a snapshot leaves out untracked or modified files over 5 MB and never runs git-lfs or other clean filters, so `.git` no longer grows by every large file twice a turn (the turn's changes name the large files it changed, "2 large files changed (not shown): dev.sqlite3, …"), and closing the pane or quitting stops a snapshot in progress; a send waits at most a second for it, and one snapshot serves both features. A pane's header no longer offers its own agent CLI as a local server to stop, a failed turn that only mentions a rate limit is no longer marked Limited, a reset time with a time zone ("resets 3pm (Europe/Warsaw)") is read in that zone, and the artifacts button no longer counts artifacts Aya dropped.
 - Terminals survive Aya being stopped by a signal (SIGTERM, SIGINT or SIGHUP, e.g. `kill`, a task runner's stop or Ctrl+C in dev) while a conversation turn runs. The signal no longer waits on the "Work in progress will stop" question nobody can answer, so Aya quits normally and hands its terminals to the next launch instead of being force-killed and leaving every pane disconnected. A second signal still ends Aya at once.
