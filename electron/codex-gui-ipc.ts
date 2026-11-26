@@ -61,7 +61,9 @@ export function isGuiSessionBusy(id: string): boolean {
 
 export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>, createWindow: (options: Electron.BrowserWindowConstructorOptions) => Electron.BrowserWindow) {
   registerWidgetProtocol();
-  const panels = new GuiPanelState(async (id, snapshot) => { await saveConversation(id, snapshot); await archiveConversation(snapshot); }, clearWidgetDocuments);
+  const turnDiffs = new GuiTurnDiffs();
+  // A turn cut short by a close or reconnect must not lend its start snapshot to the next turn.
+  const panels = new GuiPanelState(async (id, snapshot) => { await saveConversation(id, snapshot); await archiveConversation(snapshot); }, clearWidgetDocuments, key => turnDiffs.forget(key));
   const { artifacts, artifactVersions, sessions, snapshots, attachments } = panels;
   activeGuiSessions = sessions;
   const saveRevisions = new WeakMap<object, number>();
@@ -70,7 +72,6 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
   const recoverablePanels = new Set<string>();
   const journals = new Map<string, GuiRecoveryJournal>();
   const searches = new Map<string, symbol>();
-  const turnDiffs = new GuiTurnDiffs();
   prepareRecovery = ownerId => {
     recoveringOwners.add(ownerId);
     for (const panelKey of snapshots.keys()) if (panelKey.startsWith(`${ownerId}:`)) recoverablePanels.add(panelKey);
@@ -259,6 +260,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         return { connected, threadId: snapshots.get(key)?.threadId, model: current.model || current.agent, unsafeMode: current.unsafeMode, permissionMode: current.permissionMode, attachmentIds: [...attachments.get(key)?.keys() || []] };
       }
       if (sessions.has(key)) throw Error('Panel already connected');
+      turnDiffs.forget(key);
       const agent = normalizeGuiAgent(params.agent);
       const cached = snapshots.get(key);
       if (cached && !matchesGuiBinding(cached, { ...params, agent })) panels.forget(key);
@@ -434,12 +436,13 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       // Counted as busy from now on, so Quit asks even while the snapshots before the turn are still being taken.
       startingSends.set(key, (startingSends.get(key) ?? 0) + 1);
       try {
-        if (!entry.session.running) await turnDiffs.beginTurn(key, entry.cwd);
+        // One snapshot serves as the turn diff's start and as the message's edit-from-here checkpoint.
+        const running = entry.session.running, start = running ? null : await turnDiffs.beginTurn(key, entry.cwd);
         if (typeof value === 'string') return await entry.session.send(value);
         const params = value as { text: string; model?: string; effort?: string; plan?: boolean; attachmentIds?: string[] };
         const files = (params.attachmentIds || []).map(id => { const file = attachments.get(key)?.get(id); if (!file) throw Error('Please reattach this file after reconnecting'); return file; });
         const text = params.text + (files.filter(f => !f.image).length ? '\n\nAttached files (selected by the user):\n' + files.filter(f => !f.image).map(f => JSON.stringify(f.path)).join('\n') : '');
-        return await sendWithSnapshot(entry, () => entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) }));
+        return await sendWithSnapshot(entry, async () => running ? turnDiffs.snapshotNow(entry.cwd) : start, () => entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) }));
       } finally { const left = (startingSends.get(key) ?? 1) - 1; if (left > 0) startingSends.set(key, left); else startingSends.delete(key); }
     }
     if (action === 'edit-from-here') return editFromHere(entry, value, snapshots.get(key));

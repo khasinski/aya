@@ -4,7 +4,8 @@
 // before it or a pull/rebase done between turns. Idea after T3 Code's checkpoints (MIT); T3 keeps them as hidden refs,
 // Aya keeps the tree ids in the conversation instead and says so when git has since pruned them.
 import { spawn } from 'node:child_process';
-import { copyFile,mkdtemp,rm,stat,utimes } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
+import { copyFile,lstat,mkdtemp,readdir,rm,stat,utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 
@@ -18,7 +19,11 @@ const OBJECT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 export interface WorkingTreeSnapshot { root: string; tree: string; head: string | null }
 export interface TurnDiffFile { path: string; additions: number | null; deletions: number | null }
 /** What the conversation keeps for one finished turn: enough to show its diff again after a restart. */
-export interface TurnDiffSummary { id: string; turnId: string; root: string; start: string; end: string; startHead: string | null; files: TurnDiffFile[] }
+/** `files` holds at most MAX_TURN_DIFF_FILES; `totals` counts all of them when there were more. */
+export interface TurnDiffSummary { id: string; turnId: string; root: string; start: string; end: string; startHead: string | null; files: TurnDiffFile[]; totals?: TurnDiffTotals }
+export interface TurnDiffTotals { files: number; additions: number; deletions: number }
+/** A turn's summary lists this many files; the diff viewer still shows all of them. */
+export const MAX_TURN_DIFF_FILES = 200;
 export interface DiffCommit { sha: string; short: string; subject: string; author: string; date: string }
 
 interface GitResult { code: number | null; stdout: string; truncated: boolean; timedOut: boolean }
@@ -42,22 +47,69 @@ function git(cwd: string, args: string[], options: { env?: NodeJS.ProcessEnv; ti
 
 const ok = (result: GitResult) => result.code === 0 && !result.timedOut;
 
-/** The repository that holds `cwd`: its top level, the path of `cwd` inside it, and its index file. Null outside git. */
+/** The repository that holds `cwd`: its top level, the path of `cwd` inside it, and its index file. Null outside git.
+ *  `--git-path` is relative to `cwd` (no `--path-format`, which needs git 2.31). */
 export async function repositoryOf(cwd: string): Promise<{ root: string; prefix: string; index: string } | null> {
-  const result = await git(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-path', 'index', '--path-format=relative', '--show-prefix'], { timeoutMs: 2000, maxBytes: 64 * 1024 });
+  const result = await git(cwd, ['rev-parse', '--show-toplevel', '--git-path', 'index', '--show-prefix'], { timeoutMs: 2000, maxBytes: 64 * 1024 });
   if (!ok(result)) return null;
   const [root, index, prefix = ''] = result.stdout.split('\n');
-  return root && index ? { root, index, prefix } : null;
+  return root && index ? { root, index: path.resolve(cwd, index), prefix } : null;
+}
+export type Repository = NonNullable<Awaited<ReturnType<typeof repositoryOf>>>;
+
+/** Untracked or modified files larger than this are left out of a snapshot: hashing them would copy each one into the
+ *  user's .git/objects on every turn. */
+export const SNAPSHOT_FILE_LIMIT = 5 * 1024 * 1024;
+const MAX_SKIPPED_FILES = 500;
+/** Temporary index directories of snapshots in progress, removed if Aya quits during one. */
+const temporary = new Set<string>();
+let exitHook = false;
+const TEMP_PREFIXES = ['aya-turn-', 'aya-snapshot-', 'aya-restore-'];
+
+/** Removes what an earlier run left in the temp directory when it quit mid-snapshot. Only entries older than `minAgeMs`,
+ *  so a snapshot another running Aya is taking is not touched. */
+export async function sweepSnapshotTemp(dir = tmpdir(), minAgeMs = 60 * 60 * 1000): Promise<void> {
+  const names = await readdir(dir).catch(() => [] as string[]);
+  const cutoff = Date.now() - minAgeMs;
+  await Promise.all(names.filter(name => TEMP_PREFIXES.some(prefix => name.startsWith(prefix))).map(async name => {
+    const file = path.join(dir, name);
+    const info = await lstat(file).catch(() => null);
+    if (info && info.mtimeMs <= cutoff && !temporary.has(file)) await rm(file, { recursive: true, force: true }).catch(() => {});
+  }));
+}
+
+/** `-c` options that turn off every clean filter the repository configures (git-lfs and others): a snapshot must not
+ *  run them, and git-lfs would copy each file into .git/lfs/objects, which is never collected. */
+async function filterOverrides(root: string): Promise<string[]> {
+  const result = await git(root, ['config', '--name-only', '--get-regexp', '^filter\\.'], { timeoutMs: 2000, maxBytes: 256 * 1024 });
+  const names = new Set(result.stdout.split('\n').map(key => /^filter\.(.+)\.[^.]+$/.exec(key.trim())?.[1]).filter((name): name is string => !!name));
+  return [...names].flatMap(name => ['-c', `filter.${name}.clean=`, '-c', `filter.${name}.process=`, '-c', `filter.${name}.required=false`]);
+}
+
+/** Untracked and modified files over SNAPSHOT_FILE_LIMIT, relative to the root. Null when there are too many to list. */
+async function largeFiles(root: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string[] | null> {
+  const listed = await git(root, ['ls-files', '-z', '--others', '--modified', '--exclude-standard'], { env, timeoutMs, maxBytes: 16 * 1024 * 1024 });
+  if (!ok(listed) || listed.truncated) return null;
+  const files = [...new Set(listed.stdout.split('\0').filter(Boolean))], large: string[] = [];
+  for (let i = 0; i < files.length; i += 64) {
+    const sizes = await Promise.all(files.slice(i, i + 64).map(file => lstat(path.join(root, file)).then(info => info.isFile() ? info.size : 0, () => 0)));
+    sizes.forEach((size, j) => { if (size > SNAPSHOT_FILE_LIMIT) large.push(files[i + j]); });
+    if (large.length > MAX_SKIPPED_FILES) return null;
+  }
+  return large;
 }
 
 /** Record the working tree (tracked and untracked files, minus ignored ones) as a tree object. Null when `cwd` is not
- *  in a git repository, or when it takes longer than `timeLimitMs`. */
-export async function snapshotWorkingTree(cwd: string, timeLimitMs = SNAPSHOT_TIME_LIMIT_MS): Promise<WorkingTreeSnapshot | null> {
+ *  in a git repository, or when it takes longer than `timeLimitMs`. Files over SNAPSHOT_FILE_LIMIT keep what the
+ *  index has (an untracked one is left out), and no clean filter runs. */
+export async function snapshotWorkingTree(cwd: string, timeLimitMs = SNAPSHOT_TIME_LIMIT_MS, known?: Repository): Promise<WorkingTreeSnapshot | null> {
   const deadline = Date.now() + timeLimitMs;
   const left = () => Math.max(1, deadline - Date.now());
-  const repo = await repositoryOf(cwd);
+  const repo = known ?? await repositoryOf(cwd);
   if (!repo) return null;
   const dir = await mkdtemp(path.join(tmpdir(), 'aya-turn-'));
+  temporary.add(dir);
+  if (!exitHook) { exitHook = true; process.once('exit', () => { for (const entry of temporary) { try { rmSync(entry, { recursive: true, force: true }); } catch { /* quitting */ } } }); }
   try {
     const index = path.join(dir, 'index');
     // Starting from a copy of the real index lets `git add` skip files whose stat data is unchanged. The copy keeps the
@@ -65,8 +117,11 @@ export async function snapshotWorkingTree(cwd: string, timeLimitMs = SNAPSHOT_TI
     const existing = await stat(repo.index).catch(() => null);
     if (existing) { await copyFile(repo.index, index); await utimes(index, existing.atime, existing.mtime); }
     const env = { GIT_INDEX_FILE: index };
-    const config = ['-c', 'core.splitIndex=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
-    if (!ok(await git(repo.root, [...config, 'add', '-A', '--', '.'], { env, timeoutMs: left(), maxBytes: 64 * 1024 }))) return null;
+    const [filters, large] = await Promise.all([filterOverrides(repo.root), largeFiles(repo.root, env, left())]);
+    if (!large || Date.now() >= deadline) return null;
+    const config = ['-c', 'core.splitIndex=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', ...filters];
+    const skip = large.map(file => `:(exclude,literal)${file}`);
+    if (!ok(await git(repo.root, [...config, 'add', '-A', '--', '.', ...skip], { env, timeoutMs: left(), maxBytes: 64 * 1024 }))) return null;
     const tree = await git(repo.root, [...config, 'write-tree'], { env, timeoutMs: left(), maxBytes: 1024 });
     if (!ok(tree) || !OBJECT_ID.test(tree.stdout.trim())) return null;
     const head = await git(repo.root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { timeoutMs: left(), maxBytes: 1024 });
@@ -75,6 +130,7 @@ export async function snapshotWorkingTree(cwd: string, timeLimitMs = SNAPSHOT_TI
     return null;
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
+    temporary.delete(dir);
   }
 }
 
@@ -144,28 +200,52 @@ export async function commitDiff(cwd: string, sha: string): Promise<string> {
 
 let nextSummaryId = 0;
 
+/** Two snapshots slower than this (or one that hit the time limit) mark the repository slow: it is not snapshotted
+ *  again until Aya restarts. One slow snapshot alone can be a cold file cache. */
+export const SLOW_SNAPSHOT_MS = 1000;
+/** A send waits at most this long for its start snapshot; a later one still becomes the turn's start. */
+export const SEND_WAIT_MS = 1000;
+
+/** `pending`, or null once `ms` passed without it. */
+function within<T>(pending: Promise<T | null>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), ms); timer.unref?.(); });
+  return Promise.race([pending, late]).finally(() => clearTimeout(timer));
+}
+
+let swept = false;
+
 /** Start and end snapshots of the running turn of every GUI pane. */
 export class GuiTurnDiffs {
   private active = new Map<string, Promise<WorkingTreeSnapshot | null>>();
   /** Repositories whose snapshot was too slow; they are not snapshotted again until Aya restarts. */
   private slow = new Set<string>();
+  private slowOnce = new Set<string>();
+
+  constructor() { if (!swept) { swept = true; void sweepSnapshotTemp(); } }
 
   private async take(cwd: string) {
     const repo = await repositoryOf(cwd).catch(() => null);
     if (!repo || this.slow.has(repo.root)) return null;
     const started = Date.now();
-    const snapshot = await snapshotWorkingTree(cwd).catch(() => null);
-    if (!snapshot && Date.now() - started >= SNAPSHOT_TIME_LIMIT_MS - 50) this.slow.add(repo.root);
+    const snapshot = await snapshotWorkingTree(cwd, SNAPSHOT_TIME_LIMIT_MS, repo).catch(() => null);
+    const took = Date.now() - started;
+    if (took >= SNAPSHOT_TIME_LIMIT_MS - 50 || (took >= SLOW_SNAPSHOT_MS && this.slowOnce.has(repo.root))) this.slow.add(repo.root);
+    else if (took >= SLOW_SNAPSHOT_MS) this.slowOnce.add(repo.root);
     return snapshot;
   }
 
-  /** Called before a message that starts a turn goes to the agent, so the snapshot cannot include its first edit. */
-  async beginTurn(key: string, cwd: string) {
-    if (this.active.has(key)) return;
-    const pending = this.take(cwd);
-    this.active.set(key, pending);
-    await pending;
+  /** Called before a message that starts a turn goes to the agent, so the snapshot cannot include its first edit.
+   *  Waits at most SEND_WAIT_MS; the snapshot (the edit-from-here checkpoint too) or null when it is not ready. */
+  beginTurn(key: string, cwd: string): Promise<WorkingTreeSnapshot | null> {
+    let pending = this.active.get(key);
+    if (!pending) { pending = this.take(cwd); this.active.set(key, pending); }
+    return within(pending, SEND_WAIT_MS);
   }
+
+  /** The working tree now, for a message sent during a turn; null when the repository is slow or it is not ready in
+   *  SEND_WAIT_MS. */
+  snapshotNow(cwd: string, waitMs = SEND_WAIT_MS) { return within(this.take(cwd), waitMs); }
 
   /** The tree the running turn started from, if any. */
   async currentStart(key: string) { return this.active.get(key) ?? null; }
@@ -187,7 +267,8 @@ export class GuiTurnDiffs {
       if (!end || end.tree === start.tree) return;
       const files = await changedFiles(start.root, start.tree, end.tree).catch(() => []);
       if (!files.length) return;
-      const summary: TurnDiffSummary = { id: `turn-diff-${Date.now().toString(36)}-${++nextSummaryId}`, turnId: typeof turn.id === 'string' ? turn.id : '', root: start.root, start: start.tree, end: end.tree, startHead: start.head, files };
+      const totals = files.length > MAX_TURN_DIFF_FILES ? { files: files.length, additions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0), deletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0) } : undefined;
+      const summary: TurnDiffSummary = { id: `turn-diff-${Date.now().toString(36)}-${++nextSummaryId}`, turnId: typeof turn.id === 'string' ? turn.id : '', root: start.root, start: start.tree, end: end.tree, startHead: start.head, files: files.slice(0, MAX_TURN_DIFF_FILES), ...(totals ? { totals } : {}) };
       emit({ method: 'aya/turnDiff', params: { turnDiff: summary } });
     })().catch(() => {});
   }
@@ -208,7 +289,7 @@ export async function handleGuiDiffAction(diffs: GuiTurnDiffs, key: string, cwd:
     // The running turn: from its start snapshot to the working tree now.
     const current = await (await diffs.currentStart(key));
     if (!current) throw Error('No snapshot was recorded for the current turn.');
-    const now = await snapshotWorkingTree(cwd);
+    const now = await diffs.snapshotNow(cwd, SNAPSHOT_TIME_LIMIT_MS + 2000);
     if (!now) throw Error('Aya could not record the working tree in time.');
     return { ...where, start: current.tree, startHead: current.head, diff: await diffSnapshots(repo.root, current.tree, now.tree) };
   }

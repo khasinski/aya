@@ -461,7 +461,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       }
       if (event.method === 'aya/turnDiff' && isTurnDiffSummary(p.turnDiff)) {
         const turnDiff = p.turnDiff;
-        setMessages(old => old.some(m => m.id === turnDiff.id) ? old : [...old, { id: turnDiff.id, type: 'turnDiff', text: turnDiff.files.map(f => f.path).join('\n'), turnDiff }]);
+        setMessages(old => old.some(m => m.id === turnDiff.id) ? old : [...old, { id: turnDiff.id, type: 'turnDiff', text: '', turnDiff }]);
         setActivities(old => old.map(a => a.files?.length && !a.turnDiffId ? { ...a, turnDiffId: turnDiff.id } : a));
       }
       if (event.method === 'item/commandExecution/outputDelta') setActivities(old => old.map(a => a.id === p.itemId ? { ...a, output: (a.output + str(p.delta)).slice(-100000) } : a));

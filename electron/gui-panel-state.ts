@@ -17,7 +17,8 @@ export class GuiPanelState {
   readonly attachments = new Map<string, Map<string, GuiAttachment>>();
   readonly closing = new Set<string>();
   private pending = new Map<string, Promise<unknown>>();
-  constructor(private save: (id: string, snapshot: ConversationSnapshot) => Promise<void>, private clearDocuments: (key: string) => void) {}
+  /** `onDisconnect` runs whenever a panel's agent connection ends (close, reconnect, a failed connect). */
+  constructor(private save: (id: string, snapshot: ConversationSnapshot) => Promise<void>, private clearDocuments: (key: string) => void, private onDisconnect: (key: string) => void = () => {}) {}
   artifact(key: string, id: string, revision?: number): GuiArtifactEntry | undefined {
     const latest = this.artifacts.get(key)?.get(id);
     if (revision === undefined) return latest;
@@ -42,6 +43,7 @@ export class GuiPanelState {
   disconnect(key: string) {
     const entry = this.sessions.get(key);
     this.sessions.delete(key);
+    this.onDisconnect(key);
     entry?.session.close();
   }
   async close(key: string, finalView?: Record<string, unknown>, releaseOnFailure = false) {

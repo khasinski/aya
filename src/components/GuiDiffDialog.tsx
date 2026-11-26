@@ -2,7 +2,7 @@ import { useEffect,useMemo,useRef,useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DiffAnchor } from '../diff-review';
 import { reviewCommentsBlock } from '../gui-context';
-import { parseDiffSourceId,repoRelativePath,turnDiffSummaryText,type TurnDiffSummary } from '../gui-turn-diff';
+import { parseDiffSourceId,repoRelativePath,turnDiffFileCount,turnDiffSummaryText,type TurnDiffSummary } from '../gui-turn-diff';
 import type { DiffComment } from '../types';
 import { uuid } from '../uuid';
 import { DiffPanel,type DiffSource } from './DiffPanel';
@@ -13,9 +13,9 @@ const SHOWN_FILES = 6;
 
 /** The row a finished turn that changed files leaves in the conversation. */
 export function TurnChanges({ summary, onOpen }: { summary: TurnDiffSummary; onOpen: (file: string | null) => void }) {
-  const more = summary.files.length - SHOWN_FILES;
+  const more = turnDiffFileCount(summary) - SHOWN_FILES;
   return <section className="aya-gui-turn-changes" aria-label="Changes in this turn">
-    <header><strong>Changes in this turn</strong><small>{turnDiffSummaryText(summary.files)}</small><button type="button" onClick={() => onOpen(null)}>View changes</button></header>
+    <header><strong>Changes in this turn</strong><small>{turnDiffSummaryText(summary.files, summary.totals)}</small><button type="button" onClick={() => onOpen(null)}>View changes</button></header>
     <ul>{summary.files.slice(0, SHOWN_FILES).map(file => <li key={file.path}><button type="button" title={`Show ${file.path} in the diff`} onClick={() => onOpen(file.path)}><code>{file.path}</code></button><small>{file.additions === null ? 'binary' : <><span className="aya-gui-turn-changes-add">+{file.additions}</span> <span className="aya-gui-turn-changes-del">−{file.deletions}</span></>}</small></li>)}
       {more > 0 && <li><button type="button" onClick={() => onOpen(null)}>{more} more {more === 1 ? 'file' : 'files'}</button></li>}</ul>
   </section>;
@@ -87,7 +87,7 @@ export function GuiDiffDialog({ terminal, invoke, turns, busy, initialSource, fo
 
   const listed = useMemo<DiffSource[]>(() => [
     ...(busy ? [{ id: 'current', label: 'Current turn so far', group: 'Turns' }] : []),
-    ...turns.map((turn, index) => ({ id: `turn:${turn.id}`, label: `Turn ${index + 1} · ${turnDiffSummaryText(turn.files)}`, group: 'Turns' })).reverse(),
+    ...turns.map((turn, index) => ({ id: `turn:${turn.id}`, label: `Turn ${index + 1} · ${turnDiffSummaryText(turn.files, turn.totals)}`, group: 'Turns' })).reverse(),
     ...(commits.commits || []).map(commit => ({ id: `commit:${commit.sha}`, label: `${commit.short} ${commit.subject}`, group: commits.label || 'Commits' })),
   ], [busy, turns, commits]);
   // The running turn ended while it was on screen: keep it selectable until another diff is chosen.

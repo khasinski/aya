@@ -3,9 +3,10 @@
 // Idea after T3 Code's checkpoints (MIT); no code copied.
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFile, lstat, mkdir, realpath, rmdir, unlink } from 'node:fs/promises';
+import { lstat, mkdir, realpath, rmdir, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { snapshotWorkingTree } from './gui-turn-diff';
 
 interface GitResult { stdout: string }
 function git(cwd: string, args: string[], env: Record<string, string> = {}, input?: string): Promise<GitResult> {
@@ -35,23 +36,28 @@ export async function snapshotWorkspace(cwd: string): Promise<SnapshotWorkspace 
   return value;
 }
 
-/** The working tree under cwd (tracked and untracked, ignored files excluded) as a git tree,
- *  written through a temporary index so the user's index and refs stay untouched. */
+/** The working tree (tracked and untracked, ignored and very large files excluded) as a git tree, written through a
+ *  temporary index so the user's index and refs stay untouched (gui-turn-diff.ts). A send's checkpoint is the turn's
+ *  start snapshot; this one is for the revert, which the user waits for. */
 async function workingTree(ws: SnapshotWorkspace): Promise<string> {
-  const index = path.join(tmpdir(), `aya-snapshot-${randomUUID()}.index`);
-  try {
-    const real = path.resolve(ws.top, (await git(ws.top, ['rev-parse', '--git-path', 'index'])).stdout.trim());
-    try { await copyFile(real, index); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    const env = { GIT_INDEX_FILE: index };
-    await git(ws.top, ['add', '-A', '--', ws.prefix || '.'], env);
-    return (await git(ws.top, ['write-tree'], env)).stdout.trim();
-  } finally { await unlink(index).catch(() => {}); }
+  const snapshot = await snapshotWorkingTree(ws.cwd, 30000);
+  if (!snapshot) throw Error('Aya could not record the working tree');
+  return snapshot.tree;
 }
 
 export async function takeWorkspaceSnapshot(cwd: string): Promise<string | undefined> {
   const ws = await snapshotWorkspace(cwd);
   if (!ws) return undefined;
   try { return await workingTree(ws); } catch { return undefined; }
+}
+
+/** The tree `checkpoint` recorded (the turn's start snapshot), when cwd is a linked worktree and the tree is its own. */
+export async function workspaceCheckpoint(cwd: string, checkpoint: () => Promise<{ root: string; tree: string } | null>): Promise<string | undefined> {
+  const ws = await snapshotWorkspace(cwd);
+  if (!ws) return undefined;
+  const snapshot = await checkpoint().catch(() => null);
+  if (!snapshot) return undefined;
+  return await realpath(snapshot.root).catch(() => snapshot.root) === ws.top ? snapshot.tree : undefined;
 }
 
 export async function snapshotAvailable(cwd: string, tree: unknown): Promise<boolean> {
