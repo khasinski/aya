@@ -42,8 +42,12 @@ test("a full board keeps receiving live updates after cancelling Quit during a G
     await window.evaluate(() => window.aya.addBoardColumn({ projectSlug: "e2e-proj", title: "After cancelled Quit" }));
     await expect(window.getByTestId("kanban-column-after-cancelled-quit")).toBeVisible();
     await expect(gui.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+    // The cancelled Quit left Codex itself running, not only the button: it still answers Stop.
+    await gui.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(gui.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
+    await expect(gui.locator("header").getByRole("status")).toHaveText("Ready");
   } finally {
-    await gui.getByRole("button", { name: "Stop", exact: true }).click().catch(() => {});
+    await gui.getByRole("button", { name: "Stop", exact: true }).click({ timeout: 1000 }).catch(() => {});
     await closeAndWait(app);
   }
 });

@@ -37,17 +37,22 @@ let prepareRecovery: (ownerId: number) => void = () => {};
 export function prepareGuiRendererRecovery(ownerId: number) { prepareRecovery(ownerId); }
 let activeGuiSessions = new Map<string, { session: GuiSessionInstance; cwd: string; agent: GuiAgentKind }>();
 
+/** Sends still on their way to the agent, by pane key. The renderer shows the turn as running as soon as it sends, but
+ *  the session only reports `running` once the workspace snapshots are taken and the agent is called. */
+const startingSends = new Map<string, number>();
+const sessionBusy = (key: string, entry: { session: GuiSessionInstance }) => entry.session.running || (startingSends.get(key) ?? 0) > 0;
+
 export function busyGuiSessionCount(): number {
   let count = 0;
-  for (const entry of activeGuiSessions.values()) {
-    if (entry.session.running) count++;
+  for (const [key, entry] of activeGuiSessions) {
+    if (sessionBusy(key, entry)) count++;
   }
   return count;
 }
 
 export function isGuiSessionBusy(id: string): boolean {
   for (const [key, entry] of activeGuiSessions) {
-    if (key.endsWith(`:${id}`) && entry.session.running) {
+    if (key.endsWith(`:${id}`) && sessionBusy(key, entry)) {
       return true;
     }
   }
@@ -426,12 +431,16 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return item;
     }
     if (action === 'send') {
-      if (!entry.session.running) await turnDiffs.beginTurn(key, entry.cwd);
-      if (typeof value === 'string') return entry.session.send(value);
-      const params = value as { text: string; model?: string; effort?: string; plan?: boolean; attachmentIds?: string[] };
-      const files = (params.attachmentIds || []).map(id => { const file = attachments.get(key)?.get(id); if (!file) throw Error('Please reattach this file after reconnecting'); return file; });
-      const text = params.text + (files.filter(f => !f.image).length ? '\n\nAttached files (selected by the user):\n' + files.filter(f => !f.image).map(f => JSON.stringify(f.path)).join('\n') : '');
-      return sendWithSnapshot(entry, () => entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) }));
+      // Counted as busy from now on, so Quit asks even while the snapshots before the turn are still being taken.
+      startingSends.set(key, (startingSends.get(key) ?? 0) + 1);
+      try {
+        if (!entry.session.running) await turnDiffs.beginTurn(key, entry.cwd);
+        if (typeof value === 'string') return await entry.session.send(value);
+        const params = value as { text: string; model?: string; effort?: string; plan?: boolean; attachmentIds?: string[] };
+        const files = (params.attachmentIds || []).map(id => { const file = attachments.get(key)?.get(id); if (!file) throw Error('Please reattach this file after reconnecting'); return file; });
+        const text = params.text + (files.filter(f => !f.image).length ? '\n\nAttached files (selected by the user):\n' + files.filter(f => !f.image).map(f => JSON.stringify(f.path)).join('\n') : '');
+        return await sendWithSnapshot(entry, () => entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) }));
+      } finally { const left = (startingSends.get(key) ?? 1) - 1; if (left > 0) startingSends.set(key, left); else startingSends.delete(key); }
     }
     if (action === 'edit-from-here') return editFromHere(entry, value, snapshots.get(key));
     if (action === 'interrupt') return entry.session.interrupt();
@@ -448,5 +457,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     };
     return ['load', 'connect', 'reconnect', 'persist', 'close', 'dispose-pane', 'detach-for-terminal', 'adopt-terminal-session', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
   });
-  app.on('before-quit', () => { for (const { session } of sessions.values()) session.close(); });
+  // Every before-quit listener runs even when an earlier one held the quit (main's "turns are still running" prompt
+  // is registered first). Close the sessions only on a quit that goes ahead; a cancelled Quit must leave turns running.
+  app.on('before-quit', event => { if (event.defaultPrevented) return; for (const { session } of sessions.values()) session.close(); });
 }
