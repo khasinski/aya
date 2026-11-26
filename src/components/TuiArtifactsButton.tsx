@@ -14,6 +14,11 @@ export function artifactTime(at: number, now = Date.now()): string {
   return d.toDateString() === today.toDateString() ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
 }
 
+/** The list without artifacts the store dropped (it keeps a limited number across all panes). */
+export function withoutArtifacts(list: TuiArtifactSummary[], removed: readonly string[]): TuiArtifactSummary[] {
+  return list.some((a) => removed.includes(a.id)) ? list.filter((a) => !removed.includes(a.id)) : list;
+}
+
 /** Newest first, one row per artifact; an update replaces its row and moves it to the top. */
 export function withArtifact(list: TuiArtifactSummary[], artifact: TuiArtifactSummary): TuiArtifactSummary[] {
   return [artifact, ...list.filter((a) => a.id !== artifact.id)];
@@ -37,6 +42,8 @@ export function TuiArtifactsButton({ terminalId, focused = true }: {
   useEffect(() => {
     let live = true;
     const off = window.aya.onTuiArtifactsChange((change) => {
+      const removed = change.removed;
+      if (removed?.length) { setArtifacts((old) => withoutArtifacts(old, removed)); setUnseen((old) => old.filter((id) => !removed.includes(id))); }
       if (change.terminalId !== terminalId) return;
       setArtifacts((old) => withArtifact(old, change.artifact));
       if (!change.opened || !focusedRef.current || !document.hasFocus()) setUnseen((old) => old.includes(change.artifact.id) ? old : [...old, change.artifact.id]);

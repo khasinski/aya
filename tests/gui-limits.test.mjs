@@ -40,10 +40,29 @@ test("a blocked assistant message and the result text supply the reset when no e
 
 test("a clock time in the text resets today, or tomorrow once it has passed", () => {
   const local = new Date(2026, 10, 26, 14, 30).getTime();
-  assert.equal(resetFromLimitText("resets 3pm (Europe/Warsaw)", local), new Date(2026, 10, 26, 15, 0).getTime());
+  assert.equal(resetFromLimitText("resets 3pm (Nowhere/Atlantis)", local), new Date(2026, 10, 26, 15, 0).getTime(), "an unknown zone reads as local time");
   assert.equal(resetFromLimitText("resets at 9:15am", local), new Date(2026, 10, 27, 9, 15).getTime());
   assert.equal(resetFromLimitText("resets 5", local), null);
   assert.equal(resetFromLimitText("nothing here", local), null);
+});
+
+test("a reset time with a time zone is read in that zone", () => {
+  const utc = Date.UTC(2026, 10, 26, 13, 30);
+  assert.equal(resetFromLimitText("You've hit your limit · resets 3pm (Europe/Warsaw)", utc), Date.UTC(2026, 10, 26, 14, 0));
+  assert.equal(resetFromLimitText("resets 3pm (America/New_York)", utc), Date.UTC(2026, 10, 26, 20, 0));
+  assert.equal(resetFromLimitText("resets 2pm (Europe/Warsaw)", utc), Date.UTC(2026, 10, 27, 13, 0), "passed today: tomorrow");
+  assert.equal(resetFromLimitText("resets 9:30am (UTC)", utc), Date.UTC(2026, 10, 27, 9, 30));
+});
+
+test("only the CLIs' own limit messages mark a failed turn Limited, not any mention of a rate limit", () => {
+  const plain = new ClaudeUsageLimitTracker();
+  for (const text of ["Error: the tool failed while adding rate limit middleware", "Implemented the usage limit page, but tests failed", "Bash failed: grep rate_limit src/"])
+    assert.equal(plain.limitFor({ is_error: true, result: text }, now), null, text);
+  for (const text of ["API Error: Rate limit reached", "5-hour limit reached ∙ resets 3pm", 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}', "Claude usage limit reached. Your limit will reset at 5pm"])
+    assert.ok(plain.limitFor({ is_error: true, result: text }, now), text);
+  assert.equal(turnUsageLimit({ error: { message: "stream error: could not reach the rate limit service" } }, null, now), null);
+  assert.equal(isUsageLimitError({ error: { message: "Failed to write the rate limit config" } }), false);
+  assert.ok(turnUsageLimit({ error: { message: "Quota exceeded for quota metric 'Requests'" } }, null, now));
 });
 
 test("the renderer recognises Aya's Claude limit, Codex's error codes and limit text", () => {

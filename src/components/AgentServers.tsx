@@ -1,6 +1,7 @@
 // Pane header badge for the local servers a pane's agent started ("2 servers"), opening a list with each server's
 // command, pid and ports, an Open link per port and a Stop button. Main does the finding and the stopping
-// (electron/agent-servers.ts); this only polls while the pane is shown, and faster while something can change.
+// (electron/agent-servers.ts); this only polls while the pane is shown, and faster while something can change. Polls
+// are aligned to the clock, so every pane's falls in one batch in main (one ps and one lsof).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentServer } from "../../shared/ipc-types";
@@ -48,7 +49,7 @@ export function AgentServers({ list, stop, open, active, busy = false }: {
   const fast = busy || servers.length > 0;
   useEffect(() => {
     if (!active) { generation.current++; setServers([]); return; }
-    return pollVisible(() => void refresh(), fast ? SERVERS_FAST_POLL_MS : SERVERS_SLOW_POLL_MS);
+    return pollVisible(() => void refresh(), fast ? SERVERS_FAST_POLL_MS : SERVERS_SLOW_POLL_MS, { aligned: true });
   }, [active, fast, refresh]);
   useEffect(() => { if (!servers.length) setExpanded(false); }, [servers.length]);
   useEffect(() => {

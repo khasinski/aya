@@ -2,15 +2,16 @@
 // then check and apply the rewind (the agent's checks, then the optional file revert, then the agent's history).
 import type { ConversationSnapshot } from './gui-conversation-store';
 import { forgetArchivedConversation } from './gui-conversation-store';
-import { restoreWorkspaceSnapshot,snapshotAvailable,takeWorkspaceSnapshot,type EditSendInfo,type EditTarget } from './gui-edit-from-here';
+import { restoreWorkspaceSnapshot,snapshotAvailable,workspaceCheckpoint,type EditSendInfo,type EditTarget } from './gui-edit-from-here';
 import type { GuiSessionInstance } from './multi-agent-gui-session';
 
 interface Entry { session: GuiSessionInstance; cwd: string }
 export type FileRevert = { method: 'checkpoint'; count: number } | { method: 'snapshot' } | { method: null; reason: string };
 
-/** Sends a turn; in a git worktree a snapshot of the workspace is taken first, so the turn's file changes can be reverted. */
-export async function sendWithSnapshot(entry: Entry, send: () => Promise<EditSendInfo | void>) {
-  const snapshot = entry.session.editFromHere ? await takeWorkspaceSnapshot(entry.cwd) : undefined;
+/** Sends a turn; in a git worktree the snapshot taken before it (`checkpoint`: the turn's start snapshot, shared with
+ *  the turn diff) is kept with the message, so the turn's file changes can be reverted. */
+export async function sendWithSnapshot(entry: Entry, checkpoint: () => Promise<{ root: string; tree: string } | null>, send: () => Promise<EditSendInfo | void>) {
+  const snapshot = entry.session.editFromHere ? await workspaceCheckpoint(entry.cwd, checkpoint) : undefined;
   const info = await send();
   return { rewind: { ...(info || {}), ...(snapshot ? { snapshot } : {}) } };
 }

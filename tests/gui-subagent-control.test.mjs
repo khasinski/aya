@@ -11,7 +11,7 @@ process.env.AYA_HOME = isolatedHome;
 process.env.CLAUDE_CODE_TMPDIR = path.join(await realpath(isolatedHome), 'claude-tmp');
 after(() => rm(isolatedHome, { recursive: true, force: true }));
 const { ClaudeGuiSession, CodexGuiSession } = await import('../dist-electron/codex-gui-session.js');
-const { TaskOutputTail, claudeTaskOutputRoot, locateClaudeTaskOutput, TASK_OUTPUT_MAX_READ_BYTES } = await import('../dist-electron/gui-task-output-tail.js');
+const { TaskOutputTail, claudeTaskOutputRoot, locateClaudeTaskOutput, scansOnAttempt, TASK_OUTPUT_MAX_READ_BYTES } = await import('../dist-electron/gui-task-output-tail.js');
 const { activitiesForNewTurn, canStopSubagent, interruptActivities, showStop, startsSubagent } = await import('../dist-test/gui-subagents.js');
 const claudeFixture = path.resolve('tests/helpers/fake-claude-gui.cjs');
 const codexFixture = path.resolve('tests/helpers/fake-codex-gui.cjs');
@@ -35,6 +35,18 @@ test('a task output file is found by the working directory slug or in any projec
   assert.equal(await locateClaudeTaskOutput(root, '/work/my.app', 's1', 't2'), path.join(other, 't2.output'));
   assert.equal(await locateClaudeTaskOutput(root, '/work/my.app', 's1', 'missing'), null);
   assert.equal(await locateClaudeTaskOutput(path.join(root, 'none'), '/work', 's1', 't1'), null);
+});
+
+test('looking for a task file scans every project only with back-off, and remembers where the session lives', async () => {
+  const root = path.join(isolatedHome, 'locate-cheap');
+  const other = path.join(root, 'renamed', 's9', 'tasks');
+  await mkdir(other, { recursive: true }); await writeFile(path.join(other, 'a.output'), '');
+  for (let i = 0; i < 30; i++) await mkdir(path.join(root, `unrelated-${i}`), { recursive: true });
+  assert.equal(await locateClaudeTaskOutput(root, '/work/x', 's9', 'a', false), null, 'no scan: only the slug is tried');
+  assert.equal(await locateClaudeTaskOutput(root, '/work/x', 's9', 'a'), path.join(other, 'a.output'));
+  await writeFile(path.join(other, 'b.output'), '');
+  assert.equal(await locateClaudeTaskOutput(root, '/work/x', 's9', 'b', false), path.join(other, 'b.output'), "the session's project is remembered");
+  assert.deepEqual([1, 2, 3, 4, 5, 8, 16, 40].map(scansOnAttempt), [true, true, false, true, false, true, true, false]);
 });
 
 test('a task output tail streams appended text, skips ahead of a fast writer and reads once more when stopped', async () => {

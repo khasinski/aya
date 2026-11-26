@@ -154,3 +154,19 @@ test("stopping one poll leaves another poll and its listener active", (t) => {
   assert.equal(usageCalls, 1);
   assert.equal(sessionCalls, 8);
 });
+
+test("aligned polls tick on multiples of the interval, so panes started apart poll together", (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"], now: 10_500 });
+  const window = { setInterval, clearInterval, setTimeout, clearTimeout };
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: window });
+  const ticks = { a: [], b: [] };
+  const stopA = pollVisible(() => ticks.a.push(Date.now()), 4000, { aligned: true });
+  for (let i = 0; i < 13; i++) t.mock.timers.tick(100);
+  const stopB = pollVisible(() => ticks.b.push(Date.now()), 4000, { aligned: true });
+  for (let i = 0; i < 100; i++) t.mock.timers.tick(100);
+  stopA(); stopB();
+  if (previous) Object.defineProperty(globalThis, "window", previous); else delete globalThis.window;
+  assert.deepEqual(ticks.a, [10_500, 12_000, 16_000, 20_000]);
+  assert.deepEqual(ticks.b, [11_800, 12_000, 16_000, 20_000]);
+});

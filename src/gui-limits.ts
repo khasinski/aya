@@ -27,7 +27,8 @@ export const RESUME_PROMPT = "continue";
 const obj = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const str = (value: unknown) => typeof value === "string" ? value : "";
 const LIMIT_CODES = new Set(["usageLimitExceeded", "rateLimitExceeded"]);
-const LIMIT_TEXT = /usage limit|hit your limit|rate limit|quota exceeded/i;
+/** The agents' own limit messages, at the start of a line (an error that only mentions a rate limit is not one). */
+const LIMIT_TEXT = /(?:^|\n)\s*(?:(?:Claude(?: AI)? )?usage limit (?:reached|exceeded)|You(?:'|\u2019)ve (?:hit|reached) your (?:usage |session |weekly )?limit|(?:[\w-]+ )?limit reached\s*[∙·•|]|(?:API Error: (?:429 )?)?Rate limit (?:reached|exceeded)|API Error: 429\b|(?:Quota exceeded|You exceeded your current quota)\b)/i;
 
 /** A saved limit, or null when the value is not one. */
 export function parseUsageLimit(value: unknown): GuiUsageLimit | null {

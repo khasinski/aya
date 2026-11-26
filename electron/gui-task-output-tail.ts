@@ -20,18 +20,32 @@ export function claudeTaskOutputRoot(env: NodeJS.ProcessEnv, cwd: string, platfo
   return path.resolve(cwd, env.CLAUDE_CODE_TMPDIR?.trim() || fallback, `claude-${uid}`);
 }
 
+/** The project directory a session's task file was found in, so its other tasks skip the scan. */
+const sessionProjects = new Map<string, string>();
+
 /** `<root>/<project>/<session>/tasks/<task>.output`. The project directory is Claude's slug of the working
- *  directory; it is tried first, then every project directory, since the slug rules are Claude's own. */
-export async function locateClaudeTaskOutput(root: string, cwd: string, sessionId: string, taskId: string): Promise<string | null> {
-  const exists = async (file: string) => { try { return (await stat(file)).isFile(); } catch { return false; } };
+ *  directory; it is tried first (with the one this session's earlier tasks were found in), then, when `scan`, every
+ *  project directory that holds the session, since the slug rules are Claude's own. */
+export async function locateClaudeTaskOutput(root: string, cwd: string, sessionId: string, taskId: string, scan = true): Promise<string | null> {
+  const exists = async (file: string, directory = false) => { try { const info = await stat(file); return directory ? info.isDirectory() : info.isFile(); } catch { return false; } };
   const inProject = (project: string) => path.join(root, project, sessionId, 'tasks', `${taskId}.output`);
+  const key = `${root}\0${sessionId}`, known = sessionProjects.get(key);
   const slug = cwd.replace(/[^a-zA-Z0-9]/g, '-');
-  if (await exists(inProject(slug))) return inProject(slug);
+  for (const project of new Set([known, slug].filter((p): p is string => !!p))) if (await exists(inProject(project))) { sessionProjects.set(key, project); return inProject(project); }
+  if (!scan) return null;
   let projects: string[] = [];
   try { projects = await readdir(root); } catch { return null; }
-  for (const project of projects) if (project !== slug && await exists(inProject(project))) return inProject(project);
+  for (const project of projects) {
+    if (project === slug || project === known || !await exists(path.join(root, project, sessionId), true)) continue;
+    if (sessionProjects.size > 200) sessionProjects.clear();
+    sessionProjects.set(key, project);
+    if (await exists(inProject(project))) return inProject(project);
+  }
   return null;
 }
+
+/** Whether the locate attempt numbered `attempt` (from 1) scans every project directory: 1, 2, 4, 8… */
+export const scansOnAttempt = (attempt: number) => (attempt & (attempt - 1)) === 0;
 
 export interface TaskOutputTailOptions {
   /** The file when Claude named it; otherwise it is looked for under `root`. */
@@ -71,7 +85,8 @@ export class TaskOutputTail {
   private async poll() {
     if (!this.file) {
       if (!this.options.root || ++this.attempts > MAX_LOCATE_ATTEMPTS) { this.dispose(); return; }
-      this.file = await locateClaudeTaskOutput(this.options.root, this.options.cwd, this.options.sessionId, this.options.taskId);
+      // The slug (and the session's known project) every poll, the full scan with back-off.
+      this.file = await locateClaudeTaskOutput(this.options.root, this.options.cwd, this.options.sessionId, this.options.taskId, scansOnAttempt(this.attempts));
       if (!this.file) return;
     }
     let size: number;

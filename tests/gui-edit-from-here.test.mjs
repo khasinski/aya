@@ -105,6 +105,20 @@ test("a worktree snapshot restores changed, deleted and added files under the pa
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("a send's edit checkpoint is the turn's own snapshot, kept only for the pane's worktree", async () => {
+  const { workspaceCheckpoint } = await import("../dist-electron/gui-edit-from-here.js");
+  const { root, main, wt } = worktreeRepo();
+  try {
+    let taken = 0;
+    const checkpoint = async () => { taken++; return { root: wt, tree: "a".repeat(40) }; };
+    assert.equal(await workspaceCheckpoint(wt, checkpoint), "a".repeat(40));
+    assert.equal(await workspaceCheckpoint(main, checkpoint), undefined, "the main checkout keeps none");
+    assert.equal(taken, 1, "no snapshot is taken outside a worktree");
+    assert.equal(await workspaceCheckpoint(wt, async () => ({ root: main, tree: "b".repeat(40) })), undefined, "another checkout's tree is not this pane's");
+    assert.equal(await workspaceCheckpoint(wt, async () => null), undefined);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("the IPC checks the file revert, reverts files before the history, and refuses during a turn", async () => {
   process.env.AYA_HOME = mkdtempSync(path.join(tmpdir(), "aya-edit-home-"));
   const { editFromHere, parseEditTarget, sendWithSnapshot } = await import("../dist-electron/gui-edit-from-here-ipc.js");
@@ -128,7 +142,7 @@ test("the IPC checks the file revert, reverts files before the history, and refu
   session.running = true;
   await assert.rejects(editFromHere(entry, { phase: "check", target: {} }), /Stop the current turn/);
   assert.deepEqual(parseEditTarget({ claudeUser: "u", resumeAt: null, snapshot: "../x", codexTurn: 5 }), { claudeUser: "u", resumeAt: null });
-  assert.deepEqual(await sendWithSnapshot({ session, cwd: process.env.AYA_HOME }, session.send), { rewind: { claudeUser: "u1" } });
+  assert.deepEqual(await sendWithSnapshot({ session, cwd: process.env.AYA_HOME }, async () => null, session.send), { rewind: { claudeUser: "u1" } });
   await assert.rejects(editFromHere({ session: { running: false }, cwd: "/" }, { phase: "check" }), /cannot rewind/);
 });
 

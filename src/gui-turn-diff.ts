@@ -3,7 +3,11 @@
 
 export interface TurnDiffFile { path: string; additions: number | null; deletions: number | null }
 /** A finished turn that changed files: the snapshot trees it started and ended at. */
-export interface TurnDiffSummary { id: string; turnId: string; root: string; start: string; end: string; startHead: string | null; files: TurnDiffFile[] }
+export interface TurnDiffSummary { id: string; turnId: string; root: string; start: string; end: string; startHead: string | null; files: TurnDiffFile[]; totals?: TurnDiffTotals; largeFiles?: LargeFilesChanged }
+/** Files too large for the snapshots that the turn changed: the first names and how many there were. */
+export interface LargeFilesChanged { count: number; paths: string[] }
+/** All of a turn's changes, when `files` lists only the first of them. */
+export interface TurnDiffTotals { files: number; additions: number; deletions: number }
 
 const obj = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 const str = (value: unknown) => typeof value === 'string' ? value : '';
@@ -37,11 +41,21 @@ export function repoRelativePath(file: string, where: { root: string; prefix: st
   return prefix + file.replace(/^\.\//, '');
 }
 
-export function turnDiffSummaryText(files: readonly TurnDiffFile[]): string {
-  const added = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
-  const removed = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
-  return `${files.length} ${files.length === 1 ? 'file' : 'files'} changed · +${added} −${removed}`;
+export function turnDiffSummaryText(files: readonly TurnDiffFile[], totals?: TurnDiffTotals): string {
+  const count = totals?.files ?? files.length;
+  const added = totals?.additions ?? files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const removed = totals?.deletions ?? files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+  return `${count} ${count === 1 ? 'file' : 'files'} changed · +${added} −${removed}`;
 }
+
+/** "2 large files changed (not shown): dev.sqlite3, app.log", naming at most `names` of them. */
+export function largeFilesText(large: LargeFilesChanged, names = 3): string {
+  const shown = large.paths.slice(0, names), more = large.count - shown.length;
+  return `${large.count} large ${large.count === 1 ? 'file' : 'files'} changed (not shown): ${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}`;
+}
+
+/** The turn's file count, all of them when the summary lists only the first. */
+export const turnDiffFileCount = (summary: Pick<TurnDiffSummary, 'files' | 'totals'>) => summary.totals?.files ?? summary.files.length;
 
 /** The diff viewer's choices: "turn:<id>", "current" (the running turn so far) or "commit:<sha>". */
 export type DiffSource = { kind: 'turn'; summary: TurnDiffSummary } | { kind: 'current' } | { kind: 'commit'; sha: string };

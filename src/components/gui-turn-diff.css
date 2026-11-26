@@ -10,6 +10,7 @@
 .aya-gui-turn-changes li button { min-width: 0; overflow: hidden; color: var(--fg-secondary); }
 .aya-gui-turn-changes-add { color: var(--status-active, #5fbf7a); }
 .aya-gui-turn-changes-del { color: var(--status-error, #e06c75); }
+.aya-gui-turn-changes-large { margin: 6px 0 0; color: var(--fg-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .aya-gui-activity-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 4px 16px; }
 .aya-gui-activity-files button { border: 1px solid var(--border); border-radius: 6px; background: none; color: var(--fg-secondary); font: 11px var(--font-sans); padding: 2px 6px; cursor: pointer; }
 .aya-gui-activity-files button:hover { color: var(--fg-primary); border-color: var(--accent); }

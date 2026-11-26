@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-const { descendantsOf, parseLsofListeners, parseSsListeners, listAgentServers, stopAgentServer, localServerUrl } = await import(
+const { descendantsOf, parseLsofListeners, parseSsListeners, listAgentServers, stopAgentServer, localServerUrl, batchedServerLister, isShellCommand } = await import(
   "../dist-electron/agent-servers.js"
 );
 const { parseProcesses } = await import("../dist-electron/caller-proof.js");
@@ -155,4 +155,46 @@ test("real ps and lsof find a server this process started, and Stop ends it", { 
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }
+});
+
+// A pane whose agent could not be exec'd: 500 is the pane's shell, 600 the agent CLI it runs (with its own HTTP
+// server), 700 a dev server the agent started.
+const SHELL_PS = [
+  "  500     1 /bin/zsh -l -i -c cd /w && my-claude-launcher",
+  "  600   500 opencode --port 4096",
+  "  700   600 node vite",
+].join("\n");
+
+test("in a shell-rooted pane the agent CLI itself is never listed or stopped", async () => {
+  const log = [];
+  const deps = { ...fakeDeps().deps, ps: async () => SHELL_PS, lsof: async (pids) => (log.push([...pids].sort()), "p600\nn*:4096\np700\nn*:5173\n") };
+  assert.deepEqual(await listAgentServers(500, deps), [{ pid: 700, command: "node vite", ports: [5173] }]);
+  assert.deepEqual(log, [[700]]);
+  await assert.rejects(stopAgentServer(500, 600, deps), /no longer running under this agent/);
+  assert.equal(isShellCommand("-zsh"), true);
+  assert.equal(isShellCommand("/opt/homebrew/bin/fish -c x"), true);
+  assert.equal(isShellCommand("claude --resume"), false);
+});
+
+test("panes polling together share one ps and one lsof over all their processes", async () => {
+  const log = [];
+  const deps = { ...fakeDeps().deps, ps: async (fresh) => (log.push(["ps", !!fresh]), `${PS}\n${SHELL_PS}`), lsof: async (pids) => (log.push(["lsof", [...pids].sort((a, b) => a - b)]), `${LSOF}p700\nn*:5173\n`) };
+  const list = batchedServerLister(deps, 20);
+  const [a, b, none] = await Promise.all([list(100), list(500), list(undefined)]);
+  assert.equal(a.length, 2);
+  assert.deepEqual(b.map((s) => s.pid), [700]);
+  assert.deepEqual(none, []);
+  assert.deepEqual(log, [["ps", false], ["lsof", [200, 300, 301, 700]]]);
+});
+
+test("Stop reads a fresh process table and counts an unreaped (zombie) process as gone", async () => {
+  const { deps, log } = fakeDeps();
+  const reads = [];
+  const zombieDeps = { ...deps, ps: async (fresh) => (reads.push(!!fresh), PS), zombies: async (pids) => new Set(pids) };
+  let slept = 0;
+  zombieDeps.sleep = async () => { slept++; };
+  assert.deepEqual(await stopAgentServer(100, 300, zombieDeps), { forced: false });
+  assert.deepEqual(reads, [true]);
+  assert.equal(slept, 0, "no grace wait for exited processes");
+  assert.deepEqual(log, [["SIGTERM", 300], ["SIGTERM", 301]]);
 });
