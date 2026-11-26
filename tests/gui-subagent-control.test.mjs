@@ -168,6 +168,23 @@ test('Codex GUI Stop interrupts the turn and every subagent thread still running
   assert.equal(codexSpawns(events).at(-1).params.item.status, 'interrupted');
 });
 
+test('Codex GUI shows a subagent reported as subAgentActivity (Codex 0.172) as a spawn row that stops alone', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [codexFixture]);
+  t.after(() => session.close()); await session.connect(process.cwd(), '');
+  await session.send('subagent-activity');
+  await wait(() => events.some(e => e.method === 'turn/completed'));
+  assert.equal(events.some(e => e.params?.item?.type === 'subAgentActivity'), false);
+  const spawns = events.filter(e => e.params?.item?.id === 'call_spawn');
+  const last = spawns.at(-1).params.item;
+  assert.equal(spawns.at(-1).method, 'item/started');
+  assert.deepEqual({ type: last.type, tool: last.tool, status: last.status, background: last.background, receiverThreadIds: last.receiverThreadIds, prompt: last.prompt },
+    { type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'inProgress', background: true, receiverThreadIds: ['child-run-thread'], prompt: 'watch build' });
+  await session.stopSubagent('call_spawn');
+  assert.deepEqual(events.filter(e => e.method === 'fixture/interrupt').map(e => e.params), [{ threadId: 'child-run-thread', turnId: 'child-run-turn' }]);
+  await wait(() => events.filter(e => e.params?.item?.id === 'call_spawn').at(-1).method === 'item/completed');
+  assert.equal(events.filter(e => e.params?.item?.id === 'call_spawn').at(-1).params.item.status, 'interrupted');
+});
+
 test('only a running call that started a subagent gets a Stop button', () => {
   assert.equal(startsSubagent({ type: 'collabAgentToolCall', tool: 'spawnAgent' }), true);
   assert.equal(startsSubagent({ type: 'collabAgentToolCall' }), true);

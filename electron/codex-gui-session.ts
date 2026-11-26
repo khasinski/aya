@@ -13,6 +13,13 @@ import type { EditSendInfo, EditTarget } from './gui-edit-from-here';
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
 const receivers = (item: Record<string, unknown> | undefined): string[] => Array.isArray(item?.receiverThreadIds) ? item.receiverThreadIds.filter((thread): thread is string => typeof thread === 'string') : [];
+/** Codex's `subAgentActivity` item of kind `started`, shown as the spawnAgent call older Codex reported. It carries no
+ *  task, so the agent's path names it ("/root/run_tests" → "run tests"). Other kinds return null. */
+function subagentActivitySpawn(item: Record<string, unknown>, senderThreadId: string): Record<string, unknown> | null {
+  if (item.kind !== 'started' || !text(item.id)) return null;
+  const thread = text(item.agentThreadId), name = text(item.agentPath).split('/').filter(Boolean).at(-1)?.replace(/_/g, ' ') ?? '';
+  return { type: 'collabAgentToolCall', tool: 'spawnAgent', id: text(item.id), status: item.completedAtMs ? 'completed' : 'inProgress', senderThreadId, receiverThreadIds: thread ? [thread] : [], prompt: name, model: item.model ?? null, agentsStates: {} };
+}
 import { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, presentArtifact } from './gui-artifact-tools';
 export { PRESENT_TOOL, OPEN_ARTIFACT_TOOL, workspaceImage, presentArtifact } from './gui-artifact-tools';
 
@@ -414,6 +421,13 @@ const available = Array.isArray(request.params.availableDecisions) ? request.par
     if (/^(?:turn\/|item\/|thread\/goal\/)/.test(method) && this.threadId && typeof params.threadId === 'string' && params.threadId !== this.threadId) {
       if (method === 'turn/started' || method === 'turn/completed') this.childTurnChanged(params.threadId, method, object(params.turn));
       return;
+    }
+    if (object(params.item).type === 'subAgentActivity') {
+      // Newer Codex reports a subagent as activity items instead of a spawnAgent call. Its start becomes the spawn
+      // row; the other kinds are left out, as the row follows the subagent's own turns.
+      const spawn = subagentActivitySpawn(object(params.item), this.threadId);
+      if (!spawn) return;
+      params = { ...params, item: spawn };
     }
     const item = object(params.item);
     if (item.type === 'collabAgentToolCall' && item.tool === 'spawnAgent' && Array.isArray(item.receiverThreadIds)) {

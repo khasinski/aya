@@ -18,6 +18,7 @@
 - Add **Edit from here** to Claude and Codex conversations: an earlier message goes back into the composer, and sending it continues the conversation as if the later messages never happened (Claude resumes a fork cut at that point, Codex reverts the thread). An optional **Also revert files** restores the files from Claude's file checkpoints or, in a git worktree, from a snapshot Aya takes when each message is sent.
 - Conversation GUI: show the agent's suggested next prompt in the empty composer (Tab inserts it; can be turned off), a context-window meter in the header, a `$` skills picker (also in the `/` menu) for Claude and Codex, and a Restart agent session action (`/restart`) that reloads skills and MCP servers and resumes the conversation.
 - Conversation GUI: a Codex file edit waiting for approval names the files it edits instead of showing the raw request.
+- Conversation GUI: show Codex 0.172's subagents (reported as subagent activity instead of a spawn call) as their own rows with a Stop button, instead of "Using a tool".
 - Keep the restart warnings short when many terminals are open: they list the first 8 processes and count the rest, so the buttons stay on screen.
 
 ## v0.20.0 - 2026-11-22
