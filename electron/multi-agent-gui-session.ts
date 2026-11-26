@@ -1,5 +1,5 @@
 import { GuiProtocolWriter } from './gui-protocol-writer';
-import { GuiJsonLines } from './gui-json-lines';
+import { GuiJsonLines, skipMalformedLine } from './gui-json-lines';
 import { claudeChromeCommand } from './claude-chrome';
 import { TaskOutputTail, claudeTaskOutputRoot } from './gui-task-output-tail';
 import { formatClaudeUsage } from './claude-usage';
@@ -484,7 +484,7 @@ export class PiGuiSession extends BaseManagedGuiSession {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
     this.child.stdout.setEncoding('utf8');
-    const frames = new GuiJsonLines();
+    const frames = new GuiJsonLines(undefined, skipMalformedLine(this.agentLabel));
     this.child.stdout.on('data', data => {
       try {
         frames.push(String(data), message => {
@@ -1107,7 +1107,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
     child.stdout.setEncoding('utf8');
-    const frames = new GuiJsonLines();
+    const frames = new GuiJsonLines(undefined, skipMalformedLine(this.agentLabel));
     child.stdout.on('data', data => {
       if (this.child !== child) return;
       try {
@@ -1842,7 +1842,7 @@ export class AntigravityGuiSession extends BaseManagedGuiSession {
       this.stderr = (this.stderr + String(data)).slice(-4000);
     });
     this.child.stdout.setEncoding('utf8');
-    const frames = new GuiJsonLines();
+    const frames = new GuiJsonLines(undefined, skipMalformedLine(this.agentLabel));
     this.child.stdout.on('data', data => {
       try {
         frames.push(String(data), message => {

@@ -323,6 +323,17 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       write({ type: 'assistant', error: 'rate_limit', message: { content: [{ type: 'text', text: "You've hit your limit" }] } });
       write({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your limit · resets 5pm" });
       busy = false;
+    } else if (prompt === 'stray-line') {
+      // Something in Claude's process prints a line that is not part of the protocol.
+      process.stdout.write('Warning: something printed to stdout\n');
+      complete('Still connected.');
+    } else if (prompt === 'cancelled-approval') {
+      // Claude withdraws a permission request while it waits (its tool call was cancelled).
+      write({ type: 'control_request', request_id: 'approve-cancel', request: { subtype: 'can_use_tool', tool_name: 'Bash', tool_use_id: 'tool-bash-c', input: { command: 'sleep 100' } } });
+      setTimeout(() => { write({ type: 'control_cancel_request', request_id: 'approve-cancel' }); complete('Cancelled.'); }, 50);
+    } else if (prompt === 'edit-approval') {
+      write({ type: 'control_request', request_id: 'approve-edit', request: { subtype: 'can_use_tool', tool_name: 'Edit', tool_use_id: 'tool-edit-1', input: { file_path: 'a.txt' } } });
+      write({ type: 'control_request', request_id: 'approve-bash', request: { subtype: 'can_use_tool', tool_name: 'Bash', tool_use_id: 'tool-bash-2', input: { command: 'make' } } });
     } else if (prompt === 'continue') {
       complete('Continuing where I left off.');
     } else if (prompt === 'mixed-tools') {

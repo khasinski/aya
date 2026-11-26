@@ -1,5 +1,5 @@
 import { GuiProtocolWriter } from './gui-protocol-writer';
-import { GuiJsonLines } from './gui-json-lines';
+import { GuiJsonLines, skipMalformedLine } from './gui-json-lines';
 import { PROGRESS_TOOL, progressUpdate } from './gui-progress';
 import type { GuiProgress } from '../shared/gui-progress';
 import { CODEX_PROMPT_SUGGESTION_PROMPT, cleanPromptSuggestion, codexContextUsage, codexSkills, type GuiSkill } from './gui-composer-assist';
@@ -93,7 +93,7 @@ export class CodexGuiSession {
     this.writer = new GuiProtocolWriter(this.child.stdin, 'Codex', message => { this.fail(message); this.close(); });
     this.child.stderr.on('data', data => { this.stderr = (this.stderr + String(data)).slice(-4000); });
     this.child.stdout.setEncoding('utf8');
-    const frames = new GuiJsonLines();
+    const frames = new GuiJsonLines(undefined, skipMalformedLine('Codex'));
     this.child.stdout.on('data', data => {
       try {
         frames.push(String(data), message => {
