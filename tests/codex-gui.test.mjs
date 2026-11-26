@@ -58,7 +58,14 @@ test('artifacts reject malformed shapes and images cannot leave the workspace or
     await writeFile(path.join(project, 'image.png'), png); await writeFile(path.join(root, 'outside.png'), png);
     await symlink(path.join(root, 'outside.png'), path.join(project, 'escape.png'));
     await writeFile(path.join(project, 'page.png'), '<html>not an image</html>');
+    await writeFile(path.join(root, 'page.png'), '<html>not an image</html>');
     assert.match(await workspaceImage(project, 'image.png'), /^data:image\/png;base64,/);
+    assert.match(await workspaceImage(project, path.join(root, 'outside.png'), { allowTemporary: true }), /^data:image\/png;base64,/);
+    await assert.rejects(workspaceImage(project, path.join(root, 'outside.png')), /inside/);
+    await assert.rejects(workspaceImage(project, path.join(root, 'page.png'), { allowTemporary: true }), /Supported images/);
+    await assert.rejects(workspaceImage(project, '../outside.png', { allowTemporary: true }), /inside/);
+    await symlink('/etc/hosts', path.join(root, 'outside-link.png'));
+    await assert.rejects(workspaceImage(project, path.join(root, 'outside-link.png'), { allowTemporary: true }), /inside/);
     await writeFile(path.join(project, 'animated.gif'), Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
     assert.match(await workspaceImage(project, 'animated.gif'), /^data:image\/gif;base64,/);
     await assert.rejects(workspaceImage(project, '../outside.png'), /inside/);

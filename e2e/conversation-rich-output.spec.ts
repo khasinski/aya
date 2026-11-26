@@ -10,7 +10,9 @@ const fence = (language: string, source: string) => `\n\n\`\`\`${language}\n${so
 test('conversation highlights and copies code, displays local and embedded images, and enlarges them', async () => {
   const seed = seedCodexGui();
   const image = join(seed.projectDir, 'image with spaces.png');
+  const temporaryImage = join(seed.root, 'temporary image.png');
   writeFileSync(image, Buffer.from(png, 'base64'));
+  writeFileSync(temporaryImage, Buffer.from(png, 'base64'));
   writeFileSync(join(seed.projectDir, 'animated.gif'), Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
   writeFileSync(join(seed.projectDir, 'inline-output.md'), [
     'Inline `const value = 3` remains inline.',
@@ -20,6 +22,9 @@ test('conversation highlights and copies code, displays local and embedded image
     `![Relative](image%20with%20spaces.png)`,
     `![Absolute](<${image}>)`,
     `![File URL](${pathToFileURL(image).href})`,
+    `![Temporary](<${temporaryImage}>)`,
+    `[Linked temporary](<${temporaryImage}>)`,
+    `[**Styled link**](<${image}>)`,
     `![Embedded](data:image/png;base64,${png})`,
     '![Animated](animated.gif)',
     '![Missing](missing.png)',
@@ -45,12 +50,14 @@ test('conversation highlights and copies code, displays local and embedded image
     await blocks.first().getByRole('button', { name: 'Copy code' }).click();
     await expect(blocks.first().getByRole('button', { name: 'Copy code' })).toHaveText('Copied');
     expect(await window.evaluate(() => (window as unknown as { copied: string }).copied)).toBe('const value: string = "Aya";\nconsole.log(value);');
-    for (const alt of ['Relative', 'Absolute', 'File URL', 'Embedded', 'Animated']) {
+    for (const alt of ['Relative', 'Absolute', 'File URL', 'Temporary', 'Linked temporary', 'Embedded', 'Animated']) {
       const img = gui.getByRole('img', { name: alt, exact: true });
       await expect(img).toBeVisible();
       await expect.poll(() => img.evaluate(node => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     }
     await expect(gui.getByRole('alert').filter({ hasText: 'missing.png' })).toContainText('Cannot display');
+    await expect(gui.getByText('Linked temporary', { exact: true })).toBeVisible();
+    await expect(gui.getByRole('link', { name: 'Styled link' })).toBeVisible();
     await expect(gui.getByRole('alert').filter({ hasText: 'tracker.png' })).toContainText('inside the workspace');
     expect(requests).toEqual([]);
     expect(await window.evaluate(() => (window as unknown as { injected?: boolean }).injected)).toBeUndefined();
