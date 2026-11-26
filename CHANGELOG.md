@@ -23,6 +23,10 @@
 - Fix a Codex pane switched from its terminal to the Conversation showing the turns that **Edit from here** removed and missing every later one: Codex 0.172 continues a rolled-back thread in a new rollout file, which Aya now reads.
 - Fix a pane picked from the sidebar that is not in the project's split disappearing on the first click inside it (the split came back), which made a conversation's approval impossible to answer there.
 - Fix an idle Claude or Codex terminal refusing the first switch to the Conversation ("The agent may still be working"), and its status reading "?" or "state=done:app=codex": Aya now reads Codex's `state=` program status (OSC 7501) and ignores Claude Code's support query.
+- Fix **Edit from here** reverting the files and then failing: everything that can refuse (a subagent still working, a Codex without thread/revert, a message whose turn is unknown) now refuses before files change, and a Claude that cannot restart at the earlier message reopens the conversation as it was instead of leaving the pane disconnected. An edit no longer races a message being sent, and a suggestion from the removed turns no longer appears.
+- Fix Conversation GUI approvals that stayed on screen after Claude withdrew them or after the Codex subagent that asked had finished, and Stop marking a subagent stopped when an older Claude could not stop it. Switching to Full access (or Auto-accept edits, for file edits) now answers the approvals already waiting that the new mode would not have asked about; others get a notice that they still need an answer.
+- Fix a Conversation GUI pane disconnecting when the agent printed a line that is not part of its protocol.
+- Fix fan-out failing for an agent when a leftover folder sits where its worktree goes (it now gets the next `-2` suffix), or for every taken name when the branch list could not be read. The dialog says agents start from the ref's last commit, without uncommitted changes.
 - Keep the restart warnings short when many terminals are open: they list the first 8 processes and count the rest, so the buttons stay on screen.
 
 ## v0.20.0 - 2026-11-22
