@@ -25,7 +25,7 @@ import { createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
 import { formatResetTime,isUsageLimitError,limitPaneStatus,limitStatusText,mergeCodexRateLimits,nextLimitEvent,parseUsageLimit,RESUME_PROMPT,timerDelay,turnUsageLimit,type CodexRateLimits,type GuiUsageLimit } from '../gui-limits';
 import { getGuiViewPrefs,isZenShortcut,setGuiViewPrefs,subscribeGuiViewPrefs,TOOL_VISIBILITY_LABELS,visibleActivities,zenMessages,type ToolCallVisibility } from '../gui-view-prefs';
 import { backgroundAgentsText,guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
-import { canStopSubagent,showStop,startsSubagent } from '../gui-subagents';
+import { activitiesForNewTurn,canStopSubagent,interruptActivities,showStop,startsSubagent } from '../gui-subagents';
 import type { SettingsTab } from '../settings-tabs';
 import { GUI_FOLLOW_UP_STORAGE_KEY,guiStashKey } from '../storage-keys';
 import { terminalExcerpt } from '../terminal-checkpoint-registry';
@@ -378,7 +378,9 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   /** restart: stop the running agent process and resume this conversation in a new one (after changing skills or MCP servers). */
   const reconnect = async (restart = false) => {
     if (connecting || (ready && !restart) || busy) return;
-    setConnecting(true); setError(''); setQueueHeld(true); if (restart) setReady(false);
+    setConnecting(true); setError(''); setQueueHeld(true);
+    // The old process's events are dropped, so no aya/disconnected will clear what it left waiting or running.
+    if (restart) { setReady(false); setRequests([]); setActivities(interruptActivities); }
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = null;
     const revision = snapshotRevision.current;
@@ -440,7 +442,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (event.method === 'turn/started') { turnRevision.current++; turnExplanation.current = ''; setBusy(true); setTurnOutcome(null); setUsageLimit(null); }
       if (event.method === 'turn/completed' && str(obj(p.turn).ayaHead)) setMessages(old => recordClaudeHead(old, str(obj(p.turn).ayaHead)));
       if (event.method === 'turn/completed') { turnRevision.current++; setBusy(false); setRequests(old => old.filter(r => !!str(r.params.subagent))); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' && !a.background ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); const limit = turn.status === 'interrupted' ? null : turnUsageLimit(turn, codexLimits.current); setUsageLimit(limit); if (limit) setQueueHeld(true); else if (turn.error) fail(obj(turn.error).message); }
-      if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setRequests([]); setQueueHeld(true); setSideQuestion(''); setTurnOutcome('interrupted'); setMessages(old => old.map(m => m.progress?.status === 'running' ? { ...m, progress: { ...m.progress, status: 'paused' } } : m)); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: 'interrupted' } : a)); fail(p.message); }
+      if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setRequests([]); setQueueHeld(true); setSideQuestion(''); setTurnOutcome('interrupted'); setMessages(old => old.map(m => m.progress?.status === 'running' ? { ...m, progress: { ...m.progress, status: 'paused' } } : m)); setActivities(interruptActivities); fail(p.message); }
       if ((event.method === 'error' && !isUsageLimitError(p)) || event.method === 'aya/notice') fail(p.message || obj(p.error).message);
       if (event.method === 'turn/plan/updated' && Array.isArray(p.plan)) setPlan(p.plan as { step: string; status: string }[]);
       if (event.method === 'item/started' || event.method === 'item/completed') {
@@ -736,7 +738,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     dispatching.current = true;
     if (queuedId) setPendingQueuedId(queuedId);
     const sentAtTurnRevision = turnRevision.current;
-    setBusy(true); setTurnOutcome(null); setUsageLimit(null); setActivities([]); if (followSent) { followHeld.current = false; follow.current = true; lastFollowTop.current = null; }
+    setBusy(true); setTurnOutcome(null); setUsageLimit(null); setActivities(activitiesForNewTurn); if (followSent) { followHeld.current = false; follow.current = true; lastFollowTop.current = null; }
     const messageId = crypto.randomUUID();
     setMessages(old => [...old, { id: messageId, type: 'user', delivery: 'sending', text: text + (files.length ? `\n\n${files.map(a => `📎 ${a.name}`).join(' · ')}` : '') }]);
     try {
@@ -778,7 +780,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     editPending.current = true;
     try { await edit.apply(); } catch (e) { fail(e); return; } finally { editPending.current = false; }
     setMessages(old => messagesBefore(old, plan.messageId));
-    setActivities([]); setPlan([]); setTurnOutcome(null); edit.cancel();
+    setActivities(activitiesForNewTurn); setPlan([]); setTurnOutcome(null); edit.cancel();
     const files = attachments;
     setPrompt(''); setAttachments([]);
     const revision = draftRevision.current;

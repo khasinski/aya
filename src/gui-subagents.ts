@@ -14,3 +14,14 @@ export function canStopSubagent(activity: { stoppable?: boolean; status: string 
 export function showStop(busy: boolean, backgroundAgents: number): boolean {
   return busy || backgroundAgents > 0;
 }
+
+/** A new turn (a send, an edit from here) starts a fresh activity list, but keeps the background subagents still
+ *  running from an earlier turn: their Stop, the status count and their later completion stay on that row. */
+export function activitiesForNewTurn<T extends { background?: boolean; status: string }>(activities: T[]): T[] {
+  return activities.filter(activity => activity.background === true && activity.status === "inProgress");
+}
+
+/** The agent process went away (disconnect, restart): nothing it ran is still running. */
+export function interruptActivities<T extends { status: string }>(activities: T[]): T[] {
+  return activities.map(activity => activity.status === "inProgress" ? { ...activity, status: "interrupted" } : activity);
+}

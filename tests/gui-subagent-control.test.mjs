@@ -12,7 +12,7 @@ process.env.CLAUDE_CODE_TMPDIR = path.join(await realpath(isolatedHome), 'claude
 after(() => rm(isolatedHome, { recursive: true, force: true }));
 const { ClaudeGuiSession, CodexGuiSession } = await import('../dist-electron/codex-gui-session.js');
 const { TaskOutputTail, claudeTaskOutputRoot, locateClaudeTaskOutput, TASK_OUTPUT_MAX_READ_BYTES } = await import('../dist-electron/gui-task-output-tail.js');
-const { canStopSubagent, showStop, startsSubagent } = await import('../dist-test/gui-subagents.js');
+const { activitiesForNewTurn, canStopSubagent, interruptActivities, showStop, startsSubagent } = await import('../dist-test/gui-subagents.js');
 const claudeFixture = path.resolve('tests/helpers/fake-claude-gui.cjs');
 const codexFixture = path.resolve('tests/helpers/fake-codex-gui.cjs');
 const wait = async (predicate, ms = 4000) => { const end = Date.now() + ms; while (!predicate()) { if (Date.now() > end) throw Error('Timed out'); await new Promise(r => setTimeout(r, 10)); } };
@@ -196,4 +196,16 @@ test('only a running call that started a subagent gets a Stop button', () => {
   assert.equal(showStop(true, 0), true);
   assert.equal(showStop(false, 2), true);
   assert.equal(showStop(false, 0), false);
+});
+
+test('a new turn keeps the background subagents still running; a restart or disconnect interrupts every running row', () => {
+  const rows = [
+    { id: 'cmd', status: 'completed' },
+    { id: 'bg', status: 'inProgress', background: true, stoppable: true },
+    { id: 'bg-done', status: 'completed', background: true },
+    { id: 'fg', status: 'inProgress' },
+  ];
+  assert.deepEqual(activitiesForNewTurn(rows).map(a => a.id), ['bg']);
+  assert.deepEqual(interruptActivities(rows).map(a => a.status), ['completed', 'interrupted', 'completed', 'interrupted']);
+  assert.equal(canStopSubagent(interruptActivities(rows)[1]), false);
 });
