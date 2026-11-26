@@ -32,10 +32,15 @@ export interface TuiArtifactInput {
 export interface StoredArtifact { artifact: GuiArtifact; terminalId?: string; updatedAt: number }
 export type { TuiArtifactSummary };
 /** `opened`: the caller opens a window for it (aya present without --no-open). */
-export type TuiArtifactListener = (terminalId: string | undefined, item: StoredArtifact, change: { updated: boolean; opened: boolean }) => void;
+/** `removed`: artifacts (of any pane) the store dropped to stay within its limits. */
+export type TuiArtifactListener = (terminalId: string | undefined, item: StoredArtifact, change: { updated: boolean; opened: boolean; removed: string[] }) => void;
 
 /** Kept in memory across all panes, oldest out first. */
 export const MAX_TUI_ARTIFACTS = 100;
+/** And in at most this many bytes (as JSON): a hundred screenshots' data URLs add up. */
+export const TUI_ARTIFACTS_MEMORY_LIMIT = 256 * 1024 * 1024;
+/** A pane's file is written this long after its first change, once for every change in between. */
+export const WRITE_DELAY_MS = 500;
 /** Kept on disk per pane: the newest this many, in at most PANE_FILE_LIMIT bytes (the GUI conversation's snapshot limit). */
 export const MAX_TUI_ARTIFACTS_PER_PANE = 50;
 export const PANE_FILE_LIMIT = 32 * 1024 * 1024;
@@ -66,18 +71,29 @@ export interface TuiArtifactStoreOptions {
   dir?: string;
   perPane?: number;
   fileLimit?: number;
+  memoryLimit?: number;
+  writeDelayMs?: number;
 }
+
+const encodeItem = ({ artifact, updatedAt }: StoredArtifact) => JSON.stringify({ artifact, updatedAt }, (key, value) => key === "previewUrl" ? undefined : value);
 
 export class TuiArtifactStore {
   private readonly items = new Map<string, StoredArtifact>();
   private readonly listeners = new Set<TuiArtifactListener>();
   private readonly writes = new Map<string, Promise<void>>();
+  /** Panes whose file is due, with the promise their callers wait on. */
+  private readonly due = new Map<string, { done: Promise<void>; resolve: () => void; timer: ReturnType<typeof setTimeout> | null }>();
+  /** Each item's size as JSON, measured once. */
+  private readonly sizes = new WeakMap<StoredArtifact, number>();
+  private bytes = 0;
   private loading: Promise<void> | null = null;
   private readonly max: number;
   private readonly now: () => number;
   private readonly dir?: string;
   private readonly perPane: number;
   private readonly fileLimit: number;
+  private readonly memoryLimit: number;
+  private readonly writeDelayMs: number;
   constructor(options: TuiArtifactStoreOptions | number = {}, now?: () => number) {
     const o = typeof options === "number" ? { max: options, now } : options;
     this.max = o.max ?? MAX_TUI_ARTIFACTS;
@@ -85,6 +101,8 @@ export class TuiArtifactStore {
     this.dir = o.dir;
     this.perPane = o.perPane ?? MAX_TUI_ARTIFACTS_PER_PANE;
     this.fileLimit = o.fileLimit ?? PANE_FILE_LIMIT;
+    this.memoryLimit = o.memoryLimit ?? TUI_ARTIFACTS_MEMORY_LIMIT;
+    this.writeDelayMs = o.writeDelayMs ?? WRITE_DELAY_MS;
   }
 
   /** Reads what earlier runs kept, once; every other method may be called before it ends, but callers that list
@@ -94,42 +112,85 @@ export class TuiArtifactStore {
     return this.loading;
   }
 
+  /** Newest pane files first, by modification time, until they hold the newest `max` artifacts: a file written at
+   *  time m has no artifact newer than m, so the rest cannot add one. */
   private async readAll(): Promise<void> {
     if (!this.dir) return;
-    const names = await readdir(this.dir).catch(() => [] as string[]);
+    const names = (await readdir(this.dir).catch(() => [] as string[])).filter((n) => /^[a-f0-9]{64}\.json$/.test(n));
+    const files = (await Promise.all(names.map(async (name) => ({ name, mtime: (await stat(path.join(this.dir!, name)).catch(() => null))?.mtimeMs })))).filter((f): f is { name: string; mtime: number } => f.mtime !== undefined).sort((a, b) => b.mtime - a.mtime);
     const found: StoredArtifact[] = [];
-    for (const name of names.filter((n) => /^[a-f0-9]{64}\.json$/.test(n))) {
+    for (const { name, mtime } of files) {
+      if (found.filter((item) => item.updatedAt >= mtime).length >= this.max) break;
       try {
         const file = await readStoredJson(path.join(this.dir, name), this.fileLimit) as { terminalId?: unknown; items?: unknown };
         if (!str(file?.terminalId) || this.fileFor(file.terminalId) !== path.join(this.dir, name) || !Array.isArray(file.items)) continue;
-        for (const raw of file.items) { const item = validStored(raw, file.terminalId); if (item) found.push(item); }
+        // Files list newest first; reversed, artifacts stored in the same millisecond keep their order.
+        for (const raw of [...file.items].reverse()) { const item = validStored(raw, file.terminalId); if (item) found.push(item); }
       } catch { /* not ours or damaged: leave it */ }
     }
     // Oldest first, so the newest are the last kept and the map's order stays "oldest first"; this run's own win.
-    for (const item of found.sort((a, b) => a.updatedAt - b.updatedAt)) {
+    for (const item of found.sort((a, b) => a.updatedAt - b.updatedAt).slice(-this.max)) {
       if (this.items.has(item.artifact.id)) continue;
-      this.items.set(item.artifact.id, item);
+      this.add(item);
       retainArtifactMedia('tui:' + item.artifact.id, item.artifact.kind === 'html' ? item.artifact.media || [] : []);
     }
     this.trim();
+  }
+
+  private add(item: StoredArtifact) {
+    const size = encodeItem(item).length;
+    this.sizes.set(item, size);
+    this.items.set(item.artifact.id, item);
+    this.bytes += size;
+  }
+
+  private remove(id: string) {
+    const item = this.items.get(id);
+    if (!item) return;
+    this.items.delete(id);
+    this.bytes -= this.sizes.get(item) ?? 0;
   }
 
   private fileFor(terminalId: string): string {
     return path.join(this.dir!, createHash("sha256").update(terminalId).digest("hex") + ".json");
   }
 
-  /** Writes the pane's file from memory: the newest perPane artifacts that fit in fileLimit. Writes per pane run in turn. */
-  private persist(terminalId: string | undefined): Promise<void> {
+  /** Writes the pane's file from memory: the newest perPane artifacts that fit in fileLimit. Changes within
+   *  writeDelayMs share one write (`now` writes at once); writes per pane run in turn. */
+  private persist(terminalId: string | undefined, now = false): Promise<void> {
     if (!this.dir || !terminalId) return Promise.resolve();
+    let due = this.due.get(terminalId);
+    if (!due) {
+      let resolve!: () => void;
+      const done = new Promise<void>((r) => { resolve = r; });
+      due = { done, resolve, timer: null };
+      this.due.set(terminalId, due);
+    }
+    const entry = due;
+    const fire = () => {
+      if (entry.timer) clearTimeout(entry.timer);
+      if (this.due.get(terminalId) !== entry) return;
+      this.due.delete(terminalId);
+      void this.write(terminalId).then(entry.resolve);
+    };
+    if (now) fire();
+    else if (!entry.timer) { entry.timer = setTimeout(fire, this.writeDelayMs); entry.timer.unref?.(); }
+    return entry.done;
+  }
+
+  private write(terminalId: string): Promise<void> {
     const run = async () => {
       const file = this.fileFor(terminalId);
-      const mine = this.list(terminalId).slice(0, this.perPane).map(({ artifact, updatedAt }) => ({ artifact, updatedAt }));
-      if (!mine.length) { await unlink(file).catch(() => {}); return; }
-      const encode = (items: typeof mine) => JSON.stringify({ version: 1, terminalId, items }, (key, value) => key === "previewUrl" ? undefined : value);
-      let data = encode(mine);
-      while (Buffer.byteLength(data) > this.fileLimit && mine.length) { mine.pop(); data = encode(mine); }
-      if (!mine.length) { await unlink(file).catch(() => {}); return; }
-      await writeFileAtomic(file, data, 0o600);
+      // Each item is encoded once, newest first, until the next would not fit.
+      const head = `{"version":1,"terminalId":${JSON.stringify(terminalId)},"items":[`, parts: string[] = [];
+      let bytes = Buffer.byteLength(head) + 2;
+      for (const item of this.list(terminalId).slice(0, this.perPane)) {
+        const part = encodeItem(item), size = Buffer.byteLength(part) + (parts.length ? 1 : 0);
+        if (bytes + size > this.fileLimit) break;
+        parts.push(part); bytes += size;
+      }
+      if (!parts.length) { await unlink(file).catch(() => {}); return; }
+      await writeFileAtomic(file, `${head}${parts.join(",")}]}`, 0o600);
     };
     const next = (this.writes.get(terminalId) ?? Promise.resolve()).then(run).catch((error) => console.warn("[aya] could not keep a TUI artifact", error));
     this.writes.set(terminalId, next);
@@ -137,17 +198,23 @@ export class TuiArtifactStore {
     return next;
   }
 
-  /** Resolves once every pending write has landed (tests, quit). */
-  async flush(): Promise<void> { await Promise.all([...this.writes.values()]); }
+  /** Writes what is due now and resolves once every pending write has landed (tests, quit). */
+  async flush(): Promise<void> {
+    const due = [...this.due.values()].map((entry) => entry.done);
+    for (const terminalId of [...this.due.keys()]) void this.persist(terminalId, true);
+    await Promise.all([...due, ...this.writes.values()]);
+  }
 
-  private trim(): Set<string | undefined> {
-    const touched = new Set<string | undefined>();
-    while (this.items.size > this.max) {
+  /** Drops the oldest beyond `max` or the memory limit (never the newest one). */
+  private trim(): { touched: Set<string | undefined>; removed: string[] } {
+    const touched = new Set<string | undefined>(), removed: string[] = [];
+    while (this.items.size > this.max || (this.items.size > 1 && this.bytes > this.memoryLimit)) {
       const id = this.items.keys().next().value!;
       touched.add(this.items.get(id)!.terminalId);
-      this.items.delete(id); releaseArtifactMedia('tui:' + id);
+      removed.push(id);
+      this.remove(id); releaseArtifactMedia('tui:' + id);
     }
-    return touched;
+    return { touched, removed };
   }
 
   onChange(listener: TuiArtifactListener): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -165,15 +232,15 @@ export class TuiArtifactStore {
       columns: input.columns, rows: input.rows, value: input.value, description: input.description, assets: input.assets,
     }, { htmlBaseDir: input.htmlBaseDir });
     const artifact = { ...built, id: previous ? previous.artifact.id : built.id, revision: previous ? (previous.artifact.revision ?? 1) + 1 : 1 } as GuiArtifact;
-    this.items.delete(artifact.id);
-    this.items.set(artifact.id, { artifact, ...(terminalId ? { terminalId } : {}), updatedAt: this.now() });
+    this.remove(artifact.id);
+    this.add({ artifact, ...(terminalId ? { terminalId } : {}), updatedAt: this.now() });
     retainArtifactMedia('tui:' + artifact.id, artifact.kind === 'html' ? artifact.media || [] : []);
     if (artifact.kind === 'html' && artifact.media?.length) scheduleConversationAssetCollection();
-    const touched = this.trim();
+    const { touched, removed } = this.trim();
     touched.add(terminalId);
     for (const pane of touched) void this.persist(pane);
     const stored = this.items.get(artifact.id)!;
-    for (const listener of this.listeners) { try { listener(terminalId, stored, { updated: Boolean(previous), opened }); } catch (error) { console.warn("[aya] TUI artifact listener failed", error); } }
+    for (const listener of this.listeners) { try { listener(terminalId, stored, { updated: Boolean(previous), opened, removed }); } catch (error) { console.warn("[aya] TUI artifact listener failed", error); } }
     return { stored, updated: Boolean(previous) };
   }
 
@@ -186,8 +253,8 @@ export class TuiArtifactStore {
 
   /** Drops a pane's artifacts, from memory and disk. */
   forget(terminalId: string): Promise<void> {
-    for (const [id, item] of this.items) if (item.terminalId === terminalId) { this.items.delete(id); releaseArtifactMedia('tui:' + id); }
-    return this.persist(terminalId);
+    for (const [id, item] of this.items) if (item.terminalId === terminalId) { this.remove(id); releaseArtifactMedia('tui:' + id); }
+    return this.persist(terminalId, true);
   }
 
   /** Forgets every pane not in `live` whose newest artifact is older than `minAgeMs`: a pane closed while Aya was not

@@ -5,13 +5,15 @@ import test, { after } from "node:test";
 import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { closeSync, constants, openSync } from "node:fs";
 
 const home = await mkdtemp(join(tmpdir(), "aya-tui-art-"));
 process.env.AYA_HOME = join(home, "aya");
 after(() => rm(home, { recursive: true, force: true }));
 const { TuiArtifactStore, paneTuiArtifacts, tuiArtifactStore, DEFAULT_TUI_ARTIFACTS_DIR } = await import("../dist-electron/tui-artifacts.js");
 const { registerTuiArtifactsIpc } = await import("../dist-electron/ipc/tui-artifacts-ipc.js");
-const { withArtifact } = await import("../dist-test/components/TuiArtifactsButton.js");
+const { withArtifact, withoutArtifacts } = await import("../dist-test/components/TuiArtifactsButton.js");
 
 const metric = (title, value = "1", artifactId) => ({ kind: "metric", title, value, description: "d", ...(artifactId ? { artifactId } : {}) });
 let dirs = 0;
@@ -126,4 +128,72 @@ test("the header list puts a new or updated artifact on top, once", () => {
   const s = (id, revision = 1) => ({ id, kind: "metric", title: id, revision, updatedAt: 0 });
   assert.deepEqual(withArtifact([s("b"), s("a")], s("a", 2)).map((a) => [a.id, a.revision]), [["a", 2], ["b", 1]]);
   assert.deepEqual(withArtifact([], s("c")).map((a) => a.id), ["c"]);
+});
+
+test("changes close together are written once, newest first within the byte limit, each item encoded once", async () => {
+  const dir = freshDir();
+  const store = new TuiArtifactStore({ dir, writeDelayMs: 30, fileLimit: 900 });
+  let writes = 0;
+  const write = store.write.bind(store);
+  store.write = (pane) => { writes++; return write(pane); };
+  await store.present(metric("A", "1"), "t");
+  const first = (await store.present(metric("B", "0"), "t")).stored.artifact;
+  for (let i = 1; i < 20; i++) await store.present(metric("B", String(i), first.id), "t");
+  await store.flush();
+  assert.equal(writes, 1, "one write for twenty changes");
+  const stringify = JSON.stringify;
+  let encoded = 0;
+  JSON.stringify = (...args) => { encoded++; return stringify(...args); };
+  try {
+    for (let i = 0; i < 30; i++) await store.present({ kind: "html", title: `h${i}`, html: `<p>${"y".repeat(100)}</p>` }, "t");
+    encoded = 0;
+    await store.flush();
+  } finally { JSON.stringify = stringify; }
+  assert.ok(encoded <= 12, `encoded ${encoded} times for a file of a few items`);
+  const reread = new TuiArtifactStore({ dir });
+  await reread.load();
+  assert.equal(reread.list("t")[0].artifact.title, "h29");
+  assert.ok(reread.list("t").length >= 2 && reread.list("t").length < 8);
+});
+
+test("memory keeps the newest within the byte limit and tells the windows which artifacts it dropped", async () => {
+  const sent = [];
+  const store = new TuiArtifactStore({ memoryLimit: 600 });
+  registerTuiArtifactsIpc({ ipcMain: { handle: () => {} }, store, show: () => {}, broadcast: (c) => sent.push(c) });
+  const ids = [];
+  for (let i = 0; i < 4; i++) ids.push((await store.present({ kind: "html", title: `h${i}`, html: "z".repeat(200) }, i % 2 ? "p1" : "p2")).stored.artifact.id);
+  const kept = store.list().map((i) => i.artifact.id);
+  assert.ok(kept.length < 4 && kept[0] === ids[3], String(kept));
+  const removed = sent.flatMap((c) => c.removed || []);
+  assert.deepEqual(removed.sort(), ids.filter((id) => !kept.includes(id)).sort());
+  const s = (id) => ({ id, kind: "metric", title: id, revision: 1, updatedAt: 0 });
+  assert.deepEqual(withoutArtifacts([s("a"), s("b")], ["a"]).map((x) => x.id), ["b"]);
+  const same = [s("c")];
+  assert.equal(withoutArtifacts(same, ["a"]), same);
+});
+
+test("startup reads the newest pane files until they hold the kept artifacts, and no older one", { skip: process.platform === "win32" }, async () => {
+  const dir = freshDir();
+  let clock = Date.now() - 30_000;
+  const first = new TuiArtifactStore({ dir, now: () => clock++ });
+  await first.present(metric("old"), "old-pane");
+  await first.flush();
+  const [oldName] = await readdir(dir);
+  for (let i = 0; i < 3; i++) await first.present(metric(`new${i}`), "new-pane");
+  await first.flush();
+  const old = new Date(Date.now() - 60_000);
+  await utimes(join(dir, oldName), old, old);
+  // The old pane's file becomes a FIFO: reading it would block, so a load that reads it never ends.
+  await rm(join(dir, oldName));
+  execFileSync("mkfifo", [join(dir, oldName)]);
+  await utimes(join(dir, oldName), old, old);
+  const store = new TuiArtifactStore({ dir, max: 3 });
+  try {
+    const loaded = await Promise.race([store.load().then(() => true), new Promise((r) => setTimeout(() => r(false), 2000))]);
+    assert.equal(loaded, true, "the older file was not read");
+    assert.deepEqual(store.list().map((i) => i.artifact.title), ["new2", "new1", "new0"]);
+  } finally {
+    const fd = openSync(join(dir, oldName), constants.O_RDWR | constants.O_NONBLOCK);
+    closeSync(fd);
+  }
 });

@@ -9,7 +9,8 @@ export interface AgentServer { pid: number; command: string; ports: number[] }
 /** One of a terminal pane's `aya present` artifacts, without its content (electron/tui-artifacts.ts). */
 export interface TuiArtifactSummary { id: string; kind: "html" | "image" | "table" | "metric"; title: string; revision: number; updatedAt: number }
 /** An artifact a pane presented or updated; `opened` when a window opened for it (no --no-open). */
-export interface TuiArtifactsChange { terminalId: string; artifact: TuiArtifactSummary; updated: boolean; opened: boolean }
+/** `removed`: artifacts of any pane the store dropped to stay within its limits. */
+export interface TuiArtifactsChange { terminalId: string; artifact: TuiArtifactSummary; updated: boolean; opened: boolean; removed?: string[] }
 
 export interface HarnessDef {
   id: string;

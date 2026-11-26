@@ -1411,7 +1411,7 @@ app.on("before-quit", (event) => {
       quitDiagnosticsFlushPending = true;
       let timer: ReturnType<typeof setTimeout>;
       void Promise.race([
-        diagnosticsLog.flush(),
+        Promise.all([diagnosticsLog.flush(), tuiArtifactStore.flush()]),
         new Promise<void>(resolve => { timer = setTimeout(resolve, 500); }),
       ]).finally(() => {
         clearTimeout(timer);

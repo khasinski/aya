@@ -16,8 +16,8 @@ export interface TuiArtifactsIpcDeps {
 }
 
 export function registerTuiArtifactsIpc({ ipcMain, store, show, broadcast }: TuiArtifactsIpcDeps): void {
-  store.onChange((terminalId, item, { updated, opened }) => {
-    if (terminalId) broadcast({ terminalId, artifact: summarizeArtifact(item), updated, opened });
+  store.onChange((terminalId, item, { updated, opened, removed }) => {
+    if (terminalId || removed.length) broadcast({ terminalId: terminalId ?? "", artifact: summarizeArtifact(item), updated, opened, ...(removed.length ? { removed } : {}) });
   });
   ipcMain.handle("tui-artifacts:list", async (_e, rawPtyId: unknown) => {
     const ptyId = requireString(rawPtyId, "tui-artifacts:list.ptyId");
