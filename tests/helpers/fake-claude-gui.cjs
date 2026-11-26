@@ -407,6 +407,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     const inner = resp.response || {};
     if (inner.behavior) write({ method: 'fixture/permission-answer', params: { requestId: reqId, behavior: inner.behavior, message: inner.message ?? null } });
 
+    if (reqId === 'approve-edit' || reqId === 'approve-bash') return;
+    // An answer to a request this Claude never sent (one its predecessor sent before a restart).
+    if (reqId === 'late-present') { write({ method: 'fixture/late-answer', params: {} }); return; }
+
     if (reqId === 'approve-note') {
       complete(inner.behavior === 'allow' ? 'accept' : `Declined: ${inner.message}`);
       return;

@@ -17,7 +17,7 @@ import { claudeContextUsage, claudeSkills, cleanPromptSuggestion, type GuiSkill 
 import type { CodexGuiSession } from './codex-gui-session';
 import type { GuiProgress } from '../shared/gui-progress';
 import type { GuiArtifact, GuiEvent } from '../shared/codex-gui';
-import { claudeDeclineMessage, claudePermissionMode, fromClaudePermissionMode, guiPermissionModeLabel, type GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
+import { claudeDeclineMessage, claudePermissionMode, fromClaudePermissionMode, guiPermissionModeLabel, pendingApprovalsNotice, type GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
 import { insideDirectory, type EditSendInfo, type EditTarget } from './gui-edit-from-here';
 
 const execFileAsync = promisify(execFile);
@@ -1181,6 +1181,14 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     if (!this.threadId) throw Error('Connect to Claude first');
     await this.controlRequest('set_permission_mode', { mode: claudePermissionMode(mode) }, 10000);
     this.permissionMode = mode;
+    // Claude asked before the switch; what the new mode would not have asked about is answered for it.
+    let waiting = 0;
+    for (const [id, request] of [...this.requests]) {
+      if (request.method === 'item/tool/requestUserInput') continue;
+      const allowed = !request.params.subagent && (mode === 'full-access' || (mode === 'auto-accept-edits' && CLAUDE_EDIT_TOOLS.has(text(request.params.tool))));
+      if (allowed) await this.respond(id, { decision: 'accept' }); else waiting++;
+    }
+    if (waiting) this.emit({ method: 'aya/notice', params: { message: pendingApprovalsNotice(waiting, mode) } });
   }
 
   /** Takes effect for suggestions shown now; Claude generates them only when this was on at connect. */
@@ -1506,7 +1514,7 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
           text(input.command) || text(input.file_path) || text(input.path) || toolName;
         this.requests.set(reqId, {
           method: 'item/commandExecution/requestApproval',
-          params: { command: commandText, reason: text(req.decision_reason) || `Run ${toolName}`, ...origin },
+          params: { command: commandText, reason: text(req.decision_reason) || `Run ${toolName}`, tool: toolName, ...origin },
           resolve: (val) => {
             if (val.decision === 'accept') {
               this.write({

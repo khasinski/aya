@@ -7,7 +7,7 @@ import { CODEX_PROMPT_SUGGESTION_PROMPT, cleanPromptSuggestion, codexContextUsag
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import type { GuiEvent, GuiArtifact, GuiApprovalDecision } from '../shared/codex-gui';
-import { codexPermissionPolicy, initialGuiPermissionMode, type GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
+import { codexPermissionPolicy, initialGuiPermissionMode, pendingApprovalsNotice, type GuiPermissionMode } from '../shared/gui-permission-mode.cjs';
 import type { EditSendInfo, EditTarget } from './gui-edit-from-here';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -209,8 +209,21 @@ export class CodexGuiSession {
     throw Error(`Unsupported command /${name}. Use /goal, /btw or /compact. Other CLI commands remain available in Terminal mode.`);
   }
   async models() { return this.rpc('model/list', { limit: 100 }); }
-  /** Codex takes a mode with a turn; the running turn keeps the one it started with. */
-  async setPermissionMode(mode: GuiPermissionMode) { this.permissionMode = mode; }
+  /** Codex takes a mode with a turn; the running turn keeps the one it started with. What the turn asked before the
+   *  switch and the new mode would not have asked about is answered for it: everything for Full access, a file change
+   *  inside the workspace for Auto-accept edits. */
+  async setPermissionMode(mode: GuiPermissionMode) {
+    this.permissionMode = mode;
+    let waiting = 0;
+    for (const [id, request] of [...this.requests]) {
+      if (request.method === 'item/tool/requestUserInput') continue;
+      const files = Array.isArray(request.params.files) ? request.params.files : [];
+      const allowed = !request.params.subagent && (mode === 'full-access' || (mode === 'auto-accept-edits' && request.method === 'item/fileChange/requestApproval' && files.length > 0 && files.every(file => typeof file === 'string' && !file.startsWith('/'))));
+      try { if (allowed) { await this.respond(id, { decision: 'accept' }); continue; } } catch { /* this request offers no plain accept */ }
+      waiting++;
+    }
+    if (waiting) this.emit({ method: 'aya/notice', params: { message: pendingApprovalsNotice(waiting, mode) } });
+  }
   setPromptSuggestions(enabled: boolean) { this.promptSuggestions = enabled; }
   /** Cached until Codex reports `skills/changed`; a failed list is asked again next time. */
   async skills(): Promise<GuiSkill[]> {

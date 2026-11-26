@@ -169,3 +169,42 @@ test('a Codex file change approval names the files its item edits, not the raw r
   assert.equal(approvalSummary({ command: 'git status', reason: 'Check' }), 'git status');
   assert.equal(approvalSummary({ itemId: 'x' }), JSON.stringify({ itemId: 'x' }, null, 2));
 });
+
+test('a Claude mode switch answers the pending approvals the new mode would not ask about, and says which still wait', async t => {
+  const events = [], session = new ClaudeGuiSession(e => events.push(e), process.execPath, [claudeFixture]);
+  t.after(() => session.close());
+  await session.connect(process.cwd(), '');
+  await session.send('edit-approval');
+  await wait(() => events.some(e => e.id === 'approve-edit') && events.some(e => e.id === 'approve-bash'));
+  const answers = () => events.filter(e => e.method === 'fixture/permission-answer').map(e => [e.params.requestId, e.params.behavior]);
+  await session.setPermissionMode('auto-accept-edits');
+  await wait(() => answers().length === 1);
+  assert.deepEqual(answers(), [['approve-edit', 'allow']]);
+  assert.ok(events.some(e => e.method === 'aya/requestResolved' && e.params.id === 'approve-edit'));
+  assert.match(events.filter(e => e.method === 'aya/notice').at(-1).params.message, /An approval asked for before the switch still needs an answer: Auto-accept edits/);
+  await session.setPermissionMode('full-access');
+  await wait(() => answers().length === 2);
+  assert.deepEqual(answers()[1], ['approve-bash', 'allow']);
+});
+
+test('a Codex mode switch accepts the pending approvals the new mode would not ask about', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [codexFixture]);
+  t.after(() => session.close());
+  const cwd = await mkdtemp(path.join(tmpdir(), 'aya-switch-approval-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  await session.connect(cwd, '', undefined, undefined, false, 'supervised');
+  await session.send('file-approval');
+  await wait(() => events.some(e => e.method === 'item/fileChange/requestApproval'));
+  await session.setPermissionMode('auto-accept-edits');
+  await wait(() => events.some(e => e.method === 'fixture/approval'));
+  assert.deepEqual(events.find(e => e.method === 'fixture/approval').params, { decision: 'accept' });
+  await wait(() => !session.running);
+  await session.send('approval-continue');
+  await wait(() => events.some(e => e.id === 'approve-continue'));
+  await session.setPermissionMode('auto');
+  assert.match(events.filter(e => e.method === 'aya/notice').at(-1).params.message, /still needs an answer: Auto applies/);
+  assert.equal(events.filter(e => e.method === 'fixture/approval').length, 1);
+  await session.setPermissionMode('full-access');
+  await wait(() => events.filter(e => e.method === 'fixture/approval').length === 2);
+  assert.deepEqual(events.filter(e => e.method === 'fixture/approval')[1].params, { decision: 'accept' });
+});

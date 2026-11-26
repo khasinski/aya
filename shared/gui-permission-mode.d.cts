@@ -17,3 +17,4 @@ export function codexPermissionPolicy(mode: GuiPermissionMode): {
 };
 export function approvalNoteDelivery(agent: Agent): 'reason' | 'follow-up' | 'none';
 export function claudeDeclineMessage(note: unknown): string;
+export function pendingApprovalsNotice(count: number, mode: GuiPermissionMode): string;

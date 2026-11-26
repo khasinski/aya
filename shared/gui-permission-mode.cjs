@@ -41,3 +41,5 @@ exports.claudeDeclineMessage = note => {
   const trimmed = typeof note === 'string' ? note.trim() : '';
   return trimmed ? `The user declined this tool call and said:\n${trimmed}` : 'User declined in Aya GUI';
 };
+/** Shown when a mode switch leaves approvals the agent asked for before it still waiting for an answer. */
+exports.pendingApprovalsNotice = (count, mode) => `${count === 1 ? 'An approval asked for before the switch still needs' : `${count} approvals asked for before the switch still need`} an answer: ${exports.guiPermissionModeLabel(mode)} applies to what the agent asks from now on.`;
