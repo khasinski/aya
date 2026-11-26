@@ -4,6 +4,7 @@
 // refused worktree never blocks the others.
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -30,7 +31,7 @@ async function resolveCommit(directory: string, ref: string): Promise<string | n
 }
 
 /** Create `aya/<name>` at `<repo>.worktrees/<name>` for every name, from the
- *  same base commit. A name already taken by a branch or a checkout gets the
+ *  same base commit. A name already taken by a branch, a checkout or a leftover folder gets the
  *  next free `-2`, `-3` suffix; a failure is reported for that name only. */
 export async function createFanOutWorktrees(request: FanOutWorktreeRequest): Promise<FanOutWorktreesResult> {
   const { directory, names } = request;
@@ -43,15 +44,18 @@ export async function createFanOutWorktrees(request: FanOutWorktreeRequest): Pro
   const root = path.join(path.dirname(resolved), `${path.basename(resolved)}.worktrees`);
   try { await mkdir(root, { recursive: true }); }
   catch (err) { return { base, results: [], error: err instanceof Error ? err.message : String(err) }; }
-  const branches = await execFileAsync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads"], { cwd: directory, ...OPTS })
-    .then(({ stdout }) => stdout).catch(() => "");
+  // Without the branch list a taken name could not get its suffix, so nothing is created.
+  let branches: string;
+  try { branches = (await execFileAsync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads"], { cwd: directory, ...OPTS, timeout: 15000 })).stdout; }
+  catch (err) { return { base, results: [], error: `Could not list the repository's branches: ${err instanceof Error ? err.message : String(err)}` }; }
   const usedBranches = new Set(branches.split(/\r?\n/).filter(Boolean));
   const usedPaths = new Set((await listWorktrees(directory)).map(w => path.resolve(w.path)));
   const results: FanOutWorktreeResult[] = [];
   // Sequential: concurrent `git worktree add` in one repo races on its locks.
   for (const name of names) {
     let suffix = name;
-    for (let n = 2; usedBranches.has(`aya/${suffix}`) || usedPaths.has(path.join(root, suffix)); n++) suffix = `${name}-${n}`;
+    // A leftover folder that is no longer a worktree takes the name too.
+    for (let n = 2; usedBranches.has(`aya/${suffix}`) || usedPaths.has(path.join(root, suffix)) || existsSync(path.join(root, suffix)); n++) suffix = `${name}-${n}`;
     const branch = `aya/${suffix}`, checkout = path.join(root, suffix);
     usedBranches.add(branch); usedPaths.add(checkout);
     const created = await createWorktree(directory, checkout, branch, base);

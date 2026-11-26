@@ -159,6 +159,7 @@ function FanOutDialog({ draft, project, presets, launch, onWorktreesChanged, onC
           <label>Starting branch or ref
             <input value={base} onChange={e => setBase(e.target.value)} aria-label="Starting branch or ref" />
           </label>
+          <p className="aya-worktree-dialog-hint">Each agent starts from its last commit; uncommitted changes are not included.</p>
           <label>Worktree name
             <input value={slug} onChange={e => setSlugInput(e.target.value)} aria-label="Worktree name" />
           </label>

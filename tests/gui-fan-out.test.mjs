@@ -79,12 +79,23 @@ test("createFanOutWorktrees makes one aya/<name> branch per agent from one base"
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a leftover folder where a checkout would go takes the next suffix", async () => {
+  const { dir, repo } = repoWithCommit();
+  try {
+    mkdirSync(join(dirname(repo), "repo.worktrees", "t-claude"), { recursive: true });
+    writeFileSync(join(dirname(repo), "repo.worktrees", "t-claude", "old.txt"), "left over");
+    const result = await createFanOutWorktrees({ directory: repo, base: "main", names: ["t-claude"] });
+    assert.equal(result.results[0].ok, true, result.results[0].error);
+    assert.equal(result.results[0].branch, "aya/t-claude-2");
+    assert.equal(result.results[0].path, join(dirname(repo), "repo.worktrees", "t-claude-2"));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("one refused worktree does not block the other agents", async () => {
   const { dir, repo } = repoWithCommit();
   try {
-    // A plain file where the checkout should go makes git refuse that one.
-    mkdirSync(join(dirname(repo), "repo.worktrees"), { recursive: true });
-    writeFileSync(join(dirname(repo), "repo.worktrees", "t-claude"), "in the way");
+    // A branch under aya/t-claude/ makes git refuse the branch aya/t-claude.
+    execSync("git branch aya/t-claude/old", { cwd: repo });
     const result = await createFanOutWorktrees({ directory: repo, base: "main", names: ["t-claude", "t-codex"] });
     assert.equal(result.results[0].ok, false);
     assert.match(result.results[0].error, /\S/);
