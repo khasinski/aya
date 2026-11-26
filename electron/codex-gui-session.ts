@@ -48,6 +48,7 @@ export class CodexGuiSession {
   private permissionMode: GuiPermissionMode = 'auto-accept-edits';
   private appliedPermissionMode: GuiPermissionMode = 'auto-accept-edits';
   private samplingEpoch = 0;
+  private revertSupport: Promise<boolean> | null = null;
   private samplingWaiters = new Set<() => void>();
   get running() { return this.busy; }
   /** The agent process: servers it starts are listed under it (agent-servers.ts). */
@@ -301,11 +302,22 @@ export class CodexGuiSession {
       void this.rpc('thread/unsubscribe', { threadId: sideId }).catch(() => {});
     }
   }
+  /** Whether Edit from here can run, checked before any file is reverted: idle, no subagent still working, a turn to
+   *  cut at, and a Codex that has thread/revert (asked once, with no thread, which a Codex that has it refuses). */
+  async checkEditFromHere(target: EditTarget) {
+    if (this.busy) throw Error('Stop the current turn first');
+    if (this.childTurns.size) throw Error('A subagent is still working. Stop it or wait for it to finish before editing an earlier message.');
+    if (!target.codexTurn) throw Error('This message cannot be edited: Codex did not report its turn');
+    this.revertSupport ??= this.rpc('thread/revert', {}).then(() => true, error => !/unknown variant|method not found|unsupported/i.test(error instanceof Error ? error.message : String(error)));
+    if (!await this.revertSupport) throw Error('This version of Codex cannot rewind a conversation. Update Codex to edit an earlier message.');
+  }
   /** Edit from here: drop the message's turn and every later one from the thread's history (files are untouched). */
   async editFromHere(target: EditTarget) {
-    if (this.busy) throw Error('Stop the current turn first');
-    if (!target.codexTurn) throw Error('This message cannot be edited: Codex did not report its turn');
+    await this.checkEditFromHere(target);
     await this.rpc('thread/revert', { threadId: this.threadId, beforeTurnId: target.codexTurn });
+    // A suggestion or side answer sampled from the dropped turns must not arrive, and their subagents are gone.
+    this.samplingEpoch++; for (const wake of this.samplingWaiters) wake();
+    this.subagentSpawns.clear(); this.childTurns.clear(); this.subagentThreads.clear();
     return { threadId: this.threadId };
   }
   /** Stops the turn and every subagent still running, including one that outlived it. */

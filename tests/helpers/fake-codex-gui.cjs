@@ -92,6 +92,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   }
   else if (message.method === 'thread/sample' && /^Predict the next message/.test(p.prompt || '')) {
     event('fixture/suggestion-sample', p);
+    // Codex answers "must be idle" for the first tries when it reports turn/completed early.
+    if (process.env.AYA_FAKE_CODEX_SAMPLE_BUSY === '1' && ++sampleAttempts <= 2) { write({ id: message.id, error: { code: -32600, message: 'sample source must be idle' } }); return; }
     write({ id: message.id, result: { text: process.env.AYA_FAKE_NO_SUGGESTION ? null : 'Run the tests next', sourceTurnId: p.expectedTurnId } });
   }
   else if (message.method === 'skills/list') {
@@ -109,7 +111,9 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     else write({ id: message.id, result: { text: 'A separate side answer', sourceTurnId: p.expectedTurnId } });
   }
   else if (message.method === 'turn/start' && noteTurn(message, p)) return;
-  else if (message.method === 'thread/revert') {
+  // What Codex 0.172 answers: a revert without a thread is refused; a Codex before thread/revert does not know it.
+  else if (message.method === 'thread/revert' && process.env.AYA_FAKE_CODEX_NO_REVERT !== '1' && !p.threadId) write({ id: message.id, error: { code: -32600, message: 'Invalid request: missing field `threadId`' } });
+  else if (message.method === 'thread/revert' && process.env.AYA_FAKE_CODEX_NO_REVERT !== '1') {
     event('fixture/revert', p);
     const cut = noteTurns.findIndex(turn => turn.id === p.beforeTurnId);
     if (cut < 0) { write({ id: message.id, error: { code: -32602, message: `Unknown turn ${p.beforeTurnId}` } }); return; }
@@ -358,7 +362,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   else if (!message.method && message.id === 'question') { const response = secretQuestion ? 'Secret received' : message.result.answers.choice.answers[0]; secretQuestion = false; complete(response); }
   else if (!message.method && message.id === 'open-artifact') complete(message.result.success ? 'Artifact opened' : 'Unknown artifact');
   else if (!message.method && message.id === 'present') { lastArtifactId = message.result.contentItems[0].text.match(/artifactId: ([^.]+)\./)?.[1] || ''; complete(message.result.success ? '## Wynik\n\nTabela jest w panelu artefaktów.\n\n| Element | Stan |\n| --- | --- |\n| Aya | Gotowe |' : 'Tool failed'); }
-  else if (message.method && message.id) write({ id: message.id, error: { code: -32601, message: 'Unsupported fixture request' } });
+  else if (message.method && message.id) write({ id: message.id, error: { code: -32600, message: `Invalid request: unknown variant \`${message.method}\`` } });
 });
 process.on('SIGTERM', () => process.exit(busy ? 2 : 0));
 

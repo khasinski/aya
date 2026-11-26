@@ -192,3 +192,111 @@ test("Codex reverts the thread to before the message's turn", async () => {
     await assert.rejects(session.editFromHere({}), /did not report its turn/);
   } finally { session.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("the IPC asks the agent to check the rewind before any file is reverted", async () => {
+  const { editFromHere } = await import("../dist-electron/gui-edit-from-here-ipc.js");
+  const calls = [];
+  let refusal = "A subagent is still working";
+  const session = {
+    running: false,
+    checkEditFromHere: async () => { calls.push("check"); if (refusal) throw Error(refusal); },
+    previewFileRewind: async () => ["/w/a.txt"],
+    rewindFiles: async () => { calls.push("files"); },
+    editFromHere: async () => { calls.push("history"); throw Error("Claude could not restart at the earlier message (gone)."); },
+  };
+  const entry = { session, cwd: tmpdir() };
+  await assert.rejects(editFromHere(entry, { phase: "check", target: { claudeUser: "u", resumeAt: "h" } }), /subagent is still working/);
+  await assert.rejects(editFromHere(entry, { phase: "apply", target: { claudeUser: "u", resumeAt: "h" }, revertFiles: true }), /subagent is still working/);
+  assert.deepEqual(calls, ["check", "check"], "no file is touched when the agent refuses");
+  refusal = "";
+  await assert.rejects(editFromHere(entry, { phase: "apply", target: { claudeUser: "u", resumeAt: "h" }, revertFiles: true }), /could not restart.*files were already restored/);
+  assert.deepEqual(calls.slice(2), ["check", "files", "history"]);
+});
+
+test("Claude reopens the conversation as it was when it cannot start at the earlier message", async () => {
+  const { ClaudeGuiSession } = await import("../dist-electron/multi-agent-gui-session.js");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "aya-edit-claude-fail-")));
+  process.env.AYA_FAKE_CLAUDE_STATE = path.join(root, "state.json");
+  const events = [], session = new ClaudeGuiSession(event => events.push(event), claudeFixture);
+  const turn = async (prompt) => {
+    const count = events.filter(e => e.method === "turn/completed").length;
+    await session.send(prompt);
+    await waitFor(() => events.filter(e => e.method === "turn/completed")[count], "turn");
+    return events.filter(e => e.method === "item/completed").at(-1).params.item.text;
+  };
+  try {
+    const first = await session.connect(root, "");
+    await turn("note alpha"); await turn("note beta");
+    const before = events.length;
+    await assert.rejects(session.editFromHere({ resumeAt: "not-in-the-transcript" }), /could not restart at the earlier message.*reopened as it was/);
+    const launches = events.slice(before).filter(e => e.method === "fixture/config").map(e => e.params.args);
+    assert.deepEqual(launches.at(-1).slice(launches.at(-1).indexOf("--resume"), -1), ["--resume", first.threadId]);
+    assert.equal(events.slice(before).some(e => e.method === "aya/disconnected"), false, "the pane stays connected");
+    assert.equal(events.slice(before).filter(e => e.method === "aya/session").at(-1).params.threadId, first.threadId);
+    assert.equal(await turn("note gamma"), "I remember: alpha, beta, gamma");
+  } finally { session.close(); delete process.env.AYA_FAKE_CLAUDE_STATE; rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Claude refuses Edit from here while a subagent runs, and a late tool answer never reaches the restarted Claude", async () => {
+  const { ClaudeGuiSession } = await import("../dist-electron/multi-agent-gui-session.js");
+  const tmp = mkdtempSync(path.join(tmpdir(), "aya-edit-claude-tmp-"));
+  process.env.CLAUDE_CODE_TMPDIR = tmp;
+  const events = [], session = new ClaudeGuiSession(event => events.push(event), process.execPath, [claudeFixture]);
+  try {
+    await session.connect(process.cwd(), "");
+    await session.send("stoppable-agent");
+    await waitFor(() => events.some(e => e.method === "turn/completed"), "turn");
+    await assert.rejects(session.checkEditFromHere({ resumeAt: null }), /subagent is still working/);
+    await assert.rejects(session.editFromHere({ resumeAt: null }), /subagent is still working/);
+    assert.equal(events.filter(e => e.method === "fixture/config").length, 1, "Claude was not restarted");
+    await session.stopSubagent("toolu_agent2");
+    await waitFor(() => !session.running && events.filter(e => e.method === "turn/completed").length === 2, "stop turn");
+    // An Aya tool call from this Claude is still running when Edit from here replaces it.
+    let finish; session.executeAyaTool = () => new Promise(resolve => { finish = resolve; });
+    const late = session.receive({ type: "control_request", request_id: "late-present", request: { subtype: "mcp_message", server_name: "aya", message: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "aya_present", arguments: {} } } } });
+    await session.editFromHere({ resumeAt: null });
+    finish({ success: true, text: "late" }); await late;
+    await new Promise(r => setTimeout(r, 100));
+    assert.equal(events.some(e => e.method === "fixture/late-answer"), false);
+    assert.equal(events.some(e => e.method === "aya/disconnected"), false);
+  } finally { session.close(); delete process.env.CLAUDE_CODE_TMPDIR; rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("Codex checks it can rewind, and that no subagent runs, before anything is reverted", async () => {
+  const { CodexGuiSession } = await import("../dist-electron/codex-gui-session.js");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "aya-edit-codex-check-")));
+  const old = new CodexGuiSession(() => {}, codexFixture);
+  const events = [], session = new CodexGuiSession(event => events.push(event), codexFixture);
+  try {
+    process.env.AYA_FAKE_CODEX_NO_REVERT = "1";
+    await old.connect(root, "");
+    delete process.env.AYA_FAKE_CODEX_NO_REVERT;
+    await assert.rejects(old.checkEditFromHere({ codexTurn: "t1" }), /version of Codex cannot rewind/);
+    await session.connect(root, "");
+    await session.checkEditFromHere({ codexTurn: "t1" });
+    await session.send("subagent-runs");
+    await waitFor(() => !session.running, "turn end");
+    await assert.rejects(session.checkEditFromHere({ codexTurn: "turn" }), /subagent is still working/);
+    await assert.rejects(session.editFromHere({ codexTurn: "turn" }), /subagent is still working/);
+    assert.equal(events.some(e => e.method === "fixture/revert"), false);
+  } finally { old.close(); session.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Codex drops a next-prompt suggestion sampled from turns Edit from here removed", async () => {
+  const { CodexGuiSession } = await import("../dist-electron/codex-gui-session.js");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "aya-edit-codex-sample-")));
+  process.env.AYA_FAKE_CODEX_SAMPLE_BUSY = "1";
+  const events = [], session = new CodexGuiSession(event => events.push(event), codexFixture);
+  try {
+    await session.connect(root, "");
+    delete process.env.AYA_FAKE_CODEX_SAMPLE_BUSY;
+    session.setPromptSuggestions(true);
+    const sent = await session.send("note alpha");
+    // The suggestion is retried while Codex says the turn is not idle yet; the turn is removed meanwhile.
+    await waitFor(() => events.some(e => e.method === "fixture/suggestion-sample"), "first sample");
+    await session.editFromHere({ codexTurn: sent.codexTurn });
+    await new Promise(r => setTimeout(r, 1200));
+    assert.equal(events.filter(e => e.method === "fixture/suggestion-sample").length, 1, "no retry after the turn was removed");
+    assert.equal(events.some(e => e.method === "aya/promptSuggestion"), false);
+  } finally { delete process.env.AYA_FAKE_CODEX_SAMPLE_BUSY; session.close(); rmSync(root, { recursive: true, force: true }); }
+});

@@ -1,5 +1,5 @@
 // IPC side of "Edit from here": record what a sent message needs for a later rewind,
-// then check and apply the rewind (optional file revert first, then the agent's history).
+// then check and apply the rewind (the agent's checks, then the optional file revert, then the agent's history).
 import type { ConversationSnapshot } from './gui-conversation-store';
 import { forgetArchivedConversation } from './gui-conversation-store';
 import { restoreWorkspaceSnapshot,snapshotAvailable,takeWorkspaceSnapshot,type EditSendInfo,type EditTarget } from './gui-edit-from-here';
@@ -41,8 +41,10 @@ export async function editFromHere(entry: Entry, value: unknown, snapshot: Conve
   if (!session.editFromHere) throw Error('This agent cannot rewind its conversation');
   if (session.running) throw Error('Stop the current turn before editing an earlier message');
   const target = parseEditTarget(params.target);
+  if (params.phase !== 'check' && params.phase !== 'apply') throw Error('Invalid edit phase');
+  // Everything that can refuse the rewind (the target, the agent's support, running subagents) refuses before files change.
+  await session.checkEditFromHere?.(target);
   if (params.phase === 'check') return { files: await fileRevert(entry, target) };
-  if (params.phase !== 'apply') throw Error('Invalid edit phase');
   let filesReverted = false;
   if (params.revertFiles === true) {
     const files = await fileRevert(entry, target);
@@ -52,7 +54,12 @@ export async function editFromHere(entry: Entry, value: unknown, snapshot: Conve
     filesReverted = true;
   }
   const previous = snapshot ? { ...snapshot } : undefined;
-  const result = await session.editFromHere(target);
+  let result: { threadId: string };
+  try { result = await session.editFromHere(target); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw Error(filesReverted ? `${message} The files were already restored to how they were before that message.` : message);
+  }
   // The archived copy still holds the dropped turns; it is archived again from the shortened view.
   if (previous?.threadId) await forgetArchivedConversation(previous).catch(() => {});
   if (snapshot) snapshot.threadId = result.threadId;

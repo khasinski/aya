@@ -42,7 +42,7 @@ export type GuiSessionInstance = Pick<
   | 'interrupt'
   | 'respond'
   | 'close'
-> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'stopSubagent' | 'setPermissionMode' | 'editFromHere' | 'skills' | 'setPromptSuggestions'>> & {
+> & Partial<Pick<CodexGuiSession, 'listConversations' | 'readConversation' | 'stopSubagent' | 'setPermissionMode' | 'checkEditFromHere' | 'editFromHere' | 'skills' | 'setPromptSuggestions'>> & {
   /** Files a Claude checkpoint rewind would restore, or null when it cannot. */
   previewFileRewind?(target: EditTarget): Promise<string[] | null>;
   rewindFiles?(target: EditTarget): Promise<void>;
@@ -1335,30 +1335,47 @@ export class ClaudeGuiSession extends BaseManagedGuiSession {
     if (result.canRewind !== true) throw Error(text(result.error) || 'Claude could not restore the files');
   }
 
-  /** Restart Claude on its transcript cut just before the message: --resume-session-at the previous
-   *  assistant message, forked into a new session so the dropped turns never come back on resume. */
-  async editFromHere(target: EditTarget) {
+  /** Whether Edit from here can run, checked before any file is reverted. The restart would end every subagent. */
+  async checkEditFromHere(target: EditTarget) {
     if (this.busy) throw Error('Stop the current turn first');
+    if ([...this.agents.values()].some(agent => !agent.done)) throw Error('A subagent is still working. Stop it or wait for it to finish before editing an earlier message.');
     if (target.resumeAt !== null && !target.resumeAt) throw Error('This message cannot be edited: Claude did not report where its turn began');
-    const previous = this.threadId, next = randomUUID();
+    if (!this.child) throw Error('Claude is disconnected');
+  }
+
+  /** Restart Claude on its transcript cut just before the message: --resume-session-at the previous
+   *  assistant message, forked into a new session so the dropped turns never come back on resume. When Claude cannot
+   *  start there, it is started again on the conversation as it was, so the pane stays connected. */
+  async editFromHere(target: EditTarget) {
+    await this.checkEditFromHere(target);
+    const previous = this.threadId, previousHead = this.lastAssistantUuid, next = randomUUID();
     const child = this.child;
+    // Until a Claude runs again, its stops are part of the restart, not a disconnect.
     this.closing = true;
     this.writer?.close(); this.writer = null; this.child = null;
     this.failSession('Restarting Claude');
     this.terminate(child);
-    this.closing = false; this.stderr = '';
-    this.threadId = next;
-    this.lastAssistantUuid = target.resumeAt || '';
     // The restarted Claude keeps the pane's current permission mode.
     this.launchOptions = { ...this.launchOptions, permissionMode: this.permissionMode };
+    const start = async (threadId: string, head: string, args: string[]) => {
+      this.closing = true; this.stderr = ''; this.threadId = threadId; this.lastAssistantUuid = head;
+      try { return await this.launch(args); } finally { this.closing = false; }
+    };
     try {
-      const result = await this.launch(target.resumeAt ? ['--resume', previous, '--resume-session-at', target.resumeAt, '--fork-session', '--session-id', next] : ['--session-id', next]);
+      const result = await start(next, target.resumeAt || '', target.resumeAt ? ['--resume', previous, '--resume-session-at', target.resumeAt, '--fork-session', '--session-id', next] : ['--session-id', next]);
       this.emit({ method: 'aya/session', params: { threadId: this.threadId, model: result.model } });
       return { threadId: this.threadId };
     } catch (error) {
-      this.closing = false;
-      this.emit({ method: 'aya/disconnected', params: { message: `Claude could not restart at the earlier message: ${error instanceof Error ? error.message : String(error)}` } });
-      throw error;
+      const reason = (error instanceof Error ? error.message : String(error)).trim();
+      try {
+        const result = await start(previous, previousHead, ['--resume', previous]);
+        this.emit({ method: 'aya/session', params: { threadId: previous, model: result.model } });
+      } catch (reopen) {
+        const message = `Claude could not restart at the earlier message (${reason}), nor reopen the conversation: ${reopen instanceof Error ? reopen.message : String(reopen)}`;
+        this.emit({ method: 'aya/disconnected', params: { message } });
+        throw Error(message);
+      }
+      throw Error(`Claude could not restart at the earlier message (${reason}). The conversation was reopened as it was.`);
     }
   }
 

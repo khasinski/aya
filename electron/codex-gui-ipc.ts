@@ -41,6 +41,8 @@ let activeGuiSessions = new Map<string, { session: GuiSessionInstance; cwd: stri
  *  the session only reports `running` once the workspace snapshots are taken and the agent is called. */
 const startingSends = new Map<string, number>();
 const sessionBusy = (key: string, entry: { session: GuiSessionInstance }) => entry.session.running || (startingSends.get(key) ?? 0) > 0;
+/** Panes whose Edit from here is under way: a send then would reach a Claude that is being restarted. */
+const editingPanels = new Set<string>();
 
 export function busyGuiSessionCount(): number {
   let count = 0;
@@ -431,6 +433,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return item;
     }
     if (action === 'send') {
+      if (editingPanels.has(key)) throw Error('Wait for the earlier message to be edited before sending');
       // Counted as busy from now on, so Quit asks even while the snapshots before the turn are still being taken.
       startingSends.set(key, (startingSends.get(key) ?? 0) + 1);
       try {
@@ -442,7 +445,11 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
         return await sendWithSnapshot(entry, () => entry.session.send(text, { model: params.model, effort: params.effort, ...(typeof params.plan === 'boolean' ? { plan: params.plan } : {}), images: files.filter(f => f.image).map(f => f.path) }));
       } finally { const left = (startingSends.get(key) ?? 1) - 1; if (left > 0) startingSends.set(key, left); else startingSends.delete(key); }
     }
-    if (action === 'edit-from-here') return editFromHere(entry, value, snapshots.get(key));
+    if (action === 'edit-from-here') {
+      if (sessionBusy(key, entry)) throw Error('Stop the current turn before editing an earlier message');
+      editingPanels.add(key);
+      try { return await editFromHere(entry, value, snapshots.get(key)); } finally { editingPanels.delete(key); }
+    }
     if (action === 'interrupt') return entry.session.interrupt();
     if (action === 'stop-subagent') { if (!entry.session.stopSubagent) throw Error('This agent cannot stop a single subagent'); return entry.session.stopSubagent(String(value)); }
     if (action === 'read-linked-file') return readWorkspaceFile(entry.cwd, value);
@@ -455,7 +462,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
     }
     throw Error('Unknown GUI action');
     };
-    return ['load', 'connect', 'reconnect', 'persist', 'close', 'dispose-pane', 'detach-for-terminal', 'adopt-terminal-session', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation'].includes(action) ? panels.run(key, perform) : perform();
+    return ['load', 'connect', 'reconnect', 'persist', 'close', 'dispose-pane', 'detach-for-terminal', 'adopt-terminal-session', 'retain-for-recovery', 'retain-pane', 'history', 'switch-conversation', 'edit-from-here'].includes(action) ? panels.run(key, perform) : perform();
   });
   // Every before-quit listener runs even when an earlier one held the quit (main's "turns are still running" prompt
   // is registered first). Close the sessions only on a quit that goes ahead; a cancelled Quit must leave turns running.
