@@ -7,7 +7,7 @@ import { PANE_MODE_SHORTCUT_LABEL, PANE_MODE_SWITCH_EVENT, type PaneMode } from 
 
 export interface PaneModeSwitch {
   /** Switches the pane to its other mode; resolves to why it did not, or null. */
-  run: () => Promise<string | null>;
+  run: (force?: boolean) => Promise<string | null>;
 }
 
 interface Props {
@@ -34,6 +34,8 @@ interface Props {
 export function PaneHeader({ mode, terminalId, icon, color, title, children, status, actions, servers, modeSwitch, artifacts }: Props) {
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const errorRef = useRef<string | null>(null);
+  errorRef.current = error;
   const runRef = useRef(modeSwitch?.run);
   runRef.current = modeSwitch?.run;
   const switchingRef = useRef(false);
@@ -41,9 +43,11 @@ export function PaneHeader({ mode, terminalId, icon, color, title, children, sta
   const toggle = async () => {
     const run = runRef.current;
     if (!run || switchingRef.current) return;
+    // A second request while the last one's reason still shows overrides it (a warning; a refusal stays one).
+    const force = errorRef.current !== null;
     switchingRef.current = true; setSwitching(true); setError(null);
     try {
-      const why = await run();
+      const why = await run(force);
       if (why) {
         setError(why);
         if (errorTimer.current) clearTimeout(errorTimer.current);

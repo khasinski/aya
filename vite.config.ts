@@ -38,8 +38,42 @@ function rendererCsp(): Plugin {
   };
 }
 
+
+// Dev only: Vite serves the renderer's shared/*.cjs files untransformed, so their named imports fail in the browser
+// (the build converts them). Wrap each in a module: its local requires become imports, its exports named exports.
+function sharedCommonJsInDev(): Plugin {
+  return {
+    name: "aya-shared-cjs-dev",
+    apply: "serve",
+    transform(code, id) {
+      const file = id.split("?")[0];
+      if (!/\/shared\/[^/]+\.cjs$/.test(file)) return;
+      const imports: string[] = [];
+      const body = code.replace(/require\((["'])(\.\/[^"']+\.cjs)\1\)/g, (_match, _quote, path: string) => {
+        imports.push(`import __aya_require_${imports.length} from ${JSON.stringify(path)};`);
+        return `__aya_require_${imports.length - 1}`;
+      });
+      const names = new Set<string>();
+      for (const m of body.matchAll(/^exports\.([A-Za-z_$][\w$]*)\s*=/gm)) names.add(m[1]);
+      const literal = /module\.exports\s*=\s*\{([^}]*)\}/.exec(body);
+      for (const part of literal ? literal[1].split(",") : []) {
+        const name = part.trim().split(":")[0].trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
+      }
+      return [
+        ...imports,
+        "const module = { exports: {} }; let exports = module.exports;",
+        body,
+        "const __aya_exports = module.exports;",
+        "export default __aya_exports;",
+        ...[...names].map(name => `export const ${name} = __aya_exports.${name};`),
+      ].join("\n");
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), rendererCsp(), {
+  plugins: [react(), rendererCsp(), sharedCommonJsInDev(), {
     name: "aya-woff2-only", enforce: "pre",
     transform(code, id) {
       if (id.includes("@fontsource/") && id.endsWith(".css")) return code.replace(/,\s*url\([^)]*\.woff\)\s*format\(['"]woff['"]\)/g, "");

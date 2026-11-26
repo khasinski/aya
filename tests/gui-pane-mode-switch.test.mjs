@@ -13,7 +13,7 @@ const { mergeInterfaceTwins, remapProjectTabs, migrateInterfaceTwinPresets } = a
 const { claudeTranscriptMessages, codexRolloutMessages, adoptTerminalSession, findClaudeTranscript, findCodexRollout, withTerminalArtifacts } = await import("../dist-electron/gui-mode-switch.js");
 const { claudeProjectDirName } = await import("../dist-electron/claude-session.js");
 const { modeSwitchCommand, resumeSpawn } = await import("../dist-test/agentPreset.js");
-const { paneMode, initialPaneMode, terminalSwitchRefusal, conversationSwitchRefusal } = await import("../dist-test/pane-mode.js");
+const { paneMode, initialPaneMode, terminalSwitchRefusal, terminalSwitchWarning, conversationSwitchRefusal } = await import("../dist-test/pane-mode.js");
 
 const preset = (over) => ({ id: "p", name: "P", icon: "", color: "", command: "claude", ...over });
 
@@ -35,9 +35,15 @@ test("a pane's own mode wins over the preset's Opens as, and a pane without a GU
 test("a switch waits for the turn and for any approval or question", () => {
   const live = { status: "running", exitCode: null };
   assert.equal(terminalSwitchRefusal(live), null);
-  assert.match(terminalSwitchRefusal({ ...live, working: true }), /turn to finish/);
-  assert.match(terminalSwitchRefusal({ ...live, status: "waiting" }), /prompt/);
-  assert.match(terminalSwitchRefusal({ ...live, externalStatus: { level: "active", text: "", updatedAt: 0 } }), /turn/);
+  // What the agent reported, or the screen's activity, can outlive the turn: a warning a second request overrides.
+  assert.equal(terminalSwitchRefusal({ ...live, working: true }), null);
+  assert.match(terminalSwitchWarning({ ...live, working: true }), /still be working/);
+  assert.match(terminalSwitchWarning({ ...live, status: "waiting" }), /waiting/);
+  assert.match(terminalSwitchWarning({ ...live, externalStatus: { level: "active", text: "", updatedAt: 0 } }), /working/);
+  assert.equal(terminalSwitchWarning(live), null);
+  assert.equal(terminalSwitchWarning({ ...live, working: true, exitCode: 0 }), null, "an exited agent has nothing to wait for");
+  // A CLI dialog on screen would be lost: that one blocks.
+  assert.match(terminalSwitchRefusal({ ...live, status: "waiting", screenDialog: "permission" }), /prompt/);
   assert.equal(terminalSwitchRefusal({ ...live, working: true, exitCode: 0 }), null, "an exited agent has nothing to wait for");
   assert.match(terminalSwitchRefusal({ ...live, remoteHost: "box" }), /remote/);
   assert.equal(conversationSwitchRefusal({ busy: false, requests: 0, switching: false, connecting: false }), null);

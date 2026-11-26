@@ -54,7 +54,6 @@ export function TuiArtifactsButton({ terminalId, focused = true }: {
     document.addEventListener("mousedown", outside);
     return () => document.removeEventListener("mousedown", outside);
   }, [expanded]);
-  if (!artifacts.length) return null;
   const rect = expanded ? button.current?.getBoundingClientRect() : undefined;
   const label = `Artifacts (${artifacts.length})${unseen.length ? `, ${unseen.length} new` : ""}`;
   const open = (id: string) => {
@@ -67,7 +66,7 @@ export function TuiArtifactsButton({ terminalId, focused = true }: {
       data-unseen={unseen.length > 0 || undefined} aria-label={label} aria-expanded={expanded} aria-haspopup="dialog"
       title={unseen.length ? `${unseen.length} new artifact${unseen.length === 1 ? "" : "s"} from aya present` : "Artifacts this pane's agent presented"}
       onClick={() => setExpanded(!expanded)}>
-      <span className="aya-gui-icon" aria-hidden="true">deployed_code</span><b aria-hidden="true">{artifacts.length}</b>
+      <span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{artifacts.length > 0 && <b aria-hidden="true">{artifacts.length}</b>}
     </button>
     {expanded && createPortal(
       <div ref={popover} className="aya-servers-popover aya-tui-artifacts-popover" role="dialog" aria-label="Artifacts"
@@ -75,6 +74,7 @@ export function TuiArtifactsButton({ terminalId, focused = true }: {
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setExpanded(false); button.current?.focus(); } }}>
         <div className="aya-servers-title">Artifacts</div>
+        {!artifacts.length && <p className="aya-tui-artifacts-empty">None yet. Ask the agent for a chart, table or report: it shows them here with <code>aya present</code>.</p>}
         <ul>
           {artifacts.map((a) => (
             <li key={a.id} data-artifact-id={a.id}>

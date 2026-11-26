@@ -4,7 +4,7 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback } from "react";
 import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
-import { paneCanSwitchMode, paneMode, PANE_MODE_SWITCH_EVENT, terminalSwitchRefusal } from "../pane-mode";
+import { paneCanSwitchMode, paneMode, PANE_MODE_SWITCH_EVENT, terminalSwitchRefusal, terminalSwitchWarning } from "../pane-mode";
 import { findProject } from "../project-helpers";
 import { forgetSpawn } from "../spawnSession";
 import { terminalKillRefusal } from "../terminal-kill-refusal";
@@ -38,8 +38,9 @@ export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTe
     return { t, preset, agent, mode: paneMode(preset, t, !!project?.remote) };
   }, [terminalsRef, projectsRef, presetsRef]);
 
-  /** Stop the pane's terminal agent and open its Conversation on the same session. Resolves to why it did not. */
-  const switchToConversation = useCallback(async (id: string): Promise<string | null> => {
+  /** Stop the pane's terminal agent and open its Conversation on the same session. Resolves to why it did not;
+   *  `force` (a second request right after a warning) switches past a warning, never past a refusal. */
+  const switchToConversation = useCallback(async (id: string, force = false): Promise<string | null> => {
     const pane = paneContext(id);
     if (!pane) return "The pane is gone.";
     const { t, preset, agent } = pane;
@@ -47,6 +48,8 @@ export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTe
     if (!window.ayaGui) return "The Conversation view needs the Aya desktop app.";
     const refusal = terminalSwitchRefusal(t);
     if (refusal) return refusal;
+    const warning = force ? null : terminalSwitchWarning(t);
+    if (warning) return warning;
     if (t.exitCode === null && !t.stopped && !t.spawnDeferred) {
       const release = cancelPendingTerminalAttach(id);
       try { await window.aya.ptyKill(id); }

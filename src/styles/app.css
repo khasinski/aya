@@ -1765,3 +1765,4 @@ body {
   font: 500 11px/1.3 var(--font-sans); color: var(--status-error, #e5534b);
 }
 .aya-stacked-headerslot .aya-pane-mode-option { -webkit-app-region: no-drag; }
+.aya-tui-artifacts-empty { margin: 4px 0; max-width: 260px; color: var(--fg-secondary); font-size: 12px; line-height: 1.45; }

@@ -144,7 +144,7 @@ interface Props {
   onActivatePane?: () => void;
   enableWebgl?: boolean;
   /** Terminal ⇄ Conversation for an agent with a Conversation GUI; absent for a pane with the terminal only. */
-  onSwitchMode?: () => Promise<string | null>;
+  onSwitchMode?: (force?: boolean) => Promise<string | null>;
   /** The header's Artifacts slot (PaneHeader); defaults to the pane's `aya present` artifacts, in the same spot as
    *  the Conversation's artifact drawer toggle. */
   artifacts?: ReactNode;
@@ -1603,7 +1603,7 @@ function TerminalViewComponent({
             open={(port) => window.aya.openUrl(`http://localhost:${port}/`)}
           />
         }
-        modeSwitch={onSwitchMode ? { run: () => switchModeRef.current?.() ?? Promise.resolve(null) } : undefined}
+        modeSwitch={onSwitchMode ? { run: (force) => switchModeRef.current?.(force) ?? Promise.resolve(null) } : undefined}
         artifacts={artifacts ?? <TuiArtifactsButton terminalId={terminal.id} focused={isActive && isVisible} />}
       >
         {terminal.remoteHost && (

@@ -33,16 +33,25 @@ export function initialPaneMode(preset: Pick<Preset, "agent" | "command" | "inte
   return paneCanSwitchMode(preset, remote) ? (preset.interfaceMode === "gui" ? "gui" : "terminal") : undefined;
 }
 
-/** Why a terminal pane cannot switch to its Conversation right now, or null when it can. */
-export function terminalSwitchRefusal(
-  t: Pick<TerminalState, "status" | "working" | "externalStatus" | "exitCode" | "disconnected" | "stopped" | "spawnFailure" | "remoteHost" | "spawnDeferred">,
-): string | null {
+type SwitchState = Pick<TerminalState, "status" | "working" | "externalStatus" | "exitCode" | "disconnected" | "stopped" | "spawnFailure" | "remoteHost" | "spawnDeferred" | "screenDialog">;
+
+const liveAgent = (t: SwitchState) => t.exitCode === null && !t.stopped && !t.spawnFailure && !t.spawnDeferred;
+
+/** Why a terminal pane cannot switch to its Conversation at all right now, or null when it can: a remote pane, a
+ *  lost connection, or a CLI dialog on screen (an approval the switch would throw away). */
+export function terminalSwitchRefusal(t: SwitchState): string | null {
   if (t.remoteHost) return "A remote pane stays a terminal.";
   if (t.disconnected) return "Wait for the terminal to reconnect before switching.";
-  const live = t.exitCode === null && !t.stopped && !t.spawnFailure && !t.spawnDeferred;
-  if (!live) return null;
-  if (t.status === "waiting" || t.externalStatus?.level === "waiting") return "Answer the agent's prompt in the terminal before switching.";
-  if (t.working === true || t.externalStatus?.level === "active") return "Wait for the turn to finish, or stop it, before switching.";
+  if (liveAgent(t) && t.status === "waiting" && t.screenDialog) return "Answer the agent's prompt in the terminal before switching.";
+  return null;
+}
+
+/** A reason to think twice before switching, which a second request overrides: what the agent reported (status hook,
+ *  `aya status`) or the screen's activity can outlive the turn, so they never block on their own. */
+export function terminalSwitchWarning(t: SwitchState): string | null {
+  if (!liveAgent(t)) return null;
+  if (t.working === true || t.externalStatus?.level === "active") return "The agent may still be working. Switch again to stop it and switch anyway.";
+  if (t.status === "waiting" || t.externalStatus?.level === "waiting") return "The agent may be waiting for an answer. Switch again to switch anyway.";
   return null;
 }
 

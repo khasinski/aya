@@ -78,7 +78,7 @@ interface Props {
   onFocusTerminal?: (terminalId: string) => void;
   onSplitBesideTerminal?: (anchorId: string, targetId: string) => void;
   /** Terminal ⇄ Conversation (usePaneModeSwitch). */
-  onSwitchToConversation?: (terminalId: string) => Promise<string | null>;
+  onSwitchToConversation?: (terminalId: string, force?: boolean) => Promise<string | null>;
   onSwitchToTerminal?: (terminalId: string, sessionId?: string) => void;
 }
 
@@ -304,7 +304,7 @@ export const PaneGrid = memo(function PaneGrid({
             onActivatePane={() =>
               activeProjectId && setActiveSplitCell(activeProjectId, leafId)
             }
-            onSwitchMode={onSwitchToConversation && paneCanSwitchMode(preset, !!activeProject?.remote) ? () => onSwitchToConversation(terminal.id) : undefined}
+            onSwitchMode={onSwitchToConversation && paneCanSwitchMode(preset, !!activeProject?.remote) ? (force) => onSwitchToConversation(terminal.id, force) : undefined}
             enableWebgl={!isSplit}
           /></LocalErrorBoundary>
         );
@@ -344,7 +344,7 @@ export const PaneGrid = memo(function PaneGrid({
             onSpawnFailure={onSpawnFailure}
             restartTrigger={restartTriggers[t.id] ?? 0}
             macOptionKeyMode={macOptionKeyMode}
-            onSwitchMode={onSwitchToConversation && paneCanSwitchMode(preset, !!project?.remote) ? () => onSwitchToConversation(t.id) : undefined}
+            onSwitchMode={onSwitchToConversation && paneCanSwitchMode(preset, !!project?.remote) ? (force) => onSwitchToConversation(t.id, force) : undefined}
             enableWebgl={false}
           /></LocalErrorBoundary>
         );
