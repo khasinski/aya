@@ -14,6 +14,7 @@ import type {
   PaneChangeRequest,
   PtyEvent,
   TeamOpenPanesRequest,
+  TuiArtifactsChange,
   UpdateStatus,
 } from "./types";
 
@@ -91,6 +92,13 @@ const api: AyaApi = {
   ptyCwd: (ptyId) => ipcRenderer.invoke("pty:cwd", ptyId),
   ptyServers: (ptyId) => ipcRenderer.invoke("pty:servers", ptyId, "list"),
   ptyStopServer: (ptyId, pid) => ipcRenderer.invoke("pty:servers", ptyId, "stop", pid),
+  tuiArtifacts: (ptyId) => ipcRenderer.invoke("tui-artifacts:list", ptyId),
+  openTuiArtifact: (ptyId, artifactId) => ipcRenderer.invoke("tui-artifacts:open", ptyId, artifactId),
+  onTuiArtifactsChange: (handler) => {
+    const listener = (_e: unknown, change: TuiArtifactsChange) => handler(change);
+    ipcRenderer.on("tui-artifacts:changed", listener);
+    return () => ipcRenderer.removeListener("tui-artifacts:changed", listener);
+  },
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
   harnessSearch: (req, requestId, paneId) => ipcRenderer.invoke("harness:search", req, requestId, paneId),
   harnessSearchCancel: (requestId, paneId) => ipcRenderer.invoke("harness:search-cancel", requestId, paneId),

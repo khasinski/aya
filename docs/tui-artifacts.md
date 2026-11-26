@@ -16,7 +16,15 @@ aya artifact open <id>
 ```
 
 `-` reads the HTML or table JSON from stdin. `aya present` prints the artifact id. `aya capabilities` lists both
-commands, so an agent running in a pane learns about them from there.
+commands. The brief Aya gives an agent at launch ("Tell the agent about aya" in the preset; Claude, Codex, Grok,
+opencode, Pi and Antigravity) has one line telling it to show charts, tables, diagrams, HTML reports, images and metrics
+with `aya present`, never as ASCII art, so it presents without being asked to. The Conversation view's developer
+instructions say the same for its `aya_present` tool.
+
+A pane with artifacts shows an artifacts button (the Conversation view's cube icon with the count, labelled
+"Artifacts (N)") in its header. It lists each artifact's title, kind, revision and time; choosing one opens its window.
+An artifact stored with `--no-open`, or one that arrives while the pane is not focused, colours the button until the
+list is opened.
 
 HTML can contain `<video controls src="./demo.mp4">`, WebM sources, audio, captions and local video posters.
 Aya copies these files into the artifact automatically. Paths resolve beside the HTML file; for stdin they resolve from
@@ -27,5 +35,9 @@ Media is streamed separately from the HTML, with seeking support; each file can 
 - HTML runs in the same isolated `aya-widget:` frame as in the Conversation view: no Node, filesystem, network or Aya
   API access. `window.ayaWidget.suggest(text)` copies the text to the clipboard (there is no conversation to receive it).
 - A pane lists and opens only its own artifacts, and cannot update another pane's.
-- Artifacts are kept in memory (the newest 100) and end when Aya quits; the Conversation view's saved history and
-  version retention (ten revisions) do not apply here, and the window shows only the latest revision.
+- Artifacts are kept on disk per pane under `AYA_HOME/tui-artifacts/` (the pane's newest 50, in at most 32 MiB) and
+  come back after Aya restarts; Aya holds the newest 100 across all panes. A closed pane's artifacts are removed a
+  week after its last one. Only the latest revision is kept (the Conversation view's ten-revision history does not
+  apply), and the window shows that revision.
+- Main-process code can read a pane's artifacts with `paneTuiArtifacts(terminalId)` (electron/tui-artifacts.ts): full
+  `GuiArtifact`s, newest first, as the Conversation view's artifact drawer takes them.

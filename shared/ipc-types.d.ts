@@ -6,6 +6,11 @@ import type { AgentKind, Preset, WorkingTab, ProjectConfig, RepoProjectConfig, P
 /** A process under a pane's agent (or shell) that listens on TCP ports (electron/agent-servers.ts). */
 export interface AgentServer { pid: number; command: string; ports: number[] }
 
+/** One of a terminal pane's `aya present` artifacts, without its content (electron/tui-artifacts.ts). */
+export interface TuiArtifactSummary { id: string; kind: "html" | "image" | "table" | "metric"; title: string; revision: number; updatedAt: number }
+/** An artifact a pane presented or updated; `opened` when a window opened for it (no --no-open). */
+export interface TuiArtifactsChange { terminalId: string; artifact: TuiArtifactSummary; updated: boolean; opened: boolean }
+
 export interface HarnessDef {
   id: string;
   binary: string;
@@ -872,6 +877,11 @@ export interface AyaApi {
   ptyServers(ptyId: string): Promise<AgentServer[]>;
   /** SIGTERM (then SIGKILL) one of them; refused unless it still runs under the pane's process. */
   ptyStopServer(ptyId: string, pid: number): Promise<{ forced: boolean }>;
+  /** The pane's `aya present` artifacts, newest first; kept across restarts. */
+  tuiArtifacts(ptyId: string): Promise<TuiArtifactSummary[]>;
+  /** Opens (or reloads) the artifact's window; refused for another pane's artifact. */
+  openTuiArtifact(ptyId: string, artifactId: string): Promise<void>;
+  onTuiArtifactsChange(handler: (change: TuiArtifactsChange) => void): () => void;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */

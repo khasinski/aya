@@ -1719,3 +1719,25 @@ body {
 .aya-servers-meta .aya-servers-stop:hover:not(:disabled) { border-color: var(--status-error, #c01c28); color: var(--status-error, #c01c28); }
 .aya-servers-meta button:disabled { opacity: 0.6; cursor: default; }
 .aya-servers-error { margin-top: 8px; color: var(--status-error, #c01c28); }
+
+/* A terminal pane's aya present artifacts (components/TuiArtifactsButton.tsx): the Conversation view's artifact
+   button (conversation.css) in the pane header, with an accent dot while some are unseen, and its list. */
+.aya-pane-header .aya-tui-artifacts-button {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--fg-tertiary); cursor: pointer;
+}
+.aya-pane-header .aya-tui-artifacts-button:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-pane-header > .aya-tui-artifacts-button { margin-left: auto; }
+.aya-pane-header .aya-pane-header-meta + .aya-tui-artifacts-button { margin-left: 0; }
+.aya-pane-header .aya-tui-artifacts-button + .aya-servers-button { margin-left: 0; }
+.aya-tui-artifacts-button[data-unseen] { color: var(--accent); }
+.aya-tui-artifacts-button[data-unseen] b { background: var(--accent); color: var(--bg); }
+.aya-tui-artifacts-popover li { list-style: none; }
+.aya-tui-artifact-row {
+  display: grid; gap: 2px; width: 100%; padding: 7px 8px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--fg-primary); font: inherit;
+}
+.aya-tui-artifact-row:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
+.aya-tui-artifact-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.aya-tui-artifact-meta { color: var(--fg-secondary); font-size: 11px; }

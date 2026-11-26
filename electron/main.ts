@@ -12,7 +12,7 @@ import { UserRulePanePolicy } from "./screen-user-rule-pane";
 import { UserRuleProvider } from "./screen-user-rule-provider";
 import { debugLogsPending,flushDebugLogs } from "./team-debug";
 import { showTuiArtifact } from "./tui-artifact-window";
-import { TuiArtifactStore } from "./tui-artifacts";
+import { tuiArtifactStore as sharedTuiArtifactStore } from "./tui-artifacts";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
@@ -78,6 +78,7 @@ import { registerEnvIpc } from "./ipc/env-ipc";
 import { registerProjectsIpc } from "./ipc/projects-ipc";
 import { registerPromptAttachmentIpc } from "./ipc/prompt-attachments-ipc";
 import { registerAgentServersIpc } from "./ipc/agent-servers-ipc";
+import { registerTuiArtifactsIpc } from "./ipc/tui-artifacts-ipc";
 import { registerPtyIpc } from "./ipc/pty-ipc";
 import { registerRemoteIpc } from "./ipc/remote-ipc";
 import { registerSettingsIpc } from "./ipc/settings-ipc";
@@ -222,7 +223,8 @@ const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
 let remotePtySessions: RemotePtySessions | null = null;
 const userRulePolicyInstance=crypto.randomBytes(16).toString("hex");
 const hostRuleEpoch=(epoch:number)=>`${userRulePolicyInstance}:${epoch}`;
-const tuiArtifactStore = new TuiArtifactStore();
+const tuiArtifactStore = sharedTuiArtifactStore();
+void tuiArtifactStore.load();
 const userRuleProvider = new UserRuleProvider(path.join(AYA_HOME, "screen-rules"), builtinRuleSet, {
   log: (reason, digest) => diagnosticsLog.append("user-screen-rules-unavailable", { reason, digest }),
   changed: (state) => { void ptyHost.setUserRulePolicyEpoch(hostRuleEpoch(state.epoch)); ptyHost.setUserRuleStatusObserver(!state.available || state.manifest
@@ -775,6 +777,10 @@ function registerIpc(): TeamRunner {
     attach: () => ptyHost.attachWebContents(remotePtySessions!),
   });
   registerAgentServersIpc({ ipcMain, getPid: (ptyId) => ptyHost.getPid(ptyId), isRemote: (ptyId) => remoteTerminalManager.has(ptyId) });
+  registerTuiArtifactsIpc({
+    ipcMain, store: tuiArtifactStore, show: (artifact) => showTuiArtifact(artifact, createGuardedWindow),
+    broadcast: (change) => { for (const win of ayaWindows) if (!win.isDestroyed()) win.webContents.send("tui-artifacts:changed", change); },
+  });
   registerPtyIpc({
     ipcMain,
     host: ptyHost,
@@ -1056,6 +1062,8 @@ app.whenReady().then(async () => {
   // touches files and nothing below depends on it.
   void healDeadCliShims();
   void listProjects().then((projects) => sweepPaneBriefs(paneBriefDeps, projects)).catch(() => {});
+  // A closed pane's kept `aya present` artifacts go once they are a week old (prune's age guard covers a short list).
+  void listProjects().then((projects) => projects.length ? tuiArtifactStore.prune(new Set(projects.flatMap((p) => p.tabs.map((t) => t.id)))) : undefined).catch(() => {});
   // Asked ahead of the first opencode pane, which waits for the answer.
   void listPresets()
     .then((presets) => void (presets.some((p) => p.agent === "opencode") && loginShellEnv()))

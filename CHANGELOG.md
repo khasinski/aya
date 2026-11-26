@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Terminal agents now present charts, tables, diagrams, reports and images with `aya present` instead of drawing them as ASCII art: the brief Aya gives them at launch says so, and Pi panes can now receive the brief too (`--append-system-prompt`). A pane's header shows an artifacts button with the count that lists its artifacts and opens each one. The button is coloured when one arrives unseen. Artifacts are now kept per pane across Aya restarts.
+
 - Conversation GUI: send one prompt, with its attached images, to several agents or models at once, each in its own worktree and branch from the same base, then compare each branch's diff side by side. A worktree that cannot be created is reported for that agent without stopping the others.
 - Conversation GUI: show subagents as their own activity rows with the task they were given, their tool calls and their final report. Claude's background subagents stay running after the turn that started them, and the pane reports how many are still working.
 - Conversation GUI: approvals and questions from a subagent say which subagent asked and stay answerable after the main turn ends, for Claude and Codex.

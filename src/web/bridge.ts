@@ -100,6 +100,10 @@ export function createWebAya(transport: WebTransport): AyaApi {
     // A server on the host is not one this browser could open; Aya Web does not list them.
     ptyServers: async () => [],
     ptyStopServer: async () => { throw new Error("Not available in Aya Web"); },
+    // An artifact opens in a window on the host, which a browser client could not see; Aya Web does not list them.
+    tuiArtifacts: async () => [],
+    openTuiArtifact: async () => { throw new Error("Not available in Aya Web"); },
+    onTuiArtifactsChange: () => () => {},
     ptySearch: inv("pty:search"),
     harnessSearch: inv("harness:search"),
     harnessSearchCancel: inv("harness:search-cancel"),

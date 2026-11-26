@@ -257,6 +257,7 @@ const BRIEF_HINTS = new Map<Agent, string>([
   ["claude", "Adds a short note via --append-system-prompt when the pane starts."],
   ["codex", "Adds a short note via -c developer_instructions when the pane starts; not when your Codex config or the command already sets developer_instructions, which Aya never replaces."],
   ["grok", "Adds a short note via --rules when the pane starts."],
+  ["pi", "Adds a short note via --append-system-prompt when the pane starts."],
   ["opencode", "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG)."],
   ["antigravity", "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in)."],
 ]);

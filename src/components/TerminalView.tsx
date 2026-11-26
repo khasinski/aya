@@ -14,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AgentServers } from "./AgentServers";
+import { TuiArtifactsButton } from "./TuiArtifactsButton";
 import { effectiveAgent } from "../agentPreset";
 import { focusReportingState } from "../focus-reporting";
 import { registerPendingTerminalAttach } from "../pending-terminal-attach";
@@ -1599,6 +1600,7 @@ function TerminalViewComponent({
             </span>
           </div>
         )}
+        <TuiArtifactsButton terminalId={terminal.id} focused={isActive && isVisible} />
         <AgentServers
           active={isVisible && !terminal.remoteHost && terminal.exitCode === null && !terminal.spawnFailure && !terminal.spawnDeferred}
           busy={terminal.working === true}
