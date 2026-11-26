@@ -260,6 +260,12 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       setTimeout(() => process.exit(0), 1000);
     }
     else if (prompt === 'approval') write({ id: 'approve', method: 'item/commandExecution/requestApproval', params: { command: 'echo hello', reason: 'Test approval' } });
+    else if (prompt === 'file-approval') {
+      // As Codex 0.172 asks: the request names only the file change item, which was announced just before.
+      const changes = [{ path: require('node:path').join(process.cwd(), 'notes.md'), kind: { type: 'add' }, diff: '+hi' }];
+      event('item/started', { threadId: p.threadId, item: { id: 'exec-patch', type: 'fileChange', changes, status: 'inProgress' } });
+      write({ id: 'approve', method: 'item/fileChange/requestApproval', params: { threadId: p.threadId, turnId: 'turn', itemId: 'exec-patch', startedAtMs: 1, reason: null, grantRoot: null } });
+    }
     // After a decline the turn goes on, so a note can still steer it.
     else if (prompt === 'approval-continue') write({ id: 'approve-continue', method: 'item/commandExecution/requestApproval', params: { command: 'rm -rf build', reason: 'Test approval' } });
     else if (prompt === 'wait' || prompt === 'slow-steer-wait') return;

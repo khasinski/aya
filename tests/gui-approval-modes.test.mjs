@@ -8,7 +8,7 @@ import {
   approvalNoteDelivery, claudeDeclineMessage, claudePermissionMode, codexPermissionPolicy, fromClaudePermissionMode,
   guiPermissionModes, initialGuiPermissionMode, nextGuiPermissionMode, parseGuiPermissionMode,
 } from '../shared/gui-permission-mode.cjs';
-import { approvalNoteTarget, declinableApproval, isPermissionModeShortcut, permissionModeChangeText } from '../dist-test/gui-approval-modes.js';
+import { approvalNoteTarget, approvalSummary, declinableApproval, isPermissionModeShortcut, permissionModeChangeText } from '../dist-test/gui-approval-modes.js';
 const isolatedHome = await mkdtemp(path.join(tmpdir(), 'aya-gui-modes-'));
 process.env.AYA_HOME = isolatedHome;
 after(() => rm(isolatedHome, { recursive: true, force: true }));
@@ -152,4 +152,20 @@ test('a Codex decline lets the turn go on, so the note can steer it', async t =>
   await session.steer('Remove build/tmp only');
   await wait(() => events.some(e => e.method === 'fixture/steer'));
   assert.equal(events.find(e => e.method === 'fixture/steer').params.input[0].text, 'Remove build/tmp only');
+});
+
+test('a Codex file change approval names the files its item edits, not the raw request', async t => {
+  const events = [], session = new CodexGuiSession(e => events.push(e), process.execPath, [codexFixture]);
+  t.after(() => session.close());
+  const cwd = await mkdtemp(path.join(tmpdir(), 'aya-file-approval-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  await session.connect(cwd, '');
+  await session.send('file-approval');
+  await wait(() => events.some(e => e.method === 'item/fileChange/requestApproval'));
+  const request = events.find(e => e.method === 'item/fileChange/requestApproval');
+  assert.deepEqual(request.params.files, ['notes.md']);
+  assert.equal(approvalSummary(request.params), 'Edit notes.md');
+  assert.equal(approvalSummary({ files: ['a.ts'], reason: 'Needs write access' }), 'Edit a.ts\nNeeds write access');
+  assert.equal(approvalSummary({ command: 'git status', reason: 'Check' }), 'git status');
+  assert.equal(approvalSummary({ itemId: 'x' }), JSON.stringify({ itemId: 'x' }, null, 2));
 });
