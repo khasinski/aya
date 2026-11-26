@@ -4,14 +4,12 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback } from "react";
 import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
-import { paneCanSwitchMode, paneMode, PANE_MODE_SWITCH_EVENT, terminalSwitchRefusal, terminalSwitchWarning } from "../pane-mode";
-import { beginPaneModeSwitch, cancelPaneModeSwitch, paneModeSwapped } from "../pane-mode-transition";
+import { paneCanSwitchMode, paneMode, PANE_MODE_SWITCH_EVENT, switchSessionId, terminalSwitchRefusal, terminalSwitchWarning, type PaneModeSwitchResult } from "../pane-mode";
+import { beginPaneModeSwitch, cancelPaneModeSwitch, paneModeSwapped, setPaneModeResuming } from "../pane-mode-transition";
 import { findProject } from "../project-helpers";
 import { forgetSpawn } from "../spawnSession";
 import { terminalKillRefusal } from "../terminal-kill-refusal";
 import { getPreset, type Preset, type ProjectConfig, type ProjectEvent, type TerminalState } from "../types";
-
-const SAFE_SESSION_ID = /^[A-Za-z0-9_.:/-]{1,200}$/;
 
 interface Options {
   terminalsRef: RefObject<Record<string, TerminalState>>;
@@ -26,7 +24,7 @@ const restarted = (t: TerminalState): TerminalState => ({
   ...t, exitCode: null, status: "running", bell: false, spawnFailure: undefined, stopped: undefined, working: undefined,
   externalStatus: undefined, screenDialog: undefined, disconnected: undefined, disconnectedReason: undefined,
   recoveryGeneration: undefined, recoveryNotice: undefined, recoveryScreenUnknown: undefined, recoveryBlocked: undefined,
-  recoveryRetryable: undefined, spawnDeferred: undefined,
+  recoveryRetryable: undefined, spawnDeferred: undefined, modeSwitching: undefined, freshRestart: undefined,
 });
 
 export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTerminals, appendProjectEvent }: Options) {
@@ -41,7 +39,7 @@ export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTe
 
   /** Stop the pane's terminal agent and open its Conversation on the same session. Resolves to why it did not;
    *  `force` (a second request right after a warning) switches past a warning, never past a refusal. */
-  const switchToConversation = useCallback(async (id: string, force = false): Promise<string | null> => {
+  const switchToConversation = useCallback(async (id: string, force = false): Promise<PaneModeSwitchResult> => {
     const pane = paneContext(id);
     if (!pane) return "The pane is gone.";
     const { t, preset, agent } = pane;
@@ -50,19 +48,27 @@ export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTe
     const refusal = terminalSwitchRefusal(t);
     if (refusal) return refusal;
     const warning = force ? null : terminalSwitchWarning(t);
-    if (warning) return warning;
+    if (warning) return { warning };
     // From here the body fades into the loading veil; the views swap only once it covers the pane.
     // The agent stops only under the veil, so its last screen ("exited") never shows.
     await beginPaneModeSwitch(id, "gui", !!t.sessionId);
     if (t.exitCode === null && !t.stopped && !t.spawnDeferred) {
+      // The exit this kill causes is the switch's, not the pane's: no error or done (pty-event-reducer).
+      const switching = (on: boolean) => setTerminals((prev) => {
+        const cur = prev[id];
+        if (!cur) return prev;
+        const { modeSwitching: _was, ...rest } = cur;
+        return { ...prev, [id]: on ? { ...rest, modeSwitching: true } : rest };
+      });
+      switching(true);
       const release = cancelPendingTerminalAttach(id);
       try { await window.aya.ptyKill(id); }
-      catch (error) { cancelPaneModeSwitch(id); return terminalKillRefusal("restart", t.name, error); }
+      catch (error) { switching(false); cancelPaneModeSwitch(id); return terminalKillRefusal("restart", t.name, error); }
       finally { release(); }
     }
     forgetSpawn(id);
     try {
-      await window.ayaGui.invoke(id, "adopt-terminal-session", { cwd: t.cwd, configDir: preset.configDir, agent, sessionId: t.sessionId });
+      await window.ayaGui.invoke(id, "adopt-terminal-session", { cwd: t.cwd, configDir: preset.configDir, command: preset.command, agent, sessionId: t.sessionId });
     } catch (error) {
       // The terminal is stopped either way; the Conversation still opens, on a new session.
       console.error("Could not carry the terminal session over", error);
@@ -71,25 +77,28 @@ export function usePaneModeSwitch({ terminalsRef, projectsRef, presetsRef, setTe
       const cur = prev[id];
       return cur ? { ...prev, [id]: { ...restarted(cur), interfaceMode: "gui", resumeOnSwitch: undefined } } : prev;
     });
+    paneModeSwapped(id);
     appendProjectEvent({ projectSlug: t.projectSlug, terminalId: id, level: "active", title: `${t.name} switched to Conversation` });
     return null;
   }, [paneContext, setTerminals, appendProjectEvent]);
 
   /** The Conversation stopped its agent (ConversationView, 'detach-for-terminal'): start the terminal on `sessionId`. */
   const completeSwitchToTerminal = useCallback((id: string, sessionId?: string) => {
-    const t = terminalsRef.current[id];
-    if (!t) return;
+    const pane = paneContext(id);
+    if (!pane) return;
+    const { t, agent } = pane;
     forgetSpawn(id);
-    const resume = sessionId && SAFE_SESSION_ID.test(sessionId) ? sessionId : undefined;
+    const resume = switchSessionId(agent, sessionId);
+    setPaneModeResuming(id, !!resume);
     setTerminals((prev) => {
       const cur = prev[id];
       if (!cur) return prev;
       const { sessionId: _old, ...rest } = restarted(cur);
-      return { ...prev, [id]: { ...rest, ...(resume ? { sessionId: resume } : {}), interfaceMode: "terminal", resumeOnSwitch: true } };
+      return { ...prev, [id]: { ...rest, ...(resume ? { sessionId: resume } : {}), interfaceMode: "terminal", resumeOnSwitch: Date.now() } };
     });
     paneModeSwapped(id);
     appendProjectEvent({ projectSlug: t.projectSlug, terminalId: id, level: "active", title: `${t.name} switched to Terminal` });
-  }, [terminalsRef, setTerminals, appendProjectEvent]);
+  }, [paneContext, setTerminals, appendProjectEvent]);
 
   /** ⌘⌥G / View menu: the view that shows the pane runs the switch, since only a Conversation knows its turn state. */
   const requestPaneModeSwitch = useCallback((id: string | null | undefined) => {

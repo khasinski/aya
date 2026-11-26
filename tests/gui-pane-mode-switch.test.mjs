@@ -10,11 +10,11 @@ import { join } from "node:path";
 const home = mkdtempSync(join(tmpdir(), "aya-pane-mode-test-"));
 process.env.AYA_HOME = home;
 const { mergeInterfaceTwins, remapProjectTabs, migrateInterfaceTwinPresets } = await import("../dist-electron/preset-mode-migration.js");
-const { claudeTranscriptMessages, codexRolloutMessages, codexThreadMessages, adoptTerminalSession, findClaudeTranscript, findCodexRollout, findCodexRolloutSegments, withTerminalArtifacts } = await import("../dist-electron/gui-mode-switch.js");
+const { claudeTranscriptMessages, codexRolloutMessages, codexThreadMessages, adoptTerminalSession, findClaudeTranscript, findCodexRollout, findCodexRolloutSegments, terminalSessionMessages, withTerminalArtifacts } = await import("../dist-electron/gui-mode-switch.js");
 const { claudeProjectDirName } = await import("../dist-electron/claude-session.js");
 const { modeSwitchCommand, resumeSpawn } = await import("../dist-test/agentPreset.js");
-const { paneMode, initialPaneMode, terminalSwitchRefusal, terminalSwitchWarning, conversationSwitchRefusal } = await import("../dist-test/pane-mode.js");
-const { applyPtyEvent } = await import("../dist-test/pty-event-reducer.js");
+const { paneMode, initialPaneMode, terminalSwitchRefusal, terminalSwitchWarning, conversationSwitchRefusal, switchSessionId } = await import("../dist-test/pane-mode.js");
+const { applyPtyEvent, restartResumes, SWITCH_RESUME_FAILED_MS } = await import("../dist-test/pty-event-reducer.js");
 const { extractAyaOsc, parseAyaOscStatus } = await import("../dist-electron/osc-extractor.js");
 
 const preset = (over) => ({ id: "p", name: "P", icon: "", color: "", command: "claude", ...over });
@@ -72,6 +72,20 @@ test("an idle Claude or Codex terminal switches on the first request, whatever p
   assert.equal(terminalSwitchWarning(afterOutput([...codexTurn, "\x1b]7501;state=idle:app=codex\x07"])), null);
 });
 
+test("a Conversation with queued messages does not switch, since the terminal would drop them", () => {
+  const idle = { busy: false, requests: 0, switching: false, connecting: false };
+  assert.equal(conversationSwitchRefusal({ ...idle, queued: 0 }), null);
+  assert.match(conversationSwitchRefusal({ ...idle, queued: 2 }), /queued/);
+});
+
+test("the exit a switch to the Conversation causes is not the pane's: no error, no done", () => {
+  const pane = { id: "t1", projectSlug: "p", presetId: "p", name: "t1", cwd: "/w", status: "running", bell: false, exitCode: null, interfaceMode: "terminal" };
+  const exit = { type: "exit", ptyId: "t1", exitCode: 143 };
+  const state = { t1: { ...pane, modeSwitching: true } };
+  assert.equal(applyPtyEvent(state, exit), state);
+  assert.equal(applyPtyEvent({ t1: pane }, exit).t1.status, "error", "any other exit still shows");
+});
+
 // --- resume arguments ---
 
 test("switching to the terminal resumes the Conversation's session by id, whatever auto-resume says", () => {
@@ -88,6 +102,34 @@ test("switching to the terminal resumes the Conversation's session by id, whatev
   assert.equal(modeSwitchCommand(preset({ command: "claude --continue" }), id), "claude --continue");
   const spawn = resumeSpawn(preset({ autoResume: false }), { id: "a", cwd: "/w", sessionId: id, resumeOnSwitch: true }, [{ id: "b", preset: preset({}), cwd: "/w" }]);
   assert.deepEqual(spawn, { command: `claude --resume ${id}` }, "no shared-folder fallback to --continue");
+});
+
+test("only the spawn right after a switch resumes past the preset, and a resume that fails at once is dropped", () => {
+  const id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+  const switchedAt = 1_000_000;
+  const pane = { id: "t1", projectSlug: "p", presetId: "p", name: "t1", cwd: "/w", status: "running", bell: false, exitCode: null, interfaceMode: "terminal", sessionId: id, resumeOnSwitch: switchedAt };
+  // The agent ran and exited later: the next Restart follows the preset (auto-resume off: a new session).
+  const ran = applyPtyEvent({ t1: pane }, { type: "exit", ptyId: "t1", exitCode: 0 }, switchedAt + 60_000).t1;
+  assert.equal(ran.resumeOnSwitch, undefined);
+  assert.equal(ran.sessionId, id);
+  const off = preset({ autoResume: false });
+  assert.deepEqual(resumeSpawn(off, { id: "t1", cwd: "/w", restored: restartResumes(ran, true), sessionId: ran.sessionId, resumeOnSwitch: ran.resumeOnSwitch !== undefined }, []), { command: "claude" });
+  assert.deepEqual(resumeSpawn(preset({}), { id: "t1", cwd: "/w", restored: restartResumes(ran, true), sessionId: ran.sessionId, resumeOnSwitch: false }, []), { command: `claude --resume ${id}` });
+  // `codex resume <id>` of a thread with no turn yet exits at once: Restart starts fresh, not the same failure again.
+  const codex = preset({ command: "codex", agent: "codex" });
+  const failed = applyPtyEvent({ t1: pane }, { type: "exit", ptyId: "t1", exitCode: 1 }, switchedAt + SWITCH_RESUME_FAILED_MS - 1).t1;
+  assert.equal(failed.sessionId, undefined);
+  assert.equal(failed.resumeOnSwitch, undefined);
+  assert.equal(restartResumes(failed, true), false, "a restart of it does not continue latest either");
+  assert.deepEqual(resumeSpawn(codex, { id: "t1", cwd: "/w", restored: restartResumes(failed, true), sessionId: failed.sessionId }, []), { command: "codex" });
+});
+
+test("a session id handed between modes never names a path for the agents whose files Aya reads", () => {
+  assert.equal(switchSessionId("claude", "0f8fad5b-d9cb-469f-a165-70867728950e"), "0f8fad5b-d9cb-469f-a165-70867728950e");
+  assert.equal(switchSessionId("claude", "../../x"), undefined);
+  assert.equal(switchSessionId("codex", "a/b"), undefined);
+  assert.equal(switchSessionId("pi", "/home/u/.pi/sessions/s.jsonl"), "/home/u/.pi/sessions/s.jsonl", "Pi resumes a session file");
+  assert.equal(switchSessionId("pi", "bad id; rm"), undefined);
 });
 
 // --- transcripts ---
@@ -113,6 +155,23 @@ test("a Claude transcript gives the typed prompts and replies, without tool traf
     ["user", "What was it?"],
   ]);
   assert.equal(new Set(messages.map((m) => m.id)).size, messages.length);
+});
+
+test("a Claude transcript rewound in the terminal (Esc Esc) shows only the branch it went on from", () => {
+  const lines = [
+    { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "first" } },
+    { type: "assistant", uuid: "a1", parentUuid: "u1", message: { id: "m1", role: "assistant", content: [{ type: "text", text: "reply one" }] } },
+    { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "abandoned prompt" } },
+    { type: "assistant", uuid: "a2", parentUuid: "u2", message: { id: "m2", role: "assistant", content: [{ type: "text", text: "abandoned reply" }] } },
+    { type: "summary", summary: "a title" },
+    // The rewind went back to a1 and on from there.
+    { type: "user", uuid: "u3", parentUuid: "a1", message: { role: "user", content: "second" } },
+    { type: "assistant", uuid: "a3", parentUuid: "u3", message: { id: "m3", role: "assistant", content: [{ type: "text", text: "reply two" }] } },
+    // A compaction starts a new chain that points at the one before it.
+    { type: "system", uuid: "c1", parentUuid: null, logicalParentUuid: "a3", subtype: "compact_boundary" },
+    { type: "user", uuid: "u4", parentUuid: "c1", message: { role: "user", content: "third" } },
+  ].map((l) => JSON.stringify(l)).join("\n");
+  assert.deepEqual(claudeTranscriptMessages(lines).map((m) => m.text), ["first", "reply one", "second", "reply two", "third"]);
 });
 
 test("a Codex rollout gives the messages in both shapes Codex has written", () => {
@@ -166,6 +225,36 @@ test("a Codex thread rolled back by Edit from here reads on from its newer segme
   assert.equal(new Set(messages.map((m) => m.id)).size, 4);
 });
 
+test("a Codex thread rolled back twice keeps out what either rollback dropped", async () => {
+  const codex = join(home, "codex-two-rollbacks");
+  const day = join(codex, "sessions", "2026", "11", "26");
+  mkdirSync(day, { recursive: true });
+  const line = (ordinal, type, text) => JSON.stringify({ timestamp: "t", ordinal, type: "event_msg", payload: { type: "item_completed", item: { type, id: `i${ordinal}`, content: [{ type: "text", text }] } } });
+  const meta = (ordinal) => JSON.stringify({ timestamp: "t", ordinal, type: "session_meta", payload: { id: "t-2" } });
+  writeFileSync(join(day, "rollout-2026-11-26T10-00-00-t-2.jsonl"), [meta(0), line(1, "UserMessage", "one"), line(2, "AgentMessage", "did one"), line(3, "UserMessage", "two"), line(4, "AgentMessage", "did two"), line(5, "UserMessage", "three"), line(6, "AgentMessage", "did three")].join("\n"));
+  // The first rollback went back to "three"; the second further, to "two".
+  writeFileSync(join(day, "rollout-2026-11-26T11-00-00-t-2_seg-a.jsonl"), [meta(5), line(5, "UserMessage", "three again"), line(6, "AgentMessage", "did three again")].join("\n"));
+  writeFileSync(join(day, "rollout-2026-11-26T12-00-00-t-2_seg-b.jsonl"), [meta(3), line(3, "UserMessage", "two again"), line(4, "AgentMessage", "did two again")].join("\n"));
+  const messages = await codexThreadMessages(await findCodexRolloutSegments(codex, "t-2"));
+  assert.deepEqual(messages.map((m) => m.text), ["one", "did one", "two again", "did two again"]);
+});
+
+test("the terminal's session is read where its command's CODEX_HOME or CLAUDE_CONFIG_DIR put it", async () => {
+  const codex = join(home, "inline-codex-home");
+  const day = join(codex, "sessions", "2026", "11", "26");
+  mkdirSync(day, { recursive: true });
+  writeFileSync(join(day, "rollout-2026-11-26T10-00-00-t-3.jsonl"), JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "from the inline home" } }));
+  const codexMessages = await terminalSessionMessages("codex", "/w", undefined, "t-3", `CODEX_HOME=${codex} codex`);
+  assert.deepEqual(codexMessages?.map((m) => m.text), ["from the inline home"]);
+  const config = join(home, "inline-claude-config");
+  const cwd = join(home, "inline-work");
+  mkdirSync(cwd, { recursive: true });
+  mkdirSync(join(config, "projects", claudeProjectDirName(cwd)), { recursive: true });
+  writeFileSync(join(config, "projects", claudeProjectDirName(cwd), "s-9.jsonl"), JSON.stringify({ type: "user", uuid: "u", message: { role: "user", content: "from the inline config" } }));
+  const claudeMessages = await terminalSessionMessages("claude", cwd, undefined, "s-9", `CLAUDE_CONFIG_DIR="${config}" claude`);
+  assert.deepEqual(claudeMessages?.map((m) => m.text), ["from the inline config"]);
+});
+
 test("a Conversation opened from a terminal resumes the session it found and keeps the pane's choices", async () => {
   const read = async () => [{ id: "u", type: "user", text: "hi" }];
   const saved = { cwd: "/w", agent: "claude", threadId: "old", view: { permissionMode: "plan", messages: [{ id: "x", type: "user", text: "older" }], artifacts: [{ id: "a" }] } };
@@ -185,6 +274,17 @@ test("a Conversation opened from a terminal resumes the session it found and kee
   // Pi and Antigravity resume the id the pane's Conversation had, which Aya cannot read back.
   assert.equal((await adoptTerminalSession({ cwd: "/w", agent: "pi", sessionId: "p1" }, null, async () => null)).threadId, "p1");
   assert.equal((await adoptTerminalSession({ cwd: "/w", agent: "claude", sessionId: "bad id; rm" }, null, read)).threadId, undefined);
+  // An id a pane reported over OSC 9001 never names a file outside the transcripts.
+  let asked = 0;
+  const counted = async () => { asked++; return [{ id: "u", type: "user", text: "hi" }]; };
+  assert.equal((await adoptTerminalSession({ cwd: "/w", agent: "claude", sessionId: "../../etc/x" }, null, counted)).threadId, undefined);
+  assert.equal((await adoptTerminalSession({ cwd: "/w", agent: "codex", sessionId: "a/b" }, null, counted)).threadId, undefined);
+  assert.equal(asked, 0);
+  assert.equal(await findClaudeTranscript(join(home, "claude-config"), "/w", "../../x"), null);
+  // The same conversation keeps what the user queued in it; another one does not.
+  const queued = { ...saved, view: { ...saved.view, queue: [{ id: "q", text: "later" }] } };
+  assert.deepEqual((await adoptTerminalSession({ cwd: "/w", agent: "claude", sessionId: "old" }, queued, read)).view.queue, [{ id: "q", text: "later" }]);
+  assert.deepEqual((await adoptTerminalSession({ cwd: "/w", agent: "claude", sessionId: "s1" }, queued, read)).view.queue, []);
 });
 
 // --- migration ---

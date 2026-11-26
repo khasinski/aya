@@ -1,5 +1,5 @@
 import { memo,useCallback,useRef,type RefObject } from "react";
-import { paneCanSwitchMode,paneMode } from "../pane-mode";
+import { paneCanSwitchMode,paneMode,type PaneModeSwitchResult } from "../pane-mode";
 import { beginGuiPaneRecovery, guiRendererRecoveryInProgress } from '../gui-renderer-recovery';
 import type { GuiPaneStatus } from "../gui-status";
 import { emptyProjectPaneTitle,paneStyleFromRect } from "../pane-grid";
@@ -80,7 +80,7 @@ interface Props {
   onFocusTerminal?: (terminalId: string) => void;
   onSplitBesideTerminal?: (anchorId: string, targetId: string) => void;
   /** Terminal ⇄ Conversation (usePaneModeSwitch). */
-  onSwitchToConversation?: (terminalId: string, force?: boolean) => Promise<string | null>;
+  onSwitchToConversation?: (terminalId: string, force?: boolean) => Promise<PaneModeSwitchResult>;
   onSwitchToTerminal?: (terminalId: string, sessionId?: string) => void;
 }
 

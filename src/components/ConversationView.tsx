@@ -899,11 +899,12 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const closeArtifacts = () => { setDrawer(false); artifactButton.current?.focus(); };
   /** Terminal ⇄ Conversation (PaneHeader): stop the agent between turns and let the terminal resume its session. */
   const switchToTerminal = async (): Promise<string | null> => {
-    const refusal = conversationSwitchRefusal({ busy: busy || dispatching.current, requests: requests.length, switching, connecting });
+    const refusal = conversationSwitchRefusal({ busy: busy || dispatching.current, requests: requests.length, switching, connecting, queued: queue.length });
     if (refusal) return refusal;
     if (!api || !onSwitchToTerminal) return 'The terminal needs the Aya desktop app.';
     // The agent stops only under the veil, so a disconnected conversation never shows.
-    await beginPaneModeSwitch(terminal.id, 'terminal', true);
+    // Whether it resumes is known once the agent hands its session over (completeSwitchToTerminal).
+    await beginPaneModeSwitch(terminal.id, 'terminal');
     flushTextDeltas.current();
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = null;

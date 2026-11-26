@@ -5,8 +5,8 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { AGENT_SESSION_POLL_MS, asError, LOG_CLOCK_SLACK_MS, pollSession, restartGoneResume } from "./agent-session";
-import { isSafeSessionId } from "./osc-extractor";
+import { AGENT_SESSION_POLL_MS, asError, dropDeadContinue, LOG_CLOCK_SLACK_MS, pollSession, restartGoneResume } from "./agent-session";
+import { isFileSessionId, isSafeSessionId } from "./osc-extractor";
 import { pathExists } from "./path-exists";
 import { expandUserPath } from "./usage";
 
@@ -42,6 +42,7 @@ export async function claudeTranscriptExists(
   cwd: string,
   sessionId: string,
 ): Promise<boolean> {
+  if (!isFileSessionId(sessionId)) return false;
   const projects = path.join(claudeConfigDir(configDir), "projects");
   if (await pathExists(path.join(projects, claudeProjectDirName(cwd), `${sessionId}.jsonl`))) return true;
   // A folder Aya cannot name (symlinked cwd; a long one is cut at 200 characters
@@ -49,6 +50,22 @@ export async function claudeTranscriptExists(
   const others = await fs.readdir(projects).catch(() => [] as string[]);
   const found = await Promise.all(others.map((name) => pathExists(path.join(projects, name, `${sessionId}.jsonl`))));
   return found.includes(true);
+}
+
+// Claude cuts a project folder name this long and adds a hash Aya cannot rebuild.
+const NAMEABLE_PROJECT_DIR = 200;
+
+/** Whether `--continue` in `cwd` has a conversation to go on with: a transcript in the cwd's project folder (by its
+ *  spelling or its real path). A folder Aya cannot name counts as having one. */
+export async function claudeHasCwdSessions(configDir: string | undefined, cwd: string): Promise<boolean> {
+  const projects = path.join(claudeConfigDir(configDir), "projects");
+  const real = await fs.realpath(cwd).catch(() => cwd);
+  for (const dir of new Set([cwd, real].map(claudeProjectDirName))) {
+    if (dir.length > NAMEABLE_PROJECT_DIR) return true;
+    const names = await fs.readdir(path.join(projects, dir)).catch(() => [] as string[]);
+    if (names.some((name) => name.endsWith(".jsonl"))) return true;
+  }
+  return false;
 }
 
 /** Reports a claude process's conversation on every poll (an event sent while no window is connected is lost); with
@@ -98,23 +115,26 @@ export async function shellClaudeConfigDir(
   return line.slice(CONFIG_DIR_MARK.length);
 }
 
-/** `--resume <id>` of a conversation Claude no longer has becomes `--session-id <id>`. `configDir` set by
- *  the command is the only dir; else the env's or the pane shell's. A shell that cannot answer keeps the resume. */
-export function withLiveClaudeResume(
+/** `--resume <id>` of a conversation Claude no longer has becomes `--session-id <id>`, and `--continue` in a folder
+ *  with no conversation goes (a pane whose first launch ended at the folder-trust prompt saved none). `configDir` set
+ *  by the command is the only dir; else the env's or the pane shell's. A shell that cannot answer keeps the flag. */
+export async function withLiveClaudeResume(
   command: string,
   configDir: string | undefined,
   cwd: string,
   paneConfigDir: () => Promise<string> = async () => "",
   onProbeError: (err: Error) => void = () => {},
 ): Promise<string> {
-  return restartGoneResume(command, async (id) => {
-    if (configDir !== undefined) return claudeTranscriptExists(configDir, cwd, id);
-    if (await claudeTranscriptExists(undefined, cwd, id)) return true;
+  const exists = async (has: (dir: string | undefined) => Promise<boolean>) => {
+    if (configDir !== undefined) return has(configDir);
+    if (await has(undefined)) return true;
     try {
-      return await claudeTranscriptExists(await paneConfigDir() || undefined, cwd, id);
+      return await has(await paneConfigDir() || undefined);
     } catch (err) {
       onProbeError(asError(err));
       return true;
     }
-  });
+  };
+  const resumed = await restartGoneResume(command, (id) => exists((dir) => claudeTranscriptExists(dir, cwd, id)));
+  return dropDeadContinue(resumed, () => exists((dir) => claudeHasCwdSessions(dir, cwd)));
 }

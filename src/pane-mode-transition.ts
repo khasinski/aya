@@ -15,7 +15,7 @@ export interface PaneModeTransition {
   phase: PaneModePhase;
   /** "Opening conversation…" / "Starting terminal…". */
   title: string;
-  /** "Resuming session" or "Starting a new session". */
+  /** "Resuming session" or "Starting a new session" (while Aya does not know yet: "Stopping the conversation"). */
   detail: string;
 }
 
@@ -23,21 +23,27 @@ export interface PaneModeState {
   transition: PaneModeTransition | null;
   /** Why the last switch did not happen or did not finish; shown next to the toggle. */
   message: string | null;
+  /** The message warns about switching to this mode: a second request to it, while the message shows, overrides it.
+   *  A refusal or a failure has none, so a click after one never switches past anything. */
+  warning?: PaneMode;
 }
 
 /** The veil's fade, both ways; the CSS uses the same value (--aya-pane-mode-fade). */
 export const PANE_MODE_FADE_MS = 150;
 /** A terminal that prints nothing (a quiet agent, a slow login shell) is shown after this long anyway. */
 export const TERMINAL_READY_FALLBACK_MS = 2500;
-/** Nothing ever leaves the veil up longer than this. */
-const SWITCH_TIMEOUT_MS = 20_000;
+/** Nothing leaves the veil up longer than this, counted again from the swap (a cold start can take most of it). */
+export const SWITCH_TIMEOUT_MS = 20_000;
+const TIMEOUT_MESSAGE = "The switch took too long. The pane shows where it got to.";
 const MESSAGE_MS = 8000;
 
 const EMPTY: PaneModeState = { transition: null, message: null };
 const states = new Map<string, PaneModeState>();
 const listeners = new Set<() => void>();
-interface Pending { readyRequested: boolean; timers: ReturnType<typeof setTimeout>[]; cleanups: (() => void)[] }
+interface Pending { readyRequested: boolean; timers: ReturnType<typeof setTimeout>[]; cleanups: (() => void)[]; timeout?: ReturnType<typeof setTimeout> }
 const pending = new Map<string, Pending>();
+/** A switch the timeout gave up on: its view may still get ready, which takes the timeout's message back. */
+const lateTargets = new Map<string, PaneMode>();
 const messageTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const reducedMotion = () => {
@@ -68,21 +74,26 @@ export function usePaneModeTransitions(): ReadonlyMap<string, PaneModeState> {
 let lastSnapshot: Map<string, PaneModeState> = new Map();
 let lastVersion = "";
 function snapshot() {
-  const version = [...states].map(([id, s]) => `${id}:${s.transition?.phase ?? "-"}:${s.transition?.to ?? ""}`).join("|");
+  const version = [...states].map(([id, s]) => `${id}:${s.transition?.phase ?? "-"}:${s.transition?.to ?? ""}:${s.transition?.detail ?? ""}`).join("|");
   if (version !== lastVersion) { lastVersion = version; lastSnapshot = new Map(states); }
   return lastSnapshot;
 }
+
+/** The pane's switch state outside React. */
+export const paneModeState = (id: string): PaneModeState => get(id);
 
 export function paneModeSwitching(id: string): boolean {
   return !!get(id).transition;
 }
 
-/** Show why a switch did not happen, next to the toggle, for a while (null clears it). */
-export function setPaneModeMessage(id: string, message: string | null) {
+/** Show why a switch did not happen, next to the toggle, for a while (null clears it). `warning`: the message is a
+ *  warning about switching to that mode, which the next request to it overrides. */
+export function setPaneModeMessage(id: string, message: string | null, warning?: PaneMode) {
   const timer = messageTimers.get(id);
   if (timer) clearTimeout(timer);
   messageTimers.delete(id);
-  set(id, { ...get(id), message });
+  const { warning: _old, ...rest } = get(id);
+  set(id, { ...rest, message, ...(message && warning ? { warning } : {}) });
   if (message) messageTimers.set(id, setTimeout(() => { messageTimers.delete(id); if (get(id).message === message) set(id, { ...get(id), message: null }); }, MESSAGE_MS));
 }
 
@@ -94,11 +105,18 @@ function clearPending(id: string) {
   pending.delete(id);
 }
 
+/** Whether a request to switch to `to` overrides what the header shows: a warning about that same switch. */
+export function paneModeWarned(id: string, to: PaneMode): boolean {
+  const s = get(id);
+  return s.message !== null && s.warning === to;
+}
+
 /** Start a switch: the veil fades in over the current view. Resolves once it covers the pane, so the caller swaps
  *  the views only where nobody sees it. A terminal target is ready at its first output (or its exit, or a quiet
  *  fallback after the swap); a Conversation target says so itself (paneModeReady / paneModeFailed). */
-export function beginPaneModeSwitch(id: string, to: PaneMode, resuming: boolean): Promise<void> {
+export function beginPaneModeSwitch(id: string, to: PaneMode, resuming?: boolean): Promise<void> {
   clearPending(id);
+  lateTargets.delete(id);
   const p: Pending = { readyRequested: false, timers: [], cleanups: [] };
   pending.set(id, p);
   set(id, {
@@ -106,7 +124,7 @@ export function beginPaneModeSwitch(id: string, to: PaneMode, resuming: boolean)
     transition: {
       to, phase: "covering",
       title: to === "gui" ? "Opening conversation…" : "Starting terminal…",
-      detail: resuming ? "Resuming session" : "Starting a new session",
+      detail: resumingDetail(resuming),
     },
   });
   if (to === "terminal") {
@@ -114,7 +132,7 @@ export function beginPaneModeSwitch(id: string, to: PaneMode, resuming: boolean)
       if (event.type === "data" || event.type === "exit" || event.type === "no-session" || event.type === "spawn-failed") paneModeReady(id);
     }));
   }
-  p.timers.push(setTimeout(() => paneModeFailed(id, "The switch took too long. The pane shows where it got to."), SWITCH_TIMEOUT_MS));
+  armTimeout(id, p);
   return new Promise((resolve) => {
     p.timers.push(setTimeout(() => {
       const s = get(id);
@@ -126,10 +144,33 @@ export function beginPaneModeSwitch(id: string, to: PaneMode, resuming: boolean)
   });
 }
 
-/** The new view is mounted under the veil (a terminal: its first output may never come). */
+const resumingDetail = (resuming: boolean | undefined) =>
+  resuming === undefined ? "Stopping the conversation" : resuming ? "Resuming session" : "Starting a new session";
+
+/** Once Aya knows whether the new view resumes a session (a Conversation hands its id over only as it stops). */
+export function setPaneModeResuming(id: string, resuming: boolean) {
+  const s = get(id);
+  if (s.transition) set(id, { ...s, transition: { ...s.transition, detail: resumingDetail(resuming) } });
+}
+
+function armTimeout(id: string, p: Pending) {
+  if (p.timeout) clearTimeout(p.timeout);
+  const to = get(id).transition?.to;
+  p.timeout = setTimeout(() => {
+    if (pending.get(id) !== p) return;
+    if (to) lateTargets.set(id, to);
+    paneModeFailed(id, TIMEOUT_MESSAGE);
+  }, SWITCH_TIMEOUT_MS);
+  p.timers.push(p.timeout);
+}
+
+/** The new view is mounted under the veil: the timeout counts from here, since what is slow (a cold start, the
+ *  transcript lookup) comes before; a terminal's first output may never come. */
 export function paneModeSwapped(id: string) {
   const p = pending.get(id);
-  if (p && get(id).transition?.to === "terminal") p.timers.push(setTimeout(() => paneModeReady(id), TERMINAL_READY_FALLBACK_MS));
+  if (!p) return;
+  armTimeout(id, p);
+  if (get(id).transition?.to === "terminal") p.timers.push(setTimeout(() => paneModeReady(id), TERMINAL_READY_FALLBACK_MS));
 }
 
 async function reveal(id: string, p: Pending) {
@@ -148,6 +189,8 @@ async function reveal(id: string, p: Pending) {
 export function paneModeReady(id: string) {
   const p = pending.get(id);
   const s = get(id);
+  // Ready after all, past the timeout: the switch did finish.
+  if (!p && lateTargets.delete(id) && s.message === TIMEOUT_MESSAGE) { setPaneModeMessage(id, null); return; }
   if (!p || !s.transition) return;
   if (s.transition.phase === "covering") { p.readyRequested = true; return; }
   void reveal(id, p);
@@ -170,5 +213,5 @@ export function cancelPaneModeSwitch(id: string) {
 
 /** Which way a running switch goes, for the view that should report readiness. */
 export function paneModeTarget(id: string): PaneMode | null {
-  return get(id).transition?.to ?? null;
+  return get(id).transition?.to ?? lateTargets.get(id) ?? null;
 }

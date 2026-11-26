@@ -55,6 +55,7 @@ import type {
 	ThemeColors
 } from "../types";
 import { displayIpcError,UPDATE_SPAWN_REFUSAL } from "../update-spawn";
+import type { PaneModeSwitchResult } from "../pane-mode";
 import { GPU_RELAUNCHED_EVENT } from "../window-events";
 import { SnippetBar } from "./SnippetBar";
 import { FindBar } from './TerminalFindBar';
@@ -143,7 +144,7 @@ interface Props {
   onActivatePane?: () => void;
   enableWebgl?: boolean;
   /** Terminal ⇄ Conversation for an agent with a Conversation GUI; absent for a pane with the terminal only. */
-  onSwitchMode?: (force?: boolean) => Promise<string | null>;
+  onSwitchMode?: (force?: boolean) => Promise<PaneModeSwitchResult>;
   /** The header's Artifacts slot (PaneHeader); defaults to the pane's `aya present` artifacts, in the same spot as
    *  the Conversation's artifact drawer toggle. */
   artifacts?: ReactNode;
