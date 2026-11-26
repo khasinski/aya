@@ -418,7 +418,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     }, scheduleConversationFrame);
     flushTextDeltas.current = textDeltas.flush;
     const off = api.onEvent(terminal.id, event => {
-      if (event.method === 'aya/sessionEpoch') { textDeltas.flush(); eventSequence.current = 0; receivedEventSequence.current = 0; return; }
+      // A new agent session: the composer assist forgets the old one's suggested next prompt too.
+      if (event.method === 'aya/sessionEpoch') { textDeltas.flush(); eventSequence.current = 0; receivedEventSequence.current = 0; assist.handleEvent(event); return; }
       if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') textDeltas.flush();
       if (event.sequence) { receivedEventSequence.current = Math.max(receivedEventSequence.current, event.sequence); if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') eventSequence.current = receivedEventSequence.current; }
       const p = event.params;
