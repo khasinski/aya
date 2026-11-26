@@ -88,3 +88,16 @@ export function requestFanOut(draft: FanOutDraft): void {
 export function requestFanOutCompare(runId: string): void {
   window.dispatchEvent(new CustomEvent<{ runId: string }>(FAN_OUT_COMPARE_EVENT, { detail: { runId } }));
 }
+
+/** How many files a unified diff changes, counted without splitting it into lines (a branch's diff can be large). */
+export function diffFileCount(diff: string): number {
+  let count = diff.startsWith("diff --git") ? 1 : 0;
+  for (let at = diff.indexOf("\ndiff --git"); at >= 0; at = diff.indexOf("\ndiff --git", at + 1)) count++;
+  return count;
+}
+
+/** A compare tab's summary: "…" while the diff loads, "no changes", or "3 files". */
+export function diffStatsText(files: number | null | undefined): string {
+  if (files === null || files === undefined) return "…";
+  return files === 0 ? "no changes" : `${files} file${files === 1 ? "" : "s"}`;
+}

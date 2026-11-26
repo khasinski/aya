@@ -8,7 +8,7 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { makeRepo } from "./helpers/git.mjs";
 
-const { fanOutSlug, planFanOut, fanOutSummary, slugify, queueFanOutMessage, takeFanOutMessage, recordFanOutRun, fanOutRunForTerminal } =
+const { diffFileCount, diffStatsText, fanOutSlug, planFanOut, fanOutSummary, slugify, queueFanOutMessage, takeFanOutMessage, recordFanOutRun, fanOutRunForTerminal } =
   await import("../dist-test/gui-fan-out.js");
 const { createFanOutWorktrees, fanOutDiff } = await import("../dist-electron/gui-fan-out.js");
 
@@ -117,4 +117,15 @@ test("fanOutDiff shows committed, uncommitted and untracked changes since the ba
     assert.match(diff, /new\.txt/);
     await assert.rejects(() => fanOutDiff(wt.path, "HEAD; rm -rf /"), /base commit/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a compare tab counts a branch's changed files once, from the diff's headers", () => {
+  const diff = "diff --git a/a b/a\n--- a/a\n+++ b/a\n+x\ndiff --git a/b b/b\n+ text mentioning diff --git inline\n";
+  assert.equal(diffFileCount(diff), 2);
+  assert.equal(diffFileCount(""), 0);
+  assert.equal(diffStatsText(diffFileCount(diff)), "2 files");
+  assert.equal(diffStatsText(1), "1 file");
+  assert.equal(diffStatsText(0), "no changes");
+  assert.equal(diffStatsText(null), "…");
+  assert.equal(diffStatsText(undefined), "…");
 });
