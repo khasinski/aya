@@ -39,6 +39,8 @@ test("a host with no pty-host.sock is warned about, and Restart puts things righ
   };
   // Once Aya talks to its host: removing the socket earlier would race Aya's own first connection to it.
   await expect.poll(async () => (await report()).ptyHost.pid, { timeout: 15_000 }).toBeGreaterThan(1);
+  // Each report is gathered anew: the first one can predate the host's socket file on a slow start.
+  await expect.poll(async () => (await report()).ptyHost.warnings, { timeout: 15_000 }).toEqual([]);
   await expect(settings.locator(".aya-settings-diagnostics-warnings")).toHaveCount(0);
 
   // The state the 2026-10-13 race left: the host Aya uses runs, its socket file is gone.
