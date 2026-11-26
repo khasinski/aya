@@ -19,6 +19,7 @@
 - Conversation GUI: show the agent's suggested next prompt in the empty composer (Tab inserts it; can be turned off), a context-window meter in the header, a `$` skills picker (also in the `/` menu) for Claude and Codex, and a Restart agent session action (`/restart`) that reloads skills and MCP servers and resumes the conversation.
 - Conversation GUI: a Codex file edit waiting for approval names the files it edits instead of showing the raw request.
 - Conversation GUI: show Codex 0.172's subagents (reported as subagent activity instead of a spawn call) as their own rows with a Stop button, instead of "Using a tool".
+- Fix a Codex pane switched from its terminal to the Conversation showing the turns that **Edit from here** removed and missing every later one: Codex 0.172 continues a rolled-back thread in a new rollout file, which Aya now reads.
 - Keep the restart warnings short when many terminals are open: they list the first 8 processes and count the rest, so the buttons stay on screen.
 
 ## v0.20.0 - 2026-11-22

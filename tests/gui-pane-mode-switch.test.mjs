@@ -10,7 +10,7 @@ import { join } from "node:path";
 const home = mkdtempSync(join(tmpdir(), "aya-pane-mode-test-"));
 process.env.AYA_HOME = home;
 const { mergeInterfaceTwins, remapProjectTabs, migrateInterfaceTwinPresets } = await import("../dist-electron/preset-mode-migration.js");
-const { claudeTranscriptMessages, codexRolloutMessages, adoptTerminalSession, findClaudeTranscript, findCodexRollout, withTerminalArtifacts } = await import("../dist-electron/gui-mode-switch.js");
+const { claudeTranscriptMessages, codexRolloutMessages, codexThreadMessages, adoptTerminalSession, findClaudeTranscript, findCodexRollout, findCodexRolloutSegments, withTerminalArtifacts } = await import("../dist-electron/gui-mode-switch.js");
 const { claudeProjectDirName } = await import("../dist-electron/claude-session.js");
 const { modeSwitchCommand, resumeSpawn } = await import("../dist-test/agentPreset.js");
 const { paneMode, initialPaneMode, terminalSwitchRefusal, terminalSwitchWarning, conversationSwitchRefusal } = await import("../dist-test/pane-mode.js");
@@ -126,6 +126,24 @@ test("transcripts are found by the cwd's folder, a symlink-free spelling, or any
   writeFileSync(join(codex, "sessions", "2026", "11", "25", "rollout-2026-11-25T10-00-00-abc-1.jsonl"), "");
   assert.equal(await findCodexRollout(codex, "abc-1"), join(codex, "sessions", "2026", "11", "25", "rollout-2026-11-25T10-00-00-abc-1.jsonl"));
   assert.equal(await findCodexRollout(codex, "zzz"), null);
+});
+
+test("a Codex thread rolled back by Edit from here reads on from its newer segment, without the dropped turns", async () => {
+  // Codex 0.172: thread/revert starts rollout-<time>-<id>_<segment>.jsonl, whose ordinals go on from where it cut.
+  const codex = join(home, "codex-segments");
+  const day = (d) => join(codex, "sessions", "2026", "11", d);
+  mkdirSync(day("25"), { recursive: true }); mkdirSync(day("26"), { recursive: true });
+  const line = (ordinal, type, text) => JSON.stringify({ timestamp: "t", ordinal, type: "event_msg", payload: { type: "item_completed", item: { type, id: `i${ordinal}`, content: [{ type: "text", text }] } } });
+  const meta = (ordinal) => JSON.stringify({ timestamp: "t", ordinal, type: "session_meta", payload: { id: "t-1" } });
+  writeFileSync(join(day("25"), "rollout-2026-11-25T10-00-00-t-1.jsonl"), [meta(0), line(1, "UserMessage", "one"), line(2, "AgentMessage", "did one"), line(3, "UserMessage", "two"), line(4, "AgentMessage", "did two")].join("\n"));
+  writeFileSync(join(day("26"), "rollout-2026-11-26T09-00-00-t-1_seg-a.jsonl"), [meta(3), line(3, "UserMessage", "three"), line(4, "AgentMessage", "did three")].join("\n"));
+  writeFileSync(join(day("26"), "rollout-2026-11-26T09-00-00-other.jsonl"), line(0, "UserMessage", "not this thread"));
+  const files = await findCodexRolloutSegments(codex, "t-1");
+  assert.deepEqual(files.map((f) => f.split("/").at(-1)), ["rollout-2026-11-25T10-00-00-t-1.jsonl", "rollout-2026-11-26T09-00-00-t-1_seg-a.jsonl"]);
+  assert.equal(await findCodexRollout(codex, "t-1"), files[0]);
+  const messages = await codexThreadMessages(files);
+  assert.deepEqual(messages.map((m) => m.text), ["one", "did one", "three", "did three"]);
+  assert.equal(new Set(messages.map((m) => m.id)).size, 4);
 });
 
 test("a Conversation opened from a terminal resumes the session it found and keeps the pane's choices", async () => {
