@@ -13,14 +13,17 @@ import { parseProcesses, type ProcessTable } from "./caller-proof";
 export type { AgentServer };
 
 export interface AgentServerDeps {
-  /** `ps -A -o pid=,ppid=,command=` output, or null when ps cannot answer. */
-  ps(): Promise<string | null>;
+  /** `ps -A -o pid=,ppid=,command=` output, or null when ps cannot answer. `fresh`: not the table another caller
+   *  read a moment ago (a Stop must see the tree as it is now). */
+  ps(fresh?: boolean): Promise<string | null>;
   /** `lsof -Fpn` listen records for these pids ("" when none listen), or null when lsof is missing. */
   lsof(pids: number[]): Promise<string | null>;
   /** `ss -Hltnp` output, or null when ss is missing too. */
   ss(): Promise<string | null>;
   kill(pid: number, signal: NodeJS.Signals): void;
   alive(pid: number): boolean;
+  /** Of these pids, the ones that have exited but are not reaped yet (ps state Z): `alive` still sees them. */
+  zombies?(pids: number[]): Promise<Set<number>>;
   sleep(ms: number): Promise<void>;
 }
 
@@ -29,6 +32,16 @@ const PROBE_TIMEOUT_MS = 2_000;
 const TABLE_SHARE_MS = 1_000;
 const MAX_COMMAND_CHARS = 400;
 const MAX_LISTED_PIDS = 400;
+/** One lsof covers every pane asking within this window. */
+export const LIST_BATCH_MS = 150;
+const SHELLS = new Set(["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "tcsh", "csh", "nu", "elvish", "xonsh", "pwsh"]);
+
+/** A pane's root is a shell when the agent could not be exec'd in its place (a launcher function, a compound
+ *  command): the shell's own children are then the agent itself. */
+export function isShellCommand(command: string): boolean {
+  const program = command.trim().split(/\s+/)[0] ?? "";
+  return SHELLS.has(program.replace(/^-/, "").split("/").pop() ?? "");
+}
 
 /** Every descendant of `root` (root excluded), walking the ppid links of one snapshot. */
 export function descendantsOf(root: number, table: ProcessTable): number[] {
@@ -103,9 +116,9 @@ function run(file: string, args: string[]): Promise<{ stdout: string; code: numb
 let sharedTable: { at: number; text: Promise<string | null> } | null = null;
 
 export const systemDeps: AgentServerDeps = {
-  ps: () => {
-    // Several visible panes poll on their own timers; one ps answers them all for a moment.
-    if (sharedTable && Date.now() - sharedTable.at < TABLE_SHARE_MS) return sharedTable.text;
+  ps: (fresh) => {
+    // Several visible panes poll; one ps answers them all for a moment.
+    if (!fresh && sharedTable && Date.now() - sharedTable.at < TABLE_SHARE_MS) return sharedTable.text;
     const text = run("ps", ["-A", "-o", "pid=,ppid=,command="]).then(({ stdout, code }) => code === 0 && stdout ? stdout : null);
     sharedTable = { at: Date.now(), text };
     return text;
@@ -123,50 +136,112 @@ export const systemDeps: AgentServerDeps = {
   alive: (pid) => {
     try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === "EPERM"; }
   },
+  zombies: async (pids) => {
+    const { stdout } = await run("ps", ["-o", "pid=,stat=", "-p", pids.join(",")]);
+    const out = new Set<number>();
+    for (const line of stdout.split("\n")) { const match = /^\s*(\d+)\s+(\S+)/.exec(line); if (match && match[2].startsWith("Z")) out.add(Number(match[1])); }
+    return out;
+  },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
-async function tree(root: number, deps: AgentServerDeps): Promise<{ table: ProcessTable; descendants: number[] } | null> {
-  const text = await deps.ps();
+/** The processes under `root` that may be listed and stopped: never the root, and when the root is a shell, not its
+ *  own children either (the agent CLI, whose built-in servers and Stop would end the agent). */
+async function tree(root: number, deps: AgentServerDeps, fresh = false): Promise<{ table: ProcessTable; descendants: number[] } | null> {
+  const text = await deps.ps(fresh);
   const table = text ? parseProcesses(text) : null;
-  if (!table || !table.has(root)) return null;
-  return { table, descendants: descendantsOf(root, table) };
+  return table ? treeIn(root, table) : null;
 }
 
-/** The listening servers under `root`, by first port. Never the root itself: that is the agent (or shell). */
-export async function listAgentServers(root: number | null | undefined, deps: AgentServerDeps = systemDeps): Promise<AgentServer[]> {
-  if (!Number.isInteger(root) || (root as number) <= 1 || process.platform === "win32") return [];
-  const found = await tree(root as number, deps);
-  if (!found || !found.descendants.length) return [];
-  const pids = found.descendants.slice(0, MAX_LISTED_PIDS);
+function treeIn(root: number, table: ProcessTable): { table: ProcessTable; descendants: number[] } | null {
+  const entry = table.get(root);
+  if (!entry) return null;
+  const agents = isShellCommand(entry.command) ? new Set([...table].filter(([pid, p]) => p.ppid === root && pid !== root).map(([pid]) => pid)) : new Set<number>();
+  return { table, descendants: descendantsOf(root, table).filter((pid) => !agents.has(pid)) };
+}
+
+const validRoot = (root: number | null | undefined): root is number => Number.isInteger(root) && (root as number) > 1 && process.platform !== "win32";
+
+/** The listening servers under each root, from one ps and one lsof (or ss) for all of them. */
+export async function listAgentServersFor(roots: readonly number[], deps: AgentServerDeps = systemDeps): Promise<Map<number, AgentServer[]>> {
+  const out = new Map<number, AgentServer[]>(roots.map((root) => [root, []]));
+  const valid = [...new Set(roots.filter(validRoot))];
+  if (!valid.length) return out;
+  const text = await deps.ps();
+  const table = text ? parseProcesses(text) : null;
+  if (!table) return out;
+  const trees = new Map<number, number[]>();
+  for (const root of valid) { const found = treeIn(root, table); if (found?.descendants.length) trees.set(root, found.descendants.slice(0, MAX_LISTED_PIDS)); }
+  const pids = [...new Set([...trees.values()].flat())];
+  if (!pids.length) return out;
   const lsof = await deps.lsof(pids);
   let listeners: Map<number, number[]>;
   if (lsof !== null) listeners = parseLsofListeners(lsof);
   else { const ss = await deps.ss(); listeners = ss ? parseSsListeners(ss) : new Map(); }
-  const servers: AgentServer[] = [];
-  for (const pid of pids) {
-    const ports = listeners.get(pid);
-    if (!ports?.length) continue;
-    servers.push({ pid, command: (found.table.get(pid)?.command ?? "").slice(0, MAX_COMMAND_CHARS), ports: [...ports].sort((a, b) => a - b) });
+  for (const [root, under] of trees) {
+    const servers: AgentServer[] = [];
+    for (const pid of under) {
+      const ports = listeners.get(pid);
+      if (!ports?.length) continue;
+      servers.push({ pid, command: (table.get(pid)?.command ?? "").slice(0, MAX_COMMAND_CHARS), ports: [...ports].sort((a, b) => a - b) });
+    }
+    out.set(root, servers.sort((a, b) => a.ports[0] - b.ports[0] || a.pid - b.pid));
   }
-  return servers.sort((a, b) => a.ports[0] - b.ports[0] || a.pid - b.pid);
+  return out;
 }
+
+/** The listening servers under `root`, by first port. Never the root itself: that is the agent (or shell). */
+export async function listAgentServers(root: number | null | undefined, deps: AgentServerDeps = systemDeps): Promise<AgentServer[]> {
+  if (!validRoot(root)) return [];
+  return (await listAgentServersFor([root], deps)).get(root) ?? [];
+}
+
+/** listAgentServers for many panes polling at once: requests within `windowMs` share one ps and one lsof. */
+export function batchedServerLister(deps: AgentServerDeps = systemDeps, windowMs = LIST_BATCH_MS): (root: number | null | undefined) => Promise<AgentServer[]> {
+  let batch: Map<number, ((servers: AgentServer[]) => void)[]> | null = null;
+  return (root) => {
+    if (!validRoot(root)) return Promise.resolve([]);
+    return new Promise((resolve) => {
+      if (!batch) {
+        const current = batch = new Map();
+        setTimeout(() => {
+          batch = null;
+          void listAgentServersFor([...current.keys()], deps).catch(() => new Map<number, AgentServer[]>()).then((found) => {
+            for (const [key, waiting] of current) for (const done of waiting) done(found.get(key) ?? []);
+          });
+        }, windowMs).unref?.();
+      }
+      const waiting = batch.get(root);
+      if (waiting) waiting.push(resolve); else batch.set(root, [resolve]);
+    });
+  };
+}
+
+/** The lister every pane shares (terminal and Conversation GUI). */
+export const listAgentServersBatched = batchedServerLister();
 
 /** SIGTERM `pid` and its own children, then SIGKILL whatever is left after `graceMs`. Refuses a pid that is not,
  *  right now, a descendant of `root`. `forced` says whether SIGKILL was needed. */
 export async function stopAgentServer(root: number | null | undefined, pid: number, deps: AgentServerDeps = systemDeps, graceMs = STOP_GRACE_MS): Promise<{ forced: boolean }> {
   if (!Number.isInteger(pid) || pid <= 1) throw new Error("Invalid process id");
-  const found = Number.isInteger(root) && (root as number) > 1 ? await tree(root as number, deps) : null;
+  const found = Number.isInteger(root) && (root as number) > 1 ? await tree(root as number, deps, true) : null;
   if (!found) throw new Error("The agent is not running, so Aya cannot tell which processes it started");
   if (!found.descendants.includes(pid)) throw new Error("That process is no longer running under this agent");
   const targets = [pid, ...descendantsOf(pid, found.table)];
   const signal = (sig: NodeJS.Signals, to: number[]) => { for (const target of to) { try { deps.kill(target, sig); } catch { /* already gone */ } } };
+  // An exited process its parent has not reaped yet still answers kill(pid, 0); it is gone all the same.
+  const living = async () => {
+    const left = targets.filter((target) => deps.alive(target));
+    if (!left.length || !deps.zombies) return left;
+    const zombies = await deps.zombies(left).catch(() => new Set<number>());
+    return left.filter((target) => !zombies.has(target));
+  };
   signal("SIGTERM", targets);
   for (let waited = 0; waited < graceMs; waited += 100) {
-    if (!targets.some((target) => deps.alive(target))) return { forced: false };
+    if (!(await living()).length) return { forced: false };
     await deps.sleep(100);
   }
-  const left = targets.filter((target) => deps.alive(target));
+  const left = await living();
   if (!left.length) return { forced: false };
   signal("SIGKILL", left);
   return { forced: true };

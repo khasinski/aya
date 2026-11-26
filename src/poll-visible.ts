@@ -6,19 +6,29 @@ export const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
 // hidden (no point spawning `git`, re-reading session/usage files in the
 // background), and refresh once immediately when it becomes visible again.
 // Returns a cleanup that stops the interval and removes the listener.
-export function pollVisible(refresh: () => void, intervalMs: number): () => void {
+// `aligned`: ticks fall on multiples of intervalMs of the wall clock, so every caller with the same interval polls in
+// the same moment (main batches what they ask then).
+export function pollVisible(refresh: () => void, intervalMs: number, options: { aligned?: boolean } = {}): () => void {
   refresh();
   const doc = typeof document !== "undefined" ? document : undefined;
-  let timer: number | null = null;
+  let timer: number | null = null, start: number | null = null;
+  const stopTimer = () => {
+    if (timer !== null) window.clearInterval(timer);
+    if (start !== null) window.clearTimeout(start);
+    timer = start = null;
+  };
   const updateTimer = () => {
-    if (doc?.hidden) { if (timer !== null) window.clearInterval(timer); timer = null; }
-    else if (timer === null) timer = window.setInterval(refresh, intervalMs);
+    if (doc?.hidden) stopTimer();
+    else if (timer === null && start === null) {
+      if (!options.aligned) timer = window.setInterval(refresh, intervalMs);
+      else start = window.setTimeout(() => { start = null; refresh(); timer = window.setInterval(refresh, intervalMs); }, intervalMs - (Date.now() % intervalMs));
+    }
   };
   const onVisible = () => { updateTimer(); if (!doc?.hidden) refresh(); };
   updateTimer();
   doc?.addEventListener?.("visibilitychange", onVisible);
   return () => {
-    if (timer !== null) window.clearInterval(timer);
+    stopTimer();
     doc?.removeEventListener?.("visibilitychange", onVisible);
   };
 }

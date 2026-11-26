@@ -2,7 +2,7 @@
 // through the window's ordinary external-URL path (env:open-url). Conversation GUI panes use the codex-gui channel.
 
 import type { IpcMain } from "electron";
-import { listAgentServers, stopAgentServer, type AgentServerDeps } from "../agent-servers";
+import { batchedServerLister, listAgentServersBatched, stopAgentServer, type AgentServerDeps } from "../agent-servers";
 import { requireString } from "../validation";
 
 export interface AgentServersIpcDeps {
@@ -15,6 +15,8 @@ export interface AgentServersIpcDeps {
 }
 
 export function registerAgentServersIpc({ ipcMain, getPid, isRemote = () => false, system }: AgentServersIpcDeps): void {
+  // Every pane's poll in one moment shares a ps and an lsof (the Conversation GUI's too).
+  const list = system ? batchedServerLister(system) : listAgentServersBatched;
   ipcMain.handle("pty:servers", async (_e, rawPtyId: unknown, action: unknown, pid: unknown) => {
     const ptyId = requireString(rawPtyId, "pty:servers.ptyId");
     if (isRemote(ptyId)) {
@@ -23,6 +25,6 @@ export function registerAgentServersIpc({ ipcMain, getPid, isRemote = () => fals
     }
     const root = await getPid(ptyId);
     if (action === "stop") return stopAgentServer(root, Number(pid), system);
-    return listAgentServers(root, system);
+    return list(root);
   });
 }

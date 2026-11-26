@@ -17,7 +17,7 @@ import { archiveConversation,hydrateConversationArtifact,listConversations,loadC
 import { editFromHere,sendWithSnapshot } from './gui-edit-from-here-ipc';
 import { GuiPanelState,matchesGuiBinding } from './gui-panel-state';
 import { GuiRecoveryJournal } from './gui-recovery-journal';
-import { listAgentServers,localServerUrl,stopAgentServer } from './agent-servers';
+import { listAgentServersBatched,localServerUrl,stopAgentServer } from './agent-servers';
 import { GuiTurnDiffs,handleGuiDiffAction } from './gui-turn-diff';
 import { adoptTerminalSession,type AdoptTerminalRequest,withTerminalArtifacts } from './gui-mode-switch';
 import { paneTuiArtifacts } from './tui-artifacts';
@@ -369,7 +369,7 @@ export function registerCodexGuiIpc(openExternal: (url: string) => Promise<void>
       return saveGuiArtifact(artifact, event.sender);
     }
     if (!entry) throw Error('Panel is disconnected');
-    if (action === 'servers') return listAgentServers(entry.session.pid);
+    if (action === 'servers') return listAgentServersBatched(entry.session.pid);
     if (action === 'stop-server') return stopAgentServer(entry.session.pid, Number(value));
     if (action === 'open-server') return openExternal(localServerUrl(value));
     if (action === 'models') return entry.session.models();
