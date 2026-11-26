@@ -2,8 +2,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isZenShortcut, parseGuiViewPrefs, visibleActivities, zenMessages } from "../dist-test/gui-view-prefs.js";
-import { createWindowTitle, guiAnnouncement, guiWindowTitle } from "../dist-test/gui-a11y.js";
+import { isZenShortcut, memoizeByObject, parseGuiViewPrefs, visibleActivities, zenMessages } from "../dist-test/gui-view-prefs.js";
+import { createAnnouncer, createWindowTitle, guiAnnouncement, guiWindowTitle } from "../dist-test/gui-a11y.js";
 
 test("the view preference falls back to showing everything", () => {
   assert.deepEqual(parseGuiViewPrefs(null), { tools: "all", zen: false });
@@ -71,4 +71,35 @@ test("one pane owns the title at a time and releasing it restores the window's o
   title.set("b", null);
   assert.equal(doc.title, "Aya");
   assert.equal(title.owner, null);
+});
+
+test("the same announcement twice is read twice: the region is emptied, then filled on the next frame", () => {
+  const said = [], frames = [];
+  const announce = createAnnouncer(text => said.push(text), run => frames.push(run));
+  announce("Turn complete");
+  frames.shift()();
+  announce("Turn complete");
+  frames.shift()();
+  assert.deepEqual(said, ["", "Turn complete", "", "Turn complete"]);
+  // A newer announcement wins over one still waiting for its frame.
+  announce("Working"); announce("Approval needed");
+  frames.forEach(run => run());
+  assert.deepEqual(said.slice(4), ["", "", "Approval needed"]);
+});
+
+test("a message's questions are parsed once per message object, and again only when the message is replaced", () => {
+  let parses = 0;
+  const questionsOf = memoizeByObject(m => { parses++; return m.text.includes("?") ? [{ question: m.text }] : []; });
+  const asked = { id: "a", type: "assistant", text: "Which one?" }, plain = { id: "b", type: "assistant", text: "Done" };
+  const first = questionsOf(asked);
+  assert.equal(questionsOf(asked), first, "the same result object, not a new parse");
+  questionsOf(plain); questionsOf(plain);
+  // Zen's filter over a conversation on every frame parses nothing new.
+  for (let frame = 0; frame < 5; frame++) zenMessages([asked, plain], false, m => questionsOf(m).length > 0);
+  assert.equal(parses, 2);
+  // A streamed delta replaces the message: that one is parsed again.
+  const extended = { ...asked, text: "Which one? A or B?" };
+  assert.notEqual(questionsOf(extended), first);
+  assert.deepEqual(questionsOf(extended), [{ question: "Which one? A or B?" }]);
+  assert.equal(parses, 3);
 });

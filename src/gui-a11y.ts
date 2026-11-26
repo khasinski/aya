@@ -13,6 +13,17 @@ export function guiAnnouncement(previous: GuiPaneStatus | null, next: GuiPaneSta
   return next.text;
 }
 
+/** Puts text in a live region so it is read even when it equals the last announcement: the region is emptied first
+ *  and the text set on the next frame, which screen readers hear as a change. A newer announcement cancels the pending one. */
+export function createAnnouncer(set: (text: string) => void, nextFrame: (run: () => void) => unknown = run => requestAnimationFrame(run)) {
+  let revision = 0;
+  return (text: string) => {
+    const mine = ++revision;
+    set("");
+    nextFrame(() => { if (mine === revision) set(text); });
+  };
+}
+
 /** The words a window title leads with for a status: null when the status does not need the user's eyes. */
 export function titleStatus(status: GuiPaneStatus): string | null {
   if (status === "clear") return null;

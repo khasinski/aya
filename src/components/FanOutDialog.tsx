@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { guiSupportedAgent } from "../agentPreset";
 import type { DiffAnchor } from "../diff-review";
 import {
-  FAN_OUT_COMPARE_EVENT, FAN_OUT_MAX_CHOICES, FAN_OUT_OPEN_EVENT, fanOutRun, fanOutSlug, fanOutSummary, planFanOut,
+  diffFileCount, diffStatsText, FAN_OUT_COMPARE_EVENT, FAN_OUT_MAX_CHOICES, FAN_OUT_OPEN_EVENT, fanOutRun, fanOutSlug, fanOutSummary, planFanOut,
   queueFanOutMessage, recordFanOutRun, requestFanOutCompare, takeFanOutMessage,
   type FanOutAttachment, type FanOutDraft, type FanOutOutcome, type FanOutRun,
 } from "../gui-fan-out";
@@ -181,16 +181,18 @@ function FanOutCompareDialog({ run, onClose }: { run: FanOutRun; onClose: () => 
   const [selected, setSelected] = useState(run.branches[0]?.path ?? "");
   const branch = run.branches.find(b => b.path === selected) ?? run.branches[0];
   const [diffs, setDiffs] = useState<Record<string, string | null>>({});
+  // Counted once per loaded diff, not on every keystroke in the search box.
+  const [fileCounts, setFileCounts] = useState<Record<string, number | null>>({});
   const [query, setQuery] = useState("");
   const [comments, setComments] = useState<DiffComment[]>([]);
   const [commentError, setCommentError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(dialogRef, onClose);
   const load = useCallback((path: string) => {
-    setDiffs(old => ({ ...old, [path]: null }));
+    setDiffs(old => ({ ...old, [path]: null })); setFileCounts(old => ({ ...old, [path]: null }));
     void window.aya.fanOutDiff({ checkout: path, base: run.base })
-      .then(diff => setDiffs(old => ({ ...old, [path]: diff })))
-      .catch(() => setDiffs(old => ({ ...old, [path]: "" })));
+      .then(diff => { setDiffs(old => ({ ...old, [path]: diff })); setFileCounts(old => ({ ...old, [path]: diffFileCount(diff) })); })
+      .catch(() => { setDiffs(old => ({ ...old, [path]: "" })); setFileCounts(old => ({ ...old, [path]: 0 })); });
   }, [run.base]);
   useEffect(() => { for (const b of run.branches) load(b.path); }, [run, load]);
   useEffect(() => {
@@ -203,11 +205,6 @@ function FanOutCompareDialog({ run, onClose }: { run: FanOutRun; onClose: () => 
     catch (err) { setCommentError(err instanceof Error ? err.message : "Aya could not save that comment."); throw err; }
   };
   const diff = branch ? diffs[branch.path] : "";
-  const stats = (text: string | null | undefined) => {
-    if (!text) return text === "" ? "no changes" : "…";
-    const files = text.split("\n").filter(l => l.startsWith("diff --git")).length;
-    return `${files} file${files === 1 ? "" : "s"}`;
-  };
   return (
     <div className="aya-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div ref={dialogRef} className="aya-modal aya-fan-out-compare" role="dialog" aria-modal="true" aria-labelledby="fan-out-compare-title">
@@ -219,7 +216,7 @@ function FanOutCompareDialog({ run, onClose }: { run: FanOutRun; onClose: () => 
         </div>
         <div role="tablist" aria-label="Branches" className="aya-fan-out-tabs">
           {run.branches.map(b => <button key={b.path} type="button" role="tab" aria-selected={b.path === branch?.path} onClick={() => setSelected(b.path)}>
-            <strong>{b.label}</strong> <code>{b.branch}</code> <small>{stats(diffs[b.path])}</small>
+            <strong>{b.label}</strong> <code>{b.branch}</code> <small>{diffStatsText(fileCounts[b.path])}</small>
           </button>)}
         </div>
         {branch && <div role="tabpanel" aria-label={`${branch.label} diff`} className="aya-fan-out-compare-body">

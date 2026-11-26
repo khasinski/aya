@@ -21,9 +21,19 @@ export function approvalNoteTarget(requests: GuiEvent[], agent: Agent, draft: { 
   return declinableApproval(requests, agent);
 }
 
-/** Cmd/Ctrl+Shift+A cycles the permission mode, as in T3 Code. */
-export function isPermissionModeShortcut(e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
-  return (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a';
+/** Cmd+Shift+A (Ctrl+Shift+A off macOS) cycles the permission mode, as in T3 Code. By physical key, so it works on
+ *  any layout; Ctrl+Shift+A on a Mac stays the text field's "select to line start"; a held key does not cycle on. */
+export function isPermissionModeShortcut(e: { code: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; repeat?: boolean }, mac: boolean): boolean {
+  const primary = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  return primary && e.shiftKey && !e.altKey && !e.repeat && e.code === 'KeyA';
+}
+
+/** The mode the shortcut moves to. It never lands on Full access, which only an explicit choice in the mode menu turns
+ *  on; from Full access it goes back to the first mode. */
+export function nextShortcutPermissionMode(modes: GuiPermissionMode[], current: GuiPermissionMode): GuiPermissionMode {
+  const cycle: GuiPermissionMode[] = modes.filter(mode => mode !== 'full-access');
+  if (!cycle.length) return current;
+  return cycle[(cycle.indexOf(current) + 1) % cycle.length];
 }
 
 export function permissionModeChangeText(previous: GuiPermissionMode, next: GuiPermissionMode, agent: Agent): string {

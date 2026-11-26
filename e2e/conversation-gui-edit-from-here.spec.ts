@@ -62,6 +62,31 @@ test('Claude: Edit from here rewinds the session, reverts checkpointed files and
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 
+test('Claude: Enter while editing sends the edit, never a decline note for a pending subagent approval', async () => {
+  const seed = seedEnv({ singleTab: { presetId: 'gui', name: 'Claude GUI' }, presetList: preset('claude', 'Claude GUI') });
+  seed.launchEnv = { AYA_E2E_CLAUDE_BIN: claudeBin, AYA_FAKE_CLAUDE_STATE: join(seed.root, 'claude-state.json') };
+  const app = await launchApp(seed);
+  try {
+    const gui = (await app.firstWindow()).locator('.aya-conversation');
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await sendAndWait(gui, 'Claude', 'note alpha', 'I remember: alpha');
+    await sendAndWait(gui, 'Claude', 'note beta', 'I remember: alpha, beta');
+    const prompt = gui.getByRole('textbox', { name: 'Message Claude' });
+    await prompt.fill('background-agent'); await prompt.press('Enter');
+    const approval = gui.getByRole('group', { name: 'Approval required' });
+    await expect(approval).toContainText('Requested by Subagent: Read a.txt');
+    await editFrom(gui, 'note beta');
+    const bar = gui.getByRole('region', { name: 'Edit from here' });
+    await expect(bar).toBeVisible();
+    await prompt.fill('note delta'); await prompt.press('Enter');
+    // The approval is still waiting, and the edit says why it cannot go yet.
+    await expect(gui.getByRole('alert')).toContainText('Stop the current turn before editing an earlier message.');
+    await expect(approval).toBeVisible();
+    await expect(bar).toBeVisible();
+    await expect(gui.locator('.aya-gui-messages')).not.toContainText('↳ note delta');
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
 test('Codex: Edit from here reverts the thread and restores the worktree from its snapshot', async () => {
   const repo = realpathSync(mkdtempSync('/tmp/aya-e2e-edit-'));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', ...args], { cwd, stdio: 'ignore' });

@@ -6,26 +6,26 @@ import remarkGfm from 'remark-gfm';
 import type { GuiApprovalDecision,GuiArtifact,GuiArtifactEntry,GuiEvent } from '../../shared/codex-gui';
 import { conversationPatch } from '../../shared/conversation-patch.cjs';
 import { guiCapabilities,guiCommands } from '../../shared/gui-commands.cjs';
-import { approvalNoteDelivery,guiPermissionModeLabel,guiPermissionModes,initialGuiPermissionMode,nextGuiPermissionMode,parseGuiPermissionMode,type GuiPermissionMode } from '../../shared/gui-permission-mode.cjs';
+import { approvalNoteDelivery,guiPermissionModeLabel,guiPermissionModes,initialGuiPermissionMode,parseGuiPermissionMode,type GuiPermissionMode } from '../../shared/gui-permission-mode.cjs';
 import type { GuiProgress } from '../../shared/gui-progress';
 import { guiSupportedAgent } from '../agentPreset';
 import { appendMessageDeltas,createTextDeltaBuffer,scheduleConversationFrame } from '../conversation-deltas';
 import { conversationSaveDelay } from '../conversation-save-delay';
 import { movedUpFromFollowedPosition, wheelTargetsConversation } from '../conversation-scroll';
-import { approvalNoteTarget,approvalSummary,declinableApproval,isPermissionModeShortcut,permissionModeChangeText } from '../gui-approval-modes';
+import { approvalNoteTarget,approvalSummary,declinableApproval,isPermissionModeShortcut,nextShortcutPermissionMode,permissionModeChangeText } from '../gui-approval-modes';
 import { activityDuration,activityKind,activityPhases,phaseText,shortDuration,subagentLabel,subagentStates,type ActivityKind } from '../gui-activity';
 import { followUpHint,parseFollowUpPreference,pasteBecomesAttachment,recallStep,sendAction,sendLabel,sentPromptText,stashStep,withQuote,type FollowUpPreference,type Recall } from '../gui-composer';
 import { reviewCommentsBlock,terminalExcerptBlock,withContextBlock } from '../gui-context';
 import { isSkillInvocation } from '../gui-composer-assist';
 import { findStatus,findTextMatches,stepMatch } from '../gui-find';
-import { fileChangePaths,isTurnDiffSummary,repoRelativePath,type TurnDiffSummary } from '../gui-turn-diff';
+import { fileChangePaths,isTurnDiffSummary,repoRelativePath,turnDiffsOf,type TurnDiffSummary } from '../gui-turn-diff';
 import { fanOutRunForTerminal,requestFanOut,requestFanOutCompare,takeFanOutMessage } from '../gui-fan-out';
 import { guiRendererRecoveryInProgress,takeGuiPaneRecovery } from '../gui-renderer-recovery';
-import { createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
+import { createAnnouncer,createWindowTitle,guiAnnouncement,guiWindowTitle } from '../gui-a11y';
 import { formatResetTime,isUsageLimitError,limitPaneStatus,limitStatusText,mergeCodexRateLimits,nextLimitEvent,parseUsageLimit,RESUME_PROMPT,timerDelay,turnUsageLimit,type CodexRateLimits,type GuiUsageLimit } from '../gui-limits';
-import { getGuiViewPrefs,isZenShortcut,setGuiViewPrefs,subscribeGuiViewPrefs,TOOL_VISIBILITY_LABELS,visibleActivities,zenMessages,type ToolCallVisibility } from '../gui-view-prefs';
+import { getGuiViewPrefs,isZenShortcut,memoizeByObject,setGuiViewPrefs,subscribeGuiViewPrefs,TOOL_VISIBILITY_LABELS,visibleActivities,zenMessages,type ToolCallVisibility } from '../gui-view-prefs';
 import { backgroundAgentsText,guiPaneStatus,sameGuiPaneStatus,type GuiPaneStatus } from '../gui-status';
-import { canStopSubagent,showStop,startsSubagent } from '../gui-subagents';
+import { activitiesForNewTurn,canStopSubagent,interruptActivities,showStop,startsSubagent } from '../gui-subagents';
 import type { SettingsTab } from '../settings-tabs';
 import { GUI_FOLLOW_UP_STORAGE_KEY,guiStashKey } from '../storage-keys';
 import { terminalExcerpt } from '../terminal-checkpoint-registry';
@@ -98,11 +98,9 @@ function parseCallMessageQuestions(id: string, textValue: string): GuiQuestion[]
   }
   return normalizeQuestions(parsed);
 }
-function extractMessageQuestions(m: Message): GuiQuestion[] {
-  if (Array.isArray(m.questions) && m.questions.length > 0) return normalizeQuestions(m.questions);
-  if (m.type === 'assistant') return parseCallMessageQuestions(m.id, m.text);
-  return [];
-}
+// Per message object: a streamed delta replaces only the message it extends, so the others are parsed once.
+const extractMessageQuestions = memoizeByObject((m: Message): GuiQuestion[] =>
+  Array.isArray(m.questions) && m.questions.length > 0 ? normalizeQuestions(m.questions) : m.type === 'assistant' ? parseCallMessageQuestions(m.id, m.text) : []);
 /** The window title belongs to the focused Conversation GUI pane while its status needs the user's eyes. */
 const windowTitle = createWindowTitle(document);
 function stripQuestionBulletsFromText(textValue: string, questions: GuiQuestion[]): string {
@@ -146,7 +144,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const guiAgent = guiSupportedAgent(preset) ?? 'codex';
   const agentLabel = guiAgent === 'pi' ? 'Pi' : guiAgent === 'claude' ? 'Claude' : guiAgent === 'antigravity' ? 'Antigravity' : 'Codex';
   const agentBadge = guiAgent === 'pi' ? 'PI' : guiAgent === 'claude' ? 'CLAUDE' : guiAgent === 'antigravity' ? 'ANTIGRAVITY' : 'CODEX';
-  const invoke = (action: string, value?: unknown) => { if (!api) return Promise.reject(Error('Conversation GUI is available in the desktop app only.')); return api.invoke(terminal.id, action, value); };
+  const invoke = useCallback((action: string, value?: unknown) => { if (!api) return Promise.reject(Error('Conversation GUI is available in the desktop app only.')); return api.invoke(terminal.id, action, value); }, [api, terminal.id]);
   const [messages, setMessages] = useState<Message[]>([]);
   const edit = useEditFromHere(invoke);
   const [artifacts, setArtifacts] = useState<GuiArtifactEntry[]>([]);
@@ -219,7 +217,14 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     catch (e) { fail(e); setContextMenu(null); }
   };
   const [diffView, setDiffView] = useState<{ source: string; file: string | null } | null>(null);
-  const turnDiffs = messages.flatMap(m => m.type === 'turnDiff' && m.turnDiff ? [m.turnDiff] : []);
+  // Stable while no turn summary changes, so the open diff viewer (memoized) skips the frames of a streamed reply.
+  const turnDiffsRef = useRef<readonly TurnDiffSummary[]>([]);
+  const turnDiffs = turnDiffsRef.current = turnDiffsOf(messages, turnDiffsRef.current);
+  const diffTerminal = useMemo(() => ({ id: terminal.id, cwd: terminal.cwd, projectSlug: terminal.projectSlug }), [terminal.id, terminal.cwd, terminal.projectSlug]);
+  const closeDiff = useCallback(() => setDiffView(null), []);
+  const addContextRef = useRef(addContext);
+  addContextRef.current = addContext;
+  const addDiffToMessage = useCallback((block: string) => addContextRef.current(() => block), []);
   const [planMode, setPlanModeValue] = useState(false);
   const planRef = useRef(false);   // read by dispatch in the same tick that /plan or Implement changes it
   const setPlanMode = (value: boolean | ((old: boolean) => boolean)) => { const next = typeof value === 'function' ? value(planRef.current) : value; planRef.current = next; setPlanModeValue(next); };
@@ -247,7 +252,12 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const codexLimits = useRef<CodexRateLimits | null>(null);
   const view = useSyncExternalStore(subscribeGuiViewPrefs, getGuiViewPrefs);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const viewMenuButton = useRef<HTMLButtonElement>(null);
+  const viewMenu = useRef<HTMLDivElement>(null);
+  // An opened menu takes the focus on its checked item (or its first), so the arrows move through it at once.
+  useEffect(() => { if (viewMenuOpen) (viewMenu.current?.querySelector<HTMLElement>('[aria-checked="true"]') ?? viewMenu.current?.querySelector<HTMLElement>('[role^="menuitem"]'))?.focus(); }, [viewMenuOpen]);
   const [announcement, setAnnouncement] = useState('');
+  const [announce] = useState(() => createAnnouncer(setAnnouncement));
   const [paneFocused, setPaneFocused] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
@@ -378,7 +388,9 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   /** restart: stop the running agent process and resume this conversation in a new one (after changing skills or MCP servers). */
   const reconnect = async (restart = false) => {
     if (connecting || (ready && !restart) || busy) return;
-    setConnecting(true); setError(''); setQueueHeld(true); if (restart) setReady(false);
+    setConnecting(true); setError(''); setQueueHeld(true);
+    // The old process's events are dropped, so no aya/disconnected will clear what it left waiting or running.
+    if (restart) { setReady(false); setRequests([]); setActivities(interruptActivities); }
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = null;
     const revision = snapshotRevision.current;
@@ -415,7 +427,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     }, scheduleConversationFrame);
     flushTextDeltas.current = textDeltas.flush;
     const off = api.onEvent(terminal.id, event => {
-      if (event.method === 'aya/sessionEpoch') { textDeltas.flush(); eventSequence.current = 0; receivedEventSequence.current = 0; return; }
+      // A new agent session: the composer assist forgets the old one's suggested next prompt too.
+      if (event.method === 'aya/sessionEpoch') { textDeltas.flush(); eventSequence.current = 0; receivedEventSequence.current = 0; assist.handleEvent(event); return; }
       if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') textDeltas.flush();
       if (event.sequence) { receivedEventSequence.current = Math.max(receivedEventSequence.current, event.sequence); if (event.method !== 'item/agentMessage/delta' && event.method !== 'item/plan/delta') eventSequence.current = receivedEventSequence.current; }
       const p = event.params;
@@ -440,7 +453,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       if (event.method === 'turn/started') { turnRevision.current++; turnExplanation.current = ''; setBusy(true); setTurnOutcome(null); setUsageLimit(null); }
       if (event.method === 'turn/completed' && str(obj(p.turn).ayaHead)) setMessages(old => recordClaudeHead(old, str(obj(p.turn).ayaHead)));
       if (event.method === 'turn/completed') { turnRevision.current++; setBusy(false); setRequests(old => old.filter(r => !!str(r.params.subagent))); const turn = obj(p.turn); setActivities(old => old.map(a => a.status === 'inProgress' && !a.background ? { ...a, status: turn.status === 'completed' ? 'completed' : turn.status === 'failed' || turn.error ? 'failed' : 'interrupted' } : a)); if (turn.status !== 'completed') setQueueHeld(true); setTurnOutcome(turn.status === 'interrupted' ? 'interrupted' : turn.status === 'failed' || turn.error ? 'failed' : 'complete'); const limit = turn.status === 'interrupted' ? null : turnUsageLimit(turn, codexLimits.current); setUsageLimit(limit); if (limit) setQueueHeld(true); else if (turn.error) fail(obj(turn.error).message); }
-      if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setRequests([]); setQueueHeld(true); setSideQuestion(''); setTurnOutcome('interrupted'); setMessages(old => old.map(m => m.progress?.status === 'running' ? { ...m, progress: { ...m.progress, status: 'paused' } } : m)); setActivities(old => old.map(a => a.status === 'inProgress' ? { ...a, status: 'interrupted' } : a)); fail(p.message); }
+      if (event.method === 'aya/disconnected') { setReady(false); setBusy(false); setRequests([]); setQueueHeld(true); setSideQuestion(''); setTurnOutcome('interrupted'); setMessages(old => old.map(m => m.progress?.status === 'running' ? { ...m, progress: { ...m.progress, status: 'paused' } } : m)); setActivities(interruptActivities); fail(p.message); }
       if ((event.method === 'error' && !isUsageLimitError(p)) || event.method === 'aya/notice') fail(p.message || obj(p.error).message);
       if (event.method === 'turn/plan/updated' && Array.isArray(p.plan)) setPlan(p.plan as { step: string; status: string }[]);
       if (event.method === 'item/started' || event.method === 'item/completed') {
@@ -602,10 +615,10 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     const next: GuiPaneStatus = computed !== 'clear' && (computed.level === 'done' || computed.level === 'error') && !turnRanHere.current && !usageLimit ? 'clear' : computed;
     if (sameGuiPaneStatus(next, reportedStatus.current)) return;
     const said = guiAnnouncement(reportedStatus.current, next);
-    if (said) setAnnouncement(said);
+    if (said) announce(said);
     reportedStatus.current = next;
     onReportStatus(terminal.id, next);
-  }, [onReportStatus, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length, backgroundAgents, usageLimit, limitClock]);
+  }, [onReportStatus, announce, terminal.id, agentLabel, ready, busy, requests, messages, turnOutcome, queueHeld, queue.length, backgroundAgents, usageLimit, limitClock]);
   // The window title leads with the status of the pane the user is in, while that status needs them.
   const titleOwner = !hidden && (isActivePane || paneFocused);
   useEffect(() => {
@@ -618,18 +631,19 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     document.addEventListener('focusin', onFocusIn);
     return () => document.removeEventListener('focusin', onFocusIn);
   }, []);
-  // A limit's reset wakes a snoozed pane; a scheduled resume then sends "continue".
+  // A limit's reset wakes a snoozed pane; a scheduled resume then sends "continue", but never over a draft or an edit.
+  const draftOpen = !!prompt.trim() || !!edit.editing;
   useEffect(() => {
     const next = nextLimitEvent(usageLimit);
     if (!next) return;
-    if (next.action === 'resume' && (!ready || busy || requests.length > 0 || dispatching.current || switching)) return;
+    if (next.action === 'resume' && (!ready || busy || requests.length > 0 || dispatching.current || switching || draftOpen)) return;
     const timer = setTimeout(() => {
       if (next.action === 'wake') { setUsageLimit(old => old && old.snoozed ? { ...old, snoozed: false } : old); setLimitClock(n => n + 1); return; }
       setQueueHeld(false);
       void dispatchRef.current(RESUME_PROMPT);
     }, timerDelay(next.inMs));
     return () => clearTimeout(timer);
-  }, [usageLimit, limitClock, ready, busy, requests.length, switching]);
+  }, [usageLimit, limitClock, ready, busy, requests.length, switching, draftOpen]);
   useLayoutEffect(() => { if (!hidden) scrollToLatest(); }, [hidden, messages, activities, side, requests, plan, scrollToLatest]);
   // Terminal ⇄ Conversation: the loading veil lifts once this conversation is connected with its history shown.
   useEffect(() => {
@@ -736,7 +750,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     dispatching.current = true;
     if (queuedId) setPendingQueuedId(queuedId);
     const sentAtTurnRevision = turnRevision.current;
-    setBusy(true); setTurnOutcome(null); setUsageLimit(null); setActivities([]); if (followSent) { followHeld.current = false; follow.current = true; lastFollowTop.current = null; }
+    setBusy(true); setTurnOutcome(null); setUsageLimit(null); setActivities(activitiesForNewTurn); if (followSent) { followHeld.current = false; follow.current = true; lastFollowTop.current = null; }
     const messageId = crypto.randomUUID();
     setMessages(old => [...old, { id: messageId, type: 'user', delivery: 'sending', text: text + (files.length ? `\n\n${files.map(a => `📎 ${a.name}`).join(' · ')}` : '') }]);
     try {
@@ -752,12 +766,13 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
   const dispatchRef = useRef(dispatch);
   dispatchRef.current = dispatch;
   useEffect(() => {
-    if (!ready || busy || sideQuestion || queueHeld || !queue.length || requests.length || dispatching.current || steering.current) return;
+    // Not while editing an earlier message: a queued turn would land before the edit and be rewound with it.
+    if (!ready || busy || sideQuestion || queueHeld || !queue.length || requests.length || edit.editing || dispatching.current || steering.current) return;
     const next = queue[0];
     void dispatch(next.text, next.attachments, false, next.id, next.questionAnswer);
     // Queue changes drive dispatch. Model/effort changes apply to the next turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, busy, sideQuestion, queueHeld, queue, requests.length, dispatchRevision, steerPending]);
+  }, [ready, busy, sideQuestion, queueHeld, queue, requests.length, edit.editing, dispatchRevision, steerPending]);
   useEffect(() => {
     // A pane opened by "Send to several agents" sends its prompt once, when the agent first connects.
     if (!ready || !restored || switching) return;
@@ -778,7 +793,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     editPending.current = true;
     try { await edit.apply(); } catch (e) { fail(e); return; } finally { editPending.current = false; }
     setMessages(old => messagesBefore(old, plan.messageId));
-    setActivities([]); setPlan([]); setTurnOutcome(null); edit.cancel();
+    setActivities(activitiesForNewTurn); setPlan([]); setTurnOutcome(null); edit.cancel();
     const files = attachments;
     setPrompt(''); setAttachments([]);
     const revision = draftRevision.current;
@@ -797,10 +812,11 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     if ((!text.trim() && !attachments.length) || !ready || switching) return;
     setError('');
     try {
+      if (text.startsWith('/') && !isSkillInvocation(guiAgent, text, assist.skills, availableCommands)) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
+      // The edited text is never a decline note (a note is never a command, so the order above does not matter to it).
+      if (edit.editing) { await sendEdited(text); return; }
       const declining = !opposite && approvalNoteTarget(requests, guiAgent, { text, attachments: attachments.length });
       if (declining) { await declineWithNote(declining, text.trim()); return; }
-      if (text.startsWith('/') && !isSkillInvocation(guiAgent, text, assist.skills, availableCommands)) { const revision = draftRevision.current; const [name, ...args] = text.slice(1).split(/\s+/); await command(name, args.join(' ')); if (draftRevision.current === revision) setPrompt(''); return; }
-      if (edit.editing) { await sendEdited(text); return; }
       if (busy || sideQuestion || queue.length || dispatching.current) {
         if (!dispatching.current && sendAction({ mustWait: true, busy, steerSupported: capabilities.steer, preference: followUp, opposite, hasAttachments: attachments.length > 0, isCommand: false }) === 'steer') { await steer(text); return; }
         setQueue(old => [...old, { id: crypto.randomUUID(), text: text || 'Inspect the attached files.', attachments }]); setPrompt(''); setAttachments([]); return;
@@ -866,7 +882,8 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     [],
   );
   const zen = view.zen && !findOpen;   // Find shows the whole conversation while it is open
-  const shownMessages = zen ? zenMessages(messages, busy, m => extractMessageQuestions(m).length > 0) : messages;
+  const shownMessages = useMemo(() => zen ? zenMessages(messages, busy, m => extractMessageQuestions(m).length > 0) : messages, [messages, busy, zen]);
+  const keptMounted = useMemo(() => new Set(shownMessages.filter(m => m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length).map(m => m.id)), [shownMessages]);
   const shownActivities = visibleActivities(activities, zen ? 'none' : view.tools);
   const activityCounts = shownActivities.reduce((counts, activity) => {
     const status = activity.status === 'inProgress' ? 'running'
@@ -908,8 +925,17 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       modeSwitch={onSwitchToTerminal ? { run: switchToTerminal } : undefined}
       artifacts={<button className="aya-gui-icon-button aya-gui-artifact-button" ref={artifactButton} aria-label={`Artifacts${unreadArtifactCount ? ' ' + unreadArtifactCount : ''}`} title={unreadArtifactCount ? `${unreadArtifactCount} unseen artifacts` : 'Artifacts'} aria-expanded={drawer} onClick={() => setDrawer(!drawer)}><span className="aya-gui-icon" aria-hidden="true">deployed_code</span>{unreadArtifactCount > 0 && <b aria-hidden="true">{unreadArtifactCount}</b>}</button>}
       actions={<>
-      <span className="aya-gui-view" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setViewMenuOpen(false); }}><button className="aya-gui-icon-button" aria-label="Conversation view" title="Conversation view: tool calls and Zen mode" aria-haspopup="menu" aria-expanded={viewMenuOpen} data-active={view.zen || view.tools !== 'all' || undefined} onClick={() => setViewMenuOpen(open => !open)}><span className="aya-gui-icon" aria-hidden="true">{view.zen ? 'self_improvement' : 'visibility'}</span></button>
-        {viewMenuOpen && <div className="aya-gui-view-menu" role="menu" aria-label="Conversation view" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setViewMenuOpen(false); } }}>
+      <span className="aya-gui-view" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setViewMenuOpen(false); }} onKeyDown={e => {
+        // On the wrapper: Escape closes the menu from its toggle as well, and never reaches the pane.
+        if (e.key === 'Escape' && viewMenuOpen) { e.preventDefault(); e.stopPropagation(); setViewMenuOpen(false); viewMenuButton.current?.focus(); }
+      }}><button ref={viewMenuButton} className="aya-gui-icon-button" aria-label="Conversation view" title="Conversation view: tool calls and Zen mode" aria-haspopup="menu" aria-expanded={viewMenuOpen} data-active={view.zen || view.tools !== 'all' || undefined} onClick={() => setViewMenuOpen(open => !open)}><span className="aya-gui-icon" aria-hidden="true">{view.zen ? 'self_improvement' : 'visibility'}</span></button>
+        {viewMenuOpen && <div ref={viewMenu} className="aya-gui-view-menu" role="menu" aria-label="Conversation view" onKeyDown={e => {
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+          e.preventDefault();
+          const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]')), at = items.indexOf(document.activeElement as HTMLElement);
+          const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowDown' ? 1 : items.length - 1 + (at < 0 ? 1 : 0))) % items.length;
+          items[next]?.focus();
+        }}>
           <small>Tool calls</small>
           {(Object.keys(TOOL_VISIBILITY_LABELS) as ToolCallVisibility[]).map(option => <button type="button" role="menuitemradio" key={option} aria-checked={view.tools === option} onClick={() => setGuiViewPrefs({ tools: option })}>{TOOL_VISIBILITY_LABELS[option]}</button>)}
           <button type="button" role="menuitemcheckbox" aria-checked={view.zen} aria-keyshortcuts="Control+Alt+Z Meta+Alt+Z" title="Only your messages and the final reply of each turn" onClick={() => setGuiViewPrefs({ zen: !view.zen })}>Zen mode <kbd>⌘⌥Z</kbd></button>
@@ -946,9 +972,11 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
     }}
     onKeyDown={e => {
       if (isZenShortcut(e) && !e.nativeEvent.isComposing) { e.preventDefault(); setGuiViewPrefs({ zen: !view.zen }); return; }
-      if (isPermissionModeShortcut(e) && permissionModeOptions.length && !e.nativeEvent.isComposing) {
+      // Not from a dialog (the diff viewer's comment box is a portal whose keys still reach this handler).
+      const fromDialog = !(e.target instanceof Node) || !e.currentTarget.contains(e.target) || (e.target instanceof Element && !!e.target.closest('[role="dialog"]'));
+      if (isPermissionModeShortcut(e, window.aya?.platform === 'darwin') && permissionModeOptions.length && !e.nativeEvent.isComposing && !fromDialog) {
         e.preventDefault();
-        void changePermissionMode(nextGuiPermissionMode(guiAgent, permissionModeRef.current));
+        void changePermissionMode(nextShortcutPermissionMode(permissionModeOptions.map(mode => mode.id as GuiPermissionMode), permissionModeRef.current));
         return;
       }
       if (e.key === 'Escape' && !e.defaultPrevented) {
@@ -1005,7 +1033,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       }} onScroll={e => { const node = e.currentTarget; const maximum = Math.max(0, node.scrollHeight - node.clientHeight); follow.current = !followHeld.current && maximum - node.scrollTop < 80 && !movedUpFromFollowedPosition(node.scrollTop, maximum, lastFollowTop.current); if (follow.current) lastFollowTop.current = node.scrollTop; setShowJump(!follow.current); }}><div ref={scrollContent} className="aya-gui-message-content">
       {!messages.length && <div className="aya-gui-welcome"><h1>Your {agentLabel}, with room to show more.</h1><p>Ask a question, inspect your project, or request a table or image.</p><p>Artifacts stay one click away.</p></div>}
       {shownMessages.map((m, index) => (
-        <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= shownMessages.length - 12} keepMounted={Boolean(m.kind === 'plan' || m.questions?.length || m.questionAnswers || extractMessageQuestions(m).length)} findOpen={findOpen}>
+        <WindowedMessage key={m.id} viewport={scrollViewport} estimate={Math.min(1200, 70 + Math.ceil(m.text.length / 90) * 22)} initiallyVisible={index >= shownMessages.length - 12} keepMounted={keptMounted.has(m.id)} findOpen={findOpen}>
         {m.type === 'turnDiff' && m.turnDiff ? <TurnChanges summary={m.turnDiff} onOpen={file => setDiffView({ source: `turn:${m.turnDiff!.id}`, file })} /> : <ConversationMessageItem
           message={m}
           agentBadge={agentBadge}
@@ -1026,7 +1054,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       </div><ConversationTurnTimer busy={busy} hidden={hidden} /></div>}
     </div></div>
     {showJump && <button className="aya-gui-jump" onClick={resumeFollowing}>Jump to latest ↓</button>}</div>
-    {diffView && <GuiDiffDialog terminal={terminal} invoke={invoke} turns={turnDiffs} busy={busy} initialSource={diffView.source} focusFile={diffView.file} onClose={() => setDiffView(null)} onAddToMessage={block => addContext(() => block)} />}
+    {diffView && <GuiDiffDialog terminal={diffTerminal} invoke={invoke} turns={turnDiffs} busy={busy} initialSource={diffView.source} focusFile={diffView.file} onClose={closeDiff} onAddToMessage={addDiffToMessage} />}
     {side && <aside className="aya-gui-side"><button aria-label={`Close ${sideTitle.toLowerCase()}`} onClick={closeSide}>×</button><strong>{sideTitle}</strong><ReactMarkdown remarkPlugins={[remarkGfm]}>{side}</ReactMarkdown></aside>}
     {quote && <button type="button" className="aya-gui-quote" style={{ left: quote.left, top: quote.top }} onMouseDown={e => e.preventDefault()} onClick={() => { recall.current = null; setPrompt(old => withQuote(old, quote.text)); setQuote(null); window.getSelection()?.removeAllRanges(); composer.current?.focus(); }}>Quote in composer</button>}
     <form onSubmit={e => { e.preventDefault(); void send(prompt); }}>
@@ -1056,6 +1084,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       {edit.editing && <EditFromHereBar state={edit.editing} agentLabel={agentLabel} busy={busy} onRevertFiles={edit.setRevertFiles} onCancel={() => { edit.cancel(); composer.current?.focus(); }} />}
       <textarea
         ref={composer}
+        {...assist.inputProps}
         aria-label={`Message ${agentLabel}`}
         placeholder={declinableApproval(requests, guiAgent) ? 'Type why to decline the request above, then press Enter…' : assist.placeholder(`Message ${agentLabel}… (/ for commands${assist.supported ? ', $ for skills' : ''})`)}
         data-suggestion={assist.nextPrompt || undefined}
@@ -1136,7 +1165,7 @@ function ConversationSession({ headerSlot = null, terminal, preset, snippets, sn
       <div className="aya-gui-compose-footer"><button className="aya-gui-icon-button" type="button" title="Attach files or images" aria-label="Attach files" disabled={!ready} onClick={() => void invoke('pick-attachments').then(files => addAttachments(files as Attachment[])).catch(fail)}><span className="aya-gui-icon" aria-hidden="true">add</span></button>
       <span className="aya-gui-context"><button type="button" className="aya-gui-context-button" aria-haspopup="menu" aria-expanded={contextMenu !== null} aria-label="@ Context" title="Add review comments or terminal output to the message" onClick={() => void openContextMenu()}><span aria-hidden="true">@</span><span className="aya-gui-context-label"> Context</span></button>{contextMenu && <div className="aya-gui-context-menu" role="menu" aria-label="Add context">{contextMenu.comments.length > 0 && <button type="button" role="menuitem" onClick={() => addContext(() => reviewCommentsBlock(contextMenu.comments, terminal.cwd))}>Review comments <small>{contextMenu.comments.length}</small></button>}{contextMenu.terminals.map(t => <button type="button" role="menuitem" key={t.id} onClick={() => addContext(() => terminalExcerptBlock(t.name, terminalExcerpt(t.id, 60) ?? ''))}>Output of {t.name}</button>)}{!contextMenu.comments.length && !contextMenu.terminals.length && <small className="aya-gui-context-empty">Nothing to add: no unsent review comments for this checkout and no other terminal open.</small>}</div>}</span><ComposerOptions open={optionsOpen} onOpenChange={setOptionsOpen} summary={[modelName(selectedModel || model) || 'Settings', effort, planMode ? 'Plan' : '', permissionModeOptions.length ? guiPermissionModeLabel(permissionMode) : ''].filter(Boolean).join(' · ')} active={planMode || sessionUnsafe}>
       {models.length > 0 && <><label>Model<select aria-label="Model for next turn" title="Model · applies to the next turn" value={selectedModel || model} onChange={e => changeModel(e.target.value)}><option value={model}>{model}</option>{models.filter(m => m.model !== model).map(m => <option key={m.id} value={m.model}>{m.displayName}</option>)}</select></label>{(models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.length || 0) > 0 && <label>Reasoning<select aria-label="Reasoning effort" title="Reasoning effort · applies to the next turn" value={effort} onChange={e => changeEffort(e.target.value)}><option value="">Default effort</option>{models.find(m => m.model === (selectedModel || model))?.supportedReasoningEfforts.map(e => <option key={e.reasoningEffort} value={e.reasoningEffort}>{e.reasoningEffort}</option>)}</select></label>}</>}
-{permissionModeOptions.length > 0 && <label>Permissions<select aria-label="Permission mode" aria-keyshortcuts="Meta+Shift+A Control+Shift+A" title={`${permissionModeOptions.find(m => m.id === permissionMode)?.description || ''} ⌘⇧A cycles.`} value={permissionMode} onChange={e => void changePermissionMode(e.target.value as GuiPermissionMode)}>{permissionModeOptions.map(m => <option key={m.id} value={m.id} title={m.description}>{m.label}</option>)}</select></label>}
+{permissionModeOptions.length > 0 && <label>Permissions<select aria-label="Permission mode" aria-keyshortcuts={window.aya?.platform === 'darwin' ? 'Meta+Shift+A' : 'Control+Shift+A'} title={`${permissionModeOptions.find(m => m.id === permissionMode)?.description || ''} ${window.aya?.platform === 'darwin' ? '⌘⇧A' : 'Ctrl+Shift+A'} cycles the modes other than Full access.`} value={permissionMode} onChange={e => void changePermissionMode(e.target.value as GuiPermissionMode)}>{permissionModeOptions.map(m => <option key={m.id} value={m.id} title={m.description}>{m.label}</option>)}</select></label>}
 <div className="aya-composer-options-toggles">{capabilities.plan && <button type="button" className="aya-gui-plan-toggle" aria-pressed={planMode} title="Plan mode: the agent proposes a plan instead of acting (/plan)" onClick={() => setPlanMode(value => !value)}>Plan{planMode ? ' on' : ''}</button>}{busy && capabilities.steer && <button type="button" className="aya-gui-followup" title="What Enter does while the agent works" aria-label={`Enter while working: ${followUp}. Click to switch.`} onClick={() => setFollowUp(followUp === 'steer' ? 'queue' : 'steer')}>Enter: {followUp}</button>}{assist.supported && <button type="button" className="aya-gui-suggest-toggle" aria-pressed={assist.suggestionsOn} title="Show the agent's predicted next message in the empty composer; Tab uses it" onClick={() => assist.setSuggestionsOn(!assist.suggestionsOn)}>Suggestions {assist.suggestionsOn ? 'on' : 'off'}</button>}{stash.length > 0 && <small className="aya-gui-stash" title="Cmd+S in an empty composer brings the latest one back">Stash {stash.length}</small>}</div><div className="aya-composer-options-fan-out"><button type="button" title="Start this message in a separate worktree for each of several agents" onClick={() => { setOptionsOpen(false); requestFanOut({ projectSlug: terminal.projectSlug, text: prompt, sourceTerminalId: terminal.id, attachments: attachments.map(({ id, name, image }) => ({ id, name, image })) }); }}>Send to several agents…</button>{fanOutRunForTerminal(terminal.id) && <button type="button" title="Show each agent's branch diff side by side" onClick={() => { setOptionsOpen(false); requestFanOutCompare(fanOutRunForTerminal(terminal.id)!.id); }}>Compare agents…</button>}</div><small className="aya-gui-enter-hint">{busy ? followUpHint(followUp, capabilities.steer) : 'Shift+Enter for a new line'}</small></ComposerOptions>{showStop(busy, backgroundAgents) && <button type="button" className="aya-gui-stop" onClick={() => { setQueueHeld(true); void invoke('interrupt').catch(fail); }}>Stop</button>}{busy && <>{capabilities.steer && prompt.trim() && !prompt.startsWith('/') && !attachments.length && <button type="button" className="aya-gui-steer-secondary" disabled={steerPending} title={steerPending ? "Sending steer…" : "Send into the running turn"} onClick={() => void steer(prompt)}>{steerPending ? "Sending…" : "Steer ↗"}</button>}</>}<button className="aya-gui-send" disabled={!ready || (!prompt.trim() && !attachments.length)}>{noteTarget ? 'Decline with note' : sendLabel(sendAction({ mustWait: busy || Boolean(sideQuestion) || queue.length > 0, busy, steerSupported: capabilities.steer, preference: followUp, opposite: false, hasAttachments: attachments.length > 0, isCommand: prompt.startsWith('/') && !isSkillInvocation(guiAgent, prompt, assist.skills, availableCommands) }))}</button></div>
     </form></main>
     {drawer && <ArtifactPanel artifacts={artifacts} selected={selected} history={artifactHistory} seenRevisions={seenArtifactRevisions} visible={!hidden} onViewed={markArtifactViewed} onPreview={loadArtifactPreview} onLoad={loadArtifactContent} onSearch={searchArtifactContents} onSelect={setSelected} onSuggest={setSuggestion} onSave={(id, revision) => invoke('save-artifact', { id, revision })} onOpen={(id, revision) => invoke('open-artifact', { id, revision })} onBrowser={(id, revision) => invoke('open-artifact-browser', { id, revision })} />}

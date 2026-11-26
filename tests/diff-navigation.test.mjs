@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diffFileLineIndex } from "../dist-test/diff-navigation.js";
+import { cappedDiffRows, diffFileLineIndex, DIFF_LINES_PER_FILE } from "../dist-test/diff-navigation.js";
 
 const TWO_FILES = [
   "diff --git a/src/App.tsx b/src/App.tsx", // 0
@@ -92,4 +92,25 @@ test("matches a synthetic untracked-file header", () => {
     "+hello",
   ].join("\n");
   assert.equal(diffFileLineIndex(diff, "new file.txt"), 0);
+});
+
+test("a 10k-line file renders its first 2000 lines and a Show more row; each press reveals another chunk", () => {
+  const big = ["diff --git a/big.txt b/big.txt", "--- a/big.txt", "+++ b/big.txt", "@@ -0,0 +1,9997 @@", ...Array.from({ length: 9996 }, (_, i) => `+line ${i}`)];
+  const small = ["diff --git a/small.txt b/small.txt", "@@ -1 +1 @@", "-a", "+b"];
+  const lines = [...big, ...small];
+  assert.equal(big.length, 10000);
+  const rows = cappedDiffRows(lines);
+  assert.equal(DIFF_LINES_PER_FILE, 2000);
+  assert.equal(rows.filter(r => r.kind === "line" && r.index < 10000).length, 2000);
+  assert.deepEqual(rows.find(r => r.kind === "more"), { kind: "more", fileStart: 0, hidden: 8000 });
+  // The next file is not held back by the big one: its header and lines all render.
+  assert.deepEqual(rows.filter(r => r.kind === "line" && r.index >= 10000).map(r => r.index), [10000, 10001, 10002, 10003]);
+  const more = cappedDiffRows(lines, new Map([[0, 4000]]));
+  assert.equal(more.filter(r => r.kind === "line" && r.index < 10000).length, 4000);
+  assert.deepEqual(more.find(r => r.kind === "more"), { kind: "more", fileStart: 0, hidden: 6000 });
+  const all = cappedDiffRows(lines, new Map([[0, 10000]]));
+  assert.equal(all.filter(r => r.kind === "more").length, 0);
+  assert.equal(all.length, lines.length);
+  // A small diff renders every line with no button.
+  assert.deepEqual(cappedDiffRows(small).map(r => r.kind), ["line", "line", "line", "line"]);
 });

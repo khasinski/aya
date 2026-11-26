@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { assistSupported, contextMeterText, contextUsageFromParams, filterSkills, insertSkill, isSkillInvocation, parseSuggestionsPreference, skillQueryAt } from '../dist-test/gui-composer-assist.js';
+import { assistSupported, contextMeterText, contextUsageFromParams, filterSkills, insertSkill, isSkillInvocation, parseSuggestionsPreference, skillPickerKey, skillQueryAt } from '../dist-test/gui-composer-assist.js';
 import { claudeContextUsage, claudeSkills, cleanPromptSuggestion, codexContextUsage, codexSkills } from '../dist-electron/gui-composer-assist.js';
 const isolatedHome = await mkdtemp(path.join(tmpdir(), 'aya-gui-assist-'));
 process.env.AYA_HOME = isolatedHome;
@@ -62,6 +62,18 @@ test('typing $ at the caret opens the picker; matches rank by name, then descrip
   assert.equal(filterSkills(skills, '').length, 4);
   assert.equal(filterSkills(skills, '', 2).length, 2);
   assert.deepEqual(filterSkills(skills, 'rev', 8, true).map(s => s.name), ['docs:review', 'review'], 'the / menu matches names only');
+});
+
+test('Enter takes a skill only after arrowing through the picker; Tab always does', () => {
+  // `why is $PATH` + Enter sends the message instead of replacing $PATH with some skill.
+  assert.equal(skillPickerKey('Enter', false, false), null);
+  assert.equal(skillPickerKey('Enter', false, true), 'pick');
+  assert.equal(skillPickerKey('Enter', true, true), null);
+  assert.equal(skillPickerKey('Tab', false, false), 'pick');
+  assert.equal(skillPickerKey('Tab', true, false), null);
+  assert.equal(skillPickerKey('ArrowDown', false, false), 'move');
+  assert.equal(skillPickerKey('Escape', false, false), 'dismiss');
+  assert.equal(skillPickerKey('a', false, true), null);
 });
 
 test('choosing a skill inserts what the agent understands', () => {

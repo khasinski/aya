@@ -70,6 +70,53 @@ test('Stop also stops a Claude background subagent after its turn ended', async 
   } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
 });
 
+test('a new turn keeps a running background subagent: its row, its Stop and the status count', async () => {
+  const seed = seedClaudeGui();
+  const app = await launchApp(seed);
+  try {
+    const page = await app.firstWindow(), gui = page.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Claude' });
+    const turnStatus = gui.getByRole('status', { name: 'Turn status' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await prompt.fill('stoppable-agent'); await prompt.press('Enter');
+    await expect(turnStatus).toHaveText('1 subagent working in the background…');
+    await prompt.fill('continue'); await prompt.press('Enter');
+    await expect(gui.locator('article.assistant').last()).toContainText('Continuing where I left off.');
+    await expect(turnStatus).toHaveText('1 subagent working in the background…');
+    await gui.getByLabel('Tool activity', { exact: true }).click();
+    const activity = gui.getByRole('region', { name: 'Tool activity details' });
+    await activity.getByRole('button', { name: 'Stop Subagent (general-purpose): Print ticks' }).click();
+    await expect(activity).toContainText('■ Subagent (general-purpose): Print ticks');
+    await expect(activity.getByText(/Subagent \(general-purpose\): Print ticks/)).toHaveCount(1);
+    await expect(turnStatus).not.toHaveText(/working in the background/);
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
+test('restarting the agent session drops its pending approvals and interrupts its background subagents', async () => {
+  const seed = seedClaudeGui();
+  const app = await launchApp(seed);
+  try {
+    const page = await app.firstWindow(), gui = page.locator('.aya-conversation');
+    const prompt = gui.getByRole('textbox', { name: 'Message Claude' });
+    const turnStatus = gui.getByRole('status', { name: 'Turn status' });
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await prompt.fill('background-agent'); await prompt.press('Enter');
+    const approval = gui.getByRole('group', { name: 'Approval required' });
+    await expect(approval).toContainText('Requested by Subagent: Read a.txt');
+    await gui.getByRole('button', { name: 'Restart agent session' }).click();
+    await expect(approval).toHaveCount(0);
+    await expect(gui.locator('.aya-gui-settings-message').filter({ hasText: 'Agent session restarted' })).toBeVisible();
+    await expect(gui.locator('header').getByRole('status')).toHaveText('Ready');
+    await expect(turnStatus).not.toHaveText(/working in the background/);
+    await expect(gui.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await gui.getByLabel('Tool activity', { exact: true }).click();
+    await expect(gui.getByRole('region', { name: 'Tool activity details' })).toContainText('■ Subagent (Explore): Read a.txt');
+    // Nothing from the old session holds the queue: a new message starts a turn.
+    await prompt.fill('continue'); await prompt.press('Enter');
+    await expect(gui.locator('article.assistant').last()).toContainText('Continuing where I left off.');
+  } finally { await closeAndWait(app); rmSync(seed.root, { recursive: true, force: true }); }
+});
+
 test('a Codex subagent runs while its thread works and stops from its own row', async () => {
   const seed = commonJs(seedCodexGui());
   const app = await launchApp(seed);

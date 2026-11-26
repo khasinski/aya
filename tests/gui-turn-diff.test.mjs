@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GuiTurnDiffs, changedFiles, commitDiff, diffSnapshots, handleGuiDiffAction, listBranchCommits, snapshotWorkingTree } from "../dist-electron/gui-turn-diff.js";
-import { fileChangePaths, parseDiffSourceId, repoRelativePath, turnDiffSummaryText } from "../dist-test/gui-turn-diff.js";
+import { fileChangePaths, parseDiffSourceId, repoRelativePath, turnDiffsOf, turnDiffSummaryText } from "../dist-test/gui-turn-diff.js";
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), "aya-turn-diff-"));
@@ -156,4 +156,16 @@ test("file-change activities name their files, and paths are made relative to th
   assert.equal(parseDiffSourceId("turn:y", [turn]), null);
   assert.deepEqual(parseDiffSourceId("current", []), { kind: "current" });
   assert.equal(parseDiffSourceId("commit:nothex", []), null);
+});
+
+test("the turn summaries keep their identity while a reply streams, so the open diff viewer does not re-render", () => {
+  const a = { id: "a", files: [] }, b = { id: "b", files: [] };
+  const messages = [{ type: "user", text: "x" }, { type: "turnDiff", turnDiff: a }, { type: "assistant", text: "partial" }];
+  const first = turnDiffsOf(messages);
+  assert.deepEqual(first, [a]);
+  // A streamed delta replaces the assistant message; the summaries are the same.
+  assert.equal(turnDiffsOf([...messages.slice(0, 2), { type: "assistant", text: "partial reply" }], first), first);
+  const second = turnDiffsOf([...messages, { type: "turnDiff", turnDiff: b }], first);
+  assert.notEqual(second, first);
+  assert.deepEqual(second, [a, b]);
 });

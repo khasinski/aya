@@ -99,17 +99,24 @@ test('Claude: the permission mode changes mid-session, cycles with the shortcut 
     await expect(gui.getByRole('article', { name: 'Permission mode changed', exact: true })).toContainText('Supervised → Auto-accept edits. Applies now.');
     await page.keyboard.press('Escape');
     await prompt.click();
-    await page.keyboard.press('Control+Shift+A');
+    await page.keyboard.press('ControlOrMeta+Shift+KeyA');
     await expect(settings).toHaveAttribute('title', /· Auto$/);
-    await page.keyboard.press('Control+Shift+A');
+    // The shortcut never turns on Full access: it goes round to Supervised, and Full access takes the menu.
+    await page.keyboard.press('ControlOrMeta+Shift+KeyA');
+    await expect(settings).toHaveAttribute('title', /Supervised/);
+    await expect(gui.locator('header').getByText('Unsafe approvals', { exact: true })).toHaveCount(0);
+    await settings.click();
+    await select.selectOption('full-access');
+    await page.keyboard.press('Escape');
     await expect(settings).toHaveAttribute('title', /Full access/);
     await expect(gui.locator('header').getByText('Unsafe approvals', { exact: true })).toBeVisible();
-    await expect.poll(modes).toEqual([{ mode: 'acceptEdits' }, { mode: 'auto' }, { mode: 'bypassPermissions' }]);
+    await expect.poll(modes).toEqual([{ mode: 'acceptEdits' }, { mode: 'auto' }, { mode: 'default' }, { mode: 'bypassPermissions' }]);
+    await prompt.click();
     // Claude can change its mode by itself; the pane follows.
     await prompt.fill('self-mode'); await prompt.press('Enter');
     await expect(settings).toHaveAttribute('title', /Auto-accept edits/);
     await expect(gui.locator('header').getByText('Unsafe approvals', { exact: true })).toHaveCount(0);
-    await page.keyboard.press('Control+Shift+A');
+    await page.keyboard.press('ControlOrMeta+Shift+KeyA');
     await expect(settings).toHaveAttribute('title', /· Auto$/);
     await expect(gui.getByRole('status', { name: 'Conversation save status' })).toHaveText('Saved locally');
     await page.reload();

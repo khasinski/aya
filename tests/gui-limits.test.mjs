@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ClaudeUsageLimitTracker, claudeLimitMessage, resetFromLimitText } from "../dist-electron/gui-usage-limit.js";
-import { isUsageLimitError, limitPaneStatus, limitStatusText, mergeCodexRateLimits, nextLimitEvent, parseUsageLimit, RESUME_GRACE_MS, turnUsageLimit, windowName } from "../dist-test/gui-limits.js";
+import { isUsageLimitError, limitPaneStatus, limitStatusText, mergeCodexRateLimits, nextLimitEvent, parseUsageLimit, RESUME_GRACE_MS, RESUME_STALE_MS, turnUsageLimit, windowName } from "../dist-test/gui-limits.js";
 
 const now = Date.UTC(2026, 10, 26, 12, 0, 0);
 const inSeconds = (s) => Math.floor(now / 1000) + s;
@@ -82,6 +82,10 @@ test("the reset wakes the pane, then a scheduled resume follows after the grace 
   assert.deepEqual(nextLimitEvent(limit, now + 60_000), { action: "resume", inMs: RESUME_GRACE_MS });
   assert.deepEqual(nextLimitEvent(limit, now + 600_000), { action: "resume", inMs: 0 });
   assert.equal(nextLimitEvent({ ...limit, resumeAtReset: false }, now + 60_000), null);
+  // Long after the reset (Aya reopened the next day) the resume is dropped; the card offers Continue now.
+  assert.deepEqual(nextLimitEvent(limit, now + 60_000 + RESUME_STALE_MS), { action: "resume", inMs: 0 });
+  assert.equal(nextLimitEvent(limit, now + 60_000 + RESUME_STALE_MS + 1), null);
+  assert.equal(nextLimitEvent(limit, now + 24 * 3600_000), null);
   assert.equal(nextLimitEvent({ message: "x", resetsAt: null }, now), null);
 });
 

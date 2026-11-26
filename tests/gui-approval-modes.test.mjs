@@ -8,7 +8,7 @@ import {
   approvalNoteDelivery, claudeDeclineMessage, claudePermissionMode, codexPermissionPolicy, fromClaudePermissionMode,
   guiPermissionModes, initialGuiPermissionMode, nextGuiPermissionMode, parseGuiPermissionMode,
 } from '../shared/gui-permission-mode.cjs';
-import { approvalNoteTarget, approvalSummary, declinableApproval, isPermissionModeShortcut, permissionModeChangeText } from '../dist-test/gui-approval-modes.js';
+import { approvalNoteTarget, approvalSummary, declinableApproval, isPermissionModeShortcut, nextShortcutPermissionMode, permissionModeChangeText } from '../dist-test/gui-approval-modes.js';
 const isolatedHome = await mkdtemp(path.join(tmpdir(), 'aya-gui-modes-'));
 process.env.AYA_HOME = isolatedHome;
 after(() => rm(isolatedHome, { recursive: true, force: true }));
@@ -27,11 +27,28 @@ test('only Claude and Codex offer modes, in T3 Code order, and the shortcut cycl
   assert.equal(nextGuiPermissionMode('pi', 'supervised'), 'supervised');
   assert.equal(parseGuiPermissionMode('auto'), 'auto');
   assert.equal(parseGuiPermissionMode('bypassPermissions'), undefined);
-  assert.equal(isPermissionModeShortcut({ key: 'A', metaKey: true, ctrlKey: false, shiftKey: true, altKey: false }), true);
-  assert.equal(isPermissionModeShortcut({ key: 'a', metaKey: false, ctrlKey: true, shiftKey: true, altKey: false }), true);
-  assert.equal(isPermissionModeShortcut({ key: 'a', metaKey: true, ctrlKey: false, shiftKey: false, altKey: false }), false);
+  const key = (mods) => ({ code: 'KeyA', metaKey: false, ctrlKey: false, shiftKey: true, altKey: false, ...mods });
+  assert.equal(isPermissionModeShortcut(key({ metaKey: true }), true), true);
+  assert.equal(isPermissionModeShortcut(key({ ctrlKey: true }), false), true);
+  assert.equal(isPermissionModeShortcut(key({ metaKey: true, shiftKey: false }), true), false);
   assert.match(permissionModeChangeText('supervised', 'full-access', 'codex'), /Supervised → Full access\. Applies to the next turn/);
   assert.match(permissionModeChangeText('supervised', 'auto', 'claude'), /Applies now/);
+});
+
+test('the shortcut is Cmd+Shift+A on macOS and Ctrl+Shift+A elsewhere, by physical key, and never reaches Full access', () => {
+  const key = (mods) => ({ code: 'KeyA', metaKey: false, ctrlKey: false, shiftKey: true, altKey: false, ...mods });
+  // Ctrl+Shift+A on a Mac is the text field's "select to line start".
+  assert.equal(isPermissionModeShortcut(key({ ctrlKey: true }), true), false);
+  assert.equal(isPermissionModeShortcut(key({ metaKey: true }), false), false);
+  // A non-Latin layout types another character on the A key.
+  assert.equal(isPermissionModeShortcut({ ...key({ metaKey: true }), key: 'ф' }, true), true);
+  assert.equal(isPermissionModeShortcut(key({ metaKey: true, code: 'KeyQ' }), true), false);
+  assert.equal(isPermissionModeShortcut(key({ metaKey: true, repeat: true }), true), false);
+  const modes = guiPermissionModes('claude').map(m => m.id);
+  assert.equal(nextShortcutPermissionMode(modes, 'supervised'), 'auto-accept-edits');
+  assert.equal(nextShortcutPermissionMode(modes, 'auto'), 'supervised');
+  assert.equal(nextShortcutPermissionMode(modes, 'full-access'), 'supervised');
+  assert.equal(nextShortcutPermissionMode([], 'supervised'), 'supervised');
 });
 
 test('the preset’s unsafe approvals pick the first mode; Codex keeps its workspace-write default', () => {

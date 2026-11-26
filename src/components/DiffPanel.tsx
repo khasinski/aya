@@ -1,6 +1,6 @@
 import hljs, { EXT_TO_LANGUAGE } from "../syntax-highlight";
-import { useEffect,useMemo,useRef,useState } from "react";
-import { diffFileLineIndex } from "../diff-navigation";
+import { memo,useEffect,useMemo,useRef,useState } from "react";
+import { cappedDiffRows, diffFileLineIndex, DIFF_LINES_PER_FILE } from "../diff-navigation";
 import {
   commentRowIndexInDiff,
   indexDiffRows,
@@ -99,7 +99,8 @@ export function markHtmlOccurrences(html: string, query: string): string {
 }
 
 
-export function DiffPanel({
+/** Memoized: the Conversation GUI's diff viewer stays open while a reply streams in, and a large diff is many rows. */
+export const DiffPanel = memo(function DiffPanel({
   diff,
   loading,
   query,
@@ -154,6 +155,14 @@ export function DiffPanel({
   }), [lines]);
   const rawLines = useMemo(() => diff.split("\n"), [diff]);
   const indexedDiff = useMemo(() => indexDiffRows(rawLines), [rawLines]);
+  // A very large file renders its first lines and a button for the rest, a chunk at a time.
+  const [shownPerFile, setShownPerFile] = useState<{ diff: string; shown: Map<number, number> }>({ diff, shown: new Map() });
+  const shown = shownPerFile.diff === diff ? shownPerFile.shown : undefined;
+  const rows = useMemo(() => cappedDiffRows(rawLines, shown), [rawLines, shown]);
+  const showMore = (fileStart: number) => setShownPerFile(old => {
+    const current = old.diff === diff ? old.shown : new Map<number, number>();
+    return { diff, shown: new Map(current).set(fileStart, (current.get(fileStart) ?? DIFF_LINES_PER_FILE) + DIFF_LINES_PER_FILE) };
+  });
   // Which row is being commented on, and the draft note.
   const [editing, setEditing] = useState<number | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -252,7 +261,14 @@ export function DiffPanel({
         <div className="aya-statusbar-popover-empty">{emptyText}</div>
       ) : (
         <div className="aya-diff-view" ref={diffViewRef}>
-          {lines.map((line, index) => {
+          {rows.map((row) => {
+            if (row.kind === "more") {
+              const more = Math.min(row.hidden, DIFF_LINES_PER_FILE);
+              return <button key={`more:${row.fileStart}`} type="button" className="aya-diff-show-more" onClick={() => showMore(row.fileStart)}>
+                Show {more.toLocaleString("en-US")} more lines{more < row.hidden ? ` (${row.hidden.toLocaleString("en-US")} hidden)` : ""}
+              </button>;
+            }
+            const index = row.index, line = lines[index];
             const prefix = ["add", "del", "ctx"].includes(line.kind) ? line.text.slice(0, 1) : "";
             const highlighted = markHtmlOccurrences(
               highlightedLines[index],
@@ -433,4 +449,4 @@ export function DiffPanel({
       )}
     </div>
   );
-}
+});
