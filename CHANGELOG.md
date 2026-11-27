@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Switching a Claude pane from the terminal to the Conversation GUI no longer shows Claude Code's own messages as yours: a background task's `<task-notification>`, a message from another session, or the note that a usage limit has reset.
+
 ## v0.21.1 - 2026-11-27
 
 - A pane restored at startup in a folder it shares with another pane of the same agent no longer resumes the folder's newest conversation. 0.21.0 marked such panes while their first launch was waiting on the terminal host, and that launch then used the command from before the mark.

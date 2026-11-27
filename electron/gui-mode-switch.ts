@@ -23,7 +23,7 @@ const record = (value: unknown): Record<string, unknown> => (value && typeof val
 const str = (value: unknown) => (typeof value === "string" ? value : "");
 
 /** Claude Code wraps slash commands, hook output and reminders in tags; none of it is something the user typed. */
-const CLAUDE_NOISE = /^\s*<(?:command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook)>/;
+const CLAUDE_NOISE = /^\s*<(?:task-notification|command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook)>/;
 
 function claudeText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -60,6 +60,8 @@ export function claudeTranscriptMessages(jsonl: string): TranscriptMessage[] {
     if (entry.isSidechain === true || entry.isMeta === true || entry.isCompactSummary === true) continue;
     const message = record(entry.message);
     if (entry.type === "user" && message.role === "user") {
+      // Claude Code itself sent it: a background task's notification, another session's message, a resumed limit.
+      if (entry.promptSource === "system") continue;
       const text = claudeText(message.content).trim();
       if (!text || CLAUDE_NOISE.test(text)) continue;
       out.push({ id: `claude-user-${str(entry.uuid) || out.length}`, type: "user", text });

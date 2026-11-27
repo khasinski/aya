@@ -145,6 +145,10 @@ test("a Claude transcript gives the typed prompts and replies, without tool traf
     { type: "user", isMeta: true, message: { role: "user", content: "Caveat" } },
     { type: "user", message: { role: "user", content: "<command-name>/clear</command-name>" } },
     { type: "user", isSidechain: true, message: { role: "user", content: "subagent prompt" } },
+    // A background task's notification is a user line Claude Code wrote, with or without its origin fields.
+    { type: "user", uuid: "n1", promptSource: "system", origin: { kind: "task-notification" }, message: { role: "user", content: "<task-notification>\n<task-id>bj3</task-id>\n<status>stopped</status>\n</task-notification>" } },
+    { type: "user", uuid: "n2", message: { role: "user", content: "<task-notification>\n<task-id>old</task-id>\n</task-notification>" } },
+    { type: "user", uuid: "p1", promptSource: "system", origin: { kind: "peer" }, message: { role: "user", content: "Another Claude session sent a message:" } },
     "not json",
     { type: "user", uuid: "u2", message: { role: "user", content: [{ type: "text", text: "What was it?" }] } },
   ].map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n");
