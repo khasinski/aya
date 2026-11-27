@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.21.1 - 2026-11-27
+
+- A pane restored at startup in a folder it shares with another pane of the same agent no longer resumes the folder's newest conversation. 0.21.0 marked such panes while their first launch was waiting on the terminal host, and that launch then used the command from before the mark.
+
 ## v0.21.0 - 2026-11-27
 
 - Two Codex panes restored in one folder at startup now keep the shared-folder mark, so neither continues the folder's latest conversation. The mark could be tried before their terminals were loaded and was then never set.
