@@ -52,8 +52,12 @@ exports.default = async function sign(options) {
   if (exports.pinOwner(options.app, { identity: options.identity })) {
     // osx-sign walks absolute paths, while electron-builder may hand over a relative app path.
     const owner = path.resolve(options.app, OWNER_IN_APP);
-    const ignore = [...(options.ignore ? [options.ignore].flat() : []), (file) => path.resolve(file) === owner];
+    // One function: @electron/osx-sign 1.3.3 drops an `ignore` given as an array.
+    const before = options.ignore ? [options.ignore].flat() : [];
+    const ignore = (file) => path.resolve(file) === owner ||
+      before.some((rule) => (typeof rule === "function" ? rule(file) : new RegExp(rule).test(file)));
     await signAsync({ ...signOptions, ignore });
+    if (!fs.readFileSync(owner).equals(fs.readFileSync(exports.PINNED_OWNER))) throw new Error("Signing changed the pinned aya-pty-owner");
   }
   exports.verifyStagedApp(options.app);
 };
