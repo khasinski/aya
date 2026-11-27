@@ -74,13 +74,11 @@ test('one prompt with an image goes to several agents, each in its own worktree,
     expect(worktrees).toContain('branch refs/heads/aya/greet-codex-gui');
     expect(worktrees).toContain('branch refs/heads/aya/greet-claude-gui');
 
-    // Each new pane sent the prompt by itself once its agent connected; the Codex one carried the pasted image.
-    const codex = page.locator('.aya-conversation:has(textarea[aria-label="Message Codex"])').filter({ hasText: PROMPT });
-    const claude = page.locator('.aya-conversation:has(textarea[aria-label="Message Claude"])');
-    await expect(codex).toHaveCount(1);
-    await expect(claude).toHaveCount(1);
-    await expect(codex).toContainText('📎 clipboard-', { timeout: 15_000 });
-    await expect(claude).toContainText(PROMPT, { timeout: 15_000 });
+    // One new pane per agent: a second Codex pane beside the source, and a Claude one. What each sent is checked
+    // below, one visible pane at a time: a hidden pane keeps only placeholders for its messages, and the source's
+    // own draft (the prompt and its image chip) would match any text filter here.
+    await expect(page.locator('.aya-conversation:has(textarea[aria-label="Message Codex"])')).toHaveCount(2);
+    await expect(page.locator('.aya-conversation:has(textarea[aria-label="Message Claude"])')).toHaveCount(1);
 
     // An agent's edits show up in Compare, against the shared base commit.
     const codexPath = join(seed.projectDir + '.worktrees', 'greet-codex-gui');
@@ -98,13 +96,15 @@ test('one prompt with an image goes to several agents, each in its own worktree,
     await compare.getByRole('button', { name: 'Close' }).click();
     await expect(compare).toHaveCount(0);
 
-    // Hidden panes only keep placeholders for their messages: look at each one in turn.
+    // Hidden panes only keep placeholders for their messages: look at each one in turn. Each new pane sent the
+    // prompt by itself once its agent connected, and both carried the pasted image.
     const visible = page.locator('.aya-conversation:visible');
     for (const row of [page.locator('.aya-sidebar-row').filter({ hasText: 'Codex GUI' }).last(), page.locator('.aya-sidebar-row').filter({ hasText: 'Claude GUI' })]) {
       await row.click();
       await expect(visible.getByRole('status', { name: 'Turn status' })).toHaveText('Turn complete', { timeout: 15_000 });
       await expect(visible.locator('article.user')).toHaveCount(1);
       await expect(visible.locator('article.user')).toContainText(PROMPT);
+      await expect(visible.locator('article.user')).toContainText('📎 clipboard-');
       await expect(visible.locator('article.user small')).toHaveText('YOU');
     }
     // The source pane keeps its draft; nothing was sent from it.
