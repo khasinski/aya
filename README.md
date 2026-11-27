@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/khasinski/aya/actions/workflows/build.yml">
-    <img src="https://github.com/khasinski/aya/actions/workflows/build.yml/badge.svg" alt="Build status">
+  <a href="https://github.com/aya-hq/aya/actions/workflows/build.yml">
+    <img src="https://github.com/aya-hq/aya/actions/workflows/build.yml/badge.svg" alt="Build status">
   </a>
 </p>
 
@@ -99,15 +99,24 @@ run commands.
 
 ## Install
 
-Download the [latest release](https://github.com/khasinski/aya/releases/latest)
-from GitHub (Aya 0.20.0):
+Download the [latest release](https://github.com/aya-hq/aya/releases/latest)
+from GitHub (Aya 0.21.1):
 
-- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.20.0/Aya-0.20.0-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.20.0/Aya-0.20.0-arm64-mac.zip)
-- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.20.0/Aya-0.20.0.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.20.0/aya_0.20.0_amd64.deb)
+- macOS Apple Silicon: [DMG](https://github.com/aya-hq/aya/releases/download/v0.21.1/Aya-0.21.1-arm64.dmg) or [zip](https://github.com/aya-hq/aya/releases/download/v0.21.1/Aya-0.21.1-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/aya-hq/aya/releases/download/v0.21.1/Aya-0.21.1.AppImage) or [deb](https://github.com/aya-hq/aya/releases/download/v0.21.1/aya_0.21.1_amd64.deb)
 
 ### macOS
 
-Open the DMG and drag Aya to `/Applications`. The release build is Developer ID
+With [Homebrew](https://brew.sh):
+
+```sh
+brew install aya-hq/tap/aya
+```
+
+This installs Aya.app and puts the `aya` command on your PATH. Aya updates
+itself; `brew upgrade` leaves it alone.
+
+Or open the DMG and drag Aya to `/Applications`. The release build is Developer ID
 signed and Apple-notarized.
 
 ### Linux
@@ -115,15 +124,15 @@ signed and Apple-notarized.
 On Ubuntu and Debian-like systems, prefer the DEB:
 
 ```sh
-sudo apt install ./aya_0.20.0_amd64.deb
+sudo apt install ./aya_0.21.1_amd64.deb
 /opt/Aya/aya
 ```
 
 The AppImage can be run directly:
 
 ```sh
-chmod +x Aya-0.20.0.AppImage
-./Aya-0.20.0.AppImage
+chmod +x Aya-0.21.1.AppImage
+./Aya-0.21.1.AppImage
 ```
 
 The AppImage ships the statically linked AppImage runtime, so it does **not**
@@ -134,7 +143,7 @@ distributions do install by default.
 On a system with no FUSE at all, run the AppImage without mounting it:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.20.0.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.21.1.AppImage
 ```
 
 Older releases (0.7.9 and earlier) embedded the legacy runtime and failed with
@@ -152,7 +161,7 @@ that. (`StartupWMClass` does not - it is an X11 `WM_CLASS` hint, and Wayland has
 no `WM_CLASS`.)
 
 ```sh
-./scripts/install-desktop-entry.sh ./Aya-0.20.0.AppImage
+./scripts/install-desktop-entry.sh ./Aya-0.21.1.AppImage
 ```
 
 That writes `~/.local/share/applications/aya.desktop` plus every icon size to
@@ -172,7 +181,7 @@ Requirements:
 Build and package for the current platform:
 
 ```sh
-git clone https://github.com/khasinski/aya.git
+git clone https://github.com/aya-hq/aya.git
 cd aya
 npm install
 npm run package

@@ -483,7 +483,7 @@ test("rollback clears the marker before logging, warns with its live parent and 
     message: "Update to 0.13.0 didn't apply",
     detail: "Aya is still on 0.12.0. The in-app update failed to install and rolled back to the current version. You can install the latest release manually.",
   });
-  assert.deepEqual(s.log.at(-1), ["open", "https://github.com/khasinski/aya/releases/latest"]);
+  assert.deepEqual(s.log.at(-1), ["open", "https://github.com/aya-hq/aya/releases/latest"]);
   s.updates.configureAutoUpdates(s.windows[0]);
   await s.updates.checkForUpdates();
   assert.equal(s.updates.getUpdateStatus().phase, "not-available");

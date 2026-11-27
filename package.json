@@ -6,7 +6,7 @@
   "engines": {
     "node": ">=24 <25 || >=26 <27"
   },
-  "homepage": "https://github.com/khasinski/aya",
+  "homepage": "https://github.com/aya-hq/aya",
   "author": {
     "name": "Chris Hasiński",
     "email": "krzysztof.hasinski@gmail.com"
@@ -103,7 +103,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "khasinski",
+        "owner": "aya-hq",
         "repo": "aya"
       }
     ],

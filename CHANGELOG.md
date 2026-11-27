@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Aya moved to the aya-hq organization on GitHub (github.com/aya-hq/aya) and installs with Homebrew: `brew install aya-hq/tap/aya`. Earlier versions keep updating through GitHub's redirect from the old address.
 - Switching a Claude pane from the terminal to the Conversation GUI no longer shows Claude Code's own messages as yours: a background task's `<task-notification>`, a message from another session, or the note that a usage limit has reset.
 
 ## v0.21.1 - 2026-11-27

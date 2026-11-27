@@ -20,7 +20,7 @@ export const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // The install an ordinary quit started holds the quit this long at most before it quits without it.
 const QUIT_INSTALL_SETTLE_MS = 15_000;
 export const SQUIRREL_HANDOFF_TIMEOUT_MS = 60_000;
-const UPDATE_HANDOFF_FALLBACK = "Aya could not hand the update to macOS. Download the latest DMG from github.com/khasinski/aya/releases/latest and install it manually.";
+const UPDATE_HANDOFF_FALLBACK = "Aya could not hand the update to macOS. Download the latest DMG from github.com/aya-hq/aya/releases/latest and install it manually.";
 
 export function updateVersion(info: unknown): string | undefined {
   return typeof info === "object" &&
@@ -84,7 +84,7 @@ export function createUpdates(deps: UpdatesDeps) {
     diagnosticsLog.append("update-squirrel-error", { error: redactUpdaterError(error) });
   });
   // Where to send a user whose auto-update silently failed (#78).
-  const RELEASES_URL = "https://github.com/khasinski/aya/releases/latest";
+  const RELEASES_URL = "https://github.com/aya-hq/aya/releases/latest";
 
   function updatesSupportedMessage(): string {
     if (deps.isDev || !app.isPackaged) return "Updates are disabled in development builds.";

@@ -8,6 +8,7 @@
 - `npm run package`
 - Confirm GitHub release assets include `latest-mac.yml` plus the macOS ZIP; auto-update reads that feed.
 - Confirm Linux AppImage releases include `latest-linux.yml`; `.deb` users are prompted to download manually.
+- After the GitHub release is published, point the Homebrew cask at it: `node scripts/update-homebrew-cask.cjs <version> <checkout of aya-hq/homebrew-tap>`.
 
 ## Packaged App Smoke Test
 
