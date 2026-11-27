@@ -1160,7 +1160,11 @@ function TerminalViewComponent({
         // The host uses this to pick the agent's own screen-detection rules.
         agent: presetAgent,
         agentConfigDir: preset.configDir,
-        command,
+        // Read with the shared-folder fields, after the await above: a mark that
+        // lands meanwhile (sharedDir at startup) changes the command and drops
+        // sharedDirCommand/peerCwds together, and the render-time command would
+        // then go out with no peers to steer it away from "continue the latest".
+        command: commandRef.current,
         ...sharedRef.current,
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
