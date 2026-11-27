@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Homebrew installs Aya on Linux (x86_64) too: `brew install aya-hq/tap/aya` puts the AppImage in `~/Applications` with its desktop entry and icon.
+- Homebrew installs Aya on Linux (x86_64) too: `brew install aya-hq/tap/aya` puts the AppImage in `~/Applications` with its desktop entry and icon, and the `aya` command on PATH (taken from the AppImage again after each update).
 
 ## v0.21.2 - 2026-11-27
 

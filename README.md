@@ -129,7 +129,7 @@ brew install aya-hq/tap/aya
 
 This installs the AppImage as `~/Applications/Aya.AppImage` together with its
 desktop entry and icon, so the steps under "Desktop entry and icon" below are
-not needed.
+not needed, and puts the `aya` command on your PATH.
 
 On Ubuntu and Debian-like systems, the DEB works without Homebrew:
 

@@ -10,6 +10,32 @@ const { execFileSync } = require("node:child_process");
 
 const REPO = "aya-hq/aya";
 
+// Linux: the aya command lives inside the AppImage, which mounts at a new path on every run. This wrapper extracts
+// the command (1.7 MB, no FUSE needed) into a cache once per AppImage file, so it follows Aya's in-place updates.
+const LINUX_CLI = [
+  "#!/bin/sh",
+  "set -eu",
+  'appimage="${AYA_APPIMAGE:-$HOME/Applications/Aya.AppImage}"',
+  'if [ ! -x "$appimage" ]; then',
+  '  echo "aya: $appimage not found; reinstall it with: brew reinstall aya-hq/tap/aya" >&2',
+  "  exit 1",
+  "fi",
+  'cache="${XDG_CACHE_HOME:-$HOME/.cache}/aya-cli"',
+  "key=$(stat -c '%Y-%s' \"$appimage\")",
+  'cli="$cache/$key/squashfs-root/resources/app.asar.unpacked/bin/aya"',
+  'if [ ! -x "$cli" ]; then',
+  '  mkdir -p "$cache"',
+  '  tmp=$(mktemp -d "$cache/.extract-XXXXXX")',
+  "  (cd \"$tmp\" && \"$appimage\" --appimage-extract 'resources/app.asar.unpacked/*' >/dev/null)",
+  '  mv -T "$tmp" "$cache/$key" 2>/dev/null || rm -rf "$tmp"',
+  '  find "$cache" -mindepth 1 -maxdepth 1 ! -name "$key" ! -name ".extract-*" -exec rm -rf {} +',
+  "fi",
+  'exec "$cli" "$@"',
+].join("\n");
+// bin/aya starts the app as aya-app when `aya open` finds no running Aya.
+const LINUX_APP = ["#!/bin/sh", 'exec "${AYA_APPIMAGE:-$HOME/Applications/Aya.AppImage}" "$@"'].join("\n");
+const indent = (text, by) => text.split("\n").map((line) => (line ? by + line : line)).join("\n");
+
 exports.caskSource = (version, { mac, linux }) => `cask "aya" do
   version "${version}"
   sha256 arm:          "${mac}",
@@ -42,9 +68,18 @@ exports.caskSource = (version, { mac, linux }) => `cask "aya" do
     # Installs the AppImage's desktop entry and icon too. The name carries no version, so Aya's own update
     # replaces the same file.
     app_image "Aya-#{version}.AppImage", target: "Aya.AppImage"
+    generated_script "aya", content: <<~SH
+${indent(LINUX_CLI, "      ")}
+    SH
+    generated_script "aya-app", content: <<~SH
+${indent(LINUX_APP, "      ")}
+    SH
+    binary "aya"
+    binary "aya-app"
 
     zap trash: [
       "~/.aya",
+      "~/.cache/aya-cli",
       "~/.cache/aya-updater",
       "~/.config/Aya",
     ]
