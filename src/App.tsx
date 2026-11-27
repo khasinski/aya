@@ -810,17 +810,27 @@ export function App() {
   );
   const resumePanes = useStable(resumePanesNext, samePollPayload);
   // Once two panes of an agent have shared a folder, neither may ever "continue
-  // the latest" there again, even after the other is closed.
+  // the latest" there again, even after the other is closed. Keyed on the
+  // sharing panes whose terminal still lacks the mark, not on resumePanes alone:
+  // at startup the panes come from the project's tabs a render before their
+  // terminals are hydrated, and that hydration leaves resumePanes unchanged, so
+  // a mark tried that early would find nothing to set and never be tried again.
+  const sharingPanes = useMemo(() => sharingPaneIds(resumePanes), [resumePanes]);
+  const unlatchedPanes = [...sharingPanes]
+    .filter((id) => terminals[id] && !terminals[id].sharedDir)
+    .sort()
+    .join("\n");
   useEffect(() => {
-    const sharing = sharingPaneIds(resumePanes);
+    if (!unlatchedPanes) return;
+    const ids = new Set(unlatchedPanes.split("\n"));
     setTerminals((prev) => {
-      const marked = Object.values(prev).filter((t) => sharing.has(t.id) && !t.sharedDir);
+      const marked = Object.values(prev).filter((t) => ids.has(t.id) && !t.sharedDir);
       if (marked.length === 0) return prev;
       const next = { ...prev };
       for (const t of marked) next[t.id] = { ...t, sharedDir: true as const };
       return next;
     });
-  }, [resumePanes]);
+  }, [unlatchedPanes]);
   // The derived collections below are memoized: App re-renders on every poll
   // tick and PTY status flip, and rebuilding these arrays/Sets/records each time
   // both wastes O(terminals) work several times over AND hands children fresh
