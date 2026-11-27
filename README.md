@@ -100,10 +100,10 @@ run commands.
 ## Install
 
 Download the [latest release](https://github.com/aya-hq/aya/releases/latest)
-from GitHub (Aya 0.21.1):
+from GitHub (Aya 0.21.2):
 
-- macOS Apple Silicon: [DMG](https://github.com/aya-hq/aya/releases/download/v0.21.1/Aya-0.21.1-arm64.dmg) or [zip](https://github.com/aya-hq/aya/releases/download/v0.21.1/Aya-0.21.1-arm64-mac.zip)
-- Linux x64: [AppImage](https://github.com/aya-hq/aya/releases/download/v0.21.1/Aya-0.21.1.AppImage) or [deb](https://github.com/aya-hq/aya/releases/download/v0.21.1/aya_0.21.1_amd64.deb)
+- macOS Apple Silicon: [DMG](https://github.com/aya-hq/aya/releases/download/v0.21.2/Aya-0.21.2-arm64.dmg) or [zip](https://github.com/aya-hq/aya/releases/download/v0.21.2/Aya-0.21.2-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/aya-hq/aya/releases/download/v0.21.2/Aya-0.21.2.AppImage) or [deb](https://github.com/aya-hq/aya/releases/download/v0.21.2/aya_0.21.2_amd64.deb)
 
 ### macOS
 
@@ -124,15 +124,15 @@ signed and Apple-notarized.
 On Ubuntu and Debian-like systems, prefer the DEB:
 
 ```sh
-sudo apt install ./aya_0.21.1_amd64.deb
+sudo apt install ./aya_0.21.2_amd64.deb
 /opt/Aya/aya
 ```
 
 The AppImage can be run directly:
 
 ```sh
-chmod +x Aya-0.21.1.AppImage
-./Aya-0.21.1.AppImage
+chmod +x Aya-0.21.2.AppImage
+./Aya-0.21.2.AppImage
 ```
 
 The AppImage ships the statically linked AppImage runtime, so it does **not**
@@ -143,7 +143,7 @@ distributions do install by default.
 On a system with no FUSE at all, run the AppImage without mounting it:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.21.1.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.21.2.AppImage
 ```
 
 Older releases (0.7.9 and earlier) embedded the legacy runtime and failed with
@@ -161,7 +161,7 @@ that. (`StartupWMClass` does not - it is an X11 `WM_CLASS` hint, and Wayland has
 no `WM_CLASS`.)
 
 ```sh
-./scripts/install-desktop-entry.sh ./Aya-0.21.1.AppImage
+./scripts/install-desktop-entry.sh ./Aya-0.21.2.AppImage
 ```
 
 That writes `~/.local/share/applications/aya.desktop` plus every icon size to
