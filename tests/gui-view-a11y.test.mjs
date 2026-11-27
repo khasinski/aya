@@ -51,10 +51,10 @@ test("announcements say when a turn starts, needs approval and ends, never on mo
 });
 
 test("the window title leads with the status only while it needs the user", () => {
-  assert.equal(guiWindowTitle({ level: "active", text: "Claude is working" }, "Claude GUI"), "Working — Claude GUI");
-  assert.equal(guiWindowTitle({ level: "waiting", text: "Approval needed: ls" }, "Claude GUI"), "Needs approval — Claude GUI");
-  assert.equal(guiWindowTitle({ level: "waiting", text: "Claude has a question: Which?" }, "Claude GUI"), "Needs your input — Claude GUI");
-  assert.equal(guiWindowTitle({ level: "error", text: "Limited · resets 15:00" }, "Claude GUI"), "Limited — Claude GUI");
+  assert.equal(guiWindowTitle({ level: "active", text: "Claude is working" }, "Claude GUI"), "Working — Claude GUI — Aya");
+  assert.equal(guiWindowTitle({ level: "waiting", text: "Approval needed: ls" }, "Claude GUI"), "Needs approval — Claude GUI — Aya");
+  assert.equal(guiWindowTitle({ level: "waiting", text: "Claude has a question: Which?" }, "Claude GUI"), "Needs your input — Claude GUI — Aya");
+  assert.equal(guiWindowTitle({ level: "error", text: "Limited · resets 15:00" }, "Claude GUI"), "Limited — Claude GUI — Aya");
   assert.equal(guiWindowTitle({ level: "done", text: "Turn complete" }, "Claude GUI"), null);
   assert.equal(guiWindowTitle("clear", "Claude GUI"), null);
 });

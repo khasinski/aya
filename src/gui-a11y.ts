@@ -1,5 +1,5 @@
 // Screen-reader support for Conversation GUI panes: what a polite live region says when a turn starts, finishes or
-// needs the user, and the window title that leads with the focused pane's status ("Working — Claude GUI").
+// needs the user, and the window title that leads with the focused pane's status ("Working — Claude GUI — Aya").
 
 import type { GuiPaneStatus } from "./gui-status";
 
@@ -33,10 +33,11 @@ export function titleStatus(status: GuiPaneStatus): string | null {
   return null;
 }
 
-/** "Needs approval — Claude GUI", or null to show the window's own title. */
+/** "Needs approval — Claude GUI — Aya", or null to show the window's own title. It ends with the app's name: the
+ *  title stands for the whole window in Mission Control, the Window menu and window switchers. */
 export function guiWindowTitle(status: GuiPaneStatus, paneName: string): string | null {
   const lead = titleStatus(status);
-  return lead ? `${lead} — ${paneName}` : null;
+  return lead ? `${lead} — ${paneName} — Aya` : null;
 }
 
 /** One pane at a time owns the window title; releasing it puts back the title the window had before. */

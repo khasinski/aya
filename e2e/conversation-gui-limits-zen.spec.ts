@@ -31,7 +31,7 @@ test('a Claude usage limit shows Limited; Snooze keeps it quiet until the reset 
     // The limit replaces the generic failure: no error banner.
     await expect(gui.getByRole('alert')).toHaveCount(0);
     await expect(gui.getByTestId('gui-announcer')).toHaveText(/^Limited · 5-hour limit resets /);
-    await expect(page).toHaveTitle('Limited — Claude GUI');
+    await expect(page).toHaveTitle('Limited — Claude GUI — Aya');
     await page.getByTitle('Open attention center').click();
     await expect(page.locator('.aya-attention-modal .aya-attention-row', { hasText: 'Claude GUI' })).toContainText('Limited');
     await page.keyboard.press('Escape');
@@ -103,7 +103,7 @@ test('tool calls can be hidden, Zen shows only your messages and final replies, 
     await prompt.fill('approval'); await prompt.press('Enter');
     await expect(gui.getByText('Approval required')).toBeVisible();
     await expect(announcer).toHaveText('Approval needed: echo hello');
-    await expect(page).toHaveTitle('Needs approval — Codex GUI');
+    await expect(page).toHaveTitle('Needs approval — Codex GUI — Aya');
     await gui.getByRole('button', { name: 'Allow once', exact: true }).click();
     await expect(turnStatus).toHaveText('Turn complete');
     await expect(announcer).toHaveText('Turn complete');
